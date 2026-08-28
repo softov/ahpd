@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHost } from './host.js';
 import { listen } from './listen.js';
 
@@ -9,11 +10,25 @@ import { listen } from './listen.js';
  * catalogue *is* - a host that served several would have to answer "which
  * sessions" before it could answer anything, and the protocol has no place to
  * ask.
+ *
+ * This is the one file that reads argv, the filesystem and stdout. Everything
+ * under it is given what it needs. `node:fs` is used here because all three
+ * supported runtimes provide it; nothing else in the daemon imports a builtin.
  */
 
 interface Options {
+  /** TCP port to bind. 0 lets the OS choose. */
   port: number;
+  /** Address to bind. Loopback unless asked otherwise. */
+  host: string;
+  /** The directory whose sessions this host serves. */
   path: string;
+  /** The secret every connection must present, given directly. */
+  token?: string;
+  /** A file holding that secret. Written with a fresh one if it does not exist. */
+  tokenFile?: string;
+  /** Accept any connection, with no secret at all. */
+  open: boolean;
   help: boolean;
 }
 
@@ -21,21 +36,41 @@ const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
 
   ahpd [options]
 
-  --port <n>      Listen here. Default 9187.
-  --path <dir>    The directory this host's sessions live in.
-                  Default: the directory the daemon was started in.
-  --help, -h      This
+  --port <n>                    Listen here. Default 9187; 0 picks a free one.
+  --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
+                                accept from other machines, which needs a token.
+  --path <dir>                  The directory this host's sessions live in.
+                                Default: the directory the daemon started in.
+  --connection-token <secret>   Require this secret on every connection.
+  --connection-token-file <p>   Require the secret in this file. A fresh one is
+                                written if the file is not there.
+  --without-connection-token    Accept any connection. Only when the port is
+                                already reachable by nobody else.
+  --help, -h                    This
+
+Clients present the token as ?tkn=<secret> on the URL, or as an
+Authorization: Bearer <secret> header.
 
 Point a client at it:
-  pnpm example chat --host ws://127.0.0.1:9187
+  ahpc --host ws://127.0.0.1:9187
 `;
 
 function parse(argv: string[]): Options {
-  const options: Options = { port: 9187, path: process.cwd(), help: false };
+  const options: Options = {
+    port: 9187,
+    host: '127.0.0.1',
+    path: process.cwd(),
+    open: false,
+    help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--port': options.port = Number(argv[++i]); break;
+      case '--host': options.host = String(argv[++i]); break;
       case '--path': options.path = String(argv[++i]); break;
+      case '--connection-token': options.token = String(argv[++i]); break;
+      case '--connection-token-file': options.tokenFile = String(argv[++i]); break;
+      case '--without-connection-token': options.open = true; break;
       case '--help': case '-h': options.help = true; break;
       default:
         if (argv[i]?.startsWith('-')) {
@@ -47,11 +82,61 @@ function parse(argv: string[]): Options {
   return options;
 }
 
+const stop = (message: string): never => {
+  process.stderr.write(`${message}\n`);
+  process.exit(2);
+};
+
+/**
+ * The secret this host will require, and where it came from.
+ *
+ * A token file that is not there is written rather than refused: the flag is
+ * how a supervisor points several processes at one secret, and requiring the
+ * person to invent one first makes the convenient spelling the unusable one.
+ */
+function secret(options: Options): { token?: string; from: string } {
+  if (options.open) {
+    if (options.token !== undefined || options.tokenFile !== undefined) {
+      stop('--without-connection-token contradicts the token you also passed.');
+    }
+    return { from: 'no token: any connection is accepted' };
+  }
+  if (options.token !== undefined && options.tokenFile !== undefined) {
+    stop('Pass --connection-token or --connection-token-file, not both.');
+  }
+  if (options.token !== undefined) {
+    if (options.token === '') stop('--connection-token was empty.');
+    return { token: options.token, from: 'token: from --connection-token' };
+  }
+  if (options.tokenFile !== undefined) {
+    if (existsSync(options.tokenFile)) {
+      const held = readFileSync(options.tokenFile, 'utf8').trim();
+      if (held === '') stop(`${options.tokenFile} is empty.`);
+      return { token: held, from: `token: read from ${options.tokenFile}` };
+    }
+    const made = crypto.randomUUID().replaceAll('-', '');
+    // Owner-only, because the file is the credential.
+    writeFileSync(options.tokenFile, `${made}\n`, { mode: 0o600 });
+    return { token: made, from: `token: written to ${options.tokenFile}` };
+  }
+  // Loopback needs no secret - anything reaching it is already on this
+  // machine. Any other address does, and starting without one there would be
+  // a host on the network that anybody can drive.
+  const loopback = options.host === '127.0.0.1' || options.host === '::1' || options.host === 'localhost';
+  if (!loopback) {
+    stop(`Binding ${options.host} exposes this host beyond this machine.\n`
+      + 'Pass --connection-token, --connection-token-file, or --without-connection-token.');
+  }
+  return { from: 'no token: loopback only' };
+}
+
 const options = parse(process.argv.slice(2));
 if (options.help) {
   process.stdout.write(USAGE);
   process.exit(0);
 }
+
+const { token, from } = secret(options);
 
 const host = createHost({
   path: options.path,
@@ -61,14 +146,20 @@ const host = createHost({
 // Whichever runtime this is. `listen` is the only file that knows, and it
 // says which one it found - a daemon that silently ran somewhere unexpected
 // would be a daemon nobody could tell apart from the one they meant to start.
-const listener = await listen(options.port, (peer) => host.accept(peer));
-
-process.stdout.write(
-  `ahpd on ws://127.0.0.1:${listener.port} (${listener.runtime}), sessions in ${options.path}\n`,
+const listener = await listen(
+  { port: options.port, host: options.host, ...(token !== undefined ? { token } : {}) },
+  (peer) => host.accept(peer),
 );
 
-const stop = (): void => {
+process.stdout.write(
+  `ahpd on ws://${listener.host}:${listener.port} (${listener.runtime}), sessions in ${options.path}\n`
+  // Where the secret came from, never the secret: stdout is a log, and a log
+  // is the one place a credential should not end up.
+  + `${from}\n`,
+);
+
+const shutdown = (): void => {
   void Promise.resolve(listener.close()).finally(() => process.exit(0));
 };
-process.on('SIGINT', stop);
-process.on('SIGTERM', stop);
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

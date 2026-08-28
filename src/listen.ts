@@ -1,5 +1,5 @@
 import { createPeer, receive } from './rpc.js';
-import type { Connected, Listener, OnConnect, Runtime } from './types/listen.js';
+import type { Connected, Listener, ListenOptions, OnConnect, Runtime } from './types/listen.js';
 
 /**
  * Accepts WebSocket connections on Node, Bun or Deno.
@@ -25,19 +25,57 @@ interface Bound {
   connected: Connected;
 }
 
-export async function listen(port: number, onConnect: OnConnect): Promise<Listener> {
+/**
+ * The token a connection presented, if it presented one.
+ *
+ * Two places, because only one of them always works: a browser cannot set
+ * headers on a WebSocket handshake, so the query string is the portable form
+ * and the header is for clients that can.
+ */
+const presented = (url: string | undefined, authorization: string | null): string | undefined => {
+  const query = /[?&]tkn=([^&]*)/.exec(url ?? '');
+  if (query) return decodeURIComponent(query[1] ?? '');
+  const bearer = /^Bearer\s+(.+)$/i.exec(authorization ?? '');
+  return bearer?.[1];
+};
+
+/**
+ * Compares two secrets without returning early on the first difference.
+ *
+ * The lengths still differ observably, which is why a token is generated
+ * rather than chosen: they are all the same length.
+ */
+const same = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  let differing = 0;
+  for (let i = 0; i < a.length; i++) differing |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return differing === 0;
+};
+
+export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
   const runtime = runtimeOf();
+  const host = options.host ?? '127.0.0.1';
+  const token = options.token;
+  /** Whether this handshake may proceed. No token configured accepts any. */
+  const allowed = (url: string | undefined, authorization: string | null): boolean =>
+    token === undefined || same(token, presented(url, authorization) ?? '');
 
   if (runtime === 'bun') {
     const Bun = (globalThis as unknown as { Bun: {
-      serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void };
+      serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void; port: number };
     } }).Bun;
     // Per socket, because Bun's handler table is one set of callbacks for
     // every connection - `ws` is the only thing distinguishing them.
     const bound = new Map<object, Bound>();
     const server = Bun.serve({
-      port,
+      port: options.port,
+      hostname: host,
       fetch(request: Request_, server_: { upgrade(r: Request_): boolean }) {
+        // Refused before the upgrade, so an unauthorised client is told in
+        // HTTP rather than handed a socket that closes on its first message.
+        if (!allowed(request.url, request.headers.get('authorization'))) {
+          return new Response('A connection token is required', { status: 401 });
+        }
         if (server_.upgrade(request)) return undefined;
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       },
@@ -62,15 +100,21 @@ export async function listen(port: number, onConnect: OnConnect): Promise<Listen
         },
       },
     });
-    return { runtime, port, close: () => server.stop(true) };
+    return { runtime, host, port: server.port, guarded: token !== undefined, close: () => server.stop(true) };
   }
 
   if (runtime === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
-      serve(options: { port: number }, handler: (r: Request_) => Response): { shutdown(): Promise<void> };
+      serve(options: { port: number; hostname: string }, handler: (r: Request_) => Response): {
+        shutdown(): Promise<void>;
+        addr: { port: number };
+      };
       upgradeWebSocket(r: Request_): { socket: DenoSocket; response: Response };
     } }).Deno;
-    const server = Deno.serve({ port }, (request) => {
+    const server = Deno.serve({ port: options.port, hostname: host }, (request) => {
+      if (!allowed(request.url, request.headers.get('authorization'))) {
+        return new Response('A connection token is required', { status: 401 });
+      }
       if ((request.headers.get('upgrade') ?? '').toLowerCase() !== 'websocket') {
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       }
@@ -92,13 +136,19 @@ export async function listen(port: number, onConnect: OnConnect): Promise<Listen
       socket.onclose = () => { held?.connected.close(); held = undefined; };
       return response;
     });
-    return { runtime, port, close: () => server.shutdown() };
+    return {
+      runtime,
+      host,
+      port: server.addr.port,
+      guarded: token !== undefined,
+      close: () => server.shutdown(),
+    };
   }
 
-  let WebSocketServer: new (options: { port: number }) => NodeServer;
+  let WebSocketServer: new (options: NodeOptions) => NodeServer;
   try {
     ({ WebSocketServer } = await import('ws') as unknown as {
-      WebSocketServer: new (options: { port: number }) => NodeServer;
+      WebSocketServer: new (options: NodeOptions) => NodeServer;
     });
   } catch {
     throw new Error(
@@ -108,7 +158,17 @@ export async function listen(port: number, onConnect: OnConnect): Promise<Listen
     );
   }
 
-  const server = new WebSocketServer({ port });
+  const server = new WebSocketServer({
+    port: options.port,
+    host,
+    // `ws` answers a rejected handshake with the status this passes back, so
+    // an unauthorised client reads 401 rather than a socket that opened and
+    // then closed for no stated reason.
+    verifyClient: (info, accept) => {
+      if (allowed(info.req.url, info.req.headers.authorization ?? null)) accept(true);
+      else accept(false, 401, 'A connection token is required');
+    },
+  });
   server.on('connection', (socket) => {
     const peer = createPeer({
       send: (text) => { socket.send(text); },
@@ -126,12 +186,19 @@ export async function listen(port: number, onConnect: OnConnect): Promise<Listen
     server.once('listening', () => resolve());
     server.once('error', (error) => reject(error instanceof Error ? error : new Error(String(error))));
   });
-  return { runtime, port, close: () => { server.close(); } };
+  return {
+    runtime,
+    host,
+    // What was bound, not what was asked for: port 0 means the OS chooses.
+    port: server.address()?.port ?? options.port,
+    guarded: token !== undefined,
+    close: () => { server.close(); },
+  };
 }
 
 // --- the shapes each runtime hands back, named so the code above reads ------
 
-type Request_ = { headers: { get(name: string): string | null } };
+type Request_ = { url: string; headers: { get(name: string): string | null } };
 
 interface BunSocket { send(text: string): unknown; close(): void; readyState: number }
 
@@ -144,9 +211,19 @@ interface DenoSocket {
   onclose: (() => void) | null;
 }
 
+interface NodeOptions {
+  port: number;
+  host: string;
+  verifyClient(
+    info: { req: { url?: string; headers: { authorization?: string } } },
+    accept: (allow: boolean, code?: number, message?: string) => void,
+  ): void;
+}
+
 interface NodeServer {
   on(event: 'connection', handler: (socket: NodeSocket) => void): void;
   once(event: 'listening' | 'error', handler: (error?: unknown) => void): void;
+  address(): { port: number } | null;
   close(): void;
 }
 

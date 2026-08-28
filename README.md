@@ -42,6 +42,37 @@ A client names paths in the host's filesystem, never its own; a second
 directory is a second daemon rather than a flag, because the working directory
 is what the catalogue *is*.
 
+## Who may connect
+
+The daemon binds loopback and takes no token, which needs no secret: anything
+reaching `127.0.0.1` is already on this machine.
+
+```bash
+# Reachable from elsewhere, behind a secret
+ahpd --host 0.0.0.0 --connection-token-file ~/.ahpd/token
+
+# Or given directly, or deliberately without one
+ahpd --host 0.0.0.0 --connection-token "$SECRET"
+ahpd --host 0.0.0.0 --without-connection-token
+```
+
+Binding anything but loopback without one of those three refuses to start,
+rather than putting a host on the network that anybody can drive. A token file
+that does not exist is written with a fresh token, owner-readable only; one
+that does is read.
+
+Clients present it as `?tkn=<secret>` on the WebSocket URL or as an
+`Authorization: Bearer <secret>` header - the query string is the one that
+always works, because a browser cannot set headers on a WebSocket handshake.
+A connection with the wrong token is refused with **401 at the handshake**, so
+it never reaches the host at all.
+
+```bash
+ahpc --host ws://192.168.1.10:9187 --token "$SECRET"
+```
+
+Only stdout says where the token came from, never what it is.
+
 ## What it serves
 
 | Method | |
@@ -50,12 +81,14 @@ is what the catalogue *is*.
 | `ping` | ✅ |
 | `subscribe` / `unsubscribe` | ✅ root, session and chat channels |
 | `listSessions` | ✅ most-recently-modified first, live sessions included |
-| `resolveSessionConfig` | ✅ permission mode |
+| `resolveSessionConfig` | ✅ permission mode, effort, thinking - the same schema a session reports, so a row is configurable before it is resumed |
 | capabilities | ✅ models, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
 | `createSession` / `disposeSession` | ✅ |
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
 | model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
-| `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted` |
+| `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |
+| read and archived | ✅ kept per session and told to every client - including for rows no agent is running for |
+| connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
 | `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
 | `completions` | ✅ `/` against the session's commands, falling back to the harness-wide list |
 | `@` completion, terminals, resources, changesets | ⬜ see [ROADMAP.md](ROADMAP.md) |
@@ -76,6 +109,11 @@ Three rules it is careful about, because each is a silent failure otherwise:
 - **The running turn is `activeTurn`, and is not in `turns`.** A client reading
   only the history shows an empty conversation for exactly as long as somebody
   is watching one happen.
+- **A turn the client started is still said back.** The host reduces
+  `chat/turnStarted` and re-emits it. Nothing in a client applies what it sent
+  itself, so a host that reduced it privately goes on to emit
+  `chat/responsePart` for a turn no client has - and the whole answer lands
+  nowhere until somebody reopens the session and gets a fresh snapshot.
 - **`serverSeq` moves with state, never with messages.** A snapshot is taken
   *at* a sequence number and every action after it carries a greater one, which
   is how a client knows it missed nothing.
@@ -95,7 +133,7 @@ src/transcript.ts  A past session read as turns, and the paging helpers.
 src/probe.ts       One agent process at startup, to learn what is offered.
 src/session.ts     One live session, reduced into its channels' state.
 src/host.ts        Channels, subscriptions, requests and state actions.
-src/main.ts        The daemon: a port and a directory.
+src/main.ts        The daemon: argv, the filesystem and stdout.
 src/index.ts       The library entry point.
 ```
 
