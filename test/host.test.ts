@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Peer } from '../src/rpc.js';
+import type { Peer } from '../src/types/rpc.js';
 
 /*
  * The host, without a socket.

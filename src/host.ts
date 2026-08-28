@@ -1,70 +1,34 @@
+/**
+ * The protocol server: channels, subscriptions, requests and state actions.
+ *
+ * One host serves many connections. It owns the session catalogue, the live
+ * sessions and the sequence number that orders everything it emits.
+ *
+ * Rules that govern anything answering AHP:
+ *
+ * - `serverSeq` advances when state changes, not per message. A snapshot is
+ *   taken at a sequence number and every action after it carries a greater
+ *   one, which is how a client knows it missed nothing.
+ * - Notifications carry no id and get no reply. `unsubscribe` and
+ *   `dispatchAction` are notifications.
+ * - Subscriptions are per connection. Dropping one client's subscription must
+ *   not affect another's.
+ * - Only client-dispatchable actions are accepted from clients; the rest are
+ *   the host reporting what it did.
+ */
+
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { catalogue, idFor, idOf, Status } from './catalog.js';
 import { turnsOf, tail, older } from './transcript.js';
 import { probe } from './probe.js';
 import { createSession } from './session.js';
-import type { Peer, Request } from './rpc.js';
-import type { Session } from './session.js';
-import type { Summary } from './catalog.js';
-
-/**
- * An agent host, over AHP, running Claude Code.
- *
- * The other end of the seam the chat client proved. `claudeHost` in that
- * client is Claude reached in-process; this is Claude reached over a socket,
- * and the point of writing it is that the client cannot tell - `--claude` and
- * `--host ws://…` have to render the same thing or one of them is wrong.
- *
- * **What a host is.** A sessions server: several clients watch and drive the
- * same sessions and none of them owns the process running the agent. That is
- * the thing the SDK is not, and supplying it is the whole reason this exists -
- * an editor no longer has to be open for a session to be watchable.
- *
- * ## The rules that are easy to get wrong
- *
- * - **`serverSeq` is the host's clock.** A snapshot is taken *at* a sequence
- *   number and every action after it carries a greater one; a client uses the
- *   gap to know it missed nothing. So the counter moves when state moves, not
- *   per message.
- * - **A notification has no id and gets no answer.** `unsubscribe` and
- *   `dispatchAction` are notifications. Replying to one is a protocol error.
- * - **Subscriptions are per connection.** Two clients on one session is the
- *   ordinary case; a channel-wide unsubscribe to shed one of them kills the
- *   stream the other is reading.
- */
-
-export interface HostOptions {
- /**
- * The directory this host's sessions live in.
- *
- * A path on *this* machine, which is the whole point: a client names paths
- * in the host's filesystem, never its own, and a daemon is what makes that
- * distinction honest rather than incidental.
- */
- path: string;
- /** Told what happened, for a log. */
- onEvent?(message: string): void;
-}
-
-interface Connection {
- peer: Peer;
- clientId: string;
- /** The channels this connection asked for. Per connection, never global. */
- watching: Set<string>;
-}
+import type { Connection, Host, HostOptions } from './types/host.js';
+import type { Summary } from './types/catalog.js';
+import type { Session } from './types/session.js';
+import type { Peer } from './types/rpc.js';
 
 const ROOT = 'ahp-root://';
-
-export interface Host {
- /** Drive one connection. Returns the handler `serve` wants. */
- accept(peer: Peer): {
-  handle(request: Request): Promise<unknown>;
-  close(): void;
- };
- /** For tests and for a status line. */
- connections(): number;
-}
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
@@ -188,7 +152,7 @@ export function createHost(options: HostOptions): Host {
       // until its own CLI replied left the slash menu empty for the first
       // several seconds - and a client that asks once and caches never found
       // out otherwise.
-      seed_customizations: commands.map((command) => ({
+      seedCustomizations: commands.map((command) => ({
         type: 'prompt',
         id: `command:${command.name}`,
         name: command.name,
@@ -240,17 +204,12 @@ export function createHost(options: HostOptions): Host {
         sessionMutable: true,
       },
       /*
-       * No `model` here, deliberately.
+       * The model is not a config property.
        *
-       * A session has no model; each *message* has one. The protocol carries
-       * the choices on the agent (`RootState.agents[].models`) and the choice
-       * itself on the turn, and a client draws a first-class picker from
-       * those. Adding a `model` row to this schema draws a *second* control
-       * beside that one, showing the same thing - which is what it did.
-       *
-       * `session/configChanged` with a `model` key is still honoured, because
-       * a client is entitled to set it that way; it is just not advertised as
-       * a control of its own.
+       * A session has no model; each message has one. The choices are carried
+       * on the agent (`RootState.agents[].models`) and the choice on the turn.
+       * `session/configChanged` with a `model` key is still honoured, but the
+       * model is not advertised here as a control of its own.
        */
       effortLevel: {
         type: 'string',
@@ -335,13 +294,10 @@ export function createHost(options: HostOptions): Host {
     if (chat)
       return { resource: channel, state: chat.chatState(), fromSeq: serverSeq };
     /*
-     * Not running here - but the catalogue listed it, so it is real.
+     * A session in the catalogue that this host is not running.
      *
-     * Opening a row is a file read and nothing more: no CLI is spawned to
-     * look at a conversation. The session becomes live the moment somebody
-     * starts a turn on it, which is the point at which an agent is actually
-     * wanted. Browsing ninety-eight rows should not cost ninety-eight
-     * subprocesses.
+     * Served read-only from its transcript. No agent process is started until
+     * somebody sends a turn to it.
      */
     const id = idOf(channel);
     const turns = await past(id);
@@ -474,13 +430,11 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         /**
-         * What a slash offers.
+         * Completions for the text a person is composing.
          *
-         * This host advertises `/` and `@` as trigger characters, so a client
-         * is entitled to ask - and was, until now, refused. Only `/` is
-         * answered: an `@` is a file, and a host that returned nothing for it
-         * is telling the truth, while one that returned commands would be
-         * answering a different question.
+         * Answers `/` with the commands available to the session, or the
+         * harness-wide list when it has none yet. `@` means a file and is not
+         * served, so it returns nothing.
          */
         completions: async (params) => {
           if (String(params.kind ?? '') !== 'userMessage')

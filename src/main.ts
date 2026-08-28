@@ -1,6 +1,5 @@
-import { WebSocketServer } from 'ws';
 import { createHost } from './host.js';
-import { serve } from './rpc.js';
+import { listen } from './listen.js';
 
 /**
  * The daemon.
@@ -59,25 +58,17 @@ const host = createHost({
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 
-const server = new WebSocketServer({ port: options.port });
+// Whichever runtime this is. `listen` is the only file that knows, and it
+// says which one it found - a daemon that silently ran somewhere unexpected
+// would be a daemon nobody could tell apart from the one they meant to start.
+const listener = await listen(options.port, (peer) => host.accept(peer));
 
-server.on('connection', (socket) => {
-  const session = host.accept({
-    send: (message) => { if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message)); },
-    notify: (method, params) => {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ jsonrpc: '2.0', method, params }));
-    },
-    close: () => socket.close(),
-  });
-  serve(socket, (request) => session.handle(request), () => session.close());
-});
-
-server.on('listening', () => {
-  process.stdout.write(`ahpd on ws://127.0.0.1:${options.port}, sessions in ${options.path}\n`);
-});
+process.stdout.write(
+  `ahpd on ws://127.0.0.1:${listener.port} (${listener.runtime}), sessions in ${options.path}\n`,
+);
 
 const stop = (): void => {
-  server.close(() => process.exit(0));
+  void Promise.resolve(listener.close()).finally(() => process.exit(0));
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

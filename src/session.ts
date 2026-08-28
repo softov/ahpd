@@ -1,81 +1,32 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Status } from './catalog.js';
 import { tail } from './transcript.js';
+import type { Bag } from './types/common.js';
+import type { Session, SessionOptions } from './types/session.js';
 
 /**
- * One Claude run, reduced into the state a chat channel holds.
+ * One agent session, reduced into the state its channels hold.
  *
- * This is the half of the daemon that is not protocol plumbing: the SDK says
- * what happened in its own words, and a host has to say the same thing in
- * AHP's. The mapping is the one the textui chat client proved in-process -
- * same frames in, same meanings out - but the shapes on the way out are the
- * protocol's actions rather than a client's own events.
+ * The agent SDK reports what happened as its own message stream; a host has to
+ * report the same events as AHP state actions. This module is that
+ * translation, and holds the resulting state for a subscription snapshot.
  *
- * ## The rules the protocol is explicit about
+ * Rules the protocol requires of anything emitting chat actions:
  *
- * - **A part exists before it streams.** "The server MUST first emit a
- *   `chat/responsePart` to create the target part, then use [`chat/delta`] to
- *   append text to it." A delta naming a part nobody opened appends to nothing.
- * - **The running turn is `activeTurn`, and is not in `turns`.** A client that
- *   reads only the history shows an empty conversation for exactly as long as
- *   somebody is watching one happen.
- * - **A turn carries what the person said *and* what the agent answered.**
- *   `message.text` is the person's; `responseParts` is the agent's.
- * - **The client begins the turn.** `chat/turnStarted` is client-dispatchable
- *   and write-ahead: the client says the turn has begun rather than asking
- *   permission, and the host reduces it and gets to work.
+ * - A response part must exist before text streams into it: emit
+ *   `chat/responsePart` to create it, then `chat/delta` to append. A delta
+ *   naming a part that was never opened appends to nothing.
+ * - The running turn is `activeTurn` and is not in `turns`. It moves into
+ *   `turns` when it completes.
+ * - A turn carries both sides: `message.text` is what the person said,
+ *   `responseParts` is what the agent answered.
+ * - The client starts turns. `chat/turnStarted` arrives from the client; the
+ *   host reduces it and runs the agent.
  */
-
-type Bag = Record<string, unknown>;
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-
-/** Emitted on the session channel or the chat's, never both. */
-export type Emit = (channel: 'session' | 'chat', action: Bag) => void;
-
-export interface SessionOptions {
-  uri: string;
-  chatUri: string;
-  cwd: string;
-  permissionMode?: string;
-  /** Everything the client chose at creation, by config key. */
-  settings?: Record<string, string>;
-  /** The config schema, as the host advertises it. Shared with the root. */
-  schema?: () => Bag;
-  /**
-   * What the harness offers, known before this CLI has answered.
-   *
-   * Asking a brand-new session what it was given takes as long as the CLI
-   * takes to start, and answering `[]` in the meantime is a lie a client
-   * caches: it asks once when the session opens, gets nothing, and shows an
-   * empty slash menu until something else happens to re-ask. So a session
-   * starts with what the host already knows and refines it when its own CLI
-   * replies.
-   */
-  seed_customizations?: Bag[];
-  emit: Emit;
-  /**
-   * The SDK session to pick up, when this is not a new conversation.
-   *
-   * Resuming means the agent has the context it built before - the files it
-   * read, the decisions it made - rather than starting from a transcript it
-   * has only been shown.
-   */
-  resume?: string;
-  /** What was said before, so the channel does not open empty while resuming. */
-  seed?: Bag[];
-  /**
-   * The CLI has said what it was given.
-   *
-   * The handshake is the only time it says so, and it carries everything a
-   * client needs to offer: the models, the skills, the MCP servers and the
-   * slash commands. The host listens because the *root* channel advertises
-   * models and a session cannot put them there itself.
-   */
-  onHandshake?(): void;
-}
 
 interface PendingInput {
   id: string;
@@ -182,40 +133,6 @@ function customizationsOf(init: Bag, mcp: unknown[]): Bag[] {
   return out;
 }
 
-export interface Session {
-  readonly uri: string;
-  readonly chatUri: string;
-  /** What the CLI offers to run on. Empty until the handshake has landed. */
-  models(): { id: string; name: string }[];
-  /** What this session was given: skills, plugins, MCP servers, commands. */
-  customizations(): Bag[];
-  /** Every completed turn, for paging. The snapshot only carries the newest. */
-  allTurns(): Bag[];
-  status(): number;
-  title(): string;
-  modifiedAt(): string;
-  sessionState(): Bag;
-  chatState(): Bag;
-  /** Reduce a client's `chat/turnStarted` and set the agent going. */
-  begin(turnId: string, text: string, model?: string): void;
-  /**
-   * Run on this from now on.
-   *
-   * Returns false when the CLI would not take it, so a client is told rather
-   * than left believing a picker did something.
-   */
-  setModel(model: string): Promise<boolean>;
-  setPermissionMode(mode: string): void;
-  /** How hard it thinks. Live, unlike `thinking` itself. */
-  setEffort(level: string): boolean;
-  /** The config in force, by key. */
-  settings(): Record<string, string>;
-  cancel(turnId: string): void;
-  confirm(toolCallId: string, approved: boolean): void;
-  answer(requestId: string, accepted: boolean, answers: Bag): void;
-  close(): void;
-}
-
 export function createSession(options: SessionOptions): Session {
   const { uri, chatUri, cwd, emit } = options;
 
@@ -227,7 +144,7 @@ export function createSession(options: SessionOptions): Session {
   let failed: string | undefined;
   let startedAt = 0;
   let handshake: Bag | undefined;
-  let customizations: Bag[] = [...(options.seed_customizations ?? [])];
+  let customizations: Bag[] = [...(options.seedCustomizations ?? [])];
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
   let chosen: string | undefined;

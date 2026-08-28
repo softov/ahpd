@@ -1,36 +1,19 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { Bag } from './types/common.js';
+import type { Offered } from './types/probe.js';
 
 /**
- * Ask the harness what it can do, once, without a session.
+ * Reads what the agent backend offers, once, without creating a session.
  *
- * `resolveSessionConfig` is the call a composer makes **before** creating
- * anything - it is how a client learns which models and permission modes to
- * offer. Learning the models from a session's handshake is therefore always
- * one step too late: the picker is empty at exactly the moment somebody is
- * choosing.
- *
- * So the daemon pays for one short-lived CLI at startup. It is asked, over the
- * control protocol, what it offers - and closed again. No prompt is sent, no
- * transcript is written, and the subprocess does not outlive the question.
+ * Clients ask `resolveSessionConfig` before creating anything, so the models
+ * and commands have to be known before any session exists. This starts one
+ * short-lived agent process at startup, asks it over the control protocol,
+ * and closes it. No prompt is sent and no transcript is written.
  */
-
-type Bag = Record<string, unknown>;
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-
-export interface Offered {
-  models: { id: string; name: string }[];
-  /**
-   * What a slash offers, before any session exists.
-   *
-   * `completions` is asked against a chat, but a person types a slash into an
-   * empty composer before there is one - so the host keeps the harness-wide
-   * list and a live session's own list overrides it.
-   */
-  commands: { name: string; description?: string; argumentHint?: string }[];
-}
 
 export async function probe(cwd: string): Promise<Offered> {
   // A prompt that never yields. The query needs one to exist; it does not need

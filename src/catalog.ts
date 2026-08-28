@@ -1,15 +1,11 @@
 import { listSessions } from '@anthropic-ai/claude-agent-sdk';
+import type { Summary } from './types/catalog.js';
 
 /**
- * Claude's sessions, as the protocol's catalogue.
+ * The agent's sessions, as the protocol's catalogue.
  *
- * The translation the chat client proved, on the other side of the wire. It is
- * the same mapping in both places and deliberately so - what a client had to
- * invent to read Claude through `HostConnection` is what a host has to emit to
- * be read by anything at all.
- *
- * The SDK is the authority on what sessions exist; this file only renames
- * their fields.
+ * Renames the SDK's session listing into `Summary` rows. The SDK is the
+ * authority on which sessions exist; this module only maps the fields.
  */
 
 /**
@@ -29,16 +25,6 @@ export const Status = {
   IsRead: 32,
   IsArchived: 64,
 } as const;
-
-export interface Summary {
-  resource: string;
-  provider: string;
-  title: string;
-  status: number;
-  createdAt: string;
-  modifiedAt: string;
-  workingDirectories: string[];
-}
 
 /** `ahp-session:/<uuid>`, and the SDK's id is already a uuid. */
 export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`;

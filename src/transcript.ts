@@ -1,23 +1,17 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import type { Bag } from './types/common.js';
+import type { Page } from './types/transcript.js';
 
 /**
- * A session that already happened, as turns.
+ * Reads a session that already happened, as turns.
  *
- * The catalogue lists every session in the directory, and until now opening
- * one showed nothing: this host could only speak about sessions it had
- * started itself. That is a catalogue of ninety-eight rows onto an empty room.
+ * Used for sessions in the catalogue that this host is not running. Opening
+ * one costs a file read; no agent process is started until somebody sends a
+ * turn to it.
  *
- * Reading the transcript is what makes a row worth clicking. It is also
- * deliberately *cheap*: no CLI is spawned to read one. A session becomes live
- * only when somebody starts a turn on it - browsing is a file read, and
- * continuing is a subprocess.
- *
- * The walk is the same one the live path does over the same blocks, because
- * it is the same content: the SDK stores what the model said, not a reduced
- * view of it.
+ * Also holds the paging helpers, since a snapshot carries only the newest
+ * page and `fetchTurns` walks backwards from there.
  */
-
-type Bag = Record<string, unknown>;
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
@@ -149,12 +143,6 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
  * looking at.
  */
 export const PAGE = 50;
-
-export interface Page {
-  turns: Bag[];
-  /** Absent when the state already holds everything there is. */
-  turnsNextCursor?: string;
-}
 
 /**
  * The newest page, and where the rest begins.

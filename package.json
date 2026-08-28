@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, and the parts to build your own server",
+  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, on Node, Bun or Deno - and the parts to build your own",
   "bin": {
     "ahpd": "./dist/src/main.js"
   },
@@ -15,8 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.250",
-    "@microsoft/agent-host-protocol": "^0.8.0",
-    "ws": "^8.18.0"
+    "@microsoft/agent-host-protocol": "^0.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -39,5 +38,8 @@
     "dist",
     "src",
     "README.md"
-  ]
+  ],
+  "optionalDependencies": {
+    "ws": "^8.18.0"
+  }
 }
