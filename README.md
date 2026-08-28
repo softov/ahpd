@@ -20,8 +20,16 @@ alone owns. Bridging the two is all this daemon does.
 
 ```bash
 npm install && npm run build
-node dist/src/main.js --port 9187 --path /where/the/sessions/are
+
+node dist/src/main.js --port 9187 --path /where/the/sessions/are   # Node
+bun  dist/src/main.js --port 9187 --path /where/the/sessions/are   # Bun
+deno run -A dist/src/main.js --port 9187 --path /where/…           # Deno
 ```
+
+The runtime is detected at startup and named in the first line of output. Node
+needs the optional `ws` dependency, having no WebSocket server of its own; Bun
+and Deno use their built-in servers and need nothing. Node and Bun are tested;
+Deno is written to the same interface but has not been run here.
 
 Then point a client at it:
 
@@ -79,19 +87,21 @@ never coming, which reads as a hang rather than as a missing feature.
 ## Layout
 
 ```
-src/rpc.ts       JSON-RPC over one WebSocket. Transport only.
-src/catalog.ts   Claude's sessions, as the protocol's catalogue.
-src/transcript.ts  A session that already happened, as turns.
-src/probe.ts     One CLI at startup, to learn what the harness offers.
-src/session.ts   One Claude run, reduced into a chat channel's state.
-src/host.ts      The host: channels, subscriptions, requests, actions.
-src/main.ts      The daemon: a port and a directory.
+src/types/         Every shape, importing no runtime value. The contract.
+src/rpc.ts         JSON-RPC framing. Holds no socket.
+src/listen.ts      Accepts connections on Node, Bun or Deno.
+src/catalog.ts     The agent's sessions, as the protocol's catalogue.
+src/transcript.ts  A past session read as turns, and the paging helpers.
+src/probe.ts       One agent process at startup, to learn what is offered.
+src/session.ts     One live session, reduced into its channels' state.
+src/host.ts        Channels, subscriptions, requests and state actions.
+src/main.ts        The daemon: a port and a directory.
+src/index.ts       The library entry point.
 ```
 
-`catalog.ts` and `session.ts` make the same mapping the textui chat client's
-`claudeHost` makes in-process - the same SDK frames, the same meanings, in the
-protocol's shapes rather than a client's own. That is the point, and for now it
-is also a duplicate.
+`catalog.ts` and `session.ts` translate the agent SDK's frames into the
+protocol's shapes. `ahpc` makes the same translation in-process for its
+`--claude` mode, so the two are currently duplicated.
 
 **Where that resolves.** The client's `claudeHost` was the prototype and this
 is the thing it was a prototype of. Once this daemon is complete, `--claude`
