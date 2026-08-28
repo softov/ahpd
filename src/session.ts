@@ -210,9 +210,21 @@ export function createSession(options: SessionOptions): Session {
     return active;
   };
 
+  /** Prose: the part is announced, then filled by deltas. */
   const addPart = (turn: Bag, part: Bag): void => {
     (turn.responseParts as Bag[]).push(part);
     emit('chat', { type: 'chat/responsePart', turnId: turn.id, part });
+  };
+
+  /**
+   * A tool call: held for the snapshot, and announced by `chat/toolCallStart`.
+   *
+   * That action *creates* the response part on the client side, so sending
+   * `chat/responsePart` for one as well puts the same call in the transcript
+   * twice - once as this host's part and once as the reducer's own.
+   */
+  const holdPart = (turn: Bag, part: Bag): void => {
+    (turn.responseParts as Bag[]).push(part);
   };
 
   const streamed = (event: Bag): void => {
@@ -282,6 +294,11 @@ export function createSession(options: SessionOptions): Session {
 
       if (kind === 'tool_use') {
         const id = str(block.id) ?? `${of}:${index}`;
+        // Already open: the same assistant message can arrive more than once
+        // while it streams, and the permission callback opens the call under
+        // this very id when one is asked about. Either way it is one call, and
+        // a second part for it is the same row drawn twice.
+        if (parts.has(id)) continue;
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
         const call: Bag = {
@@ -293,13 +310,20 @@ export function createSession(options: SessionOptions): Session {
         };
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
-        addPart(turn, part);
+        holdPart(turn, part);
         emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
         emit('chat', {
           type: 'chat/toolCallReady',
           turnId: turn.id,
           toolCallId: id,
-          invocationMessage: command ?? name,
+          // The tool's name, never its input. A client draws the intention
+          // above the input, so the same string in both is the command
+          // printed twice on every row.
+          invocationMessage: name,
+          // Nothing is being asked here - `canUseTool` is what asks. Without
+          // this the reducer moves every tool call in the transcript into
+          // `pending-confirmation` and draws it as a question nobody put.
+          confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
         });
       }
@@ -329,10 +353,19 @@ export function createSession(options: SessionOptions): Session {
 
   // ------------------------------------------------------ asking a person
 
-  const canUseTool = async (toolName: string, raw: Bag): Promise<unknown> =>
+  const canUseTool = async (toolName: string, raw: Bag, asked?: Bag): Promise<unknown> =>
     new Promise((settle) => {
       const turn = openTurn();
-      const id = `req-${Date.now()}`;
+      const about = bag(asked);
+      /*
+       * The agent's own id for this call.
+       *
+       * Not one of this host's making. The assistant message opens the call
+       * under this id, and a confirmation that invented its own put a second
+       * row beside it for the same command - and answered under a name the
+       * client had never been given, so approving did nothing.
+       */
+      const id = str(about.toolUseID) ?? `req-${Date.now()}`;
 
       if (toolName === 'AskUserQuestion') {
         const asked = new Map<string, string>();
@@ -364,24 +397,42 @@ export function createSession(options: SessionOptions): Session {
       }
 
       const command = summarize(toolName, raw);
-      const call: Bag = {
+      const displayName = str(about.displayName) ?? toolName;
+      /*
+       * The sentence a person reads, which is not the input.
+       *
+       * The CLI renders one - "Claude wants to run …" - and it is better than
+       * anything rebuilt here. Its subtitle is sometimes the input itself
+       * though, and a client draws the intention *above* the input, so a
+       * sentence that is the input is the command printed twice.
+       */
+      const said = str(about.title) ?? str(about.description);
+      const invocationMessage = said !== undefined && said !== command ? said : displayName;
+      const confirmationTitle = str(about.title) ?? `Run ${displayName}?`;
+
+      // The call the assistant message opened, if it arrived first. Which of
+      // the two comes first is the CLI's business; either order is one call.
+      const held = parts.get(id);
+      const call = held ? bag(held.toolCall) : {
         toolCallId: id,
         toolName,
-        displayName: toolName,
-        status: 'pending-confirmation',
-        confirmationTitle: `Run ${toolName}?`,
+        displayName,
         ...(command ? { toolInput: command } : {}),
-      };
-      const part: Bag = { id, kind: 'toolCall', toolCall: call };
-      parts.set(id, part);
-      addPart(turn, part);
-      emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName: toolName });
+      } as Bag;
+      call.status = 'pending-confirmation';
+      call.confirmationTitle = confirmationTitle;
+      if (!held) {
+        const part: Bag = { id, kind: 'toolCall', toolCall: call };
+        parts.set(id, part);
+        holdPart(turn, part);
+        emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName });
+      }
       emit('chat', {
         type: 'chat/toolCallReady',
         turnId: turn.id,
         toolCallId: id,
-        invocationMessage: command ?? toolName,
-        confirmationTitle: `Run ${toolName}?`,
+        invocationMessage,
+        confirmationTitle,
         ...(command ? { toolInput: command } : {}),
       });
 
@@ -670,6 +721,17 @@ export function createSession(options: SessionOptions): Session {
       inputNeededRemoved();
       const part = parts.get(toolCallId);
       if (part) bag(part.toolCall).status = approved ? 'running' : 'cancelled';
+      // Said back, like every other action a client originates. Nothing in a
+      // client applies its own dispatch, so a row approved here stayed
+      // `pending-confirmation` on every screen watching it - including the
+      // one that had just answered it.
+      emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: active?.id,
+        toolCallId,
+        approved,
+        ...(approved ? { confirmed: 'user-action' } : {}),
+      });
       settle(approved
         ? { behavior: 'allow', updatedInput: {} }
         : { behavior: 'deny', message: 'The person declined this action' });

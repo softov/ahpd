@@ -100,7 +100,7 @@ Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
 `chat/error` - plus `root/sessionAdded` / `Removed` / `sessionSummaryChanged`
 on the root channel.
 
-Three rules it is careful about, because each is a silent failure otherwise:
+Rules it is careful about, because each is a silent failure otherwise:
 
 - **A part exists before it streams.** The protocol: *"The server MUST first
   emit a `chat/responsePart` to create the target part, then use
@@ -114,6 +114,15 @@ Three rules it is careful about, because each is a silent failure otherwise:
   itself, so a host that reduced it privately goes on to emit
   `chat/responsePart` for a turn no client has - and the whole answer lands
   nowhere until somebody reopens the session and gets a fresh snapshot.
+- **`chat/toolCallStart` creates the part; `chat/responsePart` must not.**
+  The reducer appends a response part of its own for a starting tool call, so
+  a host that announces the part as well puts every tool call in the
+  transcript twice.
+- **A tool call in the transcript says `confirmed`.** `chat/toolCallReady`
+  without it means *pending confirmation*, and the whole conversation is then
+  drawn as a queue of questions nobody asked. `canUseTool` is what asks, under
+  the agent's own `toolUseID` - a confirmation with an id of the host's making
+  is a second row for one call, answered under a name no client was given.
 - **`serverSeq` moves with state, never with messages.** A snapshot is taken
   *at* a sequence number and every action after it carries a greater one, which
   is how a client knows it missed nothing.

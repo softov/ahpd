@@ -28,7 +28,7 @@ const sdk = vi.hoisted(() => {
     modesSet: [] as string[],
     effortsSet: [] as (string | null | undefined)[],
     interrupted: 0,
-    canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>) => Promise<unknown>),
+    canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
     /**
      * Every CLI the host started, in order.
      *
@@ -1160,5 +1160,97 @@ describe('one conversation, one row', () => {
       items: { resource: string }[];
     };
     expect(listed.items.map((i) => i.resource)).toEqual(['ahp-session:/live']);
+  });
+});
+
+describe('one tool call, one row', () => {
+  /** A turn with a `Bash` call the agent has already announced. */
+  async function calling() {
+    const started = await running();
+    started.client.handle({
+      method: 'dispatchAction',
+      params: { channel: started.uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }],
+      },
+    });
+    return started;
+  }
+
+  const toolParts = (state: Record<string, unknown>) => {
+    const active = state.activeTurn as { responseParts?: Record<string, unknown>[] } | undefined;
+    return (active?.responseParts ?? []).filter((part) => part.kind === 'toolCall');
+  };
+
+  it('lets chat/toolCallStart make the part, and does not make it twice', async () => {
+    const { client, peer: p, chatUri } = await calling();
+    // `chat/toolCallStart` *creates* the response part on the client side, so
+    // a `chat/responsePart` for the same call is the row drawn twice.
+    const announced = actions(p, chatUri).filter((e) => e.action.type === 'chat/responsePart');
+    expect(announced.some((e) => (e.action.part as Record<string, unknown>).kind === 'toolCall')).toBe(false);
+    expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart')).toHaveLength(1);
+
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: Record<string, unknown> };
+    };
+    expect(toolParts(opened.snapshot.state)).toHaveLength(1);
+  });
+
+  it('says the transcript is not asking anything', async () => {
+    const { peer: p, chatUri } = await calling();
+    // Without `confirmed`, the reducer moves every tool call into
+    // `pending-confirmation` and draws it as a question nobody put.
+    const ready = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady');
+    expect(ready?.action.confirmed).toBe('not-needed');
+    // And the intention is not the input: a client draws one above the other.
+    expect(ready?.action.invocationMessage).toBe('Bash');
+    expect(ready?.action.toolInput).toBe('ls');
+  });
+
+  it('asks about the call the agent announced, not one of its own', async () => {
+    const { client, peer: p, chatUri } = await calling();
+    void sdk.canUseTool?.('Bash', { command: 'ls' }, {
+      toolUseID: 'toolu_1',
+      title: 'Claude wants to run ls',
+      displayName: 'Run in terminal',
+    });
+    await settle();
+
+    // Still one part. The confirmation is *the* call, not a second one beside
+    // it - which is also why answering it reaches the agent.
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: Record<string, unknown> };
+    };
+    expect(toolParts(opened.snapshot.state)).toHaveLength(1);
+
+    const asking = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady').at(-1);
+    expect(asking?.action.toolCallId).toBe('toolu_1');
+    expect(asking?.action.confirmed).toBeUndefined();
+    // The CLI's own sentence, which is better than one rebuilt here.
+    expect(asking?.action.invocationMessage).toBe('Claude wants to run ls');
+  });
+
+  it('answers the agent, and says so', async () => {
+    const { client, peer: p, uri, chatUri } = await calling();
+    const answer = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_1' });
+    await settle();
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+    });
+    await settle();
+
+    expect(await answer).toMatchObject({ behavior: 'allow' });
+    // Said back, because nothing in a client applies its own dispatch: an
+    // approved row stayed pending on every screen watching it, including the
+    // one that had just answered.
+    const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
+    expect(confirmed?.action).toMatchObject({ toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' });
   });
 });
