@@ -456,7 +456,9 @@ export function createSession(options: SessionOptions): Session {
     options: {
       cwd,
       includePartialMessages: true,
-      ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
+      // From the settings, which is where it lives: it is a config key like
+      // the others, and a second way in was a second thing to keep in step.
+      ...(settings.permissionMode ? { permissionMode: settings.permissionMode } : {}),
       // Resumed, not replayed: the agent picks up the context it built - the
       // files it read, the decisions it made - rather than being handed a
       // transcript of them and asked to infer the rest.

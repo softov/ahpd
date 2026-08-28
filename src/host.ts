@@ -19,12 +19,12 @@
 
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
-import { catalogue, idFor, idOf, Status } from './catalog.js';
-import { turnsOf, tail, older } from './transcript.js';
-import { probe } from './probe.js';
-import { createSession } from './session.js';
+import { idFor, idOf, uriFor, Status } from './catalog.js';
+import { tail, older } from './transcript.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
+import type { Agent } from './types/agent.js';
+import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
 import type { Peer } from './types/rpc.js';
 
@@ -32,6 +32,22 @@ const ROOT = 'ahp-root://';
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
+  /**
+   * The backends this host serves, by the id clients name.
+   *
+   * A host with two answers `createSession` for either and lists both
+   * catalogues as one. Nothing below here knows what any of them are.
+   */
+  const agents = new Map<string, Agent>();
+  for (const agent of options.agents) {
+    if (agents.has(agent.provider)) {
+      throw new Error(`Two agents both call themselves ${agent.provider}`);
+    }
+    agents.set(agent.provider, agent);
+  }
+  const first = options.agents[0];
+  if (!first)
+    throw new Error('A host with no agents can serve nothing. Pass at least one.');
   const connections = new Set<Connection>();
   /**
    * `IsRead` and `IsArchived`, per session.
@@ -44,6 +60,15 @@ export function createHost(options: HostOptions): Host {
   /** Live sessions, by their own uri, and the chats that belong to them. */
   const sessions = new Map<string, Session>();
   /**
+   * Which backend a session belongs to, by session URI.
+   *
+   * Kept for live ones as they are started and for browsed ones as they are
+   * listed: the URI says nothing about who owns it, and everything answered
+   * about a session - its schema, its transcript, the process that continues
+   * it - is that backend's answer rather than the host's.
+   */
+  const owners = new Map<string, Agent>();
+  /**
    * Config chosen for a session that has no agent running.
    *
    * A row read from its transcript is configurable before it is resumed, and
@@ -55,24 +80,35 @@ export function createHost(options: HostOptions): Host {
   const chosen = new Map<string, Record<string, string>>();
   const byChat = new Map<string, Session>();
   /**
-   * What the harness offers to run on.
+   * What one backend turned out to offer.
    *
-   * Advertised on the *root* channel, but only a running CLI can enumerate
-   * it - so it is empty until the first session's handshake lands, and that
-   * emptiness is a real answer rather than a loading state. When it fills,
-   * every client watching the root is told with `root/agentsChanged`.
+   * Advertised on the *root* channel, but only a live backend can enumerate
+   * it - so it is empty until its probe answers, and that emptiness is a real
+   * answer rather than a loading state. When it fills, every client watching
+   * the root is told with `root/agentsChanged`.
    */
-  let models: { id: string; name: string }[] = [];
-  /** What a slash offers when no session is running. See `probe`. */
-  let commands: { name: string; description?: string; argumentHint?: string }[] = [];
-  /**
-   * Skills, commands, subagents and MCP servers, as the boot probe found them.
-   *
-   * What every new session reports until its own agent answers. That takes
-   * several seconds, and a client asks once - so a session that started empty
-   * stayed empty for anyone who looked before the reply landed.
-   */
-  let seeds: Record<string, unknown>[] = [];
+  interface Learned {
+    /** Models a turn can run on. */
+    models: { id: string; name: string }[];
+    /** What a slash offers when no session of this backend is running. */
+    commands: { name: string; description?: string; argumentHint?: string }[];
+    /**
+     * Skills, commands, subagents and MCP servers, as the probe found them.
+     *
+     * What every new session reports until its own backend answers. That takes
+     * several seconds, and a client asks once - so a session that started
+     * empty stayed empty for anyone who looked before the reply landed.
+     */
+    seeds: Bag[];
+  }
+  const learned = new Map<string, Learned>();
+  const about = (provider: string): Learned => {
+    const held = learned.get(provider);
+    if (held) return held;
+    const made: Learned = { models: [], commands: [], seeds: [] };
+    learned.set(provider, made);
+    return made;
+  };
   let serverSeq = 0;
   const log = (message: string): void => options.onEvent?.(message);
   /**
@@ -116,7 +152,7 @@ export function createHost(options: HostOptions): Host {
         ? {
           summary: {
             resource: uri,
-            provider: 'claude',
+            provider: owners.get(uri)?.provider ?? first.provider,
             title: session.title(),
             status: statusOf(uri),
             createdAt: session.modifiedAt(),
@@ -135,18 +171,20 @@ export function createHost(options: HostOptions): Host {
    */
   const learnModels = (uri: string): void => {
     const session = sessions.get(uri);
-    if (!session)
+    const owner = owners.get(uri);
+    if (!session || !owner)
       return;
     const found = session.models();
     if (found.length === 0)
       return;
-    const same = found.length === models.length
-      && found.every((model, index) => model.id === models[index]?.id);
+    const held = about(owner.provider);
+    const same = found.length === held.models.length
+      && found.every((model, index) => model.id === held.models[index]?.id);
     if (same)
       return;
-    models = found;
-    log(`${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
-    dispatch(ROOT, { type: 'root/agentsChanged', agents: [agent()] });
+    held.models = found;
+    log(`${owner.provider}: ${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
+    dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
   };
   /**
    * One CLI at startup, to learn what the harness offers.
@@ -155,35 +193,39 @@ export function createHost(options: HostOptions): Host {
    * are empty - which is the same real answer this host gives for a harness
    * nobody has signed into.
    */
-  void probe(dir).then((offered) => {
-    commands = offered.commands;
-    seeds = offered.customizations;
-    if (offered.models.length === 0)
-      return;
-    models = offered.models;
-    log(`${models.length} model(s), ${commands.length} command(s)`);
-    dispatch(ROOT, { type: 'root/agentsChanged', agents: [agent()] });
-  }).catch(() => { });
+  for (const agent of agents.values()) {
+    if (!agent.probe)
+      continue;
+    void agent.probe().then((offered) => {
+      const held = about(agent.provider);
+      held.commands = offered.commands;
+      held.seeds = offered.customizations;
+      if (offered.models.length === 0)
+        return;
+      held.models = offered.models;
+      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s)`);
+      dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
+    }).catch(() => { });
+  }
   const spawn = (
+    agent: Agent,
     uri: string,
     config: Record<string, string>,
-    resuming?: { resume: string; seed: Record<string, unknown>[] },
+    resuming?: { resume: string; seed: Bag[] },
   ): Session => {
     const chatUri = `ahp-chat:/${idFor(uri)}`;
-    const session = createSession({
+    const session = agent.create({
       uri,
       chatUri,
-      cwd: dir,
-      ...(config.permissionMode ? { permissionMode: config.permissionMode } : {}),
       ...(resuming ? { resume: resuming.resume, seed: resuming.seed } : {}),
-      settings: { ...defaults(), ...config },
-      schema,
+      settings: { ...agent.defaults(), ...config },
+      schema: agent.schema,
       // What the boot probe already learned: the commands behind a slash, the
       // skills, the subagents and the MCP servers. A session that answered
       // `[]` until its own agent replied was empty for the first several
       // seconds - and a client that asks once and caches never found out
       // otherwise.
-      seedCustomizations: seeds,
+      seedCustomizations: about(agent.provider).seeds,
       emit: (channel, action) => {
         dispatch(channel === 'chat' ? chatUri : uri, action);
         // A turn starting or finishing moves the catalogue too, and a client
@@ -194,80 +236,22 @@ export function createHost(options: HostOptions): Host {
     });
     sessions.set(uri, session);
     byChat.set(chatUri, session);
+    owners.set(uri, agent);
     return session;
   };
   /**
-   * What a session can be told to do differently.
+   * Every backend, as the root channel advertises them.
    *
-   * One schema, used by `resolveSessionConfig` (before a session exists) and
-   * by every session's own state (after one does). Two copies would drift, and
-   * the composer would offer one set of controls on the new-session screen and
-   * a different set the moment a session opened.
-   *
-   * `sessionMutable` is what each row turns on: the permission mode, the model
-   * and the effort level are things the CLI takes on a *running* session.
-   * `thinking` is fixed when the query is built, so offering it live would be
-   * a switch that flips back.
+   * `models` is what its probe found, or empty for one that has not answered
+   * yet - which is the same real answer a host gives for a harness nobody has
+   * signed into.
    */
-  const schema = (): Record<string, unknown> => ({
-    properties: {
-      permissionMode: {
-        type: 'string',
-        title: 'Permissions',
-        description: 'How much the agent may do before it asks.',
-        enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
-        enumLabels: ['Ask each time', 'Accept edits', 'Plan only', 'Bypass'],
-        enumDescriptions: [
-          'Every tool call is confirmed',
-          'File edits run; commands still ask',
-          'Read and reason, change nothing',
-          'Nothing is confirmed',
-        ],
-        default: 'default',
-        sessionMutable: true,
-      },
-      /*
-       * The model is not a config property.
-       *
-       * A session has no model; each message has one. The choices are carried
-       * on the agent (`RootState.agents[].models`) and the choice on the turn.
-       * `session/configChanged` with a `model` key is still honoured, but the
-       * model is not advertised here as a control of its own.
-       */
-      effortLevel: {
-        type: 'string',
-        title: 'Effort',
-        description: 'How hard it thinks before answering.',
-        enum: ['low', 'medium', 'high', 'xhigh', 'max'],
-        enumLabels: ['Low', 'Medium', 'High', 'Very high', 'Max'],
-        default: 'high',
-        sessionMutable: true,
-      },
-      thinking: {
-        type: 'string',
-        title: 'Thinking',
-        description: 'Fixed when the session is created.',
-        enum: ['adaptive', 'disabled'],
-        enumLabels: ['Adaptive', 'Off'],
-        enumDescriptions: ['The agent decides when to think', 'No extended thinking'],
-        default: 'adaptive',
-        sessionMutable: false,
-      },
-    },
-  });
-
-  const defaults = (): Record<string, string> => ({
-    permissionMode: 'default',
-    effortLevel: 'high',
-    thinking: 'adaptive',
-  });
-
-  const agent = () => ({
-    provider: 'claude',
-    displayName: 'Claude Code',
-    description: `The Claude Agent SDK, on ${dir}`,
-    models,
-  });
+  const descriptors = () => [...agents.values()].map((agent) => ({
+    provider: agent.provider,
+    displayName: agent.displayName,
+    ...(agent.description ? { description: agent.description } : {}),
+    models: about(agent.provider).models,
+  }));
   /**
    * The catalogue: what is on disk, and what this host is running.
    *
@@ -286,14 +270,44 @@ export function createHost(options: HostOptions): Host {
       if (own)
         claimed.add(own);
     }
-    const found = (await catalogue(dir, flags))
-      .filter((item) => !claimed.has(idFor(item.resource)));
-    // Sessions this host started are real and are not on disk yet. A catalogue
-    // that dropped them would lose the one being looked at.
+    const found: Summary[] = [];
+    for (const agent of agents.values()) {
+      if (!agent.list)
+        continue;
+      // One backend refusing is not the catalogue refusing. The others still
+      // have rows, and a list that failed because a second harness is not
+      // signed in is a client that can open nothing.
+      const rows = await agent.list().catch(() => []);
+      for (const row of rows) {
+        if (claimed.has(row.id))
+          continue;
+        const resource = uriFor(row.id);
+        // Remembered as it is listed: opening a row asks its backend for the
+        // transcript, and the URI does not say whose it is.
+        owners.set(resource, agent);
+        found.push({
+          resource,
+          provider: agent.provider,
+          title: row.title,
+          // Nothing this host started is running yet, so activity is idle and
+          // the only bits set are the client's own.
+          status: Status.Idle | (flags.get(resource) ?? 0),
+          createdAt: row.createdAt,
+          modifiedAt: row.modifiedAt,
+          workingDirectories: row.workingDirectories,
+        });
+      }
+    }
+    // The protocol says a server SHOULD order them most-recently-modified
+    // first, and a client that has to sort a list it was handed is a client
+    // doing the server's job.
+    found.sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
+    // Sessions this host started are real and are not listed by a backend yet.
+    // A catalogue that dropped them would lose the one being looked at.
     for (const [uri, session] of sessions) {
       found.unshift({
         resource: uri,
-        provider: 'claude',
+        provider: owners.get(uri)?.provider ?? first.provider,
         title: session.title(),
         status: statusOf(uri),
         createdAt: session.modifiedAt(),
@@ -304,7 +318,7 @@ export function createHost(options: HostOptions): Host {
     return found;
   };
   const rootState = async () => ({
-    agents: [agent()],
+    agents: descriptors(),
     activeSessions: (await listing()).length,
   });
   /**
@@ -325,16 +339,20 @@ export function createHost(options: HostOptions): Host {
    * disagree about what the conversation is called.
    */
   const titles = new Map();
-  const past = async (id: string): Promise<Record<string, unknown>[] | undefined> => {
+  const past = async (id: string): Promise<Bag[] | undefined> => {
     const held = history.get(id);
     if (held)
       return held;
-    const found = await catalogue(dir, flags);
+    // The listing is what says whose session this is, so it is asked first.
+    const found = await listing();
     const row = found.find((item) => idFor(item.resource) === id);
-    if (!row)
+    const owner = owners.get(uriFor(id));
+    if (!row || !owner?.transcript)
       return undefined;
     titles.set(id, row.title);
-    const built = await turnsOf(id, dir);
+    const built = await owner.transcript(id);
+    if (!built)
+      return undefined;
     history.set(id, built);
     return built;
   };
@@ -360,6 +378,7 @@ export function createHost(options: HostOptions): Host {
      */
     const id = idOf(channel);
     const turns = await past(id);
+    const owner = owners.get(uriFor(id)) ?? first;
     if (turns) {
       const title = titles.get(id) ?? 'Session';
       if (channel.startsWith('ahp-chat:/')) {
@@ -380,22 +399,22 @@ export function createHost(options: HostOptions): Host {
         resource: channel,
         state: {
           resource: channel,
-          provider: 'claude',
+          provider: owner.provider,
           title,
           status: Status.Idle | (flags.get(`ahp-session:/${id}`) ?? 0),
           lifecycle: 'ready',
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
           workingDirectories: [`file://${dir}`],
-          // What the harness offers, since no agent is running to say what
-          // this session in particular was given.
-          customizations: seeds,
+          // What its backend offers, since nothing is running to say what this
+          // session in particular was given.
+          customizations: about(owner.provider).seeds,
           // The same schema a live session reports. Leaving it out drew no
           // controls at all on a browsed row - no permission mode, no effort -
           // which are the settings somebody wants *before* continuing one.
           config: {
-            schema: schema(),
-            values: { ...defaults(), ...(chosen.get(`ahp-session:/${id}`) ?? {}) },
+            schema: owner.schema(),
+            values: { ...owner.defaults(), ...(chosen.get(`ahp-session:/${id}`) ?? {}) },
           },
         },
         fromSeq: serverSeq,
@@ -529,11 +548,24 @@ export function createHost(options: HostOptions): Host {
             description: typeof entry.description === 'string' ? entry.description : undefined,
             argumentHint: typeof entry.argumentHint === 'string' ? entry.argumentHint : undefined,
           }));
-          // ...but an empty list means *not known yet*, not *none*. A session
-          // created a moment ago has not heard back from its CLI, and
-          // preferring its silence over the harness-wide list is a slash menu
-          // that is empty for exactly as long as somebody is likely to use it.
-          const offered = own.length > 0 ? own : commands;
+          /*
+           * ...but an empty list means *not known yet*, not *none*.
+           *
+           * A session created a moment ago has not heard back from its
+           * backend, and preferring its silence over the backend-wide list is
+           * a slash menu that is empty for exactly as long as somebody is
+           * likely to use it.
+           *
+           * With no session it is the root channel being asked, and the
+           * answer is every backend's - narrowed to one when the client says
+           * which provider it is composing for, because that is the only
+           * thing that knows.
+           */
+          const named = String(params.provider ?? '');
+          const wide = named !== '' && agents.has(named)
+            ? about(named).commands
+            : [...agents.keys()].flatMap((provider) => about(provider).commands);
+          const offered = own.length > 0 ? own : wide;
           const matches = offered
             .filter((command) => command.name.toLowerCase().includes(typed))
             // What was typed a prefix of, first. A substring match is useful
@@ -584,13 +616,14 @@ export function createHost(options: HostOptions): Host {
           }
           if (sessions.has(uri))
             throw new RpcError(-32003, `${uri} already exists`);
-          const provider = String(params.provider ?? 'claude');
-          if (provider !== 'claude')
+          const provider = String(params.provider ?? first.provider);
+          const agent = agents.get(provider);
+          if (!agent)
             throw new RpcError(-32002, `No provider called ${provider}`);
           const config = (typeof params.config === 'object' && params.config !== null
             ? params.config
             : {}) as Record<string, string>;
-          const session = spawn(uri, config);
+          const session = spawn(agent, uri, config);
           log(`created ${uri}`);
           // Ready, then announced. A client that hears about a session before
           // it can be subscribed to has been told about something that is not
@@ -628,12 +661,16 @@ export function createHost(options: HostOptions): Host {
          * exactly what it did.
          */
         resolveSessionConfig: async (params) => {
-          const chosen = (typeof params.config === 'object' && params.config !== null
+          const provider = String(params.provider ?? first.provider);
+          const agent = agents.get(provider);
+          if (!agent)
+            throw new RpcError(-32002, `No provider called ${provider}`);
+          const answered = (typeof params.config === 'object' && params.config !== null
             ? params.config
             : {}) as Record<string, string>;
           // Iterative, as a real host's is: what has been answered comes back
           // answered, so re-asking does not quietly undo a choice.
-          return { schema: schema(), values: { ...defaults(), ...chosen } };
+          return { schema: agent.schema(), values: { ...agent.defaults(), ...answered } };
         },
       };
       /** Notifications: no id, no answer, and that is the whole difference. */
@@ -721,7 +758,13 @@ export function createHost(options: HostOptions): Host {
                 return;
               }
               const uri = `ahp-session:/${id}`;
-              const session = spawn(uri, chosen.get(uri) ?? {}, { resume: id, seed });
+              // `past` is what learned whose session this is.
+              const owner = owners.get(uri);
+              if (!owner) {
+                log(`no backend owns ${channel}`);
+                return;
+              }
+              const session = spawn(owner, uri, chosen.get(uri) ?? {}, { resume: id, seed });
               log(`resumed ${uri}`);
               dispatch(uri, { type: 'session/ready' });
               catalogueMoved(uri, 'root/sessionSummaryChanged');

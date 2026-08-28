@@ -1,11 +1,11 @@
 import { listSessions } from '@anthropic-ai/claude-agent-sdk';
-import type { Summary } from './types/catalog.js';
+import type { Listed } from './types/agent.js';
 
 /**
- * The agent's sessions, as the protocol's catalogue.
+ * The agent's sessions, as rows a host can list.
  *
- * Renames the SDK's session listing into `Summary` rows. The SDK is the
- * authority on which sessions exist; this module only maps the fields.
+ * Renames the SDK's session listing into `Listed`. The SDK is the authority
+ * on which sessions exist; this module only maps the fields.
  */
 
 /**
@@ -33,31 +33,19 @@ export const idFor = (uri: string): string => uri.replace(/^ahp-session:\//, '')
 export const idOf = (uri: string): string => uri.replace(/^ahp-(session|chat):\//, '');
 
 /**
- * What the host is a catalogue *of*.
+ * What this backend is a catalogue *of*.
  *
  * `dir`, not `cwd` - the option that scopes a listing to one project is spelled
  * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
  * spelling answers with every session on the machine and looks like it worked.
  */
-export async function catalogue(dir: string, flags: Map<string, number>): Promise<Summary[]> {
+export async function catalogue(dir: string): Promise<Listed[]> {
   const found = await listSessions({ dir });
-  return found
-    .map((info) => {
-      const resource = uriFor(info.sessionId);
-      return {
-        resource,
-        provider: 'claude',
-        title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
-        // Nothing this host started is running yet, so activity is idle and
-        // the only bits set are the client's own.
-        status: Status.Idle | (flags.get(resource) ?? 0),
-        createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
-        modifiedAt: new Date(info.lastModified).toISOString(),
-        workingDirectories: [`file://${info.cwd ?? dir}`],
-      };
-    })
-    // The protocol says a server SHOULD order them most-recently-modified
-    // first, and a client that has to sort a list it was handed is a client
-    // doing the server's job.
-    .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  return found.map((info) => ({
+    id: info.sessionId,
+    title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
+    createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
+    modifiedAt: new Date(info.lastModified).toISOString(),
+    workingDirectories: [`file://${info.cwd ?? dir}`],
+  }));
 }

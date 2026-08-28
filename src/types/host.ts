@@ -1,5 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
+import type { Agent } from './agent.js';
 import type { Peer, Request } from './rpc.js';
 
 /** How to construct a host. */
@@ -11,6 +12,18 @@ export interface HostOptions {
    * openable.
    */
   path: string;
+  /**
+   * The backends this host serves.
+   *
+   * At least one, and each with a `provider` no other has. The first is what
+   * a client gets when it names none - which is the ordinary case, since a
+   * client that has read the root channel names one and one that has not
+   * cannot.
+   *
+   * Nothing in the host knows what any of them are. `claude()` is one that
+   * ships with it; anything satisfying `Agent` is another.
+   */
+  agents: Agent[];
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
 }

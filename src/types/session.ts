@@ -17,8 +17,6 @@ export interface SessionOptions {
   chatUri: string;
   /** The directory the agent works in. */
   cwd: string;
-  /** How much the agent may do before asking. Defaults to asking each time. */
-  permissionMode?: string;
   /** Config values chosen at creation, by key. */
   settings?: Record<string, string>;
   /** The config schema this session reports, shared with the root channel. */

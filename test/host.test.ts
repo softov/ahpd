@@ -80,6 +80,16 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { claude } = await import('../src/agents/claude.js');
+
+/**
+ * The host, serving the backend that ships with it.
+ *
+ * Every test below drives Claude through `Agent`, which is the same path a
+ * host built out of this library takes - so what is checked here is what a
+ * third-party backend gets, not a shortcut only the built-in has.
+ */
+const serving = (path: string) => createHost({ path, agents: [claude({ path })] });
 
 function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: string; params: unknown }[] } {
   const sent: Record<string, unknown>[] = [];
@@ -93,7 +103,7 @@ function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: stri
   };
 }
 
-const open = () => createHost({ path: '/home/softov' }).accept(peer());
+const open = () => serving('/home/softov').accept(peer());
 
 const hello = (versions: string[], extra: Record<string, unknown> = {}) => ({
   method: 'initialize',
@@ -235,7 +245,7 @@ describe('what it will not pretend', () => {
   });
 
   it('drops one connection\'s subscription without touching another\'s', async () => {
-    const host = createHost({ path: '/home/softov' });
+    const host = serving('/home/softov');
     const a = host.accept(peer());
     const b = host.accept(peer());
     await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -252,7 +262,7 @@ describe('what it will not pretend', () => {
 
 /** A connected client with one session, subscribed to both its channels. */
 async function running() {
-  const host = createHost({ path: '/home/softov' });
+  const host = serving('/home/softov');
   const p = peer();
   const client = host.accept(p);
   // Root included: a catalogue notification goes to the connections watching
@@ -862,7 +872,7 @@ describe('paging a long history', () => {
   const opened = async (count = 120) => {
     sdk.sessions.push({ sessionId: 'long', summary: 'A long one', lastModified: 1, cwd: '/home/softov' });
     sdk.transcript.push(...many(count));
-    const host = createHost({ path: '/home/softov' });
+    const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.8.0']));
@@ -1068,7 +1078,7 @@ describe('what the client is told about its own turn', () => {
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
-    const host = createHost({ path: '/home/softov' });
+    const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -1260,7 +1270,7 @@ describe('what goes after a slash', () => {
     sdk.init = {
       commands: Array.from({ length: count }, (_, i) => ({ name: `cmd${String(i).padStart(3, '0')}` })),
     };
-    const host = createHost({ path: '/home/softov' });
+    const host = serving('/home/softov');
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     // The boot probe is what learns them, and it answers on its own clock.

@@ -16,6 +16,37 @@ protocol, the same clients, no editor.
 The Claude Agent SDK is the opposite shape - it spawns a CLI that your process
 alone owns. Bridging the two is all this daemon does.
 
+## A host of your own
+
+`ahpd` is also the parts to serve something that is not Claude. `createHost`
+imports no backend at all: it takes agents, and Claude is one of them.
+
+```ts
+import { createHost, listen, claude } from 'ahpd';
+
+const host = createHost({
+  path: process.cwd(),
+  agents: [claude({ path: process.cwd() }), myAgent()],
+});
+
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
+
+An agent says what it is called, what a session of its kind can be configured
+with, which sessions it already has, and how to start one. Everything the
+protocol requires - version negotiation, snapshots, subscriptions, sequence
+numbers, transcript paging, completions - stays the host's.
+
+[`examples/echo`](examples/echo) is a complete one written from nothing: no
+model, no subprocess, about two hundred lines, and it runs. Its README is the
+contract in the order the host asks for it, and the rules a session has to
+keep.
+
+```bash
+node dist/examples/echo/main.js --port 9200
+ahpc --host ws://127.0.0.1:9200
+```
+
 ## Run it
 
 ```bash
@@ -137,18 +168,21 @@ never coming, which reads as a hang rather than as a missing feature.
 src/types/         Every shape, importing no runtime value. The contract.
 src/rpc.ts         JSON-RPC framing. Holds no socket.
 src/listen.ts      Accepts connections on Node, Bun or Deno.
-src/catalog.ts     The agent's sessions, as the protocol's catalogue.
-src/transcript.ts  A past session read as turns, and the paging helpers.
-src/probe.ts       One agent process at startup, to learn what is offered.
-src/session.ts     One live session, reduced into its channels' state.
 src/host.ts        Channels, subscriptions, requests and state actions.
+                   Imports no backend.
+src/agents/        Backends. `claude.ts` is the one that ships.
+src/catalog.ts     Claude's sessions, as rows a host can list.
+src/transcript.ts  A past Claude session read as turns, and the paging helpers.
+src/probe.ts       One CLI at startup, to learn what Claude offers.
+src/session.ts     One live Claude session, reduced into its channels' state.
 src/main.ts        The daemon: argv, the filesystem and stdout.
 src/index.ts       The library entry point.
+examples/echo/     A backend written from nothing, and a host serving it.
 ```
 
-`catalog.ts` and `session.ts` translate the agent SDK's frames into the
-protocol's shapes. `ahpc` makes the same translation in-process for its
-`--claude` mode, so the two are currently duplicated.
+Everything below `src/host.ts` in that list is Claude's, reached only through
+`Agent`. `ahpc` makes the same translation in-process for its `--claude` mode,
+so the two are currently duplicated.
 
 **Where that resolves.** The client's `claudeHost` was the prototype and this
 is the thing it was a prototype of. Once this daemon is complete, `--claude`

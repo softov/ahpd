@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { listen } from './listen.js';
 
@@ -140,6 +141,9 @@ const { token, from } = secret(options);
 
 const host = createHost({
   path: options.path,
+  // The daemon serves Claude Code. The host serves whatever it is given -
+  // see `examples/` for what a second one looks like.
+  agents: [claude({ path: options.path })],
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 
