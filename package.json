@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, and the parts to build your own",
+  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, and the parts to build your own server",
   "bin": {
     "ahpd": "./dist/src/main.js"
   },

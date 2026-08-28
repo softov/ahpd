@@ -18,9 +18,9 @@ interface Options {
   help: boolean;
 }
 
-const USAGE = `ahp-host - an Agent Host Protocol host that runs Claude Code
+const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
 
-  ahp-host [options]
+  ahpd [options]
 
   --port <n>      Listen here. Default 9187.
   --path <dir>    The directory this host's sessions live in.
@@ -73,7 +73,7 @@ server.on('connection', (socket) => {
 });
 
 server.on('listening', () => {
-  process.stdout.write(`ahp-host on ws://127.0.0.1:${options.port}, sessions in ${options.path}\n`);
+  process.stdout.write(`ahpd on ws://127.0.0.1:${options.port}, sessions in ${options.path}\n`);
 });
 
 const stop = (): void => {
