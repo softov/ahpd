@@ -543,7 +543,17 @@ export function createHost(options: HostOptions): Host {
               - Number(a.name.toLowerCase().startsWith(typed));
             return rank !== 0 ? rank : a.name.localeCompare(b.name);
           })
-            .slice(0, 50);
+            /*
+             * A menu's worth when something was typed; the list when nothing
+             * was.
+             *
+             * A bare slash is a client asking what there is, and it may well
+             * filter the answer itself rather than ask again per keystroke -
+             * so truncating that to a screenful drops commands it would then
+             * never offer, silently and always the same ones. A narrowing
+             * query is the interactive case and stays bounded.
+             */
+            .slice(0, typed === '' ? 500 : 50);
           return {
             items: matches.map((command) => ({
               // The space only when it takes an argument: a trailing space on

@@ -1254,3 +1254,44 @@ describe('one tool call, one row', () => {
     expect(confirmed?.action).toMatchObject({ toolCallId: 'toolu_1', approved: true, confirmed: 'user-action' });
   });
 });
+
+describe('what goes after a slash', () => {
+  const withCommands = async (count: number) => {
+    sdk.init = {
+      commands: Array.from({ length: count }, (_, i) => ({ name: `cmd${String(i).padStart(3, '0')}` })),
+    };
+    const host = createHost({ path: '/home/softov' });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    // The boot probe is what learns them, and it answers on its own clock.
+    await settle(8);
+    return client;
+  };
+
+  const ask = async (client: Awaited<ReturnType<typeof withCommands>>, text: string) =>
+    await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-root://', kind: 'userMessage', text, offset: text.length },
+    }) as { items: { insertText: string }[] };
+
+  it('answers a bare slash with the whole list, not a screenful', async () => {
+    const client = await withCommands(120);
+    // A client that filters locally rather than asking again per keystroke
+    // never offers what was truncated here - silently, and always the same
+    // ones.
+    const all = await ask(client, '/');
+    expect(all.items).toHaveLength(120);
+  });
+
+  it('keeps a narrowing query bounded', async () => {
+    const client = await withCommands(120);
+    const some = await ask(client, '/cmd0');
+    expect(some.items.length).toBeLessThanOrEqual(50);
+  });
+
+  it('answers before any session exists, which is when a composer asks', async () => {
+    const client = await withCommands(3);
+    const all = await ask(client, '/');
+    expect(all.items.map((i) => i.insertText)).toEqual(['/cmd000', '/cmd001', '/cmd002']);
+  });
+});
