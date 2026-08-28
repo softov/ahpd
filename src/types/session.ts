@@ -44,6 +44,14 @@ export interface Session {
 
   /** Models this session can run a turn on. Empty until the agent has answered. */
   models(): { id: string; name: string }[];
+  /**
+   * The id the agent gave this session, if it has said one yet.
+   *
+   * Not the same as `uri`: the client names the channel, the agent names the
+   * transcript it writes. The catalogue needs both to tell that the row on
+   * disk and this session are one conversation.
+   */
+  agentId(): string | undefined;
   /** Skills, commands, subagents and MCP servers this session was given. */
   customizations(): Bag[];
   /** Every completed turn. Snapshots carry only the newest page of these. */
@@ -72,8 +80,8 @@ export interface Session {
 
   /** Run later turns on this model. False when the agent would not take it. */
   setModel(model: string): Promise<boolean>;
-  /** Change how much the agent may do before asking. Unknown modes are ignored. */
-  setPermissionMode(mode: string): void;
+  /** Change how much the agent may do before asking. False when the mode is not one. */
+  setPermissionMode(mode: string): boolean;
   /** Change how hard it thinks. False when the level is not one. */
   setEffort(level: string): boolean;
   /** The config in force, by key. */

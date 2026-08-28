@@ -74,7 +74,7 @@ function resultText(content: unknown): string | undefined {
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-function customizationsOf(init: Bag, mcp: unknown[]): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[]): Bag[] {
   const out: Bag[] = [];
 
   for (const raw of list(init.commands)) {
@@ -144,6 +144,15 @@ export function createSession(options: SessionOptions): Session {
   let failed: string | undefined;
   let startedAt = 0;
   let handshake: Bag | undefined;
+  /**
+   * The id the agent gave this session, which is not the URI it is served at.
+   *
+   * The client picks the URI before anything exists; the CLI picks its own id
+   * when it starts and writes the transcript under that. Both name the same
+   * conversation, so the catalogue has to know they do - otherwise the row on
+   * disk and the row in memory are two sessions saying the same thing.
+   */
+  let agentId: string | undefined = options.resume;
   let customizations: Bag[] = [...(options.seedCustomizations ?? [])];
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
@@ -445,6 +454,9 @@ export function createSession(options: SessionOptions): Session {
       for await (const raw of handle) {
         const message = bag(raw as unknown);
         const type = str(message.type);
+        // Every message carries it, so this needs no particular one to arrive.
+        const said = str(message.session_id);
+        if (said) agentId = said;
 
         // The message stream's own init. Capabilities come from the control
         // protocol instead (see `describe`), because those are needed before
@@ -494,6 +506,7 @@ export function createSession(options: SessionOptions): Session {
     status,
 
     models: () => offered,
+    agentId: () => agentId,
 
     customizations: () => customizations,
     allTurns: () => turns,
@@ -560,9 +573,10 @@ export function createSession(options: SessionOptions): Session {
     setPermissionMode: (mode) => {
       const known = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
       const found = known.find((value) => value === mode);
-      if (!found) return;
+      if (!found) return false;
       settings.permissionMode = found;
       void handle.setPermissionMode(found).catch(() => {});
+      return true;
     },
 
     /**
@@ -615,6 +629,16 @@ export function createSession(options: SessionOptions): Session {
       };
       startedAt = Date.now();
       if (title === 'New session' && text) title = text.slice(0, 60);
+      // Said back, including to the client that started it. A host that only
+      // reduced this privately would go on to emit `chat/responsePart` for a
+      // turn no client has - so the parts land nowhere and the conversation
+      // appears only when somebody reopens it and gets a fresh snapshot.
+      emit('chat', {
+        type: 'chat/turnStarted',
+        turnId: active.id,
+        startedAt: active.startedAt,
+        message: active.message,
+      });
       waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
       wake?.();
       wake = undefined;

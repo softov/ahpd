@@ -43,6 +43,16 @@ export function createHost(options: HostOptions): Host {
   const flags = new Map<string, number>();
   /** Live sessions, by their own uri, and the chats that belong to them. */
   const sessions = new Map<string, Session>();
+  /**
+   * Config chosen for a session that has no agent running.
+   *
+   * A row read from its transcript is configurable before it is resumed, and
+   * this is where the answers wait. Most of what the schema offers is fixed
+   * when the query is built, so a session resumed without them is one that can
+   * never be given them - which made "plan only" unofferable on exactly the
+   * sessions somebody is deciding whether to continue.
+   */
+  const chosen = new Map<string, Record<string, string>>();
   const byChat = new Map<string, Session>();
   /**
    * What the harness offers to run on.
@@ -55,8 +65,27 @@ export function createHost(options: HostOptions): Host {
   let models: { id: string; name: string }[] = [];
   /** What a slash offers when no session is running. See `probe`. */
   let commands: { name: string; description?: string; argumentHint?: string }[] = [];
+  /**
+   * Skills, commands, subagents and MCP servers, as the boot probe found them.
+   *
+   * What every new session reports until its own agent answers. That takes
+   * several seconds, and a client asks once - so a session that started empty
+   * stayed empty for anyone who looked before the reply landed.
+   */
+  let seeds: Record<string, unknown>[] = [];
   let serverSeq = 0;
   const log = (message: string): void => options.onEvent?.(message);
+  /**
+   * A session's status, with the client flags folded in.
+   *
+   * Activity is the session's own; `IsRead` and `IsArchived` are this host's,
+   * and every answer carrying a status has to carry both halves or a row goes
+   * back to unread the moment anything else about it changes.
+   */
+  const statusOf = (uri: string): number => {
+    const session = sessions.get(uri);
+    return (session ? session.status() : Status.Idle) | (flags.get(uri) ?? 0);
+  };
   /** Everything watching a channel, which is not everything connected. */
   const broadcast = (channel: string, method: string, params: unknown): void => {
     for (const connection of connections) {
@@ -89,7 +118,7 @@ export function createHost(options: HostOptions): Host {
             resource: uri,
             provider: 'claude',
             title: session.title(),
-            status: session.status(),
+            status: statusOf(uri),
             createdAt: session.modifiedAt(),
             modifiedAt: session.modifiedAt(),
             workingDirectories: [`file://${dir}`],
@@ -128,6 +157,7 @@ export function createHost(options: HostOptions): Host {
    */
   void probe(dir).then((offered) => {
     commands = offered.commands;
+    seeds = offered.customizations;
     if (offered.models.length === 0)
       return;
     models = offered.models;
@@ -148,19 +178,12 @@ export function createHost(options: HostOptions): Host {
       ...(resuming ? { resume: resuming.resume, seed: resuming.seed } : {}),
       settings: { ...defaults(), ...config },
       schema,
-      // What the boot probe already learned. A session that answered `[]`
-      // until its own CLI replied left the slash menu empty for the first
-      // several seconds - and a client that asks once and caches never found
-      // out otherwise.
-      seedCustomizations: commands.map((command) => ({
-        type: 'prompt',
-        id: `command:${command.name}`,
-        name: command.name,
-        uri: command.name,
-        enabled: true,
-        ...(command.description ? { description: command.description } : {}),
-        ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-      })),
+      // What the boot probe already learned: the commands behind a slash, the
+      // skills, the subagents and the MCP servers. A session that answered
+      // `[]` until its own agent replied was empty for the first several
+      // seconds - and a client that asks once and caches never found out
+      // otherwise.
+      seedCustomizations: seeds,
       emit: (channel, action) => {
         dispatch(channel === 'chat' ? chatUri : uri, action);
         // A turn starting or finishing moves the catalogue too, and a client
@@ -245,13 +268,45 @@ export function createHost(options: HostOptions): Host {
     description: `The Claude Agent SDK, on ${dir}`,
     models,
   });
-  const rootState = async () => {
-    const sessions = await catalogue(dir, flags);
-    return {
-      agents: [agent()],
-      activeSessions: sessions.length,
-    };
+  /**
+   * The catalogue: what is on disk, and what this host is running.
+   *
+   * The two overlap and do not share a name. A client picks the session URI
+   * before anything exists, the agent picks its own id when it starts, and the
+   * transcript is written under the agent's - so a running session appears
+   * twice, once as the channel being talked to and once as the file it is
+   * writing. The live row wins and the file it claims is dropped: they are one
+   * conversation, and the row somebody can open is the useful half.
+   */
+  const listing = async (): Promise<Summary[]> => {
+    const claimed = new Set<string>();
+    for (const [uri, session] of sessions) {
+      claimed.add(idFor(uri));
+      const own = session.agentId();
+      if (own)
+        claimed.add(own);
+    }
+    const found = (await catalogue(dir, flags))
+      .filter((item) => !claimed.has(idFor(item.resource)));
+    // Sessions this host started are real and are not on disk yet. A catalogue
+    // that dropped them would lose the one being looked at.
+    for (const [uri, session] of sessions) {
+      found.unshift({
+        resource: uri,
+        provider: 'claude',
+        title: session.title(),
+        status: statusOf(uri),
+        createdAt: session.modifiedAt(),
+        modifiedAt: session.modifiedAt(),
+        workingDirectories: [`file://${dir}`],
+      });
+    }
+    return found;
   };
+  const rootState = async () => ({
+    agents: [agent()],
+    activeSessions: (await listing()).length,
+  });
   /**
    * A session that already happened, read from its transcript.
    *
@@ -288,8 +343,12 @@ export function createHost(options: HostOptions): Host {
       return { resource: ROOT, state: await rootState(), fromSeq: serverSeq };
     }
     const session = sessions.get(channel);
-    if (session)
-      return { resource: channel, state: session.sessionState(), fromSeq: serverSeq };
+    if (session) {
+      // The session reports its own activity; `IsRead` and `IsArchived` are
+      // this host's and it has never heard of them.
+      const state = { ...session.sessionState(), status: statusOf(channel) };
+      return { resource: channel, state, fromSeq: serverSeq };
+    }
     const chat = byChat.get(channel);
     if (chat)
       return { resource: channel, state: chat.chatState(), fromSeq: serverSeq };
@@ -323,12 +382,21 @@ export function createHost(options: HostOptions): Host {
           resource: channel,
           provider: 'claude',
           title,
-          status: Status.Idle,
+          status: Status.Idle | (flags.get(`ahp-session:/${id}`) ?? 0),
           lifecycle: 'ready',
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
           workingDirectories: [`file://${dir}`],
-          customizations: [],
+          // What the harness offers, since no agent is running to say what
+          // this session in particular was given.
+          customizations: seeds,
+          // The same schema a live session reports. Leaving it out drew no
+          // controls at all on a browsed row - no permission mode, no effort -
+          // which are the settings somebody wants *before* continuing one.
+          config: {
+            schema: schema(),
+            values: { ...defaults(), ...(chosen.get(`ahp-session:/${id}`) ?? {}) },
+          },
         },
         fromSeq: serverSeq,
       };
@@ -491,25 +559,7 @@ export function createHost(options: HostOptions): Host {
             })),
           };
         },
-        listSessions: async () => {
-          const found = await catalogue(dir, flags);
-          // Sessions this host started are real and are not on disk yet. A
-          // catalogue that dropped them would lose the one being looked at.
-          for (const [uri, session] of sessions) {
-            if (found.some((item) => item.resource === uri))
-              continue;
-            found.unshift({
-              resource: uri,
-              provider: 'claude',
-              title: session.title(),
-              status: session.status(),
-              createdAt: session.modifiedAt(),
-              modifiedAt: session.modifiedAt(),
-              workingDirectories: [`file://${dir}`],
-            });
-          }
-          return { items: found };
-        },
+        listSessions: async () => ({ items: await listing() }),
         /**
          * Start one.
          *
@@ -598,7 +648,52 @@ export function createHost(options: HostOptions): Host {
             ? params.action
             : {}) as Record<string, unknown>;
           const type = String(action.type ?? '');
+          /*
+           * The client flags, which are the host's to keep.
+           *
+           * Answered before anything looks for a running session, because
+           * these are the two actions that are *about* a session nobody has
+           * opened: marking a row read, or filing it away, is what somebody
+           * does from the catalogue - and starting an agent to record a bit
+           * would start one per row scrolled past.
+           */
+          if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
+            const uri = `ahp-session:/${idOf(channel)}`;
+            const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
+            const on = type === 'session/isReadChanged'
+              ? action.isRead === true
+              : action.isArchived === true;
+            const before = flags.get(uri) ?? 0;
+            const after = on ? before | bit : before & ~bit;
+            if (after === before)
+              return;
+            flags.set(uri, after);
+            // Every client watching, and the catalogue: a flag one client sets
+            // is a flag the others have to see, which is what having a host
+            // for this buys over each client keeping its own.
+            dispatch(uri, action);
+            catalogueMoved(uri, 'root/sessionSummaryChanged');
+            return;
+          }
           const held = sessions.get(channel) ?? byChat.get(channel);
+          /*
+           * Config for a session with no agent yet: remembered, not refused.
+           *
+           * It is applied when the session is resumed, which is what makes the
+           * controls on a browsed row mean something. Starting an agent here
+           * instead would start one per setting somebody tried.
+           */
+          if (!held && type === 'session/configChanged') {
+            const uri = `ahp-session:/${idOf(channel)}`;
+            const config = (typeof action.config === 'object' && action.config !== null
+              ? action.config
+              : {}) as Record<string, unknown>;
+            const kept = { ...chosen.get(uri) };
+            for (const [key, value] of Object.entries(config)) kept[key] = String(value);
+            chosen.set(uri, kept);
+            dispatch(uri, action);
+            return;
+          }
           /*
            * A turn on a session this host is not running yet.
            *
@@ -616,7 +711,7 @@ export function createHost(options: HostOptions): Host {
                 return;
               }
               const uri = `ahp-session:/${id}`;
-              const session = spawn(uri, {}, { resume: id, seed });
+              const session = spawn(uri, chosen.get(uri) ?? {}, { resume: id, seed });
               log(`resumed ${uri}`);
               dispatch(uri, { type: 'session/ready' });
               catalogueMoved(uri, 'root/sessionSummaryChanged');
@@ -653,13 +748,21 @@ export function createHost(options: HostOptions): Host {
                 : {}) as Record<string, unknown>;
               for (const [key, value] of Object.entries(config)) {
                 if (key === 'permissionMode') {
-                  session.setPermissionMode(String(value));
+                  // Confirmed, like every other key here. Applying it in
+                  // silence leaves each client showing whatever it last chose
+                  // for itself, and the two disagree the moment there are two.
+                  if (session.setPermissionMode(String(value))) {
+                    dispatch(session.uri, { type: 'session/configChanged', config: { permissionMode: String(value) } });
+                  }
+                  else {
+                    log(`the CLI has no permission mode called ${String(value)}`);
+                  }
                   continue;
                 }
                 if (key === 'model') {
                   void session.setModel(String(value)).then((took) => {
                     if (took)
-                      dispatch(channel, { type: 'session/configChanged', config: { model: String(value) } });
+                      dispatch(session.uri, { type: 'session/configChanged', config: { model: String(value) } });
                     else
                       log(`the CLI would not take model ${String(value)}`);
                   });
@@ -667,7 +770,7 @@ export function createHost(options: HostOptions): Host {
                 }
                 if (key === 'effortLevel') {
                   if (session.setEffort(String(value))) {
-                    dispatch(channel, { type: 'session/configChanged', config: { effortLevel: String(value) } });
+                    dispatch(session.uri, { type: 'session/configChanged', config: { effortLevel: String(value) } });
                   }
                   continue;
                 }

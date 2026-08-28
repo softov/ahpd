@@ -1038,3 +1038,127 @@ describe('what a slash offers', () => {
     expect(result.items).toEqual([]);
   });
 });
+
+describe('what the client is told about its own turn', () => {
+  it('says the turn started, so the parts that follow have somewhere to go', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    // Reducing it privately is not enough. A client applies what the host
+    // says, including what it asked for itself - and `chat/responsePart` for
+    // a turn it has never heard of is dropped, so the whole answer lands
+    // nowhere and appears only when somebody reopens the session.
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
+    expect(started?.action).toMatchObject({ turnId: 't1', message: { text: 'hi' } });
+
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
+    );
+    // The part names the turn the client was told about, and not one of the
+    // host's own making.
+    const part = actions(p, chatUri).find((e) => e.action.type === 'chat/responsePart');
+    expect(part?.action.turnId).toBe('t1');
+  });
+});
+
+describe('the flags a client sets', () => {
+  it('keeps read and archived, and tells everyone watching', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    const host = createHost({ path: '/home/softov' });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const uri = 'ahp-session:/old';
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
+    expect(actions(p, uri).some((e) => e.action.type === 'session/isReadChanged')).toBe(true);
+
+    // The catalogue carries it too: activity in the low bits, the client's own
+    // flags above. 1 | 32.
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { status: number }[];
+    };
+    expect(listed.items[0]?.status).toBe(33);
+  });
+
+  it('needs no agent to record one', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    // Marking a row read is what somebody does from a catalogue. Starting an
+    // agent to record a bit would start one per row scrolled past.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/old', action: { type: 'session/isArchivedChanged', isArchived: true } },
+    });
+    await settle();
+    expect(sessionQueries()).toHaveLength(0);
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { status: number }[];
+    };
+    expect(listed.items[0]?.status).toBe(1 | 64);
+  });
+});
+
+describe('a session read from its transcript', () => {
+  it('is configurable before it is resumed', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }) as {
+      snapshot: { state: { config: { schema: { properties: Record<string, unknown> } }; values?: unknown } };
+    };
+    // Without the schema a client draws no controls at all - no permission
+    // mode, no effort - on exactly the sessions somebody is deciding whether
+    // to continue.
+    expect(Object.keys(opened.snapshot.state.config.schema.properties)).toContain('permissionMode');
+  });
+
+  it('starts on what was chosen for it while it was only a row', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/old', action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
+    });
+    await settle();
+    // Nothing was started to record it.
+    expect(sessionQueries()).toHaveLength(0);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/old', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+    });
+    await settle(8);
+    // Most of what the schema offers is fixed when the query is built, so a
+    // session resumed without it is one that can never be given it.
+    expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
+  });
+});
+
+describe('one conversation, one row', () => {
+  it('hides the transcript a running session is writing', async () => {
+    const { client } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    // The client named the channel `live`; the agent names its own transcript
+    // and writes under that. Both are this conversation.
+    sdk.sessions.push({ sessionId: 'agent-chosen', summary: 'Hi', lastModified: 2, cwd: '/home/softov' });
+    await emit({ type: 'system', subtype: 'init', session_id: 'agent-chosen' });
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    expect(listed.items.map((i) => i.resource)).toEqual(['ahp-session:/live']);
+  });
+});
