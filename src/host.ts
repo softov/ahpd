@@ -97,6 +97,22 @@ export function createHost(options: HostOptions): Host {
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
+   * One chat, as its session's catalogue lists it.
+   *
+   * A `ChatSummary` and not a name and a URI: `status` and `modifiedAt` are
+   * required of one, and a client reducing its list against a partial row
+   * gets one it cannot sort or draw a state for.
+   */
+  const chatSummary = (uri: string, chat: Session) => ({
+    resource: uri,
+    title: chat.title(),
+    status: chat.status(),
+    modifiedAt: chat.modifiedAt(),
+    ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
+  });
+  /** What each chat's summary last said, so an unchanged one is not re-sent. */
+  const described = new Map<string, string>();
+  /**
    * The chat a session-level question is really about.
    *
    * The default one: its status is the session's, its customizations are what
@@ -340,6 +356,20 @@ export function createHost(options: HostOptions): Host {
       seedCustomizations: about(agent.provider).seeds,
       emit: (channel, action) => {
         dispatch(channel === 'chat' ? chatUri : uri, action);
+        /*
+         * The session's list of chats, when one of them has moved.
+         *
+         * Only on a change: a chat says something on every delta, and a
+         * summary re-sent per token is a list redrawn per token.
+         */
+        const moved = sessions.get(uri)?.chats.get(chatUri);
+        if (moved) {
+          const now = `${moved.title()}\u0000${String(moved.status())}\u0000${String(moved.activity() ?? '')}`;
+          if (now !== described.get(chatUri)) {
+            described.set(chatUri, now);
+            dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: chatSummary(chatUri, moved) });
+          }
+        }
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
         catalogueMoved(uri, 'root/sessionSummaryChanged');
@@ -529,7 +559,7 @@ export function createHost(options: HostOptions): Host {
         status: statusOf(channel),
         modifiedAt: modifiedOf(held),
         defaultChat: held.defaultChat,
-        chats: [...held.chats].map(([uri_, chat_]) => ({ resource: uri_, title: chat_.title() })),
+        chats: [...held.chats].map(([uri_, chat_]) => chatSummary(uri_, chat_)),
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
       };
       return { resource: channel, state, fromSeq: serverSeq };
@@ -1010,7 +1040,9 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32602, 'This host does not fork a chat from a turn');
           const chat = spawn(held.agent, uri, chatUri, held.config, undefined, held.workingDirectory);
           log(`opened ${chatUri} in ${uri}`);
-          dispatch(uri, { type: 'session/chatAdded', chat: { resource: chatUri, title: chat.title() } });
+          // `summary`, not `chat`: the reducer reads `action.summary.resource`,
+          // and a chat named any other way arrives as a TypeError inside it.
+          dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(chatUri, chat) });
           const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
             ? params.initialMessage
             : undefined) as Record<string, unknown> | undefined;
@@ -1035,7 +1067,7 @@ export function createHost(options: HostOptions): Host {
           held?.chats.delete(chatUri);
           if (held && held.defaultChat === chatUri) {
             held.defaultChat = [...held.chats.keys()][0] as string;
-            dispatch(found.uri, { type: 'session/defaultChatChanged', chat: held.defaultChat });
+            dispatch(found.uri, { type: 'session/defaultChatChanged', defaultChat: held.defaultChat });
           }
           log(`closed ${chatUri}`);
           dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });

@@ -2120,8 +2120,10 @@ describe('more than one chat in a session', () => {
     const { client, peer: p, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
 
-    expect(actions(p, uri).find((e) => e.action.type === 'session/chatAdded')?.action.chat)
-      .toMatchObject({ resource: second });
+    // `summary`, which is what the reducer reads: a chat announced under any
+    // other name arrives as a TypeError inside it.
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatAdded')?.action.summary)
+      .toMatchObject({ resource: second, status: 1 });
 
     const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { chats: { resource: string }[]; defaultChat: string } };
@@ -2194,7 +2196,8 @@ describe('more than one chat in a session', () => {
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/live' } });
 
-    expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.chat).toBe(second);
+    expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.defaultChat)
+      .toBe(second);
     expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe('ahp-chat:/live');
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }))
       .rejects.toMatchObject({ code: -32001 });
