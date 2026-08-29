@@ -71,12 +71,14 @@ npm run echo         # the same pair, for examples/echo
 npm run echo:bun
 ```
 
+Node is what this ships on and what `dev` means; Bun is the alternative, and
+the `:bun` pair exists because `listen.ts` is one file and three code paths -
+a change to it wants running under more than one before it is believed. Each
+names the runtime it is on in its first line of output, so there is never a
+question which one answered.
+
 All four run the TypeScript source, restart on save, compile nothing and
-install nothing. All four also name the runtime they are on in their first
-line of output, which is the point of having the pair: `listen.ts` is one file
-and three code paths, so a change to it wants running under more than one
-before it is believed. `dev` is the runtime the daemon ships on; `dev:bun` is
-the one that needs the least to get going.
+install nothing.
 
 The difference between them is in what each needs to find a file. This source
 spells its own imports `./host.js`, because that is what will be there after a
