@@ -28,6 +28,8 @@ const sdk = vi.hoisted(() => {
     modesSet: [] as string[],
     effortsSet: [] as (string | null | undefined)[],
     interrupted: 0,
+    mcpToggled: [] as { name: string; enabled: boolean }[],
+    mcpReconnected: [] as string[],
     canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
     /**
      * Every CLI the host started, in order.
@@ -68,6 +70,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       setPermissionMode: async (mode: string) => { sdk.modesSet.push(mode); },
       setModel: async (model?: string) => { sdk.modelsSet.push(model); },
       applyFlagSettings: async (settings: { effortLevel?: string | null }) => { sdk.effortsSet.push(settings.effortLevel); },
+      toggleMcpServer: async (name: string, enabled: boolean) => { sdk.mcpToggled.push({ name, enabled }); },
+      reconnectMcpServer: async (name: string) => { sdk.mcpReconnected.push(name); },
       // The control protocol: answers without a turn having happened, which
       // is the whole reason capabilities are read from here.
       initializationResult: async () => sdk.init,
@@ -122,6 +126,8 @@ beforeEach(() => {
   sdk.queries.length = 0;
   sdk.init = {};
   sdk.interrupted = 0;
+  sdk.mcpToggled.length = 0;
+  sdk.mcpReconnected.length = 0;
   sdk.canUseTool = undefined;
 });
 
@@ -1537,5 +1543,104 @@ describe('what it says it is doing', () => {
     expect(said.indexOf('chat/usage')).toBeLessThan(said.indexOf('chat/turnComplete'));
     const usage = actions(p, chatUri).find((e) => e.action.type === 'chat/usage')?.action.usage;
     expect(usage).toEqual({ inputTokens: 120, outputTokens: 34, cacheReadTokens: 900 });
+  });
+});
+
+describe('turning a customization on and off', () => {
+  /** A live session that has heard what its CLI offers. */
+  const withServers = async (status: string) => {
+    sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
+    sdk.mcp = [{ name: 'desk', status }];
+    const started = await running();
+    // `describe` answers on its own clock; the customizations arrive with it.
+    await settle(8);
+    return started;
+  };
+
+  const toggle = (client: Awaited<ReturnType<typeof running>>['client'], id: string, enabled: boolean) => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id, enablement: [{ kind: 'session', enabled }] } },
+    });
+  };
+
+  it('switches an MCP server off through the CLI, and reports what it became', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    sdk.mcp = [{ name: 'desk', status: 'disabled' }];
+    toggle(client, 'mcp:desk', false);
+    await settle(8);
+
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
+    // Read back rather than assumed: a server told to stop can fail to, and
+    // reporting what was *asked for* draws a row that is not true.
+    const said = actions(p, uri).filter((e) => e.action.type === 'session/customizationUpdated').at(-1);
+    expect(said?.action.customization).toMatchObject({ id: 'mcp:desk', enabled: false, state: { kind: 'stopped' } });
+  });
+
+  it('reconnects one that was not ready, because that is how signing in happens', async () => {
+    const { client } = await withServers('needs-auth');
+    sdk.mcp = [{ name: 'desk', status: 'connected' }];
+    toggle(client, 'mcp:desk', true);
+    await settle(8);
+
+    // `toggleMcpServer` only lifts the disabled flag - a server that was off
+    // because nobody had signed in comes straight back `authRequired`, which
+    // reads as a switch that flips itself off.
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+  });
+
+  it('does not reconnect one that was already ready', async () => {
+    const { client } = await withServers('connected');
+    toggle(client, 'mcp:desk', true);
+    await settle(8);
+    expect(sdk.mcpReconnected).toEqual([]);
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: true }]);
+  });
+
+  it('refuses a prompt out loud, and puts the switch back', async () => {
+    const said: string[] = [];
+    sdk.init = { commands: [{ name: 'review' }] };
+    const host = createHost({
+      path: '/home/softov',
+      agents: [claude({ paths: ['/home/softov'] })],
+      onEvent: (message) => said.push(message),
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
+    await settle(8);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: 'command:review', enablement: [{ kind: 'session', enabled: false }] } },
+    });
+    await settle(8);
+
+    // The CLI has no runtime switch for a prompt, a skill or a subagent. A
+    // control that reports success and changes nothing is worse than one that
+    // says it cannot.
+    expect(said.some((line) => line.includes('command:review has no runtime switch'))).toBe(true);
+    // And the list goes back out, so the switch a client drew from it returns
+    // to where it was rather than showing a change that did not happen.
+    expect(actions(p, 'ahp-session:/live').some((e) => e.action.type === 'session/customizationsChanged')).toBe(true);
+  });
+
+  it('serves the dedicated start and stop actions too', async () => {
+    const { client } = await withServers('disabled');
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStopRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
   });
 });

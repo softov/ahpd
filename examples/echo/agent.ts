@@ -311,6 +311,13 @@ export function echo(options: EchoOptions): Agent {
       confirm: () => {},
       answer: () => {},
 
+      // Nothing here has a runtime switch and there are no MCP servers, so
+      // all three refuse. False is a real answer: a control that reported
+      // success and changed nothing would be worse than one that says no.
+      setCustomizationEnabled: async () => false,
+      startMcpServer: async () => false,
+      stopMcpServer: async () => false,
+
       // No models to choose between, and saying so is better than accepting a
       // choice and ignoring it.
       setModel: async () => false,

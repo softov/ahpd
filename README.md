@@ -169,7 +169,8 @@ Only stdout says where the token came from, never what it is.
 | what it is doing | ✅ `chat/activityChanged` and the session's mirror of it, so a catalogue row says which session is busy with what |
 | token counts, retitling | ✅ `chat/usage` before the turn completes, `session/titleChanged` when it gets one |
 | file changes | ⬜ no changeset channel, so the changes screen is always empty |
-| toggling a skill or MCP server, MCP sign-in | ⬜ the list is read-only |
+| toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
+| toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | `@` completion, `resource*`, terminals, several chats, reconnect | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 

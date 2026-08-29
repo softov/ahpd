@@ -600,6 +600,49 @@ export function createSession(options: SessionOptions): Session {
    * gives for a harness nobody has signed into - rather than a session that
    * refuses to open.
    */
+  /**
+   * Re-read the MCP servers and say what changed.
+   *
+   * Asked of the CLI rather than assumed from what was just requested: a
+   * server told to start can come back `ready`, still `authRequired`, or
+   * `error`, and reporting the state that was *asked for* would show a green
+   * row against a server nobody has signed into.
+   */
+  const refreshMcp = async (): Promise<void> => {
+    const found = await handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]);
+    for (const raw of found) {
+      const server = bag(raw);
+      const name = str(server.name);
+      if (!name) continue;
+      const id = `mcp:${name}`;
+      const held = customizations.find((entry) => str(entry.id) === id);
+      const fresh = bag(customizationsOf({}, [server])[0]);
+      if (!held) {
+        customizations.push(fresh);
+        emit('session', { type: 'session/customizationUpdated', customization: fresh });
+        continue;
+      }
+      const moved = JSON.stringify(held.state) !== JSON.stringify(fresh.state);
+      const switched = held.enabled !== fresh.enabled;
+      if (!moved && !switched)
+        continue;
+      held.state = fresh.state;
+      held.enabled = fresh.enabled;
+      // `mcpServerStateChanged` carries the state and nothing else, so a
+      // server that came back on would arrive `ready` with the switch still
+      // drawn off. The whole row when both moved, the narrow action when only
+      // the state did.
+      if (switched)
+        emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
+      else
+        emit('session', { type: 'session/mcpServerStateChanged', id, state: fresh.state });
+    }
+  };
+
+  /** The server name behind an `mcp:` customization id, if it is one. */
+  const serverNamed = (id: string): string | undefined =>
+    (id.startsWith('mcp:') ? id.slice(4) : undefined);
+
   const describe = async (): Promise<void> => {
     const [init, mcp] = await Promise.all([
       handle.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
@@ -785,6 +828,94 @@ export function createSession(options: SessionOptions): Session {
     },
 
     settings: () => ({ ...settings, ...(chosen ? { model: chosen } : {}) }),
+
+    /**
+     * Turn one on or off.
+     *
+     * Only MCP servers: the CLI has `toggleMcpServer` and nothing equivalent
+     * for a skill, a prompt or a subagent. Those are refused rather than
+     * accepted and dropped - a switch that reports success and changes
+     * nothing is worse than one that says it cannot.
+     */
+    setCustomizationEnabled: async (id, enabled) => {
+      const server = serverNamed(id);
+      if (!server)
+        return false;
+      const held = customizations.find((entry) => str(entry.id) === id);
+      const was = str(bag(held?.state).kind);
+      try {
+        if (!enabled) {
+          await handle.toggleMcpServer(server, false);
+        }
+        /*
+         * Switching on a server that is not ready is how somebody signs into
+         * one.
+         *
+         * `toggleMcpServer` only lifts the disabled flag - a server that was
+         * off *because* nobody had signed in comes straight back
+         * `authRequired`, which reads as a switch that flips itself off.
+         * `reconnectMcpServer` is the one that makes the CLI run its own
+         * sign-in.
+         */
+        else if (was === 'ready') {
+          await handle.toggleMcpServer(server, true);
+        }
+        else {
+          await handle.toggleMcpServer(server, true).catch(() => {});
+          emit('session', { type: 'session/mcpServerStartRequested', id });
+          await handle.reconnectMcpServer(server);
+        }
+      }
+      catch {
+        // What it actually is now, which after a failed sign-in is still
+        // `authRequired` rather than anything this host invented.
+        await refreshMcp();
+        return true;
+      }
+      await refreshMcp();
+      return true;
+    },
+
+    /**
+     * Start one, which is also how a server that needs signing into is signed
+     * into.
+     *
+     * `reconnectMcpServer` makes the CLI run its own sign-in, on the machine
+     * the CLI is on. AHP's `authenticate` is the other model - the client
+     * fetches a token and pushes it - and the SDK has nowhere to put one, so
+     * this host serves the gesture and not the token.
+     */
+    startMcpServer: async (id) => {
+      const server = serverNamed(id);
+      if (!server)
+        return false;
+      emit('session', { type: 'session/mcpServerStartRequested', id });
+      try {
+        await handle.reconnectMcpServer(server);
+      }
+      catch {
+        await refreshMcp();
+        return false;
+      }
+      await refreshMcp();
+      return true;
+    },
+
+    stopMcpServer: async (id) => {
+      const server = serverNamed(id);
+      if (!server)
+        return false;
+      emit('session', { type: 'session/mcpServerStopRequested', id });
+      try {
+        await handle.toggleMcpServer(server, false);
+      }
+      catch {
+        await refreshMcp();
+        return false;
+      }
+      await refreshMcp();
+      return true;
+    },
 
     setModel: async (model) => {
       try {

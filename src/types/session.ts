@@ -109,6 +109,19 @@ export interface Session {
   /** The config in force, by key. */
   settings(): Record<string, string>;
 
+  /**
+   * Turn a customization on or off. False when this backend cannot.
+   *
+   * False is a real answer and the one to give for anything with no runtime
+   * switch: a control that reports success and changes nothing is worse than
+   * one that refuses.
+   */
+  setCustomizationEnabled(id: string, enabled: boolean): Promise<boolean>;
+  /** Start an MCP server, which is also how one that needs signing into is. */
+  startMcpServer(id: string): Promise<boolean>;
+  /** Stop one. */
+  stopMcpServer(id: string): Promise<boolean>;
+
   /** End the session and stop its agent. */
   close(): void;
 }

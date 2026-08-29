@@ -104,6 +104,26 @@ hangs it on `activeTurn` and completing is what moves that into `turns`), and
 a session's real title (`session/titleChanged`, so a client that already had
 it open stops reading "New session" over a conversation that has one).
 
+**Skills and MCP**, done 2026-08-29. The customizations panel was a list you
+could read and not touch. An MCP server is switched through the CLI now and
+the state is *read back* rather than assumed - one told to stop can fail to,
+and reporting what was asked for draws a row that is not true.
+
+Switching on a server that is not ready **reconnects** it, which is how
+somebody signs into one: `toggleMcpServer` only lifts the disabled flag, so a
+server that was off *because* nobody had signed in comes straight back
+`authRequired` and the switch looks like it flipped itself off. AHP's
+`authenticate` is the other model - the client fetches a token and pushes it -
+and the SDK has nowhere to put a token, so this host serves the gesture and
+not the token.
+
+A skill, a prompt or a subagent is refused out loud: the CLI has no runtime
+switch for any of them, and the customization list goes back out so the
+control returns to where it was rather than showing a change that did not
+happen. The client learned to listen: `session/customizationsChanged` reached
+its reducer and stopped there, so the panel showed what was true when it was
+opened and a toggle that worked looked like one that did nothing.
+
 **Before that**, in the order a client notices: a turn the client starts is
 said back (without it every response part named a turn no client had, and the
 whole answer landed nowhere until somebody reopened the session); one
@@ -133,25 +153,7 @@ job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
 about the working directory. The second is honest about changes made outside
 the conversation; the first is honest about which turn made them.
 
-## 2. Toggling a skill or an MCP server
-
-`session/customizationToggled` is client-dispatchable and this host logs it as
-unserved, so the switch on every row in the customizations panel does nothing.
-
-The SDK has `toggleMcpServer()` and `setMcpServers()`, so servers are
-straightforward. Skills and prompts have no runtime toggle - so that half is a
-refusal, said out loud rather than a switch that flips back.
-
-## 3. MCP servers that need signing into
-
-Four of the six servers on this machine report `authRequired`. The list shows
-it and nothing can act on it. AHP has `auth/required`, `authenticate` and
-`chat/toolCallAuthRequired`/`Resolved` for exactly this; the SDK has
-`reconnectMcpServer()`.
-
-Until then the row is a dead end that correctly says why it is one.
-
-## 4. Skills, as their own kind
+## 2. Skills, as their own kind
 
 `initializationResult()` returns `commands` and `agents`. Skills arrive
 *inside* `commands` rather than as their own kind, so the customization list
@@ -162,7 +164,7 @@ Worth checking whether `reloadSkills()` or a later SDK exposes them separately
 before inventing a heuristic on the command name. A wrong guess here mislabels
 every row.
 
-## 5. Completing an `@`
+## 3. Completing an `@`
 
 `@` is advertised as a trigger and answers nothing. It means a file, and this
 host serves none of the `resource*` commands either - `resourceRead`,
@@ -170,7 +172,7 @@ host serves none of the `resource*` commands either - `resourceRead`,
 also what a diff viewer fetches file content with. So the two belong together:
 browsing the host's filesystem, and completing a path into a message.
 
-## 6. Reconnect and replay
+## 4. Reconnect and replay
 
 A dropped socket loses everything between the drop and the next subscribe. AHP
 has `reconnect`, which replays missed actions from a `serverSeq` - the counter
@@ -179,7 +181,7 @@ this host already maintains correctly, which is most of the work.
 A host restart silently costs the tail of a conversation. Same failure, same
 fix.
 
-## 7. The smaller silences
+## 5. The smaller silences
 
 Each of these is one action the host never emits, and each shows up as a
 screen that is subtly stale rather than one that is wrong:
@@ -188,7 +190,7 @@ screen that is subtly stale rather than one that is wrong:
 - `chat/draftChanged` - two clients on one session do not see each other type.
 - `session/metaChanged`, `session/serverToolsChanged`.
 
-## 8. The parts a daemon may never want
+## 6. The parts a daemon may never want
 
 Served by the editor's host and not by this one, listed so the gap is a
 decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
@@ -199,7 +201,7 @@ decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
 A terminal is a real feature for a host somebody drives from a phone. The
 others are an editor's furniture.
 
-## 9. Deno
+## 7. Deno
 
 Written to the same interface as Node and Bun and never run: Deno is not
 installed here. Until somebody runs it, the third case in `listen.ts` is a

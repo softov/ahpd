@@ -908,6 +908,43 @@ export function createHost(options: HostOptions): Host {
               );
               break;
             }
+            /**
+             * Turn a skill or an MCP server on or off.
+             *
+             * `enablement` carries a decision per scope - global, workspace,
+             * session - and this host has one scope, so the session's is the
+             * one that matters and anything else is a decision about machines
+             * it does not own.
+             */
+            case 'session/customizationToggled': {
+              const id = String(action.id ?? '');
+              const enablement = Array.isArray(action.enablement) ? action.enablement.map((entry) => (
+                typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
+              )) : [];
+              const wanted = enablement.find((entry) => entry.kind === 'session') ?? enablement[0];
+              const enabled = wanted?.enabled !== false;
+              void session.setCustomizationEnabled(id, enabled).then((took) => {
+                if (took)
+                  return;
+                // Said, not swallowed. The customization list is what a client
+                // draws the switch from, so re-reporting it puts the switch
+                // back where it was rather than leaving it showing a change
+                // that did not happen.
+                log(`${id} has no runtime switch`);
+                dispatch(session.uri, { type: 'session/customizationsChanged', customizations: session.customizations() });
+              });
+              break;
+            }
+            case 'session/mcpServerStartRequested':
+              void session.startMcpServer(String(action.id ?? '')).then((took) => {
+                if (!took) log(`${String(action.id ?? '')} would not start`);
+              });
+              break;
+            case 'session/mcpServerStopRequested':
+              void session.stopMcpServer(String(action.id ?? '')).then((took) => {
+                if (!took) log(`${String(action.id ?? '')} would not stop`);
+              });
+              break;
             case 'chat/pendingMessageRemoved':
               session.unqueue(String(action.id ?? ''));
               break;
