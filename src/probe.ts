@@ -35,8 +35,13 @@ export async function probe(cwd: string): Promise<Offered> {
       handle.mcpServerStatus().then((answer) => (Array.isArray(answer) ? answer : [])).catch(() => [] as unknown[]),
       handle.reloadSkills().then((answer) => list(bag(answer as unknown).skills)).catch(() => [] as unknown[]),
     ]);
+    const styles = list(init.available_output_styles).filter((s): s is string => typeof s === 'string');
     return {
       customizations: customizationsOf(init, mcp, skills),
+      // Only when the harness has them. An empty list would draw a picker
+      // with nothing in it, which is worse than no control.
+      ...(styles.length > 0 ? { outputStyles: styles } : {}),
+      ...(str(init.output_style) ? { outputStyle: str(init.output_style) as string } : {}),
       models: list(init.models)
         // `value`, not `id`.
         .map((raw) => ({

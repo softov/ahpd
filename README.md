@@ -155,7 +155,7 @@ Only stdout says where the token came from, never what it is.
 | `ping` | ✅ |
 | `subscribe` / `unsubscribe` | ✅ root, session and chat channels |
 | `listSessions` | ✅ most-recently-modified first, live sessions included |
-| `resolveSessionConfig` | ✅ permission mode, effort, thinking - the same schema a session reports, so a row is configurable before it is resumed |
+| `resolveSessionConfig` | ✅ permission mode, effort, output style, thinking - the same schema a session reports, so a row is configurable before it is resumed. The output styles are the harness's own, learned by the boot probe, so the control is absent rather than empty on a harness that has none |
 | capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
 | skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
 | `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
@@ -178,13 +178,15 @@ Only stdout says where the token came from, never what it is.
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
+| project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
 | the write half of `resource*`, file changes | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
 `Removed`, `chat/responsePart`, `chat/delta`, `chat/toolCallStart` / `Ready` /
-`Complete`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
-`chat/error` - plus `root/sessionAdded` / `Removed` / `sessionSummaryChanged`
+`Complete`, `chat/reasoning`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
+`chat/error`, `session/metaChanged` - plus `root/sessionAdded` / `Removed` /
+`sessionSummaryChanged`
 on the root channel.
 
 Rules it is careful about, because each is a silent failure otherwise:
@@ -193,6 +195,11 @@ Rules it is careful about, because each is a silent failure otherwise:
   emit a `chat/responsePart` to create the target part, then use
   [`chat/delta`] to append text to it."* A delta naming a part nobody opened
   appends to nothing.
+- **The append action follows the part.** `chat/delta` is defined against a
+  *markdown* part and `chat/reasoning` against a *reasoning* one, and the
+  canonical reducer returns the part unchanged when they do not match. Sending
+  thinking as a `chat/delta` therefore opens the part and never fills it - a
+  thinking header with nothing under it, for as long as the model thinks.
 - **The running turn is `activeTurn`, and is not in `turns`.** A client reading
   only the history shows an empty conversation for exactly as long as somebody
   is watching one happen.

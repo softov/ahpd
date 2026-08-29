@@ -3,6 +3,37 @@
 import type { Agent } from './agent.js';
 import type { Peer, Request } from './rpc.js';
 
+/**
+ * What a host can say about a directory beyond its path.
+ *
+ * Injected rather than built in. The interesting answers come from outside the
+ * protocol - a branch is a `git` subprocess, and `git` is a binary that may
+ * not be installed - and a host embedded in something that already knows them
+ * should not have them read a second time. A host given none says only what a
+ * path alone can tell it, which is the project's name.
+ */
+export interface DirectoryFacts {
+  /**
+   * What is known about a directory now, as the session's `_meta`.
+   *
+   * Synchronous and cheap, because it is asked for every description of every
+   * session - a catalogue of a hundred rows asks a hundred times. Anything
+   * that has to be fetched is fetched by `refresh` and cached here.
+   *
+   * The keys are the protocol's: `git` is the well-known one, and anything of
+   * an implementation's own belongs under a namespace.
+   */
+  meta(dir: string): Record<string, unknown> | undefined;
+  /**
+   * Look again, answering whether anything actually moved.
+   *
+   * Asked once per served directory at startup and again whenever a turn
+   * ends. Only a true answer reaches a client, so a directory that has not
+   * changed costs nothing but the look.
+   */
+  refresh?(dir: string): Promise<boolean>;
+}
+
 /** How to construct a host. */
 export interface HostOptions {
   /**
@@ -24,6 +55,13 @@ export interface HostOptions {
    * ships with it; anything satisfying `Agent` is another.
    */
   agents: Agent[];
+  /**
+   * What this host can say about the directories it serves.
+   *
+   * Left out, sessions carry their project and nothing more. `gitBranches()`
+   * is the one that ships with this package, and the daemon uses it.
+   */
+  directories?: DirectoryFacts;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
 }

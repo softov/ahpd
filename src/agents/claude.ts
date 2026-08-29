@@ -57,6 +57,17 @@ export function claude(options: ClaudeOptions): Agent {
     return found;
   };
 
+  /*
+   * What the probe learned about output styles.
+   *
+   * The schema is otherwise fixed, but this one property's choices belong to
+   * the harness rather than to the protocol - a person's own styles live in
+   * their settings - so it is learned once at startup, the way models are,
+   * and the control is simply absent until it is known.
+   */
+  let styles: string[] = [];
+  let style: string | undefined;
+
   /**
    * What a session can be told to do differently.
    *
@@ -104,6 +115,21 @@ export function claude(options: ClaudeOptions): Agent {
         default: 'high',
         sessionMutable: true,
       },
+      // Learned, so absent until the probe has answered and absent for good
+      // on a harness that has no styles.
+      ...(styles.length > 0
+        ? {
+            outputStyle: {
+              type: 'string',
+              title: 'Output style',
+              description: 'The voice it answers in.',
+              enum: styles,
+              enumLabels: styles.map((name) => name.charAt(0).toUpperCase() + name.slice(1)),
+              ...(style !== undefined ? { default: style } : {}),
+              sessionMutable: true,
+            },
+          }
+        : {}),
       thinking: {
         type: 'string',
         title: 'Thinking',
@@ -121,6 +147,7 @@ export function claude(options: ClaudeOptions): Agent {
     permissionMode: 'default',
     effortLevel: 'high',
     thinking: 'adaptive',
+    ...(style !== undefined ? { outputStyle: style } : {}),
   });
 
   return {
@@ -132,7 +159,14 @@ export function claude(options: ClaudeOptions): Agent {
 
     directories: () => [...dirs],
 
-    probe: () => probe(dir),
+    // The styles are kept as well as handed on: `schema()` is asked before any
+    // session exists, and it can only offer what has already been learned.
+    probe: async () => {
+      const offered = await probe(dir);
+      styles = offered.outputStyles ?? [];
+      style = offered.outputStyle;
+      return offered;
+    },
 
     // Every directory it serves, as one list. A session is listed by the
     // catalogue of the directory it ran in, and a host serving several has

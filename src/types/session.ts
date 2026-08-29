@@ -115,6 +115,8 @@ export interface Session {
   setPermissionMode(mode: string): boolean;
   /** Change how hard it thinks. False when the level is not one. */
   setEffort(level: string): boolean;
+  /** Change the voice it answers in. False when the CLI has no such style. */
+  setOutputStyle(style: string): boolean;
   /** The config in force, by key. */
   settings(): Record<string, string>;
 

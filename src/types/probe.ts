@@ -11,6 +11,16 @@ export interface Offered {
    * once rather than several seconds later when its own agent replies.
    */
   customizations: Record<string, unknown>[];
+  /**
+   * Output styles this harness has, and the one in force.
+   *
+   * Optional because it is a real answer for a backend to have no such
+   * notion: left out, no output-style control is drawn at all rather than an
+   * empty picker being offered.
+   */
+  outputStyles?: string[];
+  /** The style the harness starts on, when it has them. */
+  outputStyle?: string;
   /** Commands available after a slash. */
   commands: {
     /** The command name, without its leading slash. */

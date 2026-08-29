@@ -8,7 +8,9 @@
  * `claude` is one backend that satisfies `Agent`.
  *
  * So another harness is another `Agent` handed to `createHost`, another
- * runtime is a case in `listen`, and neither is a fork. `examples/` has a
+ * runtime is a case in `listen`, and neither is a fork. Anything that has to
+ * shell out is the same shape again: `gitBranches` spawns `git` and is passed
+ * in, so a host that has no `git` is a host that was given none. `examples/` has a
  * backend written from nothing, which is the shortest description of what
  * `Agent` asks for.
  *
@@ -22,6 +24,7 @@ export {
   createPeer, receive, RpcError,
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
 } from './rpc.js';
+export { gitBranches } from './git.js';
 export { claude } from './agents/claude.js';
 export type { ClaudeOptions } from './agents/claude.js';
 export { createSession } from './session.js';

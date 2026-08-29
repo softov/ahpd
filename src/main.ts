@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
+import { gitBranches } from './git.js';
 import { listen } from './listen.js';
 
 /**
@@ -13,8 +14,12 @@ import { listen } from './listen.js';
  * ask.
  *
  * This is the one file that reads argv, the filesystem and stdout. Everything
- * under it is given what it needs. `node:fs` is used here because all three
- * supported runtimes provide it; nothing else in the daemon imports a builtin.
+ * under it is given what it needs - which is why `gitBranches` is constructed
+ * here and passed in rather than reached for by the host: it spawns `git`, and
+ * a host that went looking for a binary would be one that could not run
+ * without it. `node:fs` is used here because all three supported runtimes
+ * provide it; the builtins that remain below are the ones a protocol feature
+ * genuinely is - a terminal is a subprocess and a resource is a file.
  */
 
 interface Options {
@@ -158,6 +163,10 @@ const host = createHost({
   // The daemon serves Claude Code. The host serves whatever it is given -
   // see `examples/` for what a second one looks like.
   agents: [claude({ paths: options.paths })],
+  // The daemon runs on a machine with a checkout on it, so it can say which
+  // branch each directory is on. The host itself does not know how to find
+  // out, and a library caller that has no `git` simply passes nothing.
+  directories: gitBranches(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 
