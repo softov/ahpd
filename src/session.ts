@@ -74,13 +74,45 @@ function resultText(content: unknown): string | undefined {
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-export function customizationsOf(init: Bag, mcp: unknown[]): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = []): Bag[] {
   const out: Bag[] = [];
 
-  for (const raw of list(init.commands)) {
-    const command = bag(raw);
-    const name = str(command.name);
-    if (!name) continue;
+  /*
+   * Which of the commands are skills, and which skills a person can invoke.
+   *
+   * The CLI hands out two lists that overlap and neither says which is which:
+   * `commands` is what a slash offers, `skills` is what was loaded from disk.
+   * A command in both is a skill; one in `commands` alone is a built-in
+   * prompt. And a skill the CLI did *not* put behind a slash is one it will
+   * not let a person invoke - which is the agent-only skill the protocol has
+   * `disableUserInvocation` for, read off the CLI's own two answers rather
+   * than guessed from a name.
+   */
+  const offered = new Map(list(init.commands)
+    .map((raw) => [str(bag(raw).name) ?? '', bag(raw)] as const)
+    .filter(([name]) => name !== ''));
+  const loaded = new Map(list(skills)
+    .map((raw) => [str(bag(raw).name) ?? '', bag(raw)] as const)
+    .filter(([name]) => name !== ''));
+
+  for (const [name, skill] of loaded) {
+    const command = offered.get(name);
+    const described = str(skill.description) ?? str(bag(command).description);
+    const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
+    out.push({
+      type: 'skill',
+      id: `skill:${name}`,
+      name,
+      uri: name,
+      enabled: true,
+      ...(command ? {} : { disableUserInvocation: true }),
+      ...(described ? { description: described } : {}),
+      ...(hint ? { argumentHint: hint } : {}),
+    });
+  }
+
+  for (const [name, command] of offered) {
+    if (loaded.has(name)) continue;
     out.push({
       type: 'prompt',
       id: `command:${name}`,
@@ -616,7 +648,7 @@ export function createSession(options: SessionOptions): Session {
       if (!name) continue;
       const id = `mcp:${name}`;
       const held = customizations.find((entry) => str(entry.id) === id);
-      const fresh = bag(customizationsOf({}, [server])[0]);
+      const fresh = bag(customizationsOf({}, [server], [])[0]);
       if (!held) {
         customizations.push(fresh);
         emit('session', { type: 'session/customizationUpdated', customization: fresh });
@@ -644,9 +676,12 @@ export function createSession(options: SessionOptions): Session {
     (id.startsWith('mcp:') ? id.slice(4) : undefined);
 
   const describe = async (): Promise<void> => {
-    const [init, mcp] = await Promise.all([
+    const [init, mcp, skills] = await Promise.all([
       handle.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
       handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]),
+      // The only way to know which commands are skills. It re-reads them from
+      // disk, which at the start of a session is what one wants anyway.
+      handle.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
     ]);
     offered = list(init.models)
       .map((raw) => {
@@ -656,7 +691,7 @@ export function createSession(options: SessionOptions): Session {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '');
-    customizations = customizationsOf(init, mcp);
+    customizations = customizationsOf(init, mcp, skills);
     if (customizations.length > 0) {
       emit('session', { type: 'session/customizationsChanged', customizations });
     }

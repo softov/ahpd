@@ -156,7 +156,9 @@ Only stdout says where the token came from, never what it is.
 | `subscribe` / `unsubscribe` | ✅ root, session and chat channels |
 | `listSessions` | ✅ most-recently-modified first, live sessions included |
 | `resolveSessionConfig` | ✅ permission mode, effort, thinking - the same schema a session reports, so a row is configurable before it is resumed |
-| capabilities | ✅ models, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
+| capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
+| skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
+| `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
 | `createSession` / `disposeSession` | ✅ |
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
 | model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
@@ -171,7 +173,7 @@ Only stdout says where the token came from, never what it is.
 | file changes | ⬜ no changeset channel, so the changes screen is always empty |
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
-| `@` completion, `resource*`, terminals, several chats, reconnect | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| `@` completion, `resource*`, terminals, several chats | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /

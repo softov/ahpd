@@ -27,15 +27,16 @@ export async function probe(cwd: string): Promise<Offered> {
 
   const handle = query({ prompt: silence(), options: { cwd } } as Parameters<typeof query>[0]);
   try {
-    const [init, mcp] = await Promise.all([
+    const [init, mcp, skills] = await Promise.all([
       handle.initializationResult().then((answer) => bag(answer as unknown)),
       // Best effort beside the one that matters: a harness with no MCP servers
       // and one that will not say are the same empty list here, and neither is
       // worth failing the probe over.
       handle.mcpServerStatus().then((answer) => (Array.isArray(answer) ? answer : [])).catch(() => [] as unknown[]),
+      handle.reloadSkills().then((answer) => list(bag(answer as unknown).skills)).catch(() => [] as unknown[]),
     ]);
     return {
-      customizations: customizationsOf(init, mcp),
+      customizations: customizationsOf(init, mcp, skills),
       models: list(init.models)
         // `value`, not `id`.
         .map((raw) => ({

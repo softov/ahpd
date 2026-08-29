@@ -23,6 +23,7 @@ const sdk = vi.hoisted(() => {
     transcript: [] as Record<string, unknown>[],
     init: {} as Record<string, unknown>,
     mcp: [] as Record<string, unknown>[],
+    skills: [] as Record<string, unknown>[],
     said: [] as string[],
     modelsSet: [] as (string | undefined)[],
     modesSet: [] as string[],
@@ -76,6 +77,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       // is the whole reason capabilities are read from here.
       initializationResult: async () => sdk.init,
       mcpServerStatus: async () => sdk.mcp,
+      reloadSkills: async () => ({ skills: sdk.skills }),
       supportedModels: async () => [],
       streamInput: async () => {},
       close: () => { fake.closed = true; fake.wake?.(); },
@@ -119,6 +121,7 @@ beforeEach(() => {
   sdk.sessions.length = 0;
   sdk.transcript.length = 0;
   sdk.mcp.length = 0;
+  sdk.skills.length = 0;
   sdk.said.length = 0;
   sdk.modelsSet.length = 0;
   sdk.modesSet.length = 0;
@@ -1642,5 +1645,169 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
+  });
+});
+
+describe('a skill is not a prompt', () => {
+  const offering = async () => {
+    // The CLI hands out two lists that overlap. `review` is in both, `deploy`
+    // is a built-in prompt, and `keybindings-help` is a skill the CLI does
+    // not put behind a slash.
+    sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }, { name: 'deploy' }] };
+    sdk.skills = [{ name: 'review' }, { name: 'keybindings-help', description: 'Internal' }];
+    const started = await running();
+    await settle(8);
+    const opened = await started.client.handle({ method: 'subscribe', params: { channel: started.uri } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    };
+    return { ...started, items: opened.snapshot.state.customizations };
+  };
+
+  it('calls a command that was loaded as a skill a skill', async () => {
+    const { items } = await offering();
+    const review = items.find((entry) => entry.name === 'review');
+    expect(review).toMatchObject({ type: 'skill', id: 'skill:review' });
+    // And keeps the description, whichever of the two lists carried it.
+    expect(review?.description).toBe('Read the diff');
+    // Once, not twice: it is in both lists and it is one thing.
+    expect(items.filter((entry) => entry.name === 'review')).toHaveLength(1);
+  });
+
+  it('leaves a command that is not a skill a prompt', async () => {
+    const { items } = await offering();
+    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'prompt' });
+  });
+
+  it('marks a skill the CLI will not put behind a slash as the agent\'s', async () => {
+    const { items } = await offering();
+    // Read off the CLI's own two answers rather than guessed from the name.
+    expect(items.find((entry) => entry.name === 'keybindings-help'))
+      .toMatchObject({ type: 'skill', disableUserInvocation: true });
+  });
+
+  it('completes a slash into skills as well as prompts, and not the agent\'s', async () => {
+    const { client, chatUri } = await offering();
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: chatUri, kind: 'userMessage', text: '/', offset: 1 },
+    }) as { items: { insertText: string }[] };
+    const names = found.items.map((entry) => entry.insertText);
+    expect(names).toContain('/review');
+    expect(names).toContain('/deploy');
+    // Offering one the host would refuse is worse than not offering it.
+    expect(names).not.toContain('/keybindings-help');
+  });
+});
+
+describe('a client that dropped, coming back', () => {
+  it('replays what it missed, and nothing it already had', async () => {
+    const host = serving('/home/softov');
+    const first = peer();
+    const a = host.accept(first);
+    await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await a.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+
+    const seen = actions(first, 'ahp-chat:/live');
+    const upTo = seen.at(-1)?.serverSeq ?? 0;
+
+    // The socket goes. The host forgets this client's subscriptions with it,
+    // which is why the client has to say what they were.
+    a.close();
+    a.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
+    });
+    await settle();
+
+    const back = host.accept(peer());
+    await back.handle(hello(['0.8.0']));
+    const result = await back.handle({
+      method: 'reconnect',
+      params: {
+        channel: 'ahp-root://',
+        clientId: 'probe',
+        lastSeenServerSeq: upTo,
+        subscriptions: ['ahp-root://', 'ahp-session:/live', 'ahp-chat:/live'],
+      },
+    }) as { type: string; actions: { serverSeq: number; action: { type: string } }[]; missing: string[] };
+
+    expect(result.type).toBe('replay');
+    expect(result.missing).toEqual([]);
+    // Everything after what it saw, and nothing at or before it.
+    expect(result.actions.every((held) => held.serverSeq > upTo)).toBe(true);
+    expect(result.actions.map((held) => held.action.type)).toContain('chat/turnStarted');
+  });
+
+  it('names the channels it cannot resume rather than failing the whole thing', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    const result = await client.handle({
+      method: 'reconnect',
+      params: {
+        channel: 'ahp-root://',
+        clientId: 'probe',
+        lastSeenServerSeq: 0,
+        subscriptions: ['ahp-root://', 'ahp-session:/vanished'],
+      },
+    }) as { type: string; missing: string[] };
+    // A session whose agent has gone. Said, so the client drops it rather
+    // than waiting on a channel that will never speak again.
+    expect(result.missing).toEqual(['ahp-session:/vanished']);
+    expect(result.type).toBe('replay');
+  });
+
+  it('watches again, so what happens next arrives without a fresh subscribe', async () => {
+    const host = serving('/home/softov');
+    const setup = host.accept(peer());
+    await setup.handle(hello(['0.8.0']));
+    await setup.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+
+    const p = peer();
+    const back = host.accept(p);
+    await back.handle(hello(['0.8.0']));
+    await back.handle({
+      method: 'reconnect',
+      params: {
+        channel: 'ahp-root://',
+        clientId: 'probe',
+        lastSeenServerSeq: 0,
+        subscriptions: ['ahp-chat:/live'],
+      },
+    });
+    back.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
+    });
+    await settle();
+    expect(actions(p, 'ahp-chat:/live').some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
+  });
+
+  it('hands back snapshots when the gap is longer than the buffer', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    // A thousand and one actions later, the first is gone. Rather than
+    // replaying a hole, the protocol has a second answer.
+    for (let i = 0; i < 1100; i++) {
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-session:/live', action: { type: 'session/isReadChanged', isRead: i % 2 === 0 } },
+      });
+    }
+    await settle();
+    const result = await client.handle({
+      method: 'reconnect',
+      params: {
+        channel: 'ahp-root://',
+        clientId: 'probe',
+        lastSeenServerSeq: 1,
+        subscriptions: ['ahp-session:/live'],
+      },
+    }) as { type: string; snapshots: { resource: string }[] };
+    expect(result.type).toBe('snapshot');
+    expect(result.snapshots.map((s) => s.resource)).toEqual(['ahp-session:/live']);
   });
 });

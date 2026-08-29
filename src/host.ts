@@ -112,6 +112,17 @@ export function createHost(options: HostOptions): Host {
     return made;
   };
   let serverSeq = 0;
+  /**
+   * How many actions to keep for a client that comes back.
+   *
+   * A number, because the alternative is a buffer that grows for the length
+   * of the daemon's life. Past it, a returning client is handed fresh
+   * snapshots instead - which is correct, only more expensive, and is what
+   * the protocol has the second reconnect result for.
+   */
+  const REPLAY = 1000;
+  /** The last `REPLAY` action envelopes, oldest first. */
+  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: undefined }[] = [];
   const log = (message: string): void => options.onEvent?.(message);
   /**
    * A session's status, with the client flags folded in.
@@ -142,7 +153,12 @@ export function createHost(options: HostOptions): Host {
    */
   const dispatch = (channel: string, action: Record<string, unknown>): void => {
     serverSeq += 1;
-    broadcast(channel, 'action', { channel, action, serverSeq, origin: undefined });
+    const envelope = { channel, action, serverSeq, origin: undefined };
+    // Kept whether or not anyone was listening: a client that dropped is by
+    // definition not listening, and it is the one that will ask for these.
+    replayable.push(envelope);
+    if (replayable.length > REPLAY) replayable.shift();
+    broadcast(channel, 'action', envelope);
   };
   /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
   const catalogueMoved = (uri: string, method: string): void => {
@@ -485,6 +501,61 @@ export function createHost(options: HostOptions): Host {
           };
         },
         ping: async () => ({}),
+        /**
+         * A client that dropped, coming back.
+         *
+         * `serverSeq` is what makes this answerable: it advances with state
+         * and never with messages, so "everything after the last one I saw"
+         * is a well-formed question. The subscriptions come from the client
+         * because they were its own - this host forgot them when the
+         * connection went.
+         *
+         * Two answers, and the difference is whether the gap still fits in
+         * the buffer. Replay is cheap and exact; a snapshot is neither, and
+         * is what an hour-long disconnection gets.
+         */
+        reconnect: async (params) => {
+          const clientId = typeof params.clientId === 'string' ? params.clientId : connection.clientId;
+          connection.clientId = clientId;
+          const wanted = Array.isArray(params.subscriptions)
+            ? params.subscriptions.filter((uri): uri is string => typeof uri === 'string')
+            : [];
+          const since = typeof params.lastSeenServerSeq === 'number' ? params.lastSeenServerSeq : 0;
+
+          const missing: string[] = [];
+          const resumed: string[] = [];
+          for (const channel of wanted) {
+            try {
+              await snapshotOf(channel);
+              connection.watching.add(channel);
+              resumed.push(channel);
+            }
+            catch {
+              // A session whose agent has gone, or one this client may no
+              // longer see. Named, so the client drops it rather than waiting
+              // on a channel that will never speak again.
+              missing.push(channel);
+            }
+          }
+
+          const oldest = replayable[0]?.serverSeq;
+          // Nothing buffered means nothing has happened since, which is a
+          // replay of nothing rather than a reason to re-snapshot.
+          const replayable_ = oldest === undefined || since >= oldest - 1;
+          if (replayable_) {
+            log(`${clientId} came back at ${since}, replaying`);
+            return {
+              type: 'replay',
+              actions: replayable.filter((held) => held.serverSeq > since
+                && resumed.includes(held.channel)),
+              missing,
+            };
+          }
+          log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
+          const snapshots = [];
+          for (const channel of resumed) snapshots.push(await snapshotOf(channel));
+          return { type: 'snapshot', snapshots };
+        },
         subscribe: async (params) => {
           const channel = String(params.channel ?? '');
           const snapshot = await snapshotOf(channel);
@@ -551,7 +622,11 @@ export function createHost(options: HostOptions): Host {
           // A live session's own list wins: two sessions in one directory can
           // be handed different things.
           const own = (session?.customizations() ?? [])
-            .filter((entry) => entry.type === 'prompt' && entry.disableUserInvocation !== true)
+            // Skills as well as prompts, and not the ones the CLI keeps for
+            // the agent: offering one it will refuse is worse than not
+            // offering it.
+            .filter((entry) => (entry.type === 'prompt' || entry.type === 'skill')
+              && entry.disableUserInvocation !== true)
             .map((entry) => ({
             name: String(entry.name),
             description: typeof entry.description === 'string' ? entry.description : undefined,

@@ -104,6 +104,27 @@ hangs it on `activeTurn` and completing is what moves that into `turns`), and
 a session's real title (`session/titleChanged`, so a client that already had
 it open stops reading "New session" over a conversation that has one).
 
+**Skills, told apart**, done 2026-08-29. Skills arrived *inside* `commands`,
+so the list said `prompt` for something a client would rather label a skill,
+and an agent-only skill could not be distinguished at all. The CLI hands out
+two lists that overlap and neither says which is which - `commands` is what a
+slash offers, `reloadSkills()` is what was loaded from disk - and the answer
+is in the disagreement: a name in both is a skill, one in `commands` alone is
+a built-in prompt, and a skill the CLI did *not* put behind a slash is one it
+will not let a person invoke, which is `disableUserInvocation` read off the
+CLI's own answers rather than guessed from a name. Live: 19 skills, 36
+prompts, 6 subagents, 6 servers, and `keybindings-help` correctly the agent's.
+
+**Reconnect and replay**, done 2026-08-29. A dropped socket lost everything
+between the drop and the next subscribe. `serverSeq` is what makes this
+answerable - it advances with state and never with messages, so "everything
+after the last one I saw" is a well-formed question. The last thousand action
+envelopes are kept and replayed from that number; past them a returning client
+is handed fresh snapshots, which is correct and only more expensive.
+Subscriptions come back with it, because the host forgot them when the
+connection went, and a channel it cannot resume is *named* so the client drops
+it rather than waiting on one that will never speak again.
+
 **Skills and MCP**, done 2026-08-29. The customizations panel was a list you
 could read and not touch. An MCP server is switched through the CLI now and
 the state is *read back* rather than assumed - one told to stop can fail to,
@@ -153,18 +174,7 @@ job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
 about the working directory. The second is honest about changes made outside
 the conversation; the first is honest about which turn made them.
 
-## 2. Skills, as their own kind
-
-`initializationResult()` returns `commands` and `agents`. Skills arrive
-*inside* `commands` rather than as their own kind, so the customization list
-says `prompt` for something a client would rather label a skill, and
-`disableUserInvocation` - an agent-only skill - cannot be distinguished.
-
-Worth checking whether `reloadSkills()` or a later SDK exposes them separately
-before inventing a heuristic on the command name. A wrong guess here mislabels
-every row.
-
-## 3. Completing an `@`
+## 2. Completing an `@`
 
 `@` is advertised as a trigger and answers nothing. It means a file, and this
 host serves none of the `resource*` commands either - `resourceRead`,
@@ -172,16 +182,7 @@ host serves none of the `resource*` commands either - `resourceRead`,
 also what a diff viewer fetches file content with. So the two belong together:
 browsing the host's filesystem, and completing a path into a message.
 
-## 4. Reconnect and replay
-
-A dropped socket loses everything between the drop and the next subscribe. AHP
-has `reconnect`, which replays missed actions from a `serverSeq` - the counter
-this host already maintains correctly, which is most of the work.
-
-A host restart silently costs the tail of a conversation. Same failure, same
-fix.
-
-## 5. The smaller silences
+## 3. The smaller silences
 
 Each of these is one action the host never emits, and each shows up as a
 screen that is subtly stale rather than one that is wrong:
@@ -190,7 +191,7 @@ screen that is subtly stale rather than one that is wrong:
 - `chat/draftChanged` - two clients on one session do not see each other type.
 - `session/metaChanged`, `session/serverToolsChanged`.
 
-## 6. The parts a daemon may never want
+## 4. The parts a daemon may never want
 
 Served by the editor's host and not by this one, listed so the gap is a
 decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
@@ -201,7 +202,7 @@ decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
 A terminal is a real feature for a host somebody drives from a phone. The
 others are an editor's furniture.
 
-## 7. Deno
+## 5. Deno
 
 Written to the same interface as Node and Bun and never run: Deno is not
 installed here. Until somebody runs it, the third case in `listen.ts` is a
