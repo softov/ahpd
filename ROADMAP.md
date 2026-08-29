@@ -86,14 +86,73 @@ says `connected`/`failed`/`needs-auth` where the protocol says
 
 ---
 
-## 1. Completing an `@`
+**Since then**, in the order a client notices: a turn the client starts is
+said back (without it every response part named a turn no client had, and the
+whole answer landed nowhere until somebody reopened the session); one
+conversation is one catalogue row rather than two; `IsRead` and `IsArchived`
+are kept and told to every client; a browsed row carries the same config
+schema a live one does; one tool call is one row and approving it works; the
+host takes `agents` rather than importing Claude, with a worked example; a
+connection token and a bind address; several working directories, with one the
+client did not name refused rather than silently replaced.
 
-`@` is advertised as a trigger and answers nothing. It means a file, and this
-host does not serve the `resource*` commands either - so the two belong
-together: browsing the host's filesystem, and completing a path into a message
-attachment.
+---
 
-## 2. Skills, properly
+# Pending
+
+Verified against a live daemon on 2026-08-29, not read off the spec. Each
+entry says what it costs a person today.
+
+## 1. A queued message is thrown away
+
+The composer says *"The agent is working. Type to queue a message."* The client
+dispatches `chat/pendingMessageSet`; this host logs `not served yet` and drops
+it. Nothing appears in the queue, nothing is sent when the turn ends, and
+there is no error - the message is simply gone.
+
+This is first because it is the only item on the list that loses something
+somebody typed. `chat/pendingMessageRemoved` and
+`chat/queuedMessagesReordered` come with it, and the host already knows when a
+turn ends, which is the whole of the behaviour.
+
+## 2. Nothing says what the agent is doing
+
+`chat/activityChanged` is never emitted, so the detail pane's **Doing** row
+reads "nothing it says" for the entire length of a turn. The SDK's message
+stream names the tool before it runs it, which is exactly the sentence that
+row wants.
+
+## 3. File changes never appear
+
+There is no changeset channel: no `session/changesetsChanged`, no
+`changeset/*`, no `invokeChangesetOperation`. `changes()` answers
+`{status:'complete', files:[]}` for every session, so the changes screen is
+permanently empty and the **Changes** row always reads "nothing yet".
+
+The Claude SDK hands out no diff, so this is a decision rather than a wiring
+job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
+about the working directory. The second is honest about changes made outside
+the conversation; the first is honest about which turn made them.
+
+## 4. Toggling a skill or an MCP server
+
+`session/customizationToggled` is client-dispatchable and this host logs it as
+unserved, so the switch on every row in the customizations panel does nothing.
+
+The SDK has `toggleMcpServer()` and `setMcpServers()`, so servers are
+straightforward. Skills and prompts have no runtime toggle - so that half is a
+refusal, said out loud rather than a switch that flips back.
+
+## 5. MCP servers that need signing into
+
+Four of the six servers on this machine report `authRequired`. The list shows
+it and nothing can act on it. AHP has `auth/required`, `authenticate` and
+`chat/toolCallAuthRequired`/`Resolved` for exactly this; the SDK has
+`reconnectMcpServer()`.
+
+Until then the row is a dead end that correctly says why it is one.
+
+## 6. Skills, as their own kind
 
 `initializationResult()` returns `commands` and `agents`. Skills arrive
 *inside* `commands` rather than as their own kind, so the customization list
@@ -104,32 +163,52 @@ Worth checking whether `reloadSkills()` or a later SDK exposes them separately
 before inventing a heuristic on the command name. A wrong guess here mislabels
 every row.
 
-## 3. Toggling a customization
+## 7. Completing an `@`
 
-`session/customizationToggled` is client-dispatchable and this host ignores it.
-Turning a skill or an MCP server off mid-session is the obvious next thing
-somebody tries after seeing the list.
+`@` is advertised as a trigger and answers nothing. It means a file, and this
+host serves none of the `resource*` commands either - `resourceRead`,
+`resourceList`, `resourceResolve`, `resourceWrite` and the rest - which is
+also what a diff viewer fetches file content with. So the two belong together:
+browsing the host's filesystem, and completing a path into a message.
 
-The SDK has `toggleMcpServer()` and `setMcpServers()`, so servers are
-straightforward. Skills and prompts have no runtime toggle - so that half is a
-refusal, said out loud rather than a switch that flips back.
-
-## 4. MCP servers that need signing into
-
-Four of the six servers on this machine report `authRequired`. The list shows
-it and nothing can act on it. AHP has `auth/required` and `authenticate` for
-exactly this; the SDK has `reconnectMcpServer()`.
-
-Until then the row is a dead end that correctly says why it is one.
-
-## 5. Reconnect and replay
+## 8. Reconnect and replay
 
 A dropped socket loses everything between the drop and the next subscribe. AHP
 has `reconnect`, which replays missed actions from a `serverSeq` - the counter
 this host already maintains correctly, which is most of the work.
 
-Advisor's own note is that a host restart silently costs the tail of a
-conversation. Same failure, same fix.
+A host restart silently costs the tail of a conversation. Same failure, same
+fix.
+
+## 9. The smaller silences
+
+Each of these is one action the host never emits, and each shows up as a
+screen that is subtly stale rather than one that is wrong:
+
+- `session/titleChanged` - the catalogue learns a session's real title, the
+  open session's header does not, so it reads "New session" over a
+  conversation that has one.
+- `chat/usage` - no token counts anywhere.
+- `chat/truncated` - a conversation the harness compacted says nothing about it.
+- `chat/draftChanged` - two clients on one session do not see each other type.
+- `session/metaChanged`, `session/serverToolsChanged`.
+
+## 10. The parts a daemon may never want
+
+Served by the editor's host and not by this one, listed so the gap is a
+decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
+`root/terminalsChanged`), several chats per session (`createChat`,
+`disposeChat`, `session/chatAdded`/`Removed`/`Updated`), annotations
+(`annotations/*`), OTLP (`otlp`), and `sessionConfigCompletions`.
+
+A terminal is a real feature for a host somebody drives from a phone. The
+others are an editor's furniture.
+
+## 11. Deno
+
+Written to the same interface as Node and Bun and never run: Deno is not
+installed here. Until somebody runs it, the third case in `listen.ts` is a
+claim rather than a fact.
 
 ---
 

@@ -165,7 +165,10 @@ Only stdout says where the token came from, never what it is.
 | connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
 | `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
 | `completions` | ✅ `/` against the session's commands, falling back to the harness-wide list |
-| `@` completion, terminals, resources, changesets | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| queued messages | ⬜ `chat/pendingMessageSet` is dropped - a message typed while a turn runs is lost |
+| file changes | ⬜ no changeset channel, so the changes screen is always empty |
+| toggling a skill or MCP server, MCP sign-in | ⬜ the list is read-only |
+| `@` completion, `resource*`, terminals, several chats, reconnect | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
