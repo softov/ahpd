@@ -28,20 +28,47 @@ There is no changeset channel: no `session/changesetsChanged`, no
 `{status:'complete', files:[]}` for every session, so the changes screen is
 permanently empty and the **Changes** row always reads "nothing yet".
 
-The gap is entirely on this side. `ahpc` already has the client half - a
+The gap is entirely on this side. `ahpc` has the client half already - a
 reducer, a `Changeset` parser, a screen that opens a row and fetches its
-content - so the first action this host emits will draw something.
+content, and now `ahpc changes <uri>`, which prints "No changes." against a
+session that has changed a great deal. The first action this host emits draws
+something in all of them.
 
-The Claude SDK hands out no diff, so this is a decision rather than a wiring
-job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
-about the working directory. The second is honest about changes made outside
-the conversation; the first is honest about which turn made them. The git half of
-that question is already answered - `gitBranches()` reads the branch of every
-directory served - so the same place is where a diff would come from. It is
-also the shape to copy: `gitBranches()`, `fileResources()` and
-`shellTerminals()` are all passed to `createHost` rather than reached for by
-it, so the protocol imports no runtime and a host without one of them refuses
-the commands it cannot answer.
+**It is no longer a decision.** It looked like one - derive a diff from the
+`Edit`/`Write` calls as they happen, or ask git about the working directory -
+because the Claude SDK hands out neither. The reference host answers it: it
+does both, and neither is the unit. A changeset is a *scope*, and they nest
+under the session's own URI so disposing a session tears down every one of
+them by string-prefix scan:
+
+```
+<sessionUri>/changeset/uncommitted                    git, working tree vs HEAD
+<sessionUri>/changeset/session                        everything this session did
+<sessionUri>/changeset/turn/<turnId>                  one turn's changes
+<sessionUri>/changeset/compare/<orig>/<mod>           between two turns
+```
+
+Catalogue entries advertise the last two as *templates* - `turn/{turnId}` -
+which a client expands before subscribing.
+
+So the order is: **`uncommitted` first**, because it is pure git and both
+consumers are already built and waiting. `session` and `turn/<id>` follow, and
+want the `Edit`/`Write` calls after all - that is what says which turn a change
+belongs to, and no amount of git will answer it.
+
+`gitBranches()` is the shape to copy, and the reason: it is *passed* to
+`createHost` rather than reached for by it, alongside `fileResources()` and
+`shellTerminals()`, so the protocol imports no runtime and a host given none of
+them refuses what it cannot answer rather than failing part-way through it. A
+changeset source is another such port - `git` is a binary, and a served
+directory may not be a repository at all.
+
+The reference is readable locally: `/github/externals/vscode` is a blobless
+sparse checkout of `src/vs/platform/agentHost` (35 MB, `git pull` to update).
+`common/changesetUri.ts` is the scoping above; `node/agentHostChangesetService.ts`
+and `node/agentHostChangesetFileMonitorCoordinator.ts` are how it is kept fresh;
+`node/claude/claudeFileEditObserver.ts` is the per-turn half, and is small. It
+is MIT-licensed: read it for the design, keep our own prose.
 
 ## A-01-03 - What is left of the protocol
 
@@ -93,7 +120,9 @@ reason each is a decision:
 | `root/activeSessionsChanged` | 1 | presence, with `session/activeClient*` below |
 
 **The 24 client-dispatchable actions it does not handle** - each a control a
-client may offer that this host would ignore: `session/workingDirectorySet` /
+client may offer that this host would ignore. `ahpc dispatch <uri> <type>
+--field k=v` sends any of them verbatim, so this list is now a thing that can
+be run rather than a thing that was read off the types: `session/workingDirectorySet` /
 `Removed` / `Replaced` and `chat/workingDirectorySet` / `Removed` (directories
 are fixed at creation here, and a session that moves is a conversation whose
 second half cannot see the files its first half was about);
