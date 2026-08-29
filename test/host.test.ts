@@ -88,6 +88,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createHost } = await import('../src/host.js');
 const { claude } = await import('../src/agents/claude.js');
 
+/** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
+const ETX = String.fromCharCode(3);
+
 /**
  * The host, serving the backend that ships with it.
  *
@@ -2211,5 +2214,42 @@ describe('more than one chat in a session', () => {
       method: 'createChat',
       params: { channel: uri, chat: second, source: { kind: 'fork', chat: 'ahp-chat:/live', turnId: 't1' } },
     })).rejects.toMatchObject({ code: -32602 });
+  });
+});
+
+
+describe('interrupting a terminal', () => {
+  it('turns ^C into a signal, because there is no line discipline to', async () => {
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0']));
+    const uri = 'ahp-terminal:/int';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: 'sleep 30\n' } },
+    });
+    await new Promise((r) => { setTimeout(r, 300); });
+    /*
+     * A pseudoterminal's driver sees the byte and signals the foreground
+     * group. Pipes have no driver, so it would arrive as ordinary input and
+     * the command would run on - a terminal a runaway command cannot be
+     * stopped in.
+     */
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: ETX } },
+    });
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
+    }
+    expect(actions(p, uri).some((e) => e.action.type === 'terminal/exited')).toBe(true);
   });
 });

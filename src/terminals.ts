@@ -39,6 +39,14 @@ export function createTerminal(options: TerminalOptions): Terminal {
 
   const child = spawn(shellOf(), [], {
     cwd,
+    /*
+     * Its own process group, so a signal reaches what it started.
+     *
+     * A shell reading from a pipe runs each command as its own child, and a
+     * signal sent to the shell alone leaves the command running. The group is
+     * what a terminal driver would have signalled, and this has no driver.
+     */
+    detached: true,
     // A shell reading commands from a pipe. Without a pseudoterminal there is
     // no point asking it to be interactive: it would print a prompt nobody
     // can answer the way it expects.
@@ -81,9 +89,27 @@ export function createTerminal(options: TerminalOptions): Terminal {
     }),
 
     write: (data) => {
-      if (exitCode !== undefined || !child.stdin.writable)
+      if (exitCode !== undefined)
         return;
-      child.stdin.write(data);
+      /*
+       * `^C` is a signal, and there is nothing here to turn it into one.
+       *
+       * A pseudoterminal has a line discipline that sees the byte and sends
+       * SIGINT to the foreground group. Pipes have none, so the byte arrives
+       * as input and the command runs on - which is a terminal a runaway
+       * command cannot be stopped in. Sending the signal is what the driver
+       * would have done.
+       */
+      const at = data.indexOf('\u0003');
+      if (at !== -1) {
+        const rest = data.slice(0, at) + data.slice(at + 1);
+        if (rest !== '' && child.stdin.writable) child.stdin.write(rest);
+        try { process.kill(-(child.pid ?? 0), 'SIGINT'); }
+        // The group is gone, which is the outcome asked for.
+        catch { /* nothing left to interrupt */ }
+        return;
+      }
+      if (child.stdin.writable) child.stdin.write(data);
     },
 
     // Kept because the state reports them and a client draws to them. Nothing
@@ -107,7 +133,9 @@ export function createTerminal(options: TerminalOptions): Terminal {
 
     close: () => {
       child.stdin.end();
-      child.kill();
+      // The group, not the shell: detached, its children outlive it otherwise.
+      try { process.kill(-(child.pid ?? 0), 'SIGKILL'); }
+      catch { child.kill(); }
     },
   };
 }
