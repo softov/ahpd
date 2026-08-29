@@ -22,6 +22,8 @@ import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import { complete, list as listResources, read as readResource, resolve as resolveResource, uriOf } from './resources.js';
+import { createTerminal } from './terminals.js';
+import type { Terminal } from './types/terminals.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
@@ -71,8 +73,37 @@ export function createHost(options: HostOptions): Host {
    * that is exactly what having a host buys.
    */
   const flags = new Map<string, number>();
-  /** Live sessions, by their own uri, and the chats that belong to them. */
-  const sessions = new Map<string, Session>();
+  /**
+   * A live session: one or more chats, and what they all run on.
+   *
+   * The protocol's session is a *container*. It was one conversation here
+   * because one backend session is one CLI, and the two were collapsed - so a
+   * second chat had nowhere to go.
+   */
+  interface Held {
+    /** The backend running it. */
+    agent: Agent;
+    /** Its chats, by URI, in the order they were opened. */
+    chats: Map<string, Session>;
+    /** Which of them a client gets when it names none. */
+    defaultChat: string;
+    /** Config in force. Every chat in the session runs on it. */
+    config: Record<string, string>;
+    /** Where they work, when the client named a directory. */
+    workingDirectory: string | undefined;
+  }
+  /** Live sessions, by their own uri. */
+  const sessions = new Map<string, Held>();
+  /** Every chat, back to the session holding it. */
+  const byChat = new Map<string, { uri: string; chat: Session }>();
+  /**
+   * The chat a session-level question is really about.
+   *
+   * The default one: its status is the session's, its customizations are what
+   * the session was handed, and it is the one a client talks to when it has
+   * not asked for another.
+   */
+  const leadOf = (held: Held): Session | undefined => held.chats.get(held.defaultChat);
   /**
    * Which backend a session belongs to, by session URI.
    *
@@ -82,6 +113,14 @@ export function createHost(options: HostOptions): Host {
    * it - is that backend's answer rather than the host's.
    */
   const owners = new Map<string, Agent>();
+  /**
+   * Terminals, by their own channel URI.
+   *
+   * The host's rather than a session's: a terminal outlives the turn that
+   * opened it, several clients watch one, and the protocol lists them on the
+   * *root* channel - which is where something owned by no session belongs.
+   */
+  const terminals = new Map<string, Terminal>();
   /** Where a browsed session ran, as its own catalogue reported it. */
   const wheres = new Map<string, string[]>();
   /**
@@ -94,7 +133,6 @@ export function createHost(options: HostOptions): Host {
    * sessions somebody is deciding whether to continue.
    */
   const chosen = new Map<string, Record<string, string>>();
-  const byChat = new Map<string, Session>();
   /**
    * What one backend turned out to offer.
    *
@@ -146,8 +184,37 @@ export function createHost(options: HostOptions): Host {
    * back to unread the moment anything else about it changes.
    */
   const statusOf = (uri: string): number => {
-    const session = sessions.get(uri);
-    return (session ? session.status() : Status.Idle) | (flags.get(uri) ?? 0);
+    const held = sessions.get(uri);
+    if (!held)
+      return Status.Idle | (flags.get(uri) ?? 0);
+    /*
+     * The default chat's activity, promoted by any other chat that needs
+     * something.
+     *
+     * The protocol's own rule: a session waiting on a person is waiting
+     * whichever of its chats is doing the waiting, and a catalogue that only
+     * looked at the default one would show a session as idle while another
+     * chat in it is blocked.
+     */
+    let activity = leadOf(held)?.status() ?? Status.Idle;
+    for (const chat of held.chats.values()) {
+      const its = chat.status();
+      if (its === Status.InputNeeded) activity = Status.InputNeeded;
+      else if (its === Status.Error && activity !== Status.InputNeeded) activity = Status.Error;
+    }
+    return activity | (flags.get(uri) ?? 0);
+  };
+  /** The most recent change across a session's chats. */
+  const modifiedOf = (held: Held): string => [...held.chats.values()]
+    .map((chat) => chat.modifiedAt())
+    .sort()
+    .at(-1) ?? new Date().toISOString();
+  /** What a session is doing: its default chat's, or whichever chat is waiting. */
+  const activityOf = (held: Held): string | undefined => {
+    for (const chat of held.chats.values()) {
+      if (chat.status() === Status.InputNeeded) return chat.activity();
+    }
+    return leadOf(held)?.activity();
   };
   /** Everything watching a channel, which is not everything connected. */
   const broadcast = (channel: string, method: string, params: unknown): void => {
@@ -176,21 +243,22 @@ export function createHost(options: HostOptions): Host {
   };
   /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
   const catalogueMoved = (uri: string, method: string): void => {
-    const session = sessions.get(uri);
+    const held = sessions.get(uri);
+    const lead = held && leadOf(held);
     broadcast(ROOT, method, {
       channel: ROOT,
       resource: uri,
-      ...(session
+      ...(held && lead
         ? {
           summary: {
             resource: uri,
-            provider: owners.get(uri)?.provider ?? first.provider,
-            title: session.title(),
+            provider: held.agent.provider,
+            title: lead.title(),
             status: statusOf(uri),
-            ...(session.activity() !== undefined ? { activity: session.activity() } : {}),
-            createdAt: session.modifiedAt(),
-            modifiedAt: session.modifiedAt(),
-            workingDirectories: session.workingDirectories(),
+            ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+            createdAt: modifiedOf(held),
+            modifiedAt: modifiedOf(held),
+            workingDirectories: lead.workingDirectories(),
           },
         }
         : {}),
@@ -204,18 +272,19 @@ export function createHost(options: HostOptions): Host {
    */
   const learnModels = (uri: string): void => {
     const session = sessions.get(uri);
+    const lead = session && leadOf(session);
     const owner = owners.get(uri);
-    if (!session || !owner)
+    if (!lead || !owner)
       return;
-    const found = session.models();
+    const found = lead.models();
     if (found.length === 0)
       return;
-    const held = about(owner.provider);
-    const same = found.length === held.models.length
-      && found.every((model, index) => model.id === held.models[index]?.id);
+    const learnt = about(owner.provider);
+    const same = found.length === learnt.models.length
+      && found.every((model, index) => model.id === learnt.models[index]?.id);
     if (same)
       return;
-    held.models = found;
+    learnt.models = found;
     log(`${owner.provider}: ${found.length} model(s): ${found.map((m) => m.id).join(', ')}`);
     dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
   };
@@ -240,14 +309,22 @@ export function createHost(options: HostOptions): Host {
       dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
     }).catch(() => { });
   }
+  /**
+   * Start one chat, and the session holding it if there is not one yet.
+   *
+   * One backend session is one CLI, and a chat is one conversation, so a
+   * second chat in a session is a second CLI on the same directory and the
+   * same config - which is what makes them peers rather than one being the
+   * other's child.
+   */
   const spawn = (
     agent: Agent,
     uri: string,
+    chatUri: string,
     config: Record<string, string>,
     resuming?: { resume: string; seed: Bag[] },
     workingDirectory?: string,
   ): Session => {
-    const chatUri = `ahp-chat:/${idFor(uri)}`;
     const session = agent.create({
       uri,
       chatUri,
@@ -269,8 +346,16 @@ export function createHost(options: HostOptions): Host {
       },
       onHandshake: () => { learnModels(uri); },
     });
-    sessions.set(uri, session);
-    byChat.set(chatUri, session);
+    const held = sessions.get(uri) ?? {
+      agent,
+      chats: new Map<string, Session>(),
+      defaultChat: chatUri,
+      config,
+      workingDirectory,
+    };
+    held.chats.set(chatUri, session);
+    sessions.set(uri, held);
+    byChat.set(chatUri, { uri, chat: session });
     owners.set(uri, agent);
     return session;
   };
@@ -286,6 +371,18 @@ export function createHost(options: HostOptions): Host {
     displayName: agent.displayName,
     ...(agent.description ? { description: agent.description } : {}),
     models: about(agent.provider).models,
+    capabilities: {
+      /*
+       * Several chats per session, and neither of the source modes.
+       *
+       * Multi-chat is the host's doing rather than a backend's - a second
+       * chat is `create` called twice - so it holds for any backend. `fork`
+       * and `sideChat` both need a backend that can resume at a *turn*, and
+       * an empty object is the protocol's way of saying multi-chat without
+       * them.
+       */
+      multipleChats: {},
+    },
   }));
   /**
    * The catalogue: what is on disk, and what this host is running.
@@ -299,11 +396,13 @@ export function createHost(options: HostOptions): Host {
    */
   const listing = async (): Promise<Summary[]> => {
     const claimed = new Set<string>();
-    for (const [uri, session] of sessions) {
+    for (const [uri, held] of sessions) {
       claimed.add(idFor(uri));
-      const own = session.agentId();
-      if (own)
-        claimed.add(own);
+      for (const chat of held.chats.values()) {
+        const own = chat.agentId();
+        if (own)
+          claimed.add(own);
+      }
     }
     const found: Summary[] = [];
     for (const agent of agents.values()) {
@@ -340,25 +439,36 @@ export function createHost(options: HostOptions): Host {
     found.sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
     // Sessions this host started are real and are not listed by a backend yet.
     // A catalogue that dropped them would lose the one being looked at.
-    for (const [uri, session] of sessions) {
+    for (const [uri, held] of sessions) {
+      const lead = leadOf(held);
+      if (!lead)
+        continue;
       found.unshift({
         resource: uri,
-        provider: owners.get(uri)?.provider ?? first.provider,
-        title: session.title(),
+        provider: held.agent.provider,
+        title: lead.title(),
         status: statusOf(uri),
         // What it is doing, so a list of twenty sessions says which one is
         // busy with what rather than only which one is busy.
-        ...(session.activity() !== undefined ? { activity: session.activity() } : {}),
-        createdAt: session.modifiedAt(),
-        modifiedAt: session.modifiedAt(),
-        workingDirectories: session.workingDirectories(),
+        ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+        createdAt: modifiedOf(held),
+        modifiedAt: modifiedOf(held),
+        workingDirectories: lead.workingDirectories(),
       });
     }
     return found;
   };
+  /** Every terminal, as the root channel lists them. */
+  const terminalInfo = () => [...terminals.values()].map((held) => ({
+    resource: held.uri,
+    title: held.title(),
+    claim: held.claim(),
+    ...(held.exitCode() !== undefined ? { exitCode: held.exitCode() } : {}),
+  }));
   const rootState = async () => ({
     agents: descriptors(),
     activeSessions: (await listing()).length,
+    ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
   });
   /**
    * A session that already happened, read from its transcript.
@@ -399,16 +509,34 @@ export function createHost(options: HostOptions): Host {
     if (channel === ROOT) {
       return { resource: ROOT, state: await rootState(), fromSeq: serverSeq };
     }
-    const session = sessions.get(channel);
-    if (session) {
-      // The session reports its own activity; `IsRead` and `IsArchived` are
-      // this host's and it has never heard of them.
-      const state = { ...session.sessionState(), status: statusOf(channel) };
+    const terminal = terminals.get(channel);
+    if (terminal)
+      return { resource: channel, state: terminal.state(), fromSeq: serverSeq };
+    const held = sessions.get(channel);
+    const lead = held && leadOf(held);
+    if (held && lead) {
+      /*
+       * The session's state, assembled here rather than asked of one chat.
+       *
+       * A session is a container: its title, config and customizations come
+       * from the default chat, its status and activity from whichever chat is
+       * driving them, its `modifiedAt` from the latest of all - and `chats` is
+       * the list, which no single chat knows. `IsRead` and `IsArchived` are
+       * this host's, and no chat has heard of them.
+       */
+      const state = {
+        ...lead.sessionState(),
+        status: statusOf(channel),
+        modifiedAt: modifiedOf(held),
+        defaultChat: held.defaultChat,
+        chats: [...held.chats].map(([uri_, chat_]) => ({ resource: uri_, title: chat_.title() })),
+        ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+      };
       return { resource: channel, state, fromSeq: serverSeq };
     }
-    const chat = byChat.get(channel);
-    if (chat)
-      return { resource: channel, state: chat.chatState(), fromSeq: serverSeq };
+    const talking = byChat.get(channel);
+    if (talking)
+      return { resource: channel, state: talking.chat.chatState(), fromSeq: serverSeq };
     /*
      * A session in the catalogue that this host is not running.
      *
@@ -588,7 +716,7 @@ export function createHost(options: HostOptions): Host {
         fetchTurns: async (params) => {
           const channel = String(params.channel ?? '');
           const live = byChat.get(channel);
-          const all = live ? live.allTurns() : await past(idOf(channel));
+          const all = live ? live.chat.allTurns() : await past(idOf(channel));
           if (!all)
             throw new RpcError(-32001, `No agent for session ${channel}`);
           const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
@@ -637,11 +765,12 @@ export function createHost(options: HostOptions): Host {
           if (asked) {
             const typed_ = asked[1] ?? '';
             const from = offset - typed_.length - 1;
-            const held = byChat.get(String(params.channel ?? ''))
-              ?? sessions.get(String(params.channel ?? ''));
+            const asking = String(params.channel ?? '');
+            const chat_ = byChat.get(asking)?.chat
+              ?? (sessions.get(asking) ? leadOf(sessions.get(asking) as Held) : undefined);
             // Relative to the session's own directory, which is what a person
             // means by a path while talking to an agent working there.
-            const base = held?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+            const base = chat_?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
             const paths = await complete(typed_, base, browsable());
             return {
               items: paths.map((path) => ({
@@ -666,8 +795,9 @@ export function createHost(options: HostOptions): Host {
             return { items: [] };
           const typed = (found[1] ?? '').toLowerCase();
           const start = offset - typed.length - 1;
-          const session = byChat.get(String(params.channel ?? ''))
-            ?? sessions.get(String(params.channel ?? ''));
+          const asked_ = String(params.channel ?? '');
+          const session = byChat.get(asked_)?.chat
+            ?? (sessions.get(asked_) ? leadOf(sessions.get(asked_) as Held) : undefined);
           // A live session's own list wins: two sessions in one directory can
           // be handed different things.
           const own = (session?.customizations() ?? [])
@@ -744,6 +874,54 @@ export function createHost(options: HostOptions): Host {
          * working on, and this daemon is meant to be reachable from another
          * machine. A client that asks gets `-32601` rather than silence.
          */
+        /**
+         * A shell on this machine.
+         *
+         * The client picks the URI, as it does for a session, so it can
+         * subscribe without a round trip in between. `cwd` is checked against
+         * the directories this host serves - a terminal is arbitrary code on
+         * the machine, and one that started anywhere would be a host that
+         * hands out a shell wherever it is asked.
+         */
+        createTerminal: async (params) => {
+          const uri = String(params.channel ?? '');
+          if (!uri.startsWith('ahp-terminal:'))
+            throw new RpcError(-32602, `${uri} is not a terminal URI`);
+          if (terminals.has(uri))
+            throw new RpcError(-32003, `${uri} already exists`);
+          const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
+          const roots = browsable();
+          if (!roots.some((root) => asked === root || asked.startsWith(`${root}/`))) {
+            throw new RpcError(-32009, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
+          }
+          const claim = (typeof params.claim === 'object' && params.claim !== null
+            ? params.claim
+            : { kind: 'client', clientId: connection.clientId }) as Record<string, unknown>;
+          const terminal = createTerminal({
+            uri,
+            cwd: asked,
+            claim,
+            ...(typeof params.name === 'string' ? { name: params.name } : {}),
+            ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
+            ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
+            emit: (_channel, action) => { dispatch(uri, action); },
+          });
+          terminals.set(uri, terminal);
+          log(`opened ${uri} in ${asked}`);
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          return {};
+        },
+        disposeTerminal: async (params) => {
+          const uri = String(params.channel ?? '');
+          const terminal = terminals.get(uri);
+          if (!terminal)
+            throw new RpcError(-32008, `No terminal at ${uri}`);
+          terminal.close();
+          terminals.delete(uri);
+          log(`closed ${uri}`);
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          return {};
+        },
         resourceList: async (params) => ({
           entries: await listResources(String(params.uri ?? ''), browsable()),
         }),
@@ -794,7 +972,7 @@ export function createHost(options: HostOptions): Host {
             : undefined;
           let session;
           try {
-            session = spawn(agent, uri, config, undefined, where);
+            session = spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where);
           }
           catch (error) {
             // The backend's own words. It is the thing that knows which
@@ -810,14 +988,69 @@ export function createHost(options: HostOptions): Host {
           catalogueMoved(uri, 'root/sessionAdded');
           return {};
         },
+        /**
+         * A second conversation in one session.
+         *
+         * Same backend, same directory, same config - which is what makes the
+         * chats peers rather than one being the other's child. `source` is not
+         * served: forking a chat from a turn needs the backend to resume at
+         * that turn, and this one resumes whole sessions.
+         */
+        createChat: async (params) => {
+          const uri = String(params.channel ?? '');
+          const chatUri = String(params.chat ?? '');
+          const held = sessions.get(uri);
+          if (!held)
+            throw new RpcError(-32001, `No agent for session ${uri}`);
+          if (!chatUri.startsWith('ahp-chat:'))
+            throw new RpcError(-32602, `${chatUri} is not a chat URI`);
+          if (byChat.has(chatUri))
+            throw new RpcError(-32003, `${chatUri} already exists`);
+          if (params.source !== undefined)
+            throw new RpcError(-32602, 'This host does not fork a chat from a turn');
+          const chat = spawn(held.agent, uri, chatUri, held.config, undefined, held.workingDirectory);
+          log(`opened ${chatUri} in ${uri}`);
+          dispatch(uri, { type: 'session/chatAdded', chat: { resource: chatUri, title: chat.title() } });
+          const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
+            ? params.initialMessage
+            : undefined) as Record<string, unknown> | undefined;
+          if (first_ !== undefined) {
+            chat.begin(crypto.randomUUID(), String(first_.text ?? ''));
+          }
+          return {};
+        },
+        disposeChat: async (params) => {
+          const chatUri = String(params.channel ?? '');
+          const found = byChat.get(chatUri);
+          if (!found)
+            throw new RpcError(-32001, `No chat at ${chatUri}`);
+          const held = sessions.get(found.uri);
+          if (held && held.chats.size === 1) {
+            // The last one is the session. Removing it would leave a session
+            // with nothing to talk to, which `disposeSession` says properly.
+            throw new RpcError(-32602, `${chatUri} is the only chat in ${found.uri}; dispose the session instead`);
+          }
+          found.chat.close();
+          byChat.delete(chatUri);
+          held?.chats.delete(chatUri);
+          if (held && held.defaultChat === chatUri) {
+            held.defaultChat = [...held.chats.keys()][0] as string;
+            dispatch(found.uri, { type: 'session/defaultChatChanged', chat: held.defaultChat });
+          }
+          log(`closed ${chatUri}`);
+          dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
+          return {};
+        },
         disposeSession: async (params) => {
           const uri = String(params.channel ?? '');
-          const session = sessions.get(uri);
-          if (!session)
+          const held = sessions.get(uri);
+          if (!held)
             throw new RpcError(-32001, `No agent for session ${uri}`);
-          session.close();
+          for (const [chatUri, chat] of held.chats) {
+            chat.close();
+            byChat.delete(chatUri);
+          }
           sessions.delete(uri);
-          byChat.delete(session.chatUri);
           // Every other client is told, because the session was theirs too.
           broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, resource: uri });
           log(`disposed ${uri}`);
@@ -900,7 +1133,45 @@ export function createHost(options: HostOptions): Host {
             catalogueMoved(uri, 'root/sessionSummaryChanged');
             return;
           }
-          const held = sessions.get(channel) ?? byChat.get(channel);
+          const terminal = terminals.get(channel);
+          if (terminal) {
+            switch (type) {
+              /*
+               * Input is side-effect only.
+               *
+               * The reducer changes nothing on it - what comes back is
+               * `terminal/data`, once the shell has actually said something.
+               * Echoing it here would print every keystroke twice on the
+               * client that typed it and once on the ones that did not.
+               */
+              case 'terminal/input':
+                terminal.write(String(action.data ?? ''));
+                break;
+              case 'terminal/resized':
+                terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
+                break;
+              case 'terminal/titleChanged':
+                terminal.setTitle(String(action.title ?? ''));
+                break;
+              case 'terminal/claimed':
+                terminal.setClaim((typeof action.claim === 'object' && action.claim !== null
+                  ? action.claim
+                  : {}) as Record<string, unknown>);
+                break;
+              default:
+                log(`dispatchAction ${type} is not served on a terminal`);
+            }
+            return;
+          }
+          /*
+           * Which chat a client action is about.
+           *
+           * A chat channel names one; a session channel names the default,
+           * because that is what a client talking to a session without having
+           * asked for a chat means.
+           */
+          const holding = sessions.get(channel);
+          const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
           /*
            * Config for a session with no agent yet: remembered, not refused.
            *
@@ -946,7 +1217,7 @@ export function createHost(options: HostOptions): Host {
               // a conversation whose second half cannot see the files its
               // first half was about.
               const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
-              const session = spawn(owner, uri, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
+              const session = spawn(owner, uri, `ahp-chat:/${id}`, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
               log(`resumed ${uri}`);
               dispatch(uri, { type: 'session/ready' });
               catalogueMoved(uri, 'root/sessionSummaryChanged');
@@ -981,8 +1252,18 @@ export function createHost(options: HostOptions): Host {
               const config = (typeof action.config === 'object' && action.config !== null
                 ? action.config
                 : {}) as Record<string, unknown>;
+              // Config belongs to the session, so it is remembered there: a
+              // chat opened after this one is answered starts on it too.
+              const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
+              if (owning) {
+                for (const [key, value] of Object.entries(config)) owning.config[key] = String(value);
+              }
               for (const [key, value] of Object.entries(config)) {
+                const everywhere: Session[] = owning ? [...owning.chats.values()] : [session];
                 if (key === 'permissionMode') {
+                  for (const chat of everywhere) {
+                    if (chat !== session) chat.setPermissionMode(String(value));
+                  }
                   // Confirmed, like every other key here. Applying it in
                   // silence leaves each client showing whatever it last chose
                   // for itself, and the two disagree the moment there are two.

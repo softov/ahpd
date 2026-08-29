@@ -104,6 +104,38 @@ hangs it on `activeTurn` and completing is what moves that into `turns`), and
 a session's real title (`session/titleChanged`, so a client that already had
 it open stops reading "New session" over a conversation that has one).
 
+**Terminals**, done 2026-08-29. A shell in a served directory, over pipes
+rather than a pseudoterminal: a PTY needs a native binding this daemon does
+not depend on, and the protocol has `isPty: false` for exactly this - "output
+is plain text and clients do not need to parse VT sequences". So a command
+runs and its output arrives, and anything that draws itself with cursor
+movement will not look right. Said in the state rather than left to be
+discovered by rendering it.
+
+A terminal is arbitrary code on this machine, so its directory is checked the
+way a session's is - one that started anywhere would be a host that hands out
+a shell wherever it is asked. It is listed on the root channel because it
+outlives the turn that opened it and belongs to no session, and its exit code
+is reported because saying nothing reads as still running.
+
+**Several chats per session**, done 2026-08-29. The protocol's session is a
+*container*; it was one conversation here because one backend session is one
+CLI and the two had been collapsed, so a second chat had nowhere to go. A
+session now holds a map of chats, each its own agent process on the same
+directory and the same config - which is what makes them peers rather than one
+being the other's child.
+
+The session's own state is assembled here rather than asked of one chat, which
+is what the protocol asks for: title and customizations from the default chat,
+`modifiedAt` from the latest of all, and status *promoted* - a session waiting
+on a person is waiting whichever of its chats is doing the waiting, and a
+catalogue that only read the default one would show it idle. Config is
+remembered on the session, so a chat opened later starts on it.
+
+Neither source mode is served: `fork` and `sideChat` both need a backend that
+can resume at a turn, and this one resumes whole sessions. The capability it
+advertises - an empty `multipleChats` - is the protocol's way of saying so.
+
 **The filesystem, and `@`**, done 2026-08-29. `resourceList`, `resourceRead`
 and `resourceResolve` are served, and every path is checked against the
 directories the host was told to serve *after* symlinks are resolved - a link
@@ -207,16 +239,25 @@ screen that is subtly stale rather than one that is wrong:
 
 - `session/metaChanged`, `session/serverToolsChanged`.
 
-## 3. The parts a daemon may never want
+## 3. What is left of the protocol
 
-Served by the editor's host and not by this one, listed so the gap is a
-decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
-`root/terminalsChanged`), several chats per session (`createChat`,
-`disposeChat`, `session/chatAdded`/`Removed`/`Updated`), annotations
-(`annotations/*`), OTLP (`otlp`), and `sessionConfigCompletions`.
+Named so the gap is a decision rather than an oversight:
 
-A terminal is a real feature for a host somebody drives from a phone. The
-others are an editor's furniture.
+- **The write half of `resource*`** - `resourceWrite`, `resourceDelete`,
+  `resourceMkdir`, `resourceMove`, `resourceCopy`. Deliberate: a host that
+  lets any connected client write anywhere is a different proposition from
+  one that lets it read the project it is working on.
+- **Annotations** (`annotations/*`) and **OTLP** (`otlp`) - an editor's
+  furniture and a telemetry pipe. Neither has a caller here.
+- **`sessionConfigCompletions`** - config values that need looking up. Every
+  key this host offers is an enum.
+- **`chat/toolCallResultConfirmed`**, **`chat/toolCallContentChanged`**,
+  **`session/activeClientSet`**, **`session/metaChanged`**,
+  **`session/serverToolsChanged`**, **`chat/workingDirectorySet`** - one
+  action each, none with a caller yet.
+- **Fork and side chats.** `createChat` serves neither, and the capability it
+  advertises says so: both need a backend that can resume at a *turn*, and
+  this one resumes whole sessions.
 
 ## 4. Deno
 

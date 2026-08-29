@@ -219,7 +219,9 @@ describe('what it will not pretend', () => {
     await client.handle(hello(['0.8.0']));
     // An empty success leaves the client waiting for state that is never
     // coming, which reads as a hang rather than as a missing feature.
-    await expect(client.handle({ method: 'createTerminal', params: { channel: 'ahp-root://' } }))
+    // `otlp` is telemetry export, which this daemon has no opinion about and
+    // is unlikely ever to serve - so it stays a fair example.
+    await expect(client.handle({ method: 'otlp', params: { channel: 'ahp-root://' } }))
       .rejects.toMatchObject({ code: -32601 });
   });
 
@@ -1996,5 +1998,215 @@ describe('a compacted context', () => {
     // every one of them is still in the transcript and still readable - what
     // was compacted is the model's context, not the conversation.
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(false);
+  });
+});
+
+describe('a shell on this machine', () => {
+  const opened = async () => {
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    return { host, client, peer: p };
+  };
+
+  /** Wait for the shell to actually say something. */
+  const spoken = async (p: ReturnType<typeof peer>, uri: string, want: string) => {
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      const said = actions(p, uri)
+        .filter((e) => e.action.type === 'terminal/data')
+        .map((e) => String(e.action.data))
+        .join('');
+      if (said.includes(want)) return said;
+    }
+    return actions(p, uri).filter((e) => e.action.type === 'terminal/data').map((e) => String(e.action.data)).join('');
+  };
+
+  it('runs what it is sent and says what came back', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/one';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: 'echo hello-from-a-terminal\n' } },
+    });
+    expect(await spoken(p, uri, 'hello-from-a-terminal')).toContain('hello-from-a-terminal');
+  });
+
+  it('says it is not a pseudoterminal, rather than leaving it to be discovered', async () => {
+    const { client } = await opened();
+    const uri = 'ahp-terminal:/two';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    const found = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { isPty: boolean; supportsCommandDetection: boolean } };
+    };
+    // Pipes, not a PTY: anything that draws itself with cursor movement will
+    // not look right, and a client that had to find that out by rendering it
+    // would find out too late.
+    expect(found.snapshot.state.isPty).toBe(false);
+    expect(found.snapshot.state.supportsCommandDetection).toBe(false);
+  });
+
+  it('lists them on the root channel, and stops when one is disposed', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/three';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    const listed = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1);
+    expect((listed?.action.terminals as { resource: string }[]).map((t) => t.resource)).toEqual([uri]);
+
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+    const after = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1);
+    expect(after?.action.terminals).toEqual([]);
+    // And the channel is gone with it.
+    await expect(client.handle({ method: 'subscribe', params: { channel: uri } }))
+      .rejects.toMatchObject({ code: -32001 });
+  });
+
+  it('will not open one outside the directories it serves', async () => {
+    const { client } = await opened();
+    // A terminal is arbitrary code on this machine. One that started anywhere
+    // would be a host that hands out a shell wherever it is asked.
+    await expect(client.handle({
+      method: 'createTerminal',
+      params: { channel: 'ahp-terminal:/four', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///etc' },
+    })).rejects.toMatchObject({ code: -32009 });
+  });
+
+  it('reports the exit code when the shell goes', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/five';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: 'exit 3\n' } },
+    });
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
+    }
+    // Reporting nothing would read as still running.
+    expect(actions(p, uri).find((e) => e.action.type === 'terminal/exited')?.action.exitCode).toBe(3);
+  });
+});
+
+describe('more than one chat in a session', () => {
+  const second = 'ahp-chat:/other';
+
+  it('advertises that it can, so a client knows it may ask', async () => {
+    const client = open();
+    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+      snapshots: { state: { agents: { capabilities?: { multipleChats?: unknown } }[] } }[];
+    };
+    // Without this a client MUST NOT call `createChat` at all.
+    expect(result.snapshots[0]?.state.agents[0]?.capabilities?.multipleChats).toEqual({});
+  });
+
+  it('opens one, and lists both on the session', async () => {
+    const { client, peer: p, uri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatAdded')?.action.chat)
+      .toMatchObject({ resource: second });
+
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[]; defaultChat: string } };
+    };
+    expect(opened.snapshot.state.chats.map((c) => c.resource)).toEqual(['ahp-chat:/live', second]);
+    // The first stays the one a client gets when it names none.
+    expect(opened.snapshot.state.defaultChat).toBe('ahp-chat:/live');
+  });
+
+  it('runs them on their own agents, so a turn in one is not a turn in the other', async () => {
+    const { client, uri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'over here' } } },
+    });
+    await settle();
+    // Two CLIs, one directory, one config - which is what makes them peers.
+    expect(sessionQueries()).toHaveLength(2);
+    expect(sdk.said).toEqual(['over here']);
+
+    const first_ = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
+      snapshot: { state: { turns: unknown[]; activeTurn?: unknown } };
+    };
+    expect(first_.snapshot.state.turns).toEqual([]);
+    expect(first_.snapshot.state.activeTurn).toBeUndefined();
+  });
+
+  it('carries the session\'s config into a chat opened later', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
+    });
+    await settle();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await settle();
+    // Config belongs to the session, not to whichever chat happened to be
+    // open when it was answered.
+    expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
+  });
+
+  it('says a session is waiting when any of its chats is', async () => {
+    const { client, uri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+    void sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_1' });
+    await settle();
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { status: number }[];
+    };
+    // A catalogue that only looked at the default chat would show this idle
+    // while another chat in it is blocked on a person.
+    expect(listed.items[0]?.status).toBe(24);
+  });
+
+  it('will not dispose the only one, and says what to do instead', async () => {
+    const { client } = await running();
+    await expect(client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/live' } }))
+      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('dispose the session') });
+  });
+
+  it('closes one, and moves the default when it was the default', async () => {
+    const { client, peer: p, uri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/live' } });
+
+    expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.chat).toBe(second);
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe('ahp-chat:/live');
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }))
+      .rejects.toMatchObject({ code: -32001 });
+  });
+
+  it('refuses to fork one from a turn, which it cannot do', async () => {
+    const { client, uri } = await running();
+    // Forking needs a backend that resumes at a *turn*; this one resumes
+    // whole sessions, and the capability it advertises says neither mode.
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: second, source: { kind: 'fork', chat: 'ahp-chat:/live', turnId: 't1' } },
+    })).rejects.toMatchObject({ code: -32602 });
   });
 });

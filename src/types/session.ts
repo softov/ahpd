@@ -5,9 +5,11 @@ import type { Bag } from './common.js';
 /**
  * Emits one state action on a session's channel.
  *
- * `session` addresses the session channel, `chat` the chat channel beneath it.
+ * `session` addresses the session channel, `chat` the chat channel beneath it,
+ * and `terminal` a terminal's own - the emitter knows which of its channels it
+ * is talking about and the host knows what each is called.
  */
-export type Emit = (channel: 'session' | 'chat', action: Bag) => void;
+export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
 
 /** How to construct a session. */
 export interface SessionOptions {

@@ -176,7 +176,9 @@ Only stdout says where the token came from, never what it is.
 | `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve |
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
-| the write half of `resource*`, terminals, several chats | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered |
+| several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
+| the write half of `resource*`, file changes | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
