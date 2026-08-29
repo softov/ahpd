@@ -100,6 +100,8 @@ export function echo(options: EchoOptions): Agent {
     let activity: string | undefined;
     /** Messages waiting for the running turn to end. The host's, not a client's. */
     const queued: Bag[] = [];
+    /** What somebody is part-way through typing. */
+    let draft = '';
     /** The backend's own id, which is not the URI the client chose. */
     const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
 
@@ -237,6 +239,7 @@ export function echo(options: EchoOptions): Agent {
         turns,
         ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
+        ...(draft !== '' ? { draft } : {}),
         queuedMessages: [...queued],
       }),
 
@@ -265,6 +268,13 @@ export function echo(options: EchoOptions): Agent {
         start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
         touch();
         startNext();
+      },
+
+      // Held by the session, so two people on one chat see each other's.
+      setDraft: (text) => {
+        if (text === draft) return;
+        draft = text;
+        start.emit('chat', { type: 'chat/draftChanged', draft: text });
       },
 
       unqueue: (id) => {
@@ -356,6 +366,8 @@ export function echo(options: EchoOptions): Agent {
         description: 'Say the rest of this line loudly',
       }],
     }),
+
+    directories: () => [dir],
 
     /** Sessions somebody can browse. Ordering is the host's business. */
     list: async (): Promise<Listed[]> => [...kept.values()].map((session) => ({

@@ -130,6 +130,8 @@ export function claude(options: ClaudeOptions): Agent {
     schema,
     defaults,
 
+    directories: () => [...dirs],
+
     probe: () => probe(dir),
 
     // Every directory it serves, as one list. A session is listed by the

@@ -101,6 +101,19 @@ export interface Agent {
    */
   probe?(): Promise<Offered>;
 
+  /**
+   * The directories this backend will work in.
+   *
+   * The host's answer to "may this client read that file": a resource outside
+   * every backend's directories is refused, because a host that served the
+   * whole filesystem is one that anybody who can reach the port can read
+   * `~/.ssh` through.
+   *
+   * Left out means this backend claims no directories, and contributes
+   * nothing to what may be browsed.
+   */
+  directories?(): string[];
+
   /** Sessions this backend already has. Ordering is the host's business. */
   list?(): Promise<Listed[]>;
 

@@ -173,7 +173,10 @@ Only stdout says where the token came from, never what it is.
 | file changes | ⬜ no changeset channel, so the changes screen is always empty |
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
-| `@` completion, `resource*`, terminals, several chats | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve |
+| `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
+| shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
+| the write half of `resource*`, terminals, several chats | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /

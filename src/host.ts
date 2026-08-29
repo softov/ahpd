@@ -21,6 +21,7 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
+import { complete, list as listResources, read as readResource, resolve as resolveResource, uriOf } from './resources.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
@@ -45,6 +46,19 @@ export function createHost(options: HostOptions): Host {
     }
     agents.set(agent.provider, agent);
   }
+  /**
+   * Every directory any backend serves, plus the host's own.
+   *
+   * What a client may browse and read. Asked each time rather than captured,
+   * because a backend may learn about a directory after this host started.
+   */
+  const browsable = (): string[] => {
+    const found = new Set<string>([options.path]);
+    for (const agent of options.agents) {
+      for (const dir_ of agent.directories?.() ?? []) found.add(dir_);
+    }
+    return [...found];
+  };
   const first = options.agents[0];
   if (!first)
     throw new Error('A host with no agents can serve nothing. Pass at least one.');
@@ -610,9 +624,44 @@ export function createHost(options: HostOptions): Host {
           const offset = typeof params.offset === 'number'
             ? Math.max(0, Math.min(params.offset, text.length))
             : text.length;
+          const before = text.slice(0, offset);
+          /*
+           * An at-sign at the start of a word, and a path since.
+           *
+           * Answered before the slash, because the two cannot both match and
+           * a file is the more specific question. What follows may contain
+           * slashes - `@src/ho` is a path being typed, not a command - so the
+           * pattern stops at whitespace rather than at a separator.
+           */
+          const asked = /(?:^|\s)@(\S*)$/.exec(before);
+          if (asked) {
+            const typed_ = asked[1] ?? '';
+            const from = offset - typed_.length - 1;
+            const held = byChat.get(String(params.channel ?? ''))
+              ?? sessions.get(String(params.channel ?? ''));
+            // Relative to the session's own directory, which is what a person
+            // means by a path while talking to an agent working there.
+            const base = held?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+            const paths = await complete(typed_, base, browsable());
+            return {
+              items: paths.map((path) => ({
+                insertText: `@${path}`,
+                rangeStart: from,
+                rangeEnd: offset,
+                attachment: {
+                  // A reference, not the bytes: the file is fetched with
+                  // `resourceRead` if anything needs it, and a completion that
+                  // carried a megabyte would carry it per keystroke.
+                  type: 'resource',
+                  uri: uriOf(`${base}/${path}`.replace(/\/{2,}/g, '/')),
+                  label: path,
+                },
+              })),
+            };
+          }
           // A slash at the start of a word, and nothing but word characters
           // since. A slash mid-sentence is a path, not a command.
-          const found = /(?:^|\s)\/([\w:-]*)$/.exec(text.slice(0, offset));
+          const found = /(?:^|\s)\/([\w:-]*)$/.exec(before);
           if (!found)
             return { items: [] };
           const typed = (found[1] ?? '').toLowerCase();
@@ -686,6 +735,28 @@ export function createHost(options: HostOptions): Host {
           };
         },
         listSessions: async () => ({ items: await listing() }),
+        /*
+         * The host's filesystem, as far as a client is allowed to see it.
+         *
+         * Read-only on purpose. The write half of `resource*` exists and is
+         * not served: a host that let any connected client write anywhere is
+         * a different thing from one that lets it read the project it is
+         * working on, and this daemon is meant to be reachable from another
+         * machine. A client that asks gets `-32601` rather than silence.
+         */
+        resourceList: async (params) => ({
+          entries: await listResources(String(params.uri ?? ''), browsable()),
+        }),
+        resourceRead: async (params) => await readResource(
+          String(params.uri ?? ''),
+          browsable(),
+          typeof params.encoding === 'string' ? params.encoding : undefined,
+        ),
+        resourceResolve: async (params) => await resolveResource(
+          String(params.uri ?? ''),
+          browsable(),
+          params.followSymlinks !== false,
+        ),
         /**
          * Start one.
          *
@@ -1019,6 +1090,9 @@ export function createHost(options: HostOptions): Host {
               void session.stopMcpServer(String(action.id ?? '')).then((took) => {
                 if (!took) log(`${String(action.id ?? '')} would not stop`);
               });
+              break;
+            case 'chat/draftChanged':
+              session.setDraft(String(action.draft ?? ''));
               break;
             case 'chat/pendingMessageRemoved':
               session.unqueue(String(action.id ?? ''));

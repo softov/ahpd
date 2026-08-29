@@ -1811,3 +1811,190 @@ describe('a client that dropped, coming back', () => {
     expect(result.snapshots.map((s) => s.resource)).toEqual(['ahp-session:/live']);
   });
 });
+
+describe('the host\'s filesystem, as far as a client may see it', () => {
+  const at = (base: string) => createHost({
+    path: base,
+    agents: [claude({ paths: [base] })],
+  }).accept(peer());
+
+  const opened = async (base = '/github/ahpd') => {
+    const client = at(base);
+    await client.handle(hello(['0.8.0']));
+    return client;
+  };
+
+  it('lists a directory, folders first', async () => {
+    const client = await opened();
+    const found = await client.handle({
+      method: 'resourceList',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src' },
+    }) as { entries: { name: string; type: string }[] };
+    expect(found.entries.map((e) => e.name)).toContain('host.ts');
+    // A listing in whatever order the filesystem happened to return is one
+    // nobody can scan.
+    const kinds = found.entries.map((e) => e.type);
+    expect(kinds.indexOf('file')).toBeGreaterThan(kinds.lastIndexOf('directory'));
+  });
+
+  it('reads a file as text, and says which encoding that was', async () => {
+    const client = await opened();
+    const found = await client.handle({
+      method: 'resourceRead',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/package.json' },
+    }) as { data: string; encoding: string };
+    expect(found.encoding).toBe('utf-8');
+    expect(found.data).toContain('"name": "ahpd"');
+  });
+
+  it('refuses a path it was not told to serve', async () => {
+    const client = await opened();
+    // A host that answered for any path is one that anybody who can reach the
+    // port can read `~/.ssh/id_ed25519` through.
+    await expect(client.handle({
+      method: 'resourceRead',
+      params: { channel: 'ahp-root://', uri: 'file:///etc/passwd' },
+    })).rejects.toMatchObject({ code: -32009 });
+  });
+
+  it('refuses one that climbs out of a served directory', async () => {
+    const client = await opened('/github/ahpd/src');
+    await expect(client.handle({
+      method: 'resourceList',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src/../../..' },
+    })).rejects.toMatchObject({ code: -32009 });
+  });
+
+  it('says a missing file is missing, not forbidden', async () => {
+    const client = await opened();
+    // The two are different answers and a client acts differently on each.
+    await expect(client.handle({
+      method: 'resourceRead',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/nothing-here.txt' },
+    })).rejects.toMatchObject({ code: -32008 });
+  });
+
+  it('resolves what a path is without opening it', async () => {
+    const client = await opened();
+    const found = await client.handle({
+      method: 'resourceResolve',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src' },
+    }) as { type: string; uri: string };
+    expect(found.type).toBe('directory');
+    expect(found.uri).toBe('file:///github/ahpd/src');
+  });
+
+  it('will not write, and says so rather than pretending', async () => {
+    const client = await opened();
+    // The write half exists in the protocol and is deliberately not served.
+    await expect(client.handle({
+      method: 'resourceWrite',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x' },
+    })).rejects.toMatchObject({ code: -32601 });
+  });
+});
+
+describe('completing an at-sign', () => {
+  it('offers paths under the session\'s own directory', async () => {
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @src/ho', offset: 15 },
+    }) as { items: { insertText: string; rangeStart: number; attachment: { type: string; uri: string } }[] };
+
+    expect(found.items.map((i) => i.insertText)).toContain('@src/host.ts');
+    // The whole `@…` is replaced, so completing does not leave two at-signs.
+    expect(found.items[0]?.rangeStart).toBe(8);
+    // A reference rather than the bytes: a completion that carried the file
+    // would carry it per keystroke.
+    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: 'file:///github/ahpd/src/host.ts' });
+  });
+
+  it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-root://', kind: 'userMessage', text: '@sr', offset: 3 },
+    }) as { items: { insertText: string }[] };
+    expect(found.items.map((i) => i.insertText)).toContain('@src/');
+  });
+
+  it('leaves a slash command alone, because the two cannot both match', async () => {
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-root://', kind: 'userMessage', text: 'mail me@example.com', offset: 19 },
+    }) as { items: unknown[] };
+    // An at-sign mid-word is an address, not a path.
+    expect(found.items).toEqual([]);
+  });
+});
+
+describe('two people on one chat', () => {
+  it('shows each other what is being typed', async () => {
+    const host = serving('/home/softov');
+    const one = peer();
+    const a = host.accept(one);
+    const two = peer();
+    const b = host.accept(two);
+    for (const client of [a, b]) {
+      await client.handle(hello(['0.8.0']));
+    }
+    await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    for (const client of [a, b]) {
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+    }
+
+    a.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/live', action: { type: 'chat/draftChanged', draft: 'half a th' } },
+    });
+    await settle();
+    // The only reason a draft is on the wire at all: a client that kept its
+    // own would need nothing from a host for it.
+    expect(actions(two, 'ahp-chat:/live').find((e) => e.action.type === 'chat/draftChanged')?.action.draft)
+      .toBe('half a th');
+
+    // And somebody arriving later gets it from the snapshot.
+    const three = host.accept(peer());
+    await three.handle(hello(['0.8.0']));
+    const opened = await three.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
+      snapshot: { state: { draft?: string } };
+    };
+    expect(opened.snapshot.state.draft).toBe('half a th');
+  });
+});
+
+describe('a compacted context', () => {
+  it('says so in the turn, and does not throw the conversation away', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'a long one' } } },
+    });
+    await settle();
+    await emit({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', pre_tokens: 120000, post_tokens: 30000 },
+    });
+
+    const part = actions(p, chatUri)
+      .filter((e) => e.action.type === 'chat/responsePart')
+      .map((e) => e.action.part as Record<string, unknown>)
+      .find((held) => held.kind === 'systemNotification');
+    expect(part?.content).toBe('Context compacted automatically: 120000 tokens to 30000.');
+
+    // Not `chat/truncated`. That means "drop the turns before this one", and
+    // every one of them is still in the transcript and still readable - what
+    // was compacted is the model's context, not the conversation.
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(false);
+  });
+});

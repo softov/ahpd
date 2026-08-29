@@ -196,6 +196,14 @@ export function createSession(options: SessionOptions): Session {
    * would not see them at all.
    */
   const queued: Bag[] = [];
+  /**
+   * What somebody is part-way through typing.
+   *
+   * Held here so two people on one session see each other's, which is the
+   * only reason a draft is on the wire at all - a client that kept its own
+   * would need nothing from a host for it.
+   */
+  let draft = '';
   let customizations: Bag[] = [...(options.seedCustomizations ?? [])];
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
@@ -713,6 +721,37 @@ export function createSession(options: SessionOptions): Session {
         // a turn; what this adds is the model the turn actually ran on.
         if (type === 'system' && str(message.subtype) === 'init') { handshake = message; continue; }
 
+        /*
+         * The harness compacted its context.
+         *
+         * Deliberately *not* `chat/truncated`: that means "drop the turns
+         * before this one", and every one of them is still in the transcript
+         * and still readable. What was compacted is the model's context, not
+         * the conversation, and a host that conflated the two would delete
+         * from every client's screen a history it can still serve.
+         *
+         * Said as a notice in the running turn instead, because somebody
+         * watching an answer change character halfway through deserves to
+         * know why.
+         */
+        if (type === 'system' && str(message.subtype) === 'compact_boundary') {
+          const turn = active;
+          if (turn) {
+            const about = bag(message.compact_metadata);
+            const was = typeof about.pre_tokens === 'number' ? about.pre_tokens : undefined;
+            const now = typeof about.post_tokens === 'number' ? about.post_tokens : undefined;
+            const how = str(about.trigger) === 'manual' ? 'Context compacted' : 'Context compacted automatically';
+            addPart(turn, {
+              id: `${String(turn.id)}:compact:${String(turns.length)}`,
+              kind: 'systemNotification',
+              content: was !== undefined && now !== undefined
+                ? `${how}: ${String(was)} tokens to ${String(now)}.`
+                : `${how}.`,
+            });
+          }
+          continue;
+        }
+
         if (type === 'stream_event') { streamed(bag(message.event)); continue; }
         if (type === 'assistant') { assistant(bag(message.message)); continue; }
         if (type === 'user') { results(bag(message.message)); continue; }
@@ -820,6 +859,7 @@ export function createSession(options: SessionOptions): Session {
       ...tail(turns),
       ...(active ? { activeTurn: active } : {}),
       ...(activity !== undefined ? { activity } : {}),
+      ...(draft !== '' ? { draft } : {}),
       queuedMessages: [...queued],
     }),
 
@@ -991,6 +1031,15 @@ export function createSession(options: SessionOptions): Session {
       emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
       touch();
       startNext();
+    },
+
+    setDraft: (text) => {
+      if (text === draft)
+        return;
+      draft = text;
+      // Not `touch()`: typing is not a change to the conversation, and a
+      // catalogue that reordered itself on every keystroke would be unusable.
+      emit('chat', { type: 'chat/draftChanged', draft: text });
     },
 
     unqueue: (id) => {

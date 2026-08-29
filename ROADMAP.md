@@ -104,6 +104,32 @@ hangs it on `activeTurn` and completing is what moves that into `turns`), and
 a session's real title (`session/titleChanged`, so a client that already had
 it open stops reading "New session" over a conversation that has one).
 
+**The filesystem, and `@`**, done 2026-08-29. `resourceList`, `resourceRead`
+and `resourceResolve` are served, and every path is checked against the
+directories the host was told to serve *after* symlinks are resolved - a link
+inside a served directory pointing at `/etc` passes a textual test and opens
+something else. `-32009` for a path outside them, `-32008` for one that is not
+there: two different answers a client acts differently on.
+
+The write half - `resourceWrite`, `resourceDelete`, `resourceMkdir`,
+`resourceMove`, `resourceCopy` - is deliberately not served, and answers
+`-32601`. A host that lets any connected client write anywhere is a different
+proposition from one that lets it read the project it is working on, and this
+daemon is meant to be reachable from another machine.
+
+`@` completes a path under the session's own working directory, offered as a
+`resource` attachment rather than the bytes: a completion that carried the
+file would carry it per keystroke. A directory keeps its trailing slash so the
+next keystroke goes into it, and an at-sign mid-word is an address rather than
+a path.
+
+Also: `chat/draftChanged`, which is the only reason a draft is on the wire at
+all - a client that kept its own would need nothing from a host for it - and a
+compacted context, said as a notice in the running turn. Deliberately *not*
+`chat/truncated`: that means "drop the turns before this one", and every one
+of them is still in the transcript and still readable. What the harness
+compacted is the model's context, not the conversation.
+
 **Skills, told apart**, done 2026-08-29. Skills arrived *inside* `commands`,
 so the list said `prompt` for something a client would rather label a skill,
 and an agent-only skill could not be distinguished at all. The CLI hands out
@@ -174,24 +200,14 @@ job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
 about the working directory. The second is honest about changes made outside
 the conversation; the first is honest about which turn made them.
 
-## 2. Completing an `@`
-
-`@` is advertised as a trigger and answers nothing. It means a file, and this
-host serves none of the `resource*` commands either - `resourceRead`,
-`resourceList`, `resourceResolve`, `resourceWrite` and the rest - which is
-also what a diff viewer fetches file content with. So the two belong together:
-browsing the host's filesystem, and completing a path into a message.
-
-## 3. The smaller silences
+## 2. The smaller silences
 
 Each of these is one action the host never emits, and each shows up as a
 screen that is subtly stale rather than one that is wrong:
 
-- `chat/truncated` - a conversation the harness compacted says nothing about it.
-- `chat/draftChanged` - two clients on one session do not see each other type.
 - `session/metaChanged`, `session/serverToolsChanged`.
 
-## 4. The parts a daemon may never want
+## 3. The parts a daemon may never want
 
 Served by the editor's host and not by this one, listed so the gap is a
 decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
@@ -202,7 +218,7 @@ decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
 A terminal is a real feature for a host somebody drives from a phone. The
 others are an editor's furniture.
 
-## 5. Deno
+## 4. Deno
 
 Written to the same interface as Node and Bun and never run: Deno is not
 installed here. Until somebody runs it, the third case in `listen.ts` is a

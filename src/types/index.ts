@@ -14,3 +14,4 @@ export type { Page } from './transcript.js';
 export type { Connected, OnConnect, Runtime, Listener } from './listen.js';
 export type { Offered } from './probe.js';
 export type { Agent, Listed, Start } from './agent.js';
+export type { Entry, Metadata, Read } from './resources.js';
