@@ -62,6 +62,24 @@ needs the optional `ws` dependency, having no WebSocket server of its own; Bun
 and Deno use their built-in servers and need nothing. Node and Bun are tested;
 Deno is written to the same interface but has not been run here.
 
+### While you are changing it
+
+```bash
+npm run dev          # bun --watch src/main.ts - no build, restarts on save
+npm run dev:echo     # the same, for examples/echo
+```
+
+Bun runs the TypeScript as it is and rewrites the `.js` specifiers this source
+writes, so nothing is compiled and nothing is installed. Node strips types too
+but resolves specifiers literally, so `node src/main.ts` looks for a
+`host.js` that only exists after a build - for a Node loop, run
+`npm run build:watch` beside `node --watch dist/src/main.js`.
+
+The runtime the daemon reports is the one it is running on, so `npm run dev`
+exercises the Bun path and a build exercises Node. Both are served by the same
+`listen.ts`, but they are not the same code path - if you have changed that
+file, run it under the other before believing it.
+
 Then point a client at it:
 
 ```bash

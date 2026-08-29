@@ -9,7 +9,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
     "start": "node dist/src/main.js",
+    "dev": "bun --watch src/main.ts",
+    "dev:echo": "bun --watch examples/echo/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
