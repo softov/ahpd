@@ -101,6 +101,10 @@ export function echo(options: EchoOptions): Agent {
 
     // A resumed session opens on what it said before, so a title from the
     // seed is better than one invented now.
+    // Where this session works. Named by the client or the backend's own,
+    // and reported rather than assumed - the host does not know which.
+    const where = start.workingDirectory ?? dir;
+
     const said = start.seed?.[0];
     if (said) title = String((said.message as Bag | undefined)?.text ?? title).slice(0, 60);
 
@@ -126,6 +130,7 @@ export function echo(options: EchoOptions): Agent {
       status,
       title: () => title,
       modifiedAt: () => modified,
+      workingDirectories: () => [`file://${where}`],
 
       sessionState: () => ({
         resource: start.uri,
@@ -135,7 +140,7 @@ export function echo(options: EchoOptions): Agent {
         lifecycle: 'ready',
         defaultChat: start.chatUri,
         chats: [{ resource: start.chatUri, title }],
-        workingDirectories: [`file://${dir}`],
+        workingDirectories: [`file://${where}`],
         customizations: start.seedCustomizations ?? [],
         // The schema *and* what is in force. A client reads
         // `config.schema.properties` to know which controls to draw and

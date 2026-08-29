@@ -68,6 +68,8 @@ export function createHost(options: HostOptions): Host {
    * it - is that backend's answer rather than the host's.
    */
   const owners = new Map<string, Agent>();
+  /** Where a browsed session ran, as its own catalogue reported it. */
+  const wheres = new Map<string, string[]>();
   /**
    * Config chosen for a session that has no agent running.
    *
@@ -157,7 +159,7 @@ export function createHost(options: HostOptions): Host {
             status: statusOf(uri),
             createdAt: session.modifiedAt(),
             modifiedAt: session.modifiedAt(),
-            workingDirectories: [`file://${dir}`],
+            workingDirectories: session.workingDirectories(),
           },
         }
         : {}),
@@ -212,11 +214,13 @@ export function createHost(options: HostOptions): Host {
     uri: string,
     config: Record<string, string>,
     resuming?: { resume: string; seed: Bag[] },
+    workingDirectory?: string,
   ): Session => {
     const chatUri = `ahp-chat:/${idFor(uri)}`;
     const session = agent.create({
       uri,
       chatUri,
+      ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(resuming ? { resume: resuming.resume, seed: resuming.seed } : {}),
       settings: { ...agent.defaults(), ...config },
       schema: agent.schema,
@@ -283,8 +287,9 @@ export function createHost(options: HostOptions): Host {
           continue;
         const resource = uriFor(row.id);
         // Remembered as it is listed: opening a row asks its backend for the
-        // transcript, and the URI does not say whose it is.
+        // transcript, and the URI says neither whose it is nor where it ran.
         owners.set(resource, agent);
+        wheres.set(resource, row.workingDirectories);
         found.push({
           resource,
           provider: agent.provider,
@@ -312,7 +317,7 @@ export function createHost(options: HostOptions): Host {
         status: statusOf(uri),
         createdAt: session.modifiedAt(),
         modifiedAt: session.modifiedAt(),
-        workingDirectories: [`file://${dir}`],
+        workingDirectories: session.workingDirectories(),
       });
     }
     return found;
@@ -405,7 +410,7 @@ export function createHost(options: HostOptions): Host {
           lifecycle: 'ready',
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
-          workingDirectories: [`file://${dir}`],
+          workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
           customizations: about(owner.provider).seeds,
@@ -623,8 +628,31 @@ export function createHost(options: HostOptions): Host {
           const config = (typeof params.config === 'object' && params.config !== null
             ? params.config
             : {}) as Record<string, string>;
-          const session = spawn(agent, uri, config);
-          log(`created ${uri}`);
+          /*
+           * Where the client asked the agent to work.
+           *
+           * A list on the wire and one directory to a session, so the first is
+           * the answer. `file://` comes off: everything below here deals in
+           * paths, and a backend handed a URI would open a directory called
+           * `file:`.
+           */
+          const asked = Array.isArray(params.workingDirectories)
+            ? params.workingDirectories.find((entry) => typeof entry === 'string')
+            : undefined;
+          const where = typeof asked === 'string'
+            ? asked.replace(/^file:\/\//, '')
+            : undefined;
+          let session;
+          try {
+            session = spawn(agent, uri, config, undefined, where);
+          }
+          catch (error) {
+            // The backend's own words. It is the thing that knows which
+            // directories it serves, and a refusal a client can read beats an
+            // internal error it cannot.
+            throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+          }
+          log(`created ${uri}${where ? ` in ${where}` : ''}`);
           // Ready, then announced. A client that hears about a session before
           // it can be subscribed to has been told about something that is not
           // there yet.
@@ -764,7 +792,11 @@ export function createHost(options: HostOptions): Host {
                 log(`no backend owns ${channel}`);
                 return;
               }
-              const session = spawn(owner, uri, chosen.get(uri) ?? {}, { resume: id, seed });
+              // Back where it ran. A session continued in another directory is
+              // a conversation whose second half cannot see the files its
+              // first half was about.
+              const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
+              const session = spawn(owner, uri, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
               log(`resumed ${uri}`);
               dispatch(uri, { type: 'session/ready' });
               catalogueMoved(uri, 'root/sessionSummaryChanged');

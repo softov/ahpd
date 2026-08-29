@@ -565,6 +565,7 @@ export function createSession(options: SessionOptions): Session {
     allTurns: () => turns,
     title: () => title,
     modifiedAt: () => modified,
+    workingDirectories: () => [`file://${cwd}`],
 
     sessionState: () => ({
       resource: uri,

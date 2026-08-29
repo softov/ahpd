@@ -32,6 +32,15 @@ export interface Start {
   chatUri: string;
   /** Config values in force, by key: this agent's defaults with the client's on top. */
   settings: Record<string, string>;
+  /**
+   * The directory the client asked the agent to work in, if it named one.
+   *
+   * A path, not a `file://` URI. Absent means the client named none and the
+   * backend picks. A backend that will not work there should throw saying so:
+   * a directory accepted and then ignored is a session running somewhere
+   * nobody asked for, and nothing on screen says which.
+   */
+  workingDirectory?: string;
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */

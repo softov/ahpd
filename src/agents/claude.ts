@@ -16,19 +16,46 @@ import type { Agent, Start } from '../types/agent.js';
 /** How to build the Claude backend. */
 export interface ClaudeOptions {
   /**
-   * The directory its sessions live in, and the one its agents work in.
+   * The directories it will work in, and the ones it lists.
    *
-   * Scopes the catalogue too: sessions outside it are neither listed nor
-   * openable.
+   * The first is where a session goes when the client names none. A client
+   * may name any of the others and nothing else: a host that ran the agent
+   * wherever it was told is one anybody who can reach the port can point at
+   * any directory on the machine.
+   *
+   * This is also the catalogue's scope, so a directory left out is one whose
+   * sessions are neither listed nor openable.
    */
-  path: string;
+  paths: string[];
   /** The id clients name. `claude` unless something else already is. */
   provider?: string;
 }
 
-/** Claude Code on one directory, ready to be handed to `createHost`. */
+/** Claude Code on one or more directories, ready to be handed to `createHost`. */
 export function claude(options: ClaudeOptions): Agent {
-  const dir = options.path;
+  const dirs = options.paths;
+  const dir = dirs[0];
+  if (dir === undefined)
+    throw new Error('claude() needs at least one directory to work in.');
+
+  /**
+   * Which directory a session goes in.
+   *
+   * Named, or the first. Anything else is refused rather than quietly
+   * replaced - a directory accepted and then ignored is a session running
+   * somewhere nobody asked for, with nothing on screen to say so.
+   */
+  const workingDirectory = (asked?: string): string => {
+    if (asked === undefined)
+      return dir;
+    const found = dirs.find((served) => served === asked);
+    if (found === undefined) {
+      throw new Error(
+        `This host does not serve ${asked}. It serves ${dirs.join(', ')}.`,
+      );
+    }
+    return found;
+  };
 
   /**
    * What a session can be told to do differently.
@@ -99,18 +126,32 @@ export function claude(options: ClaudeOptions): Agent {
   return {
     provider: options.provider ?? 'claude',
     displayName: 'Claude Code',
-    description: `The Claude Agent SDK, on ${dir}`,
+    description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
 
     probe: () => probe(dir),
-    list: () => catalogue(dir),
-    transcript: (id) => turnsOf(id, dir),
+
+    // Every directory it serves, as one list. A session is listed by the
+    // catalogue of the directory it ran in, and a host serving several has
+    // one catalogue.
+    list: async () => (await Promise.all(dirs.map((served) => catalogue(served)))).flat(),
+
+    // Whichever directory holds it. The transcript reader wants the one the
+    // session ran in, and only its own catalogue knows which that was.
+    transcript: async (id) => {
+      for (const served of dirs) {
+        const rows = await catalogue(served).catch(() => []);
+        if (rows.some((row) => row.id === id))
+          return turnsOf(id, served);
+      }
+      return undefined;
+    },
 
     create: (start: Start) => createSession({
       uri: start.uri,
       chatUri: start.chatUri,
-      cwd: dir,
+      cwd: workingDirectory(start.workingDirectory),
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,

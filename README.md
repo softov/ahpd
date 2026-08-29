@@ -26,7 +26,7 @@ import { createHost, listen, claude } from 'ahpd';
 
 const host = createHost({
   path: process.cwd(),
-  agents: [claude({ path: process.cwd() }), myAgent()],
+  agents: [claude({ paths: [process.cwd()] }), myAgent()],
 });
 
 await listen({ port: 9187 }, (peer) => host.accept(peer));
@@ -68,10 +68,23 @@ Then point a client at it:
 ahpc --host ws://127.0.0.1:9187
 ```
 
-`--path` is the directory the host's sessions live in, on **this** machine.
-A client names paths in the host's filesystem, never its own; a second
-directory is a second daemon rather than a flag, because the working directory
-is what the catalogue *is*.
+`--path` is a directory the host serves, on **this** machine, and it is
+repeatable:
+
+```bash
+ahpd --path /work/api --path /work/web
+```
+
+The first is where a session goes when the client names none, and is what the
+host advertises as its default. The catalogue is the union of all of them, so
+nothing goes missing by adding one.
+
+A client names paths in the host's filesystem, never its own - `ahpc --path`
+asks for a directory *there*. One the host was not told to serve is refused
+with the list of what it does serve, rather than quietly replaced: a host that
+ran the agent wherever it was told is one that anybody who can reach the port
+can point at any directory on the machine, and a directory accepted and then
+ignored is a session running somewhere nobody asked for.
 
 ## Who may connect
 

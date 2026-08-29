@@ -22,8 +22,14 @@ interface Options {
   port: number;
   /** Address to bind. Loopback unless asked otherwise. */
   host: string;
-  /** The directory whose sessions this host serves. */
-  path: string;
+  /**
+   * The directories whose sessions this host serves.
+   *
+   * The first is where a session goes when the client names none, and is what
+   * the host advertises as its default. A client may name any of the others
+   * and nothing else.
+   */
+  paths: string[];
   /** The secret every connection must present, given directly. */
   token?: string;
   /** A file holding that secret. Written with a fresh one if it does not exist. */
@@ -40,8 +46,10 @@ const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
   --port <n>                    Listen here. Default 9187; 0 picks a free one.
   --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
                                 accept from other machines, which needs a token.
-  --path <dir>                  The directory this host's sessions live in.
-                                Default: the directory the daemon started in.
+  --path <dir>                  A directory this host serves. Repeatable; the
+                                first is the default a client gets when it
+                                names none, and a directory not named here is
+                                refused. Default: where the daemon started.
   --connection-token <secret>   Require this secret on every connection.
   --connection-token-file <p>   Require the secret in this file. A fresh one is
                                 written if the file is not there.
@@ -60,7 +68,7 @@ function parse(argv: string[]): Options {
   const options: Options = {
     port: 9187,
     host: '127.0.0.1',
-    path: process.cwd(),
+    paths: [],
     open: false,
     help: false,
   };
@@ -68,7 +76,12 @@ function parse(argv: string[]): Options {
     switch (argv[i]) {
       case '--port': options.port = Number(argv[++i]); break;
       case '--host': options.host = String(argv[++i]); break;
-      case '--path': options.path = String(argv[++i]); break;
+      // Repeatable. One host over two projects is one catalogue and one
+      // process, which is the case a second `--path` is for; a directory this
+      // host was not told about is refused rather than served, because a host
+      // that ran the agent wherever it was told is one anybody who can reach
+      // the port can point at any directory on the machine.
+      case '--path': options.paths.push(String(argv[++i])); break;
       case '--connection-token': options.token = String(argv[++i]); break;
       case '--connection-token-file': options.tokenFile = String(argv[++i]); break;
       case '--without-connection-token': options.open = true; break;
@@ -80,6 +93,7 @@ function parse(argv: string[]): Options {
         }
     }
   }
+  if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;
 }
 
@@ -140,10 +154,10 @@ if (options.help) {
 const { token, from } = secret(options);
 
 const host = createHost({
-  path: options.path,
+  path: options.paths[0] as string,
   // The daemon serves Claude Code. The host serves whatever it is given -
   // see `examples/` for what a second one looks like.
-  agents: [claude({ path: options.path })],
+  agents: [claude({ paths: options.paths })],
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 
@@ -156,7 +170,7 @@ const listener = await listen(
 );
 
 process.stdout.write(
-  `ahpd on ws://${listener.host}:${listener.port} (${listener.runtime}), sessions in ${options.path}\n`
+  `ahpd on ws://${listener.host}:${listener.port} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`,

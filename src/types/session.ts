@@ -61,6 +61,15 @@ export interface Session {
   title(): string;
   /** ISO 8601 timestamp of the last change. */
   modifiedAt(): string;
+  /**
+   * Where the agent is actually working, as `file://` URIs.
+   *
+   * Asked rather than assumed: the host knows what directory it was started
+   * in and a session may have been created in another, so a host that
+   * answered with its own reported the wrong one for exactly the sessions
+   * somebody chose a directory for.
+   */
+  workingDirectories(): string[];
   /** The session channel's state, for a subscription snapshot. */
   sessionState(): Bag;
   /** The chat channel's state, for a subscription snapshot. */

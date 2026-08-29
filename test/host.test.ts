@@ -89,7 +89,8 @@ const { claude } = await import('../src/agents/claude.js');
  * host built out of this library takes - so what is checked here is what a
  * third-party backend gets, not a shortcut only the built-in has.
  */
-const serving = (path: string) => createHost({ path, agents: [claude({ path })] });
+const serving = (path: string, also: string[] = []) =>
+  createHost({ path, agents: [claude({ paths: [path, ...also] })] });
 
 function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: string; params: unknown }[] } {
   const sent: Record<string, unknown>[] = [];
@@ -1303,5 +1304,73 @@ describe('what goes after a slash', () => {
     const client = await withCommands(3);
     const all = await ask(client, '/');
     expect(all.items.map((i) => i.insertText)).toEqual(['/cmd000', '/cmd001', '/cmd002']);
+  });
+});
+
+describe('where the agent works', () => {
+  const opened = async (also: string[] = []) => {
+    const host = serving('/home/softov', also);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    return client;
+  };
+
+  it('runs a session in the directory the client named', async () => {
+    const client = await opened(['/brb_main/src']);
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/a',
+        provider: 'claude',
+        workingDirectories: ['file:///brb_main/src'],
+      },
+    });
+    await settle();
+    // `file://` comes off on the way in: a backend handed a URI would open a
+    // directory called `file:`.
+    expect(sessionQueries().at(-1)?.options.cwd).toBe('/brb_main/src');
+  });
+
+  it('reports where it actually is, not where the host was started', async () => {
+    const client = await opened(['/brb_main/src']);
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/a',
+        provider: 'claude',
+        workingDirectories: ['file:///brb_main/src'],
+      },
+    });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { workingDirectories: string[] }[];
+    };
+    expect(listed.items[0]?.workingDirectories).toEqual(['file:///brb_main/src']);
+  });
+
+  it('refuses one it was not told to serve, in the backend\'s own words', async () => {
+    const client = await opened();
+    // A host that ran the agent wherever it was told is one anybody who can
+    // reach the port can point at any directory on the machine. Said, not
+    // silently replaced: a directory accepted and then ignored is a session
+    // running somewhere nobody asked for.
+    await expect(client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/a',
+        provider: 'claude',
+        workingDirectories: ['file:///etc'],
+      },
+    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('/etc') });
+    expect(sessionQueries()).toHaveLength(0);
+  });
+
+  it('uses the first one when the client names none', async () => {
+    const client = await opened(['/brb_main/src']);
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/a', provider: 'claude' },
+    });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
   });
 });
