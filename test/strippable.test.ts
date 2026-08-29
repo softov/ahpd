@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 /*
  * What running the source unbuilt costs.
  *
- * `npm run dev:node` runs the TypeScript through Node, which *strips* types
+ * `npm run dev` runs the TypeScript through Node, which *strips* types
  * rather than transforming them - so it cannot run the parts of TypeScript
  * that emit code of their own: enums, namespaces, and constructor parameter
  * properties. One of each compiles perfectly and breaks the dev loop for
