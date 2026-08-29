@@ -2,6 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { gitBranches } from './git.js';
+import { fileResources } from './resources.js';
+import { shellTerminals } from './terminals.js';
 import { listen } from './listen.js';
 
 /**
@@ -163,9 +165,17 @@ const host = createHost({
   // The daemon serves Claude Code. The host serves whatever it is given -
   // see `examples/` for what a second one looks like.
   agents: [claude({ paths: options.paths })],
-  // The daemon runs on a machine with a checkout on it, so it can say which
-  // branch each directory is on. The host itself does not know how to find
-  // out, and a library caller that has no `git` simply passes nothing.
+  /*
+   * What this daemon can do that the protocol cannot.
+   *
+   * All three touch the machine - a file, a subprocess, a `git` binary - and
+   * all three are handed in rather than reached for, so `createHost` stays the
+   * protocol and nothing else. A host embedded somewhere with its own notion
+   * of a file passes its own; one with no shell passes no terminals and says
+   * `-32601` when asked for one.
+   */
+  resources: fileResources(),
+  terminals: shellTerminals(),
   directories: gitBranches(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });

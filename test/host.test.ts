@@ -86,6 +86,17 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { fileResources } = await import('../src/resources.js');
+const { shellTerminals } = await import('../src/terminals.js');
+const { gitBranches } = await import('../src/git.js');
+/*
+ * What the daemon hands its host, handed here too.
+ *
+ * These tests drive the same path a host built out of this library takes, and
+ * that path includes giving it a filesystem and a shell: `createHost` is the
+ * protocol and owns neither.
+ */
+const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 const { claude } = await import('../src/agents/claude.js');
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
@@ -99,7 +110,7 @@ const ETX = String.fromCharCode(3);
  * third-party backend gets, not a shortcut only the built-in has.
  */
 const serving = (path: string, also: string[] = []) =>
-  createHost({ path, agents: [claude({ paths: [path, ...also] })] });
+  createHost({ path, agents: [claude({ paths: [path, ...also] })], ...machine() });
 
 function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: string; params: unknown }[] } {
   const sent: Record<string, unknown>[] = [];
@@ -1821,6 +1832,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
   const at = (base: string) => createHost({
     path: base,
     agents: [claude({ paths: [base] })],
+    ...machine(),
   }).accept(peer());
 
   const opened = async (base = '/github/ahpd') => {
@@ -1901,7 +1913,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
 
 describe('completing an at-sign', () => {
   it('offers paths under the session\'s own directory', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
@@ -1919,7 +1931,7 @@ describe('completing an at-sign', () => {
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     const found = await client.handle({
@@ -1930,7 +1942,7 @@ describe('completing an at-sign', () => {
   });
 
   it('leaves a slash command alone, because the two cannot both match', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })] });
+    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     const found = await client.handle({
@@ -2006,7 +2018,7 @@ describe('a compacted context', () => {
 
 describe('a shell on this machine', () => {
   const opened = async () => {
-    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] });
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -2220,7 +2232,7 @@ describe('more than one chat in a session', () => {
 
 describe('interrupting a terminal', () => {
   it('turns ^C into a signal, because there is no line discipline to', async () => {
-    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] });
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.8.0']));

@@ -38,8 +38,10 @@ about the working directory. The second is honest about changes made outside
 the conversation; the first is honest about which turn made them. The git half of
 that question is already answered - `gitBranches()` reads the branch of every
 directory served - so the same place is where a diff would come from. It is
-also the shape to copy: it is passed to `createHost`, not reached for by it,
-because `git` is a binary and a host may be given none.
+also the shape to copy: `gitBranches()`, `fileResources()` and
+`shellTerminals()` are all passed to `createHost` rather than reached for by
+it, so the protocol imports no runtime and a host without one of them refuses
+the commands it cannot answer.
 
 ## A-01-03 - What is left of the protocol
 

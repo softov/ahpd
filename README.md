@@ -22,15 +22,27 @@ alone owns. Bridging the two is all this daemon does.
 imports no backend at all: it takes agents, and Claude is one of them.
 
 ```ts
-import { createHost, listen, claude } from 'ahpd';
+import { createHost, listen, claude, fileResources, shellTerminals, gitBranches } from 'ahpd';
 
 const host = createHost({
   path: process.cwd(),
   agents: [claude({ paths: [process.cwd()] }), myAgent()],
+  // The parts that touch the machine. Each is optional, and a host given none
+  // of them still serves the whole conversation.
+  resources: fileResources(),   // files a client may read, and `@` completion
+  terminals: shellTerminals(),  // a shell, as a terminal channel
+  directories: gitBranches(),   // which branch each served directory is on
 });
 
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
+
+`createHost` imports no filesystem, no subprocess and no `git`. Reading a file
+is `node:fs` on one runtime and something else on another; a terminal is a
+subprocess; a branch is a *binary* that may not be installed at all. So each
+arrives as a port rather than a built-in, and a host without one refuses the
+commands it cannot answer - `-32601`, the same answer it gives for anything
+else it does not serve - rather than failing part-way through one.
 
 An agent says what it is called, what a session of its kind can be configured
 with, which sessions it already has, and how to start one. Everything the
@@ -173,10 +185,10 @@ Only stdout says where the token came from, never what it is.
 | file changes | ⬜ no changeset channel, so the changes screen is always empty |
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
-| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve |
+| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
-| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered |
+| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
 | project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
 | the write half of `resource*`, file changes | ⬜ see [ROADMAP.md](ROADMAP.md) |

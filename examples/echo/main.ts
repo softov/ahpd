@@ -1,4 +1,4 @@
-import { createHost, listen } from '../../src/index.js';
+import { createHost, fileResources, listen, shellTerminals } from '../../src/index.js';
 import { echo } from './agent.js';
 
 /**
@@ -29,6 +29,12 @@ const host = createHost({
   // Register as many as you like. The first is what a client gets when it
   // names none; each needs a `provider` no other has.
   agents: [echo({ path })],
+  // The parts that touch the machine, handed in. `createHost` is the protocol
+  // and owns neither a filesystem nor a shell, so a host that wants to serve
+  // files and terminals says so - and one that does not simply leaves these
+  // out and answers `-32601` when asked.
+  resources: fileResources(),
+  terminals: shellTerminals(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 

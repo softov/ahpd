@@ -21,8 +21,6 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
-import { complete, list as listResources, read as readResource, resolve as resolveResource, uriOf } from './resources.js';
-import { createTerminal } from './terminals.js';
 import type { Terminal } from './types/terminals.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
@@ -30,6 +28,23 @@ import type { Agent } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
 import type { Peer } from './types/rpc.js';
+
+/** `file://` and a path. A string, so this file needs no filesystem to say it. */
+const uriOf = (path: string): string => `file://${path}`;
+
+/**
+ * A port this host was not given.
+ *
+ * Refused the way anything else it does not have is refused, and with the same
+ * words: a host without a filesystem does not serve `resourceRead`, and saying
+ * so is what lets a client draw the screen it can rather than wait for one it
+ * cannot.
+ */
+const need = <T>(port: T | undefined, method: string): T => {
+  if (port === undefined)
+    throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
+  return port;
+};
 
 const ROOT = 'ahp-root://';
 
@@ -886,7 +901,10 @@ export function createHost(options: HostOptions): Host {
             // Relative to the session's own directory, which is what a person
             // means by a path while talking to an agent working there.
             const base = chat_?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
-            const paths = await complete(typed_, base, browsable());
+            // Nothing rather than an error: this same command serves `/`,
+            // and a host with no filesystem still has commands to offer.
+            if (!options.resources) return { items: [] };
+            const paths = await options.resources.complete(typed_, base, browsable());
             return {
               items: paths.map((path) => ({
                 insertText: `@${path}`,
@@ -999,6 +1017,10 @@ export function createHost(options: HostOptions): Host {
          * hands out a shell wherever it is asked.
          */
         createTerminal: async (params) => {
+          // Before the URI is looked at. A host that opens no shells at all
+          // should say that, not complain about the argument to a request it
+          // was never going to answer.
+          const shells = need(options.terminals, 'createTerminal');
           const uri = String(params.channel ?? '');
           if (!uri.startsWith('ahp-terminal:'))
             throw new RpcError(-32602, `${uri} is not a terminal URI`);
@@ -1012,7 +1034,7 @@ export function createHost(options: HostOptions): Host {
           const claim = (typeof params.claim === 'object' && params.claim !== null
             ? params.claim
             : { kind: 'client', clientId: connection.clientId }) as Record<string, unknown>;
-          const terminal = createTerminal({
+          const terminal = shells.create({
             uri,
             cwd: asked,
             claim,
@@ -1038,14 +1060,14 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         resourceList: async (params) => ({
-          entries: await listResources(String(params.uri ?? ''), browsable()),
+          entries: await need(options.resources, 'resourceList').list(String(params.uri ?? ''), browsable()),
         }),
-        resourceRead: async (params) => await readResource(
+        resourceRead: async (params) => await need(options.resources, 'resourceRead').read(
           String(params.uri ?? ''),
           browsable(),
           typeof params.encoding === 'string' ? params.encoding : undefined,
         ),
-        resourceResolve: async (params) => await resolveResource(
+        resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),
           browsable(),
           params.followSymlinks !== false,

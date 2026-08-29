@@ -2,6 +2,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { RpcError } from './rpc.js';
 import type { Entry, Metadata, Read } from './types/resources.js';
+import type { ResourceStore } from './types/host.js';
 
 /**
  * The host's filesystem, as far as a client is allowed to see it.
@@ -144,3 +145,16 @@ export async function complete(typed: string, base: string, roots: string[], lim
     .map((entry) => `${inside}${entry.name}${entry.type === 'directory' ? '/' : ''}`)
     .slice(0, limit);
 }
+
+/**
+ * The filesystem this process is on, as a host's `ResourceStore`.
+ *
+ * Kept out of `createHost` so the protocol imports no runtime: this file is
+ * the one that touches `node:fs`, and a host that never opens a file never
+ * loads it.
+ *
+ * ```ts
+ * createHost({ path, agents, resources: fileResources() });
+ * ```
+ */
+export const fileResources = (): ResourceStore => ({ list, read, resolve, complete });

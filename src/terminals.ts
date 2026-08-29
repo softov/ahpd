@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { Terminal, TerminalOptions } from './types/terminals.js';
+import type { TerminalStore } from './types/host.js';
 
 /**
  * A shell on the host machine, as a terminal channel.
@@ -139,3 +140,15 @@ export function createTerminal(options: TerminalOptions): Terminal {
     },
   };
 }
+
+/**
+ * A shell on this machine, as a host's `TerminalStore`.
+ *
+ * Kept out of `createHost` for the reason above: spawning is the runtime's
+ * business, and a host that opens no terminal should not have to have one.
+ *
+ * ```ts
+ * createHost({ path, agents, terminals: shellTerminals() });
+ * ```
+ */
+export const shellTerminals = (): TerminalStore => ({ create: createTerminal });

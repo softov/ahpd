@@ -1,6 +1,8 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { Agent } from './agent.js';
+import type { Entry, Metadata, Read } from './resources.js';
+import type { Terminal, TerminalOptions } from './terminals.js';
 import type { Peer, Request } from './rpc.js';
 
 /**
@@ -34,6 +36,42 @@ export interface DirectoryFacts {
   refresh?(dir: string): Promise<boolean>;
 }
 
+/**
+ * The files a client may read through this host.
+ *
+ * A port, for the same reason `DirectoryFacts` is one: reading a directory is
+ * `node:fs` on one runtime and something else on another, and a host embedded
+ * in an editor may already have the file open. `roots` arrives per call rather
+ * than being captured, because a backend may learn of a directory after the
+ * host started and the answer has to move with it.
+ *
+ * A host given none serves no `resource*` command at all - `-32601`, the same
+ * answer it gives for anything else it does not have - and completes no `@`.
+ */
+export interface ResourceStore {
+  /** One directory's entries. */
+  list(uri: string, roots: string[], ): Promise<Entry[]>;
+  /** One file's bytes, or the range of them that was asked for. */
+  read(uri: string, roots: string[], wanted?: string): Promise<Read>;
+  /** What a URI is, without reading it. */
+  resolve(uri: string, roots: string[], followSymlinks?: boolean): Promise<Metadata>;
+  /** Paths under `base` that start with what is typed. */
+  complete(typed: string, base: string, roots: string[], limit?: number): Promise<string[]>;
+}
+
+/**
+ * The shells this host can open.
+ *
+ * A port, because a terminal is a subprocess: which one, and how it is
+ * spawned, is the runtime's business rather than the protocol's. A host given
+ * none serves neither `createTerminal` nor `disposeTerminal`, and says so with
+ * `-32601` rather than opening nothing and reporting success.
+ */
+export interface TerminalStore {
+  /** Open one, in a directory the host has already checked. */
+  create(options: TerminalOptions): Terminal;
+}
+
 /** How to construct a host. */
 export interface HostOptions {
   /**
@@ -55,6 +93,20 @@ export interface HostOptions {
    * ships with it; anything satisfying `Agent` is another.
    */
   agents: Agent[];
+  /**
+   * The files a client may read, and complete an `@` into.
+   *
+   * Left out, no `resource*` command is served. `fileResources()` is the one
+   * that ships with this package, and the daemon uses it.
+   */
+  resources?: ResourceStore;
+  /**
+   * How to open a shell.
+   *
+   * Left out, no terminal can be created. `shellTerminals()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  terminals?: TerminalStore;
   /**
    * What this host can say about the directories it serves.
    *
