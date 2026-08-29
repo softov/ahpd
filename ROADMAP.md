@@ -21,60 +21,47 @@ origin map, and the canonical reducers - rather than read off the prose.
 
 # Missing
 
-## A-01-01 - File changes never appear
+## A-01-01 - Per-turn changesets
 
-There is no changeset channel: no `session/changesetsChanged`, no
-`changeset/*`, no `invokeChangesetOperation`. `changes()` answers
-`{status:'complete', files:[]}` for every session, so the changes screen is
-permanently empty and the **Changes** row always reads "nothing yet".
+The `uncommitted` scope is served: `<sessionUri>/changeset/uncommitted` is
+subscribable, a catalogue entry advertises it, `session/changesetsChanged` says
+when it moves, and a roll-up rides on the catalogue row so a list needs no
+subscription. Both sides of every edit are fetchable - `after` is the file
+itself and `before` is `git show HEAD:<path>` behind a URI this host mints and
+resolves, because what a file *used to be* is not a file on disk and the
+filesystem port cannot serve it. `gitChanges()` is passed to `createHost`, so a
+host given none advertises no changesets rather than an empty screen.
 
-The gap is entirely on this side. `ahpc` has the client half already - a
-reducer, a `Changeset` parser, a screen that opens a row and fetches its
-content, and now `ahpc changes <uri>`, which prints "No changes." against a
-session that has changed a great deal. The first action this host emits draws
-something in all of them.
-
-**It is no longer a decision.** It looked like one - derive a diff from the
-`Edit`/`Write` calls as they happen, or ask git about the working directory -
-because the Claude SDK hands out neither. The reference host answers it: it
-does both, and neither is the unit. A changeset is a *scope*, and they nest
-under the session's own URI so disposing a session tears down every one of
-them by string-prefix scan:
+What is left is the two scopes git cannot answer:
 
 ```
-<sessionUri>/changeset/uncommitted                    git, working tree vs HEAD
-<sessionUri>/changeset/session                        everything this session did
-<sessionUri>/changeset/turn/<turnId>                  one turn's changes
-<sessionUri>/changeset/compare/<orig>/<mod>           between two turns
+<sessionUri>/changeset/session                everything this session did
+<sessionUri>/changeset/turn/<turnId>          one turn's changes
 ```
 
-Catalogue entries advertise the last two as *templates* - `turn/{turnId}` -
-which a client expands before subscribing.
+Both need the `Edit`/`Write` tool calls, because nothing in a working tree says
+which turn made it look that way. The catalogue advertises them as *templates* -
+`turn/{turnId}` - which a client expands before subscribing, so serving them is
+a second scope beside the first rather than a change to it.
+`node/claude/claudeFileEditObserver.ts` in the reference is the shape, and is
+small.
 
-So the order is: **`uncommitted` first**, because it is pure git and both
-consumers are already built and waiting. `session` and `turn/<id>` follow, and
-want the `Edit`/`Write` calls after all - that is what says which turn a change
-belongs to, and no amount of git will answer it.
-
-`gitBranches()` is the shape to copy, and the reason: it is *passed* to
-`createHost` rather than reached for by it, alongside `fileResources()` and
-`shellTerminals()`, so the protocol imports no runtime and a host given none of
-them refuses what it cannot answer rather than failing part-way through it. A
-changeset source is another such port - `git` is a binary, and a served
-directory may not be a repository at all.
+`changeset/*` actions and `invokeChangesetOperation` are still unserved: this
+host computes a changeset and does not act on one. Committing, reverting and
+marking a file reviewed are operations, and each is a write to somebody's
+repository from a daemon that may be reached from another machine.
 
 The reference is readable locally: `/github/externals/vscode` is a blobless
 sparse checkout of `src/vs/platform/agentHost` (35 MB, `git pull` to update).
-`common/changesetUri.ts` is the scoping above; `node/agentHostChangesetService.ts`
-and `node/agentHostChangesetFileMonitorCoordinator.ts` are how it is kept fresh;
-`node/claude/claudeFileEditObserver.ts` is the per-turn half, and is small. It
+`common/changesetUri.ts` is the scoping; `node/agentHostChangesetService.ts` and
+`node/agentHostChangesetFileMonitorCoordinator.ts` are how it is kept fresh. It
 is MIT-licensed: read it for the design, keep our own prose.
 
 ## A-01-03 - What is left of the protocol
 
 The complete count, so the gap is a decision rather than an oversight. The
 protocol defines **32 commands** and **96 state actions** (52 server-origin, 44
-client-dispatchable). This host serves 19 commands and 47 actions.
+client-dispatchable). This host serves 19 commands and 48 actions.
 
 **The thirteen commands not served** - and, at A-01-03h, two channels that
 define no commands at all:
@@ -106,15 +93,15 @@ define no commands at all:
   caller here, and neither is on the path a client takes to hold a
   conversation.
 
-**The 25 server-origin actions this host never emits**, by channel, with the
+**The 24 server-origin actions this host never emits**, by channel, with the
 reason each is a decision:
 
 | channel | n | why |
 | --- | ---: | --- |
-| `changeset/*` | 7 | A-01-01 |
+| `changeset/*` | 7 | Computing a changeset is served; acting on one is not - see A-01-01 |
 | `automation` + `automationRun` | 5 | A-01-06 |
 | `terminal/*` | 4 | `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` are shell integration, which needs a PTY this daemon does not have. `isPty: false` is the honest form of all four. |
-| `session/*` | 4 | `changesetsChanged` is wanted, and is A-01-01. `customizationRemoved` is not: the list goes out whole, and nothing removes one alone. `creationFailed` is not needed rather than missing - `createSession` finishes or throws inside the request, so a client never holds a session in `creating` and `lifecycle: 'ready'` is true by the time anything can read it. `serverToolsChanged` is the correct field, empty for a true reason: `serverTools` are tools the *host* contributes - `SdkMcpToolDefinition`, being `name`, `description`, `inputSchema` - and this host defines none. The CLI's own built-in tools are never enumerated by the SDK at all, so they could not go here even if wanted. The day this host adds a tool of its own, it is two lines. |
+| `session/*` | 3 | `customizationRemoved` is not: the list goes out whole, and nothing removes one alone. `creationFailed` is not needed rather than missing - `createSession` finishes or throws inside the request, so a client never holds a session in `creating` and `lifecycle: 'ready'` is true by the time anything can read it. `serverToolsChanged` is the correct field, empty for a true reason: `serverTools` are tools the *host* contributes - `SdkMcpToolDefinition`, being `name`, `description`, `inputSchema` - and this host defines none. The CLI's own built-in tools are never enumerated by the SDK at all, so they could not go here even if wanted. The day this host adds a tool of its own, it is two lines. |
 | `chat/*` | 3 | `toolCallDelta` is deliberate and already said in the code: a tool call's arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete. `toolCallAuthRequired` / `AuthResolved` are mid-call MCP authentication, a moment the SDK does not surface. |
 | `resourceWatch/changed` | 1 | A-01-07 |
 | `root/activeSessionsChanged` | 1 | presence, with `session/activeClient*` below |

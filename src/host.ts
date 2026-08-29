@@ -336,6 +336,7 @@ export function createHost(options: HostOptions): Host {
    */
   for (const dir_ of browsable()) {
     void options.directories?.refresh?.(dir_).catch(() => {});
+    void options.changes?.refresh?.(dir_).catch(() => {});
   }
 
   for (const agent of agents.values()) {
@@ -398,7 +399,22 @@ export function createHost(options: HostOptions): Host {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const meta = options.directories?.meta(dir);
-    return { project, ...(meta ? { _meta: meta } : {}) };
+    // The changesets this session can be asked about, as URIs a client
+    // subscribes to. A template with no variables in it is the whole scope;
+    // the ones with `{turnId}` are not served yet.
+    const scopes = options.changes?.scopes(dir) ?? [];
+    const changesets = scopes.map((scope) => ({
+      label: scope.label,
+      uriTemplate: `${uri}/changeset/${scope.id}`,
+      ...(scope.description ? { description: scope.description } : {}),
+    }));
+    const summary = options.changes?.summary(dir);
+    return {
+      project,
+      ...(meta ? { _meta: meta } : {}),
+      ...(changesets.length > 0 ? { changesets } : {}),
+      ...(summary?.files ? { changes: summary } : {}),
+    };
   };
 
   /**
@@ -410,14 +426,38 @@ export function createHost(options: HostOptions): Host {
    * what `metaOf` writes.
    */
   const refreshFacts = (dir: string): void => {
-    const looking = options.directories?.refresh?.(dir);
-    if (!looking) return;
-    void looking.then((moved) => {
+    /** Every session in that directory, since a fact is the directory's. */
+    const inThere = (): string[] => [...sessions.keys()].filter((uri) => dirOf(uri) === dir);
+
+    void options.directories?.refresh?.(dir).then((moved) => {
       if (!moved) return;
-      for (const [uri] of sessions) {
-        if (dirOf(uri) !== dir) continue;
+      for (const uri of inThere()) {
         const meta = options.directories?.meta(dir);
         dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
+        catalogueMoved(uri, 'root/sessionSummaryChanged');
+      }
+    }).catch(() => {});
+
+    /*
+     * And what it changed.
+     *
+     * The catalogue entry rather than the changeset itself: the protocol has
+     * `session/changesetsChanged` carry the *list* a session offers, and a
+     * client that is watching one re-reads it from its own channel. Sending
+     * the files here would be the same answer from two places.
+     */
+    void options.changes?.refresh?.(dir).then((moved) => {
+      if (!moved) return;
+      const scopes = options.changes?.scopes(dir) ?? [];
+      for (const uri of inThere()) {
+        dispatch(uri, {
+          type: 'session/changesetsChanged',
+          changesets: scopes.map((scope) => ({
+            label: scope.label,
+            uriTemplate: `${uri}/changeset/${scope.id}`,
+            ...(scope.description ? { description: scope.description } : {}),
+          })),
+        });
         catalogueMoved(uri, 'root/sessionSummaryChanged');
       }
     }).catch(() => {});
@@ -640,6 +680,22 @@ export function createHost(options: HostOptions): Host {
     const terminal = terminals.get(channel);
     if (terminal)
       return { resource: channel, state: terminal.state(), fromSeq: serverSeq };
+    /*
+     * A changeset, which lives under the session it belongs to.
+     *
+     * `<sessionUri>/changeset/<scope>`. Nested on purpose: disposing a session
+     * tears down every changeset it had by string-prefix scan, and the reverse
+     * lookup - which session is this - is the same scan.
+     */
+    const cut = channel.indexOf('/changeset/');
+    if (cut > 0) {
+      const owner = channel.slice(0, cut);
+      const scope = channel.slice(cut + '/changeset/'.length);
+      const dir = dirOf(owner);
+      const state = dir === undefined ? undefined : await options.changes?.state(dir, scope);
+      if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
+      return { resource: channel, state, fromSeq: serverSeq };
+    }
     const held = sessions.get(channel);
     const lead = held && leadOf(held);
     if (held && lead) {
@@ -1062,11 +1118,19 @@ export function createHost(options: HostOptions): Host {
         resourceList: async (params) => ({
           entries: await need(options.resources, 'resourceList').list(String(params.uri ?? ''), browsable()),
         }),
-        resourceRead: async (params) => await need(options.resources, 'resourceRead').read(
-          String(params.uri ?? ''),
-          browsable(),
-          typeof params.encoding === 'string' ? params.encoding : undefined,
-        ),
+        resourceRead: async (params) => {
+          const uri = String(params.uri ?? '');
+          // The `before` side of an edit is not a file on disk - it is what a
+          // file used to be - so the changeset source is asked first, and
+          // answers only for the URIs it minted.
+          const own = await options.changes?.read?.(uri);
+          if (own) return own;
+          return await need(options.resources, 'resourceRead').read(
+            uri,
+            browsable(),
+            typeof params.encoding === 'string' ? params.encoding : undefined,
+          );
+        },
         resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),
           browsable(),

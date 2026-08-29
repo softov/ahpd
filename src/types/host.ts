@@ -3,6 +3,7 @@
 import type { Agent } from './agent.js';
 import type { Entry, Metadata, Read } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
+import type { ChangesetSource } from './changes.js';
 import type { Peer, Request } from './rpc.js';
 
 /**
@@ -107,6 +108,14 @@ export interface HostOptions {
    * ships with this package, and the daemon uses it.
    */
   terminals?: TerminalStore;
+  /**
+   * Where the file changes a session made come from.
+   *
+   * Left out, no session advertises a changeset and the changes screen is
+   * honestly empty rather than emptily wrong. `gitChanges()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  changes?: ChangesetSource;
   /**
    * What this host can say about the directories it serves.
    *

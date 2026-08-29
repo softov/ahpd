@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { gitBranches } from './git.js';
+import { gitChanges } from './changes.js';
 import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
 import { listen } from './listen.js';
@@ -177,6 +178,7 @@ const host = createHost({
   resources: fileResources(),
   terminals: shellTerminals(),
   directories: gitBranches(),
+  changes: gitChanges(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 

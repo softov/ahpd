@@ -28,6 +28,7 @@ export {
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
 } from './rpc.js';
 export { gitBranches } from './git.js';
+export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { shellTerminals } from './terminals.js';
 export { claude } from './agents/claude.js';
