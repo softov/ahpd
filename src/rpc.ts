@@ -1,12 +1,3 @@
-
-
-export class RpcError extends Error {
-  constructor(readonly code: number, message: string, readonly data?: unknown) {
-    super(message);
-    this.name = 'RpcError';
-  }
-}
-
 /**
  * JSON-RPC 2.0 framing.
  *
@@ -23,6 +14,28 @@ export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
 export const METHOD_NOT_FOUND = -32601;
 export const INTERNAL_ERROR = -32603;
+
+/**
+ * An error carrying a JSON-RPC code, and whatever the client needs to act.
+ *
+ * The fields are declared and assigned rather than written as constructor
+ * parameter properties, which are the one piece of TypeScript in this
+ * codebase that *emits* code: a runtime that only strips types cannot run
+ * them, and running this source unbuilt is worth more than the two lines.
+ */
+export class RpcError extends Error {
+  /** The JSON-RPC error code. */
+  readonly code: number;
+  /** Structured detail for the client, where there is any. */
+  readonly data?: unknown;
+
+  constructor(code: number, message: string, data?: unknown) {
+    super(message);
+    this.name = 'RpcError';
+    this.code = code;
+    this.data = data;
+  }
+}
 
 /** Answer over one wire. */
 export function createPeer(wire: Wire): Peer {

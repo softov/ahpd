@@ -12,7 +12,9 @@
     "build:watch": "tsc -p tsconfig.json --watch",
     "start": "node dist/src/main.js",
     "dev": "bun --watch src/main.ts",
+    "dev:node": "node --watch --import ./scripts/dev.mjs src/main.ts",
     "dev:echo": "bun --watch examples/echo/main.ts",
+    "dev:echo:node": "node --watch --import ./scripts/dev.mjs examples/echo/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

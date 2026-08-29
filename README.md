@@ -65,20 +65,28 @@ Deno is written to the same interface but has not been run here.
 ### While you are changing it
 
 ```bash
-npm run dev          # bun --watch src/main.ts - no build, restarts on save
-npm run dev:echo     # the same, for examples/echo
+npm run dev            # bun
+npm run dev:node       # node
+npm run dev:echo       # the same two, for examples/echo
+npm run dev:echo:node
 ```
 
-Bun runs the TypeScript as it is and rewrites the `.js` specifiers this source
-writes, so nothing is compiled and nothing is installed. Node strips types too
-but resolves specifiers literally, so `node src/main.ts` looks for a
-`host.js` that only exists after a build - for a Node loop, run
-`npm run build:watch` beside `node --watch dist/src/main.js`.
+Both run the TypeScript source, restart on save, compile nothing and install
+nothing. Both also report which runtime they are on in their first line of
+output, which is the point of having the pair: `listen.ts` is one file and
+three code paths, so a change to it wants running under more than one before
+it is believed.
 
-The runtime the daemon reports is the one it is running on, so `npm run dev`
-exercises the Bun path and a build exercises Node. Both are served by the same
-`listen.ts`, but they are not the same code path - if you have changed that
-file, run it under the other before believing it.
+The difference is in what each needs to find a file. This source spells its
+own imports `./host.js`, because that is what will be there after a build. Bun
+rewrites those to the `.ts` on disk by itself; Node resolves them literally
+and looks for a `host.js` that does not exist yet, so `dev:node` registers
+[`scripts/dev-hooks.mjs`](scripts/dev-hooks.mjs) to do the same rewrite - about
+twenty lines, no dependency.
+
+Node also strips types rather than transforming them, so it cannot run the
+TypeScript that *emits* code: enums, namespaces, and constructor parameter
+properties. There are none here, and there is a test that says so.
 
 Then point a client at it:
 
