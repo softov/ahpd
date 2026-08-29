@@ -1374,3 +1374,168 @@ describe('where the agent works', () => {
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
   });
 });
+
+describe('a message typed while a turn is running', () => {
+  /** A live session with a turn under way. */
+  const busy = async () => {
+    const started = await running();
+    started.client.handle({
+      method: 'dispatchAction',
+      params: { channel: started.chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    return started;
+  };
+
+  const queue = (client: Awaited<ReturnType<typeof busy>>['client'], channel: string, id: string, text: string) => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    });
+  };
+
+  it('waits, rather than being dropped on the floor', async () => {
+    const { client, chatUri } = await busy();
+    queue(client, chatUri, 'q1', 'second');
+    await settle();
+    // The composer invites you to queue one. It used to go nowhere: no queue,
+    // nothing sent when the turn ended, and no error either.
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { queuedMessages: { id: string; message: { text: string } }[] } };
+    };
+    expect(opened.snapshot.state.queuedMessages).toEqual([{ id: 'q1', message: { text: 'second' } }]);
+    // And the agent has not been told about it yet.
+    expect(sdk.said).toEqual(['first']);
+  });
+
+  it('becomes the next turn when the running one ends', async () => {
+    const { client, peer: p, chatUri } = await busy();
+    queue(client, chatUri, 'q1', 'second');
+    await settle();
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+
+    expect(sdk.said).toEqual(['first', 'second']);
+    // Named on the turn that consumed it, which is how a client's reducer
+    // takes it out of the queue - rather than a second action saying so.
+    const started = actions(p, chatUri)
+      .filter((e) => e.action.type === 'chat/turnStarted')
+      .at(-1);
+    expect(started?.action.queuedMessageId).toBe('q1');
+  });
+
+  it('can be taken back while it is still waiting', async () => {
+    const { client, chatUri } = await busy();
+    queue(client, chatUri, 'q1', 'second');
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'q1' } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    expect(sdk.said).toEqual(['first']);
+  });
+
+  it('keeps the order it was given, and what was not named behind it', async () => {
+    const { client, chatUri } = await busy();
+    queue(client, chatUri, 'a', 'A');
+    queue(client, chatUri, 'b', 'B');
+    queue(client, chatUri, 'c', 'C');
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/queuedMessagesReordered', order: ['c', 'a'] } },
+    });
+    await settle();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { queuedMessages: { id: string }[] } };
+    };
+    expect(opened.snapshot.state.queuedMessages.map((m) => m.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('refuses a steering message rather than queueing it behind the turn it was for', async () => {
+    const { client, chatUri } = await busy();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    // Steering is injected *into* the running turn. Delivering it to the next
+    // one would be delivering it to a different conversation.
+    expect(sdk.said).toEqual(['first']);
+  });
+
+  it('starts one straight away when nothing is running', async () => {
+    const { client, chatUri } = await running();
+    queue(client, chatUri, 'q1', 'only');
+    await settle();
+    expect(sdk.said).toEqual(['only']);
+  });
+});
+
+describe('what it says it is doing', () => {
+  it('names the tool, and stops naming it when the turn ends', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls -la' } }] },
+    });
+
+    // On the session channel, because that is where a catalogue row and a
+    // detail pane read it - the protocol has a session mirror its chat's.
+    const said = actions(p, uri)
+      .filter((e) => e.action.type === 'session/activityChanged')
+      .map((e) => e.action.activity);
+    expect(said).toContain('Bash ls -la');
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { activity?: string }[];
+    };
+    expect(listed.items[0]?.activity).toBe('Bash ls -la');
+
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    // Cleared, not left saying the last thing it did.
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged').at(-1)?.action.activity)
+      .toBeUndefined();
+  });
+
+  it('says the title once it has one', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'a question about paging' } } },
+    });
+    await settle();
+    // The catalogue learned it; a client with the session already open holds
+    // whatever it was called when it opened it, which was "New session".
+    const retitled = actions(p, uri).find((e) => e.action.type === 'session/titleChanged');
+    expect(retitled?.action.title).toBe('a question about paging');
+  });
+
+  it('reports what the turn cost, while there is still a turn to hang it on', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+    await emit({
+      type: 'result',
+      subtype: 'success',
+      duration_ms: 5,
+      usage: { input_tokens: 120, output_tokens: 34, cache_read_input_tokens: 900 },
+    });
+    const said = actions(p, chatUri).map((e) => e.action.type);
+    // Before the turn completes: the reducer hangs usage on `activeTurn`, and
+    // completing is what moves that into `turns`.
+    expect(said.indexOf('chat/usage')).toBeLessThan(said.indexOf('chat/turnComplete'));
+    const usage = actions(p, chatUri).find((e) => e.action.type === 'chat/usage')?.action.usage;
+    expect(usage).toEqual({ inputTokens: 120, outputTokens: 34, cacheReadTokens: 900 });
+  });
+});

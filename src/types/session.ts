@@ -57,6 +57,8 @@ export interface Session {
 
   /** `SessionStatus` bitset, derived from what the session is doing now. */
   status(): number;
+  /** What it is doing now, in one line, or nothing when it is idle. */
+  activity(): string | undefined;
   /** Display title. */
   title(): string;
   /** ISO 8601 timestamp of the last change. */
@@ -79,6 +81,19 @@ export interface Session {
   begin(turnId: string, text: string, model?: string): void;
   /** Stop the running turn, and answer anything it was blocked on. */
   cancel(turnId: string): void;
+
+  /**
+   * Hold a message, and make it the next turn when the running one ends.
+   *
+   * The queue is the session's, not a client's: a client that held a message
+   * would be the only thing that could ever send it, and nothing in a client
+   * watches for a turn to end. The same `id` twice edits what is waiting.
+   */
+  queue(id: string, text: string, model?: string): void;
+  /** Take one back, while it is still waiting. */
+  unqueue(id: string): void;
+  /** Reorder what is waiting. Anything not named keeps its place behind what is. */
+  reorder(order: string[]): void;
 
   /** Answer a tool call the agent is waiting on. */
   confirm(toolCallId: string, approved: boolean): void;

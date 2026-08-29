@@ -96,6 +96,10 @@ export function echo(options: EchoOptions): Agent {
     let title = 'Echo session';
     let modified = new Date().toISOString();
     let closed = false;
+    /** What it is doing, or nothing while it is idle. */
+    let activity: string | undefined;
+    /** Messages waiting for the running turn to end. The host's, not a client's. */
+    const queued: Bag[] = [];
     /** The backend's own id, which is not the URI the client chose. */
     const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
 
@@ -109,11 +113,86 @@ export function echo(options: EchoOptions): Agent {
     if (said) title = String((said.message as Bag | undefined)?.text ?? title).slice(0, 60);
 
     const touch = (): void => { modified = new Date().toISOString(); };
+
+    /**
+     * Say what it is doing, on both channels.
+     *
+     * The chat is where the work happens; the protocol has a session mirror
+     * its default chat's activity, and the session is the one a catalogue row
+     * and a detail pane read.
+     */
+    const doing = (said: string | undefined): void => {
+      if (activity === said) return;
+      activity = said;
+      start.emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
+      start.emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
+    };
     /** `SessionStatus`: 8 is in progress, 1 is idle. */
     const status = (): number => (active ? 8 : 1);
 
     const remember = (): void => {
       kept.set(id, { id, title, createdAt: modified, modifiedAt: modified, turns: [...turns] });
+    };
+
+    /**
+     * Start a turn, whoever asked for it.
+     *
+     * `queuedMessageId` names the waiting message it came from; a client's
+     * reducer takes it out of the queue on that word, which is what empties
+     * the queue as its turns start.
+     */
+    const beginTurn = (turnId: string, text: string, queuedMessageId?: string): void => {
+      if (title === 'Echo session' && text) {
+        title = text.slice(0, 60);
+        // Said, because a client that opened the session holds the old one.
+        start.emit('session', { type: 'session/titleChanged', title });
+      }
+      const startedAt = new Date().toISOString();
+      active = { id: turnId, startedAt, message: { text }, responseParts: [] };
+      start.emit('chat', {
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt,
+        message: { text },
+        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+      });
+      doing('Echoing');
+
+      const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: '' };
+      (active.responseParts as Bag[]).push(part);
+      start.emit('chat', { type: 'chat/responsePart', turnId, part });
+
+      const words = speak(settings.voice ?? 'plain', text).split(/\s+/).filter((word) => word !== '');
+      const began = Date.now();
+      void (async () => {
+        for (const word of words) {
+          if (closed) return;
+          if (pace > 0) await new Promise((wake) => { setTimeout(wake, pace); });
+          const chunk = part.content === '' ? word : ` ${word}`;
+          part.content = `${String(part.content)}${chunk}`;
+          start.emit('chat', { type: 'chat/delta', turnId, partId: part.id, content: chunk });
+        }
+        if (closed || !active) return;
+        const done = active;
+        done.duration = Date.now() - began;
+        turns.push(done);
+        active = undefined;
+        doing(undefined);
+        touch();
+        remember();
+        start.emit('chat', { type: 'chat/turnComplete', turnId, duration: done.duration });
+        startNext();
+      })();
+      touch();
+    };
+
+    /** The head of the queue, once there is nothing running. */
+    const startNext = (): void => {
+      if (active || closed) return;
+      const next = queued.shift();
+      if (!next) return;
+      const message = (next.message ?? {}) as Bag;
+      beginTurn(crypto.randomUUID(), String(message.text ?? ''), String(next.id));
     };
 
     return {
@@ -127,6 +206,7 @@ export function echo(options: EchoOptions): Agent {
       customizations: () => start.seedCustomizations ?? [],
 
       allTurns: () => turns,
+      activity: () => activity,
       status,
       title: () => title,
       modifiedAt: () => modified,
@@ -142,6 +222,7 @@ export function echo(options: EchoOptions): Agent {
         chats: [{ resource: start.chatUri, title }],
         workingDirectories: [`file://${where}`],
         customizations: start.seedCustomizations ?? [],
+        ...(activity !== undefined ? { activity } : {}),
         // The schema *and* what is in force. A client reads
         // `config.schema.properties` to know which controls to draw and
         // `config.values` to know where each one sits.
@@ -155,7 +236,8 @@ export function echo(options: EchoOptions): Agent {
         modifiedAt: modified,
         turns,
         ...(active ? { activeTurn: active } : {}),
-        queuedMessages: [],
+        ...(activity !== undefined ? { activity } : {}),
+        queuedMessages: [...queued],
       }),
 
       /**
@@ -166,35 +248,48 @@ export function echo(options: EchoOptions): Agent {
        * `chat/delta` naming a part nobody opened appends to nothing, and a
        * part naming a turn no client has is dropped.
        */
-      begin: (turnId, text) => {
-        if (title === 'Echo session' && text) title = text.slice(0, 60);
-        const startedAt = new Date().toISOString();
-        active = { id: turnId, startedAt, message: { text }, responseParts: [] };
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
+      begin: (turnId, text) => beginTurn(turnId, text),
 
-        const part: Bag = { id: `${turnId}:0`, kind: 'markdown', content: '' };
-        (active.responseParts as Bag[]).push(part);
-        start.emit('chat', { type: 'chat/responsePart', turnId, part });
+      /**
+       * Wait, then be the next turn.
+       *
+       * Idle now means this is not a queue at all: it is announced and then
+       * started at once, which a client sees as an entry that appears and
+       * leaves rather than one that was never there.
+       */
+      queue: (id, text) => {
+        const entry: Bag = { id, message: { text } };
+        const at = queued.findIndex((held) => held.id === id);
+        if (at >= 0) queued[at] = entry;
+        else queued.push(entry);
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
+        touch();
+        startNext();
+      },
 
-        const words = speak(settings.voice ?? 'plain', text).split(/\s+/).filter((word) => word !== '');
-        const began = Date.now();
-        void (async () => {
-          for (const word of words) {
-            if (closed) return;
-            if (pace > 0) await new Promise((wake) => { setTimeout(wake, pace); });
-            const chunk = part.content === '' ? word : ` ${word}`;
-            part.content = `${String(part.content)}${chunk}`;
-            start.emit('chat', { type: 'chat/delta', turnId, partId: part.id, content: chunk });
-          }
-          if (closed || !active) return;
-          const done = active;
-          done.duration = Date.now() - began;
-          turns.push(done);
-          active = undefined;
-          touch();
-          remember();
-          start.emit('chat', { type: 'chat/turnComplete', turnId, duration: done.duration });
-        })();
+      unqueue: (id) => {
+        const at = queued.findIndex((held) => held.id === id);
+        if (at < 0) return;
+        queued.splice(at, 1);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+        touch();
+      },
+
+      reorder: (order) => {
+        const byId = new Map(queued.map((held) => [String(held.id), held]));
+        const seen = new Set<string>();
+        const moved: Bag[] = [];
+        for (const id of order) {
+          const held = byId.get(id);
+          if (!held || seen.has(id)) continue;
+          seen.add(id);
+          moved.push(held);
+        }
+        // Anything the order did not name keeps its place behind what it did.
+        for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
+        queued.length = 0;
+        queued.push(...moved);
+        start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
         touch();
       },
 
@@ -204,6 +299,7 @@ export function echo(options: EchoOptions): Agent {
         turn.state = 'cancelled';
         turns.push(turn);
         active = undefined;
+        doing(undefined);
         touch();
         remember();
         start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id) });

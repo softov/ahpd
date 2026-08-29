@@ -157,6 +157,7 @@ export function createHost(options: HostOptions): Host {
             provider: owners.get(uri)?.provider ?? first.provider,
             title: session.title(),
             status: statusOf(uri),
+            ...(session.activity() !== undefined ? { activity: session.activity() } : {}),
             createdAt: session.modifiedAt(),
             modifiedAt: session.modifiedAt(),
             workingDirectories: session.workingDirectories(),
@@ -315,6 +316,9 @@ export function createHost(options: HostOptions): Host {
         provider: owners.get(uri)?.provider ?? first.provider,
         title: session.title(),
         status: statusOf(uri),
+        // What it is doing, so a list of twenty sessions says which one is
+        // busy with what rather than only which one is busy.
+        ...(session.activity() !== undefined ? { activity: session.activity() } : {}),
         createdAt: session.modifiedAt(),
         modifiedAt: session.modifiedAt(),
         workingDirectories: session.workingDirectories(),
@@ -872,6 +876,45 @@ export function createHost(options: HostOptions): Host {
             }
             case 'chat/turnCancelled':
               session.cancel(String(action.turnId ?? ''));
+              break;
+            /**
+             * Say it after the turn that is running.
+             *
+             * The queue is the host's, which is the whole difference between a
+             * queue and a list: it starts the next turn from the head the
+             * moment it goes idle, and every client watching the chat sees the
+             * same one. Held in a client it would never be sent - nothing
+             * there is watching for a turn to end.
+             */
+            case 'chat/pendingMessageSet': {
+              const kind = String(action.kind ?? 'queued');
+              if (kind !== 'queued') {
+                // Steering is injected *into* the running turn. The SDK has
+                // nowhere to put one, and queueing it behind the turn it was
+                // meant for would deliver it to the wrong conversation.
+                log(`${kind} messages are not served yet`);
+                break;
+              }
+              const message = (typeof action.message === 'object' && action.message !== null
+                ? action.message
+                : {}) as Record<string, unknown>;
+              const model = (typeof message.model === 'object' && message.model !== null
+                ? message.model
+                : {}) as Record<string, unknown>;
+              session.queue(
+                String(action.id ?? ''),
+                String(message.text ?? ''),
+                typeof model.id === 'string' ? model.id : undefined,
+              );
+              break;
+            }
+            case 'chat/pendingMessageRemoved':
+              session.unqueue(String(action.id ?? ''));
+              break;
+            case 'chat/queuedMessagesReordered':
+              session.reorder(Array.isArray(action.order)
+                ? action.order.filter((id): id is string => typeof id === 'string')
+                : []);
               break;
             case 'chat/toolCallConfirmed':
               session.confirm(String(action.toolCallId ?? ''), action.approved === true);

@@ -95,8 +95,13 @@ it('carries a turn from the client to the backend and back', async () => {
 
   const said = actions(p, chatUri).map((e) => e.action.type);
   // The order every backend has to keep: the turn is said back, a part is
-  // opened, and only then does text stream into it.
-  expect(said.slice(0, 3)).toEqual(['chat/turnStarted', 'chat/responsePart', 'chat/delta']);
+  // opened, and only then does text stream into it. Their order relative to
+  // each other, not their position - a backend may say other things in
+  // between, and this one says what it is doing.
+  const ordering = said.filter((type) => type === 'chat/turnStarted'
+    || type === 'chat/responsePart'
+    || type === 'chat/delta');
+  expect(ordering.slice(0, 3)).toEqual(['chat/turnStarted', 'chat/responsePart', 'chat/delta']);
   expect(said).toContain('chat/turnComplete');
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {

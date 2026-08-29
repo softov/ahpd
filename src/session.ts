@@ -153,6 +153,17 @@ export function createSession(options: SessionOptions): Session {
    * disk and the row in memory are two sessions saying the same thing.
    */
   let agentId: string | undefined = options.resume;
+  /** What the session is doing, in one line, or nothing when it is idle. */
+  let activity: string | undefined;
+  /**
+   * Messages waiting for the running turn to end.
+   *
+   * The host's, not a client's. A client that held them would be the only
+   * thing that could ever send them, and would not - nothing in a client is
+   * watching for a turn to end - and a second client watching the same chat
+   * would not see them at all.
+   */
+  const queued: Bag[] = [];
   let customizations: Bag[] = [...(options.seedCustomizations ?? [])];
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
@@ -179,6 +190,53 @@ export function createSession(options: SessionOptions): Session {
   }
 
   const touch = (): void => { modified = new Date().toISOString(); };
+
+  /**
+   * Say what it is doing now, if that has changed.
+   *
+   * On both channels: the chat is where the work happens, and the protocol
+   * says a session mirrors its default chat's activity - which is the one a
+   * catalogue row and a detail pane read.
+   */
+  const doing = (said: string | undefined): void => {
+    if (activity === said)
+      return;
+    activity = said;
+    emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
+    emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
+  };
+
+  /** One line for a tool that is running. The name alone says too little. */
+  const busyWith = (name: string, input: Bag): string => {
+    const what = summarize(name, input);
+    return (what ? `${name} ${what}` : name).replace(/\s+/g, ' ').slice(0, 80);
+  };
+
+  /** Retitle, and say so: a client that opened the session holds the old one. */
+  const retitle = (said: string): void => {
+    if (said === '' || said === title)
+      return;
+    title = said;
+    emit('session', { type: 'session/titleChanged', title });
+  };
+
+  /**
+   * The SDK's token counts, in the protocol's spelling.
+   *
+   * Every field is optional on both sides, so anything missing is left out
+   * rather than reported as zero - a nought is a measurement and an absence
+   * is not.
+   */
+  const usageOf = (raw: unknown): Bag | undefined => {
+    const found = bag(raw);
+    const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+    const info: Bag = {
+      ...(num(found.input_tokens) !== undefined ? { inputTokens: num(found.input_tokens) } : {}),
+      ...(num(found.output_tokens) !== undefined ? { outputTokens: num(found.output_tokens) } : {}),
+      ...(num(found.cache_read_input_tokens) !== undefined ? { cacheReadTokens: num(found.cache_read_input_tokens) } : {}),
+    };
+    return Object.keys(info).length > 0 ? info : undefined;
+  };
 
   const status = (): number => (pending ? Status.InputNeeded
     : active ? Status.InProgress
@@ -311,6 +369,7 @@ export function createSession(options: SessionOptions): Session {
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
         holdPart(turn, part);
+        doing(busyWith(name, bag(block.input)));
         emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
         emit('chat', {
           type: 'chat/toolCallReady',
@@ -339,6 +398,9 @@ export function createSession(options: SessionOptions): Session {
       if (!part) continue;
       const call = bag(part.toolCall);
       call.status = block.is_error === true ? 'failed' : 'completed';
+      // Back to thinking. Leaving the last tool's name up makes a session look
+      // busy with something that finished.
+      doing('Thinking');
       const text = resultText(block.content);
       if (text !== undefined) call.content = [{ text }];
       emit('chat', {
@@ -436,6 +498,7 @@ export function createSession(options: SessionOptions): Session {
         ...(command ? { toolInput: command } : {}),
       });
 
+      doing(`Waiting on you: ${displayName}`);
       const entry: Bag = { id, kind: 'toolConfirmation', toolCall: call };
       pending = {
         id,
@@ -472,6 +535,62 @@ export function createSession(options: SessionOptions): Session {
       canUseTool,
     },
   } as Parameters<typeof query>[0]);
+
+  /**
+   * Start a turn, whoever asked for it.
+   *
+   * `queuedMessageId` names the waiting message this turn came from, and the
+   * client's reducer takes it out of the queue on that word - which is what
+   * makes the queue empty as its turns start rather than needing a second
+   * action to say so.
+   */
+  const beginTurn = (turnId: string, text: string, model?: string, queuedMessageId?: string): void => {
+    if (model && model !== chosen) {
+      chosen = model;
+      void handle.setModel(model === 'default' ? undefined : model).catch(() => {});
+    }
+    active = {
+      id: turnId,
+      startedAt: new Date().toISOString(),
+      message: { text, ...(chosen ? { model: { id: chosen } } : {}) },
+      responseParts: [],
+    };
+    startedAt = Date.now();
+    // Said back, including to the client that started it. A host that only
+    // reduced this privately would go on to emit `chat/responsePart` for a
+    // turn no client has - so the parts land nowhere and the conversation
+    // appears only when somebody reopens it and gets a fresh snapshot.
+    emit('chat', {
+      type: 'chat/turnStarted',
+      turnId: active.id,
+      startedAt: active.startedAt,
+      message: active.message,
+      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+    });
+    if (title === 'New session' && text) retitle(text.slice(0, 60));
+    doing('Thinking');
+    waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    wake?.();
+    wake = undefined;
+    touch();
+  };
+
+  /**
+   * The head of the queue, once there is nothing running.
+   *
+   * Called wherever a turn ends, which is the only place it can be: a queue
+   * that waited for a client to notice would be a list, and every client
+   * watching this chat would have to agree about which of them sends it.
+   */
+  const startNext = (): void => {
+    if (active || closed)
+      return;
+    const next = queued.shift();
+    if (!next)
+      return;
+    const message = bag(next.message);
+    beginTurn(crypto.randomUUID(), str(message.text) ?? '', str(bag(message.model).id), str(next.id));
+  };
 
   /**
    * Ask the CLI what it can do, without asking it to do anything.
@@ -525,6 +644,14 @@ export function createSession(options: SessionOptions): Session {
           if (turn) {
             if (str(message.subtype) !== 'success') turn.state = 'error';
             turn.duration = typeof message.duration_ms === 'number' ? message.duration_ms : Date.now() - startedAt;
+            // Before the turn completes, not after: the reducer hangs usage on
+            // `activeTurn`, and `chat/turnComplete` is what moves that into
+            // `turns` - so the other order reports it about nothing.
+            const used = usageOf(message.usage);
+            if (used) {
+              turn.usage = used;
+              emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
+            }
             turns.push(turn);
             active = undefined;
             parts.clear();
@@ -535,7 +662,9 @@ export function createSession(options: SessionOptions): Session {
             failed = list(message.errors).map(String).join('\n') || 'The turn failed';
             emit('chat', { type: 'chat/error', message: failed });
           }
+          doing(undefined);
           touch();
+          startNext();
         }
       }
     } catch (error) {
@@ -549,6 +678,7 @@ export function createSession(options: SessionOptions): Session {
         emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
       }
       emit('chat', { type: 'chat/error', message: failed });
+      doing(undefined);
       touch();
     }
   })();
@@ -563,6 +693,7 @@ export function createSession(options: SessionOptions): Session {
 
     customizations: () => customizations,
     allTurns: () => turns,
+    activity: () => activity,
     title: () => title,
     modifiedAt: () => modified,
     workingDirectories: () => [`file://${cwd}`],
@@ -577,6 +708,9 @@ export function createSession(options: SessionOptions): Session {
       chats: [{ resource: chatUri, title }],
       workingDirectories: [`file://${cwd}`],
       customizations,
+      // What it is doing, only while it is doing something. The protocol has
+      // a session mirror its default chat's, which is where this is set.
+      ...(activity !== undefined ? { activity } : {}),
       /*
        * The schema *and* what is in force.
        *
@@ -607,7 +741,8 @@ export function createSession(options: SessionOptions): Session {
       // turns, and the snapshot is what a client waits on before it draws.
       ...tail(turns),
       ...(active ? { activeTurn: active } : {}),
-      queuedMessages: [],
+      ...(activity !== undefined ? { activity } : {}),
+      queuedMessages: [...queued],
     }),
 
     /**
@@ -670,32 +805,54 @@ export function createSession(options: SessionOptions): Session {
      * that cannot, because the transcript would then credit a turn to a model
      * that never ran it.
      */
-    begin: (turnId, text, model) => {
-      if (model && model !== chosen) {
-        chosen = model;
-        void handle.setModel(model === 'default' ? undefined : model).catch(() => {});
+    begin: (turnId, text, model) => beginTurn(turnId, text, model),
+
+    /**
+     * Wait, then be the next turn.
+     *
+     * Idle *now* means this is not a queue at all, and the protocol says the
+     * host starts the head as soon as it can - so it is announced and then
+     * immediately started, which is a queue entry a client sees appear and
+     * leave rather than one that was never there.
+     */
+    queue: (id, text, model) => {
+      const entry: Bag = { id, message: { text, ...(model ? { model: { id: model } } : {}) } };
+      const at = queued.findIndex((held) => str(held.id) === id);
+      // The same id again edits what is waiting; a fresh one appends. That is
+      // the client's spelling for "change my mind" and it costs nothing here.
+      if (at >= 0) queued[at] = entry;
+      else queued.push(entry);
+      emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
+      touch();
+      startNext();
+    },
+
+    unqueue: (id) => {
+      const at = queued.findIndex((held) => str(held.id) === id);
+      if (at < 0) return;
+      queued.splice(at, 1);
+      emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
+      touch();
+    },
+
+    reorder: (order) => {
+      const byId = new Map(queued.map((held) => [str(held.id) ?? '', held]));
+      const moved: Bag[] = [];
+      const seen = new Set<string>();
+      for (const id of order) {
+        const held = byId.get(id);
+        if (!held || seen.has(id)) continue;
+        seen.add(id);
+        moved.push(held);
       }
-      active = {
-        id: turnId,
-        startedAt: new Date().toISOString(),
-        message: { text, ...(chosen ? { model: { id: chosen } } : {}) },
-        responseParts: [],
-      };
-      startedAt = Date.now();
-      if (title === 'New session' && text) title = text.slice(0, 60);
-      // Said back, including to the client that started it. A host that only
-      // reduced this privately would go on to emit `chat/responsePart` for a
-      // turn no client has - so the parts land nowhere and the conversation
-      // appears only when somebody reopens it and gets a fresh snapshot.
-      emit('chat', {
-        type: 'chat/turnStarted',
-        turnId: active.id,
-        startedAt: active.startedAt,
-        message: active.message,
-      });
-      waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
-      wake?.();
-      wake = undefined;
+      // Anything the order did not mention keeps its place behind what did,
+      // rather than being dropped for not having been named.
+      for (const held of queued) {
+        if (!seen.has(str(held.id) ?? '')) moved.push(held);
+      }
+      queued.length = 0;
+      queued.push(...moved);
+      emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => str(held.id) ?? '') });
       touch();
     },
 
@@ -713,7 +870,11 @@ export function createSession(options: SessionOptions): Session {
         active = undefined;
         emit('chat', { type: 'chat/turnCancelled', turnId: turnId || turn.id, duration: turn.duration });
       }
+      doing(undefined);
       touch();
+      // Deliberately not `startNext`: somebody stopping a turn is stopping
+      // this conversation, and starting the one behind it is the opposite of
+      // what they asked for.
     },
 
     confirm: (toolCallId, approved) => {
@@ -724,6 +885,7 @@ export function createSession(options: SessionOptions): Session {
       inputNeededRemoved();
       const part = parts.get(toolCallId);
       if (part) bag(part.toolCall).status = approved ? 'running' : 'cancelled';
+      doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       // Said back, like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here stayed
       // `pending-confirmation` on every screen watching it - including the

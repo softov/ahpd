@@ -86,7 +86,25 @@ says `connected`/`failed`/`needs-auth` where the protocol says
 
 ---
 
-**Since then**, in the order a client notices: a turn the client starts is
+**The silences**, done 2026-08-29. A message typed while a turn was running
+was dropped on the floor - the composer invited you to queue it, the client
+dispatched `chat/pendingMessageSet`, and the host logged "not served yet". The
+queue is the host's now: it holds the message, starts it as the next turn when
+the running one ends, and names it on that turn so a client's reducer takes it
+out of the queue on the same word. Steering is refused out loud instead, since
+the SDK has nowhere to inject one and delivering it to the *next* turn would
+deliver it to a different conversation. Cancelling deliberately does not start
+the next: somebody stopping a turn is stopping the conversation.
+
+With it, three things the host knew and never said: what it is doing
+(`Thinking`, then `Bash sleep 4 && echo done`, then nothing - on the chat and
+mirrored on the session, which is where a catalogue row reads it), what a turn
+cost (`chat/usage`, emitted *before* `chat/turnComplete`, because the reducer
+hangs it on `activeTurn` and completing is what moves that into `turns`), and
+a session's real title (`session/titleChanged`, so a client that already had
+it open stops reading "New session" over a conversation that has one).
+
+**Before that**, in the order a client notices: a turn the client starts is
 said back (without it every response part named a turn no client had, and the
 whole answer landed nowhere until somebody reopened the session); one
 conversation is one catalogue row rather than two; `IsRead` and `IsArchived`
@@ -103,26 +121,7 @@ client did not name refused rather than silently replaced.
 Verified against a live daemon on 2026-08-29, not read off the spec. Each
 entry says what it costs a person today.
 
-## 1. A queued message is thrown away
-
-The composer says *"The agent is working. Type to queue a message."* The client
-dispatches `chat/pendingMessageSet`; this host logs `not served yet` and drops
-it. Nothing appears in the queue, nothing is sent when the turn ends, and
-there is no error - the message is simply gone.
-
-This is first because it is the only item on the list that loses something
-somebody typed. `chat/pendingMessageRemoved` and
-`chat/queuedMessagesReordered` come with it, and the host already knows when a
-turn ends, which is the whole of the behaviour.
-
-## 2. Nothing says what the agent is doing
-
-`chat/activityChanged` is never emitted, so the detail pane's **Doing** row
-reads "nothing it says" for the entire length of a turn. The SDK's message
-stream names the tool before it runs it, which is exactly the sentence that
-row wants.
-
-## 3. File changes never appear
+## 1. File changes never appear
 
 There is no changeset channel: no `session/changesetsChanged`, no
 `changeset/*`, no `invokeChangesetOperation`. `changes()` answers
@@ -134,7 +133,7 @@ job: derive one from the `Edit`/`Write` tool calls as they happen, or ask git
 about the working directory. The second is honest about changes made outside
 the conversation; the first is honest about which turn made them.
 
-## 4. Toggling a skill or an MCP server
+## 2. Toggling a skill or an MCP server
 
 `session/customizationToggled` is client-dispatchable and this host logs it as
 unserved, so the switch on every row in the customizations panel does nothing.
@@ -143,7 +142,7 @@ The SDK has `toggleMcpServer()` and `setMcpServers()`, so servers are
 straightforward. Skills and prompts have no runtime toggle - so that half is a
 refusal, said out loud rather than a switch that flips back.
 
-## 5. MCP servers that need signing into
+## 3. MCP servers that need signing into
 
 Four of the six servers on this machine report `authRequired`. The list shows
 it and nothing can act on it. AHP has `auth/required`, `authenticate` and
@@ -152,7 +151,7 @@ it and nothing can act on it. AHP has `auth/required`, `authenticate` and
 
 Until then the row is a dead end that correctly says why it is one.
 
-## 6. Skills, as their own kind
+## 4. Skills, as their own kind
 
 `initializationResult()` returns `commands` and `agents`. Skills arrive
 *inside* `commands` rather than as their own kind, so the customization list
@@ -163,7 +162,7 @@ Worth checking whether `reloadSkills()` or a later SDK exposes them separately
 before inventing a heuristic on the command name. A wrong guess here mislabels
 every row.
 
-## 7. Completing an `@`
+## 5. Completing an `@`
 
 `@` is advertised as a trigger and answers nothing. It means a file, and this
 host serves none of the `resource*` commands either - `resourceRead`,
@@ -171,7 +170,7 @@ host serves none of the `resource*` commands either - `resourceRead`,
 also what a diff viewer fetches file content with. So the two belong together:
 browsing the host's filesystem, and completing a path into a message.
 
-## 8. Reconnect and replay
+## 6. Reconnect and replay
 
 A dropped socket loses everything between the drop and the next subscribe. AHP
 has `reconnect`, which replays missed actions from a `serverSeq` - the counter
@@ -180,20 +179,16 @@ this host already maintains correctly, which is most of the work.
 A host restart silently costs the tail of a conversation. Same failure, same
 fix.
 
-## 9. The smaller silences
+## 7. The smaller silences
 
 Each of these is one action the host never emits, and each shows up as a
 screen that is subtly stale rather than one that is wrong:
 
-- `session/titleChanged` - the catalogue learns a session's real title, the
-  open session's header does not, so it reads "New session" over a
-  conversation that has one.
-- `chat/usage` - no token counts anywhere.
 - `chat/truncated` - a conversation the harness compacted says nothing about it.
 - `chat/draftChanged` - two clients on one session do not see each other type.
 - `session/metaChanged`, `session/serverToolsChanged`.
 
-## 10. The parts a daemon may never want
+## 8. The parts a daemon may never want
 
 Served by the editor's host and not by this one, listed so the gap is a
 decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
@@ -204,7 +199,7 @@ decision rather than an oversight: terminals (`createTerminal`, `terminal/*`,
 A terminal is a real feature for a host somebody drives from a phone. The
 others are an editor's furniture.
 
-## 11. Deno
+## 9. Deno
 
 Written to the same interface as Node and Bun and never run: Deno is not
 installed here. Until somebody runs it, the third case in `listen.ts` is a
