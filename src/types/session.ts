@@ -31,6 +31,20 @@ export interface SessionOptions {
   resume?: string;
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
+  /**
+   * A file a tool is about to change, and the same file once it has.
+   *
+   * Off the agent's own message stream rather than out of a hook: the SDK's
+   * `PreToolUse` and `PostToolUse` are bypassable from a person's settings,
+   * and the stream is the signal that cannot be turned off. Called with
+   * `before` as the tool is announced and `after` when its result arrives,
+   * which is what makes a turn's changeset the turn's rather than the
+   * working tree's at the time somebody asked.
+   *
+   * The path only. Reading it is the host's business, because reading a file
+   * is a filesystem and a session has none.
+   */
+  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
   /** Called once the agent has reported what it can do. */
   onHandshake?(): void;
 }

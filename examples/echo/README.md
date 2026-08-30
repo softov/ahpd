@@ -40,6 +40,27 @@ sequence numbers, transcript paging, completions, read and archived flags -
 all of it is the host's, and none of it changed to serve a backend it had
 never heard of.
 
+## What a host is *given*, which is a different contract
+
+`agent.ts` is what a backend implements. `main.ts` shows the other half: the
+four ports a host is handed, none of which `createHost` owns.
+
+| port | what it is |
+| --- | --- |
+| `resources` | files a client may read, and what `@` completes into |
+| `terminals` | how a shell is opened |
+| `directories` | facts about a served directory - the branch it is on |
+| `changes` | what the working tree has that HEAD does not |
+
+Each is optional and independent, and a host given none of them still serves
+the whole conversation - which is the point of them being ports rather than
+imports. Leave one out and the commands behind it answer `-32601`, the same
+answer this host gives for anything else it does not serve.
+
+`gitBranches()` and `gitChanges()` are wired here even though echo is not a
+git backend, because they describe the *directory*, not the agent: a host
+serving a repository can say so whatever is answering in it.
+
 ## The contract, in the order the host asks
 
 | | |

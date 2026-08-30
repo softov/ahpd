@@ -22,6 +22,23 @@ const lines = async (path: string): Promise<number> => {
   catch { return 0; }
 };
 
+/**
+ * How many lines differ between two versions, without diffing them.
+ *
+ * A count, not a diff: the rows carry both sides and a client renders the
+ * real thing from those. Computing a proper LCS here to fill in two numbers
+ * would be the same work twice, once where nobody can see it.
+ */
+const counted = (before: string, after: string): { added: number; removed: number } => {
+  const was = before === '' ? [] : before.split('\n');
+  const now = after === '' ? [] : after.split('\n');
+  const shared = new Set(was);
+  const added = now.filter((row) => !shared.has(row)).length;
+  const kept_ = new Set(now);
+  const removed = was.filter((row) => !kept_.has(row)).length;
+  return { added, removed };
+};
+
 /** One `git` run, as text, or nothing when it would not run. */
 const git = (dir: string, args: string[]): Promise<string | undefined> =>
   new Promise((answer) => {
@@ -40,6 +57,15 @@ const BEFORE = 'ahp-git:';
 const beforeUri = (dir: string, path: string): string => `${BEFORE}//${dir}/${path}`;
 
 /**
+ * The scheme for a side that was *captured* rather than read.
+ *
+ * A turn's changeset is what the files looked like on either side of that
+ * turn, and neither side is on disk once a later turn has run. Both are held
+ * here and served from here.
+ */
+const CAPTURED = 'ahp-edit:';
+
+/**
  * Uncommitted changes, from `git status` and `git diff`.
  *
  * ```ts
@@ -50,7 +76,63 @@ const beforeUri = (dir: string, path: string): string => `${BEFORE}//${dir}/${pa
  * the protocol defines, and neither can be answered from git alone: git knows
  * what a working tree looks like, not which turn made it look that way.
  */
+/** One file, as a turn found it and as the turn left it. */
+interface Captured {
+  before?: string;
+  after?: string;
+}
+
 export function gitChanges(): ChangesetSource {
+  /**
+   * What each turn changed, per session.
+   *
+   * `session -> turn -> path -> both sides`. Held rather than derived because
+   * git cannot answer it: a working tree says what it looks like now, so a
+   * turn asked about after two more have run would be handed their work too.
+   */
+  const seen = new Map<string, Map<string, Map<string, Captured>>>();
+
+  /** The text held for a captured side, by the URI minted for it. */
+  const kept = new Map<string, string>();
+
+  const capturedUri = (session: string, turn: string, path: string, phase: string): string =>
+    `${CAPTURED}//${encodeURIComponent(session)}/${encodeURIComponent(turn)}/${phase}${path}`;
+
+  /** Every file a session has touched, newest turn last. */
+  const across = (session: string): Map<string, Captured> => {
+    const flat = new Map<string, Captured>();
+    for (const [, files] of seen.get(session) ?? []) {
+      for (const [path, sides] of files) {
+        const already = flat.get(path);
+        // The first `before` and the last `after`: a session's changeset is
+        // the whole conversation as one edit, not the last turn of it.
+        flat.set(path, {
+          ...(already?.before !== undefined ? { before: already.before } : sides.before !== undefined ? { before: sides.before } : {}),
+          ...(sides.after !== undefined ? { after: sides.after } : already?.after !== undefined ? { after: already.after } : {}),
+        });
+      }
+    }
+    return flat;
+  };
+
+  /** Captured sides as the protocol's rows, with both sides fetchable. */
+  const rowsOf = (session: string, turn: string, files: Map<string, Captured>): ChangesetFile[] =>
+    [...files].map(([path, sides]) => {
+      const uri = `file://${path}`;
+      const before = capturedUri(session, turn, path, 'before');
+      const after = capturedUri(session, turn, path, 'after');
+      return {
+        id: uri,
+        edit: {
+          // An empty `before` is a file the turn created, and the protocol
+          // says a creation by leaving the side out rather than by a word.
+          ...(sides.before ? { before: { uri, content: { uri: before } } } : {}),
+          ...(sides.after !== undefined ? { after: { uri, content: { uri: after } } } : {}),
+          diff: counted(sides.before ?? '', sides.after ?? ''),
+        },
+      };
+    });
+
   /** The last answer per directory, so a catalogue of rows is not a hundred `git` runs. */
   const held = new Map<string, { files: ChangesetFile[]; summary: ChangesSummary }>();
 
@@ -135,15 +217,71 @@ export function gitChanges(): ChangesetSource {
   };
 
   return {
-    scopes: (dir) => (held.has(dir)
-      ? [{ id: 'uncommitted', label: 'Uncommitted Changes', description: 'The working tree, against HEAD' }]
-      : []),
+    scopes: (dir, session) => {
+      const scopes = held.has(dir)
+        ? [{ id: 'uncommitted', label: 'Uncommitted Changes', description: 'The working tree, against HEAD' }]
+        : [];
+      const turns = seen.get(session);
+      if (!turns || turns.size === 0) return scopes;
+      return [
+        ...scopes,
+        { id: 'session', label: 'This Session', description: 'Everything this conversation changed' },
+        // A template, which is how the protocol offers a scope that has to be
+        // filled in: a client expands `{turnId}` from a turn it can see.
+        { id: 'turn/{turnId}', label: 'This Turn', description: 'What one turn changed' },
+      ];
+    },
 
-    state: async (dir, scope) => {
-      if (scope !== 'uncommitted') return undefined;
-      const found = held.get(dir) ?? await look(dir);
-      if (!found) return undefined;
-      return { status: 'complete', files: found.files };
+    state: async (dir, session, scope) => {
+      if (scope === 'uncommitted') {
+        const found = held.get(dir) ?? await look(dir);
+        if (!found) return undefined;
+        return { status: 'complete', files: found.files };
+      }
+      if (scope === 'session') {
+        const files = across(session);
+        if (files.size === 0) return { status: 'complete', files: [] };
+        return { status: 'complete', files: rowsOf(session, 'session', files) };
+      }
+      if (scope.startsWith('turn/')) {
+        const turn = scope.slice('turn/'.length);
+        const files = seen.get(session)?.get(turn);
+        // A turn nobody has heard of is not an empty changeset - it is a
+        // question about something that did not happen.
+        if (!files) return undefined;
+        return { status: 'complete', files: rowsOf(session, turn, files) };
+      }
+      return undefined;
+    },
+
+    /*
+     * Both sides of a file, captured as the tool runs.
+     *
+     * `before` is read as the tool is announced and `after` when its result
+     * arrives. A file that did not exist reads as empty, which is what a
+     * creation is.
+     */
+    observe: (dir, session, turnId, path, phase) => {
+      void (async () => {
+        const text = await readFile(path, 'utf8').catch(() => undefined);
+        const turns = seen.get(session) ?? new Map<string, Map<string, Captured>>();
+        seen.set(session, turns);
+        const files = turns.get(turnId) ?? new Map<string, Captured>();
+        turns.set(turnId, files);
+        const sides = files.get(path) ?? {};
+        // The first `before` wins: a turn that edits one file twice found it
+        // in one state, and the second read is already its own work.
+        if (phase === 'before' && sides.before === undefined) sides.before = text ?? '';
+        if (phase === 'after') sides.after = text ?? '';
+        files.set(path, sides);
+
+        kept.set(capturedUri(session, turnId, path, phase), text ?? '');
+        // The session-wide view is assembled from the turns, and its rows mint
+        // URIs of their own, so those have to resolve too.
+        const flat = across(session).get(path);
+        if (flat?.before !== undefined) kept.set(capturedUri(session, 'session', path, 'before'), flat.before);
+        if (flat?.after !== undefined) kept.set(capturedUri(session, 'session', path, 'after'), flat.after);
+      })().catch(() => {});
     },
 
     summary: (dir) => held.get(dir)?.summary,
@@ -155,6 +293,11 @@ export function gitChanges(): ChangesetSource {
      * the only place that version still exists.
      */
     read: async (uri) => {
+      // Captured sides are held, not fetched: neither is on disk any more.
+      if (uri.startsWith(CAPTURED)) {
+        const text = kept.get(uri);
+        return text === undefined ? undefined : { data: text, encoding: 'utf-8' };
+      }
       if (!uri.startsWith(BEFORE)) return undefined;
       const rest = uri.slice(`${BEFORE}//`.length);
       // The directory is the longest known one this URI starts with: a path

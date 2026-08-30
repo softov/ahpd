@@ -1,4 +1,4 @@
-import { createHost, fileResources, listen, shellTerminals } from '../../src/index.js';
+import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '../../src/index.js';
 import { echo } from './agent.js';
 
 /**
@@ -29,12 +29,22 @@ const host = createHost({
   // Register as many as you like. The first is what a client gets when it
   // names none; each needs a `provider` no other has.
   agents: [echo({ path })],
-  // The parts that touch the machine, handed in. `createHost` is the protocol
-  // and owns neither a filesystem nor a shell, so a host that wants to serve
-  // files and terminals says so - and one that does not simply leaves these
-  // out and answers `-32601` when asked.
+  /*
+   * The parts that touch the machine, handed in.
+   *
+   * `createHost` is the protocol and owns none of these: a file is `node:fs`
+   * on one runtime and something else on another, a terminal is a subprocess,
+   * and a branch and a diff are a `git` binary that may not be installed. A
+   * host that wants to serve them says so; one that does not leaves them out
+   * and answers `-32601` when asked, rather than failing part-way through.
+   *
+   * All four are optional and independent. `src/git.ts` is the smallest one,
+   * if you are writing your own.
+   */
   resources: fileResources(),
   terminals: shellTerminals(),
+  directories: gitBranches(),
+  changes: gitChanges(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 
