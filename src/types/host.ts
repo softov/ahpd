@@ -1,7 +1,77 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { Agent } from './agent.js';
+import type { Entry, Metadata, Read } from './resources.js';
+import type { Terminal, TerminalOptions } from './terminals.js';
+import type { ChangesetSource } from './changes.js';
 import type { Peer, Request } from './rpc.js';
+
+/**
+ * What a host can say about a directory beyond its path.
+ *
+ * Injected rather than built in. The interesting answers come from outside the
+ * protocol - a branch is a `git` subprocess, and `git` is a binary that may
+ * not be installed - and a host embedded in something that already knows them
+ * should not have them read a second time. A host given none says only what a
+ * path alone can tell it, which is the project's name.
+ */
+export interface DirectoryFacts {
+  /**
+   * What is known about a directory now, as the session's `_meta`.
+   *
+   * Synchronous and cheap, because it is asked for every description of every
+   * session - a catalogue of a hundred rows asks a hundred times. Anything
+   * that has to be fetched is fetched by `refresh` and cached here.
+   *
+   * The keys are the protocol's: `git` is the well-known one, and anything of
+   * an implementation's own belongs under a namespace.
+   */
+  meta(dir: string): Record<string, unknown> | undefined;
+  /**
+   * Look again, answering whether anything actually moved.
+   *
+   * Asked once per served directory at startup and again whenever a turn
+   * ends. Only a true answer reaches a client, so a directory that has not
+   * changed costs nothing but the look.
+   */
+  refresh?(dir: string): Promise<boolean>;
+}
+
+/**
+ * The files a client may read through this host.
+ *
+ * A port, for the same reason `DirectoryFacts` is one: reading a directory is
+ * `node:fs` on one runtime and something else on another, and a host embedded
+ * in an editor may already have the file open. `roots` arrives per call rather
+ * than being captured, because a backend may learn of a directory after the
+ * host started and the answer has to move with it.
+ *
+ * A host given none serves no `resource*` command at all - `-32601`, the same
+ * answer it gives for anything else it does not have - and completes no `@`.
+ */
+export interface ResourceStore {
+  /** One directory's entries. */
+  list(uri: string, roots: string[], ): Promise<Entry[]>;
+  /** One file's bytes, or the range of them that was asked for. */
+  read(uri: string, roots: string[], wanted?: string): Promise<Read>;
+  /** What a URI is, without reading it. */
+  resolve(uri: string, roots: string[], followSymlinks?: boolean): Promise<Metadata>;
+  /** Paths under `base` that start with what is typed. */
+  complete(typed: string, base: string, roots: string[], limit?: number): Promise<string[]>;
+}
+
+/**
+ * The shells this host can open.
+ *
+ * A port, because a terminal is a subprocess: which one, and how it is
+ * spawned, is the runtime's business rather than the protocol's. A host given
+ * none serves neither `createTerminal` nor `disposeTerminal`, and says so with
+ * `-32601` rather than opening nothing and reporting success.
+ */
+export interface TerminalStore {
+  /** Open one, in a directory the host has already checked. */
+  create(options: TerminalOptions): Terminal;
+}
 
 /** How to construct a host. */
 export interface HostOptions {
@@ -24,6 +94,35 @@ export interface HostOptions {
    * ships with it; anything satisfying `Agent` is another.
    */
   agents: Agent[];
+  /**
+   * The files a client may read, and complete an `@` into.
+   *
+   * Left out, no `resource*` command is served. `fileResources()` is the one
+   * that ships with this package, and the daemon uses it.
+   */
+  resources?: ResourceStore;
+  /**
+   * How to open a shell.
+   *
+   * Left out, no terminal can be created. `shellTerminals()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  terminals?: TerminalStore;
+  /**
+   * Where the file changes a session made come from.
+   *
+   * Left out, no session advertises a changeset and the changes screen is
+   * honestly empty rather than emptily wrong. `gitChanges()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  changes?: ChangesetSource;
+  /**
+   * What this host can say about the directories it serves.
+   *
+   * Left out, sessions carry their project and nothing more. `gitBranches()`
+   * is the one that ships with this package, and the daemon uses it.
+   */
+  directories?: DirectoryFacts;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
 }

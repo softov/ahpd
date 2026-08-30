@@ -21,8 +21,6 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
-import { complete, list as listResources, read as readResource, resolve as resolveResource, uriOf } from './resources.js';
-import { createTerminal } from './terminals.js';
 import type { Terminal } from './types/terminals.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
@@ -30,6 +28,23 @@ import type { Agent } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
 import type { Peer } from './types/rpc.js';
+
+/** `file://` and a path. A string, so this file needs no filesystem to say it. */
+const uriOf = (path: string): string => `file://${path}`;
+
+/**
+ * A port this host was not given.
+ *
+ * Refused the way anything else it does not have is refused, and with the same
+ * words: a host without a filesystem does not serve `resourceRead`, and saying
+ * so is what lets a client draw the screen it can rather than wait for one it
+ * cannot.
+ */
+const need = <T>(port: T | undefined, method: string): T => {
+  if (port === undefined)
+    throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
+  return port;
+};
 
 const ROOT = 'ahp-root://';
 
@@ -275,6 +290,7 @@ export function createHost(options: HostOptions): Host {
             createdAt: modifiedOf(held),
             modifiedAt: modifiedOf(held),
             workingDirectories: lead.workingDirectories(),
+            ...describes(uri),
           },
         }
         : {}),
@@ -311,6 +327,18 @@ export function createHost(options: HostOptions): Host {
    * are empty - which is the same real answer this host gives for a harness
    * nobody has signed into.
    */
+  /*
+   * Everything known about every directory served, before anything asks.
+   *
+   * A catalogue is drawn from a snapshot, and one taken before this had
+   * answered would draw every row without its facts and only fill them in
+   * when something else happened to move the row.
+   */
+  for (const dir_ of browsable()) {
+    void options.directories?.refresh?.(dir_).catch(() => {});
+    void options.changes?.refresh?.(dir_).catch(() => {});
+  }
+
   for (const agent of agents.values()) {
     if (!agent.probe)
       continue;
@@ -333,6 +361,108 @@ export function createHost(options: HostOptions): Host {
    * same config - which is what makes them peers rather than one being the
    * other's child.
    */
+  /**
+   * The directory a session works in, as a path.
+   *
+   * Every description of a session wants it - the project name and the branch
+   * both come from it - and the two places it is kept spell it as a `file://`
+   * URI, which git and `basename` do not take.
+   */
+  const dirOf = (uri: string): string | undefined => {
+    const held = sessions.get(uri);
+    const lead = held && leadOf(held);
+    const where = lead?.workingDirectories()[0] ?? wheres.get(uri)?.[0];
+    return where?.replace(/^file:\/\//, '');
+  };
+
+  /**
+   * What a session says about itself beyond the protocol's own fields.
+   *
+   * One helper for all four places a session is described - the live snapshot,
+   * the browsed one, the catalogue row and the notification that moves it -
+   * because a row and the session it opens disagreeing is the bug this is
+   * meant to avoid.
+   */
+  const describes = (uri: string): Bag => {
+    const dir = dirOf(uri);
+    if (dir === undefined) return {};
+    /*
+     * The project's name is the directory's own, not its path.
+     *
+     * A catalogue of sessions across several repositories is read by which
+     * repository each row is in, and every row spelling out
+     * `/home/somebody/work/…` differs only in the part that scrolls off. Done
+     * here rather than with `basename` because it is a string and this file
+     * is the protocol.
+     */
+    const project = { uri: `file://${dir}`, displayName: dir.split('/').filter(Boolean).pop() ?? dir };
+    // Anything past the path is the host's to be told, not this file's to go
+    // and find - `git` is a binary, and a host may be given none.
+    const meta = options.directories?.meta(dir);
+    // The changesets this session can be asked about, as URIs a client
+    // subscribes to. A template with no variables in it is the whole scope;
+    // the ones with `{turnId}` are not served yet.
+    const scopes = options.changes?.scopes(dir) ?? [];
+    const changesets = scopes.map((scope) => ({
+      label: scope.label,
+      uriTemplate: `${uri}/changeset/${scope.id}`,
+      ...(scope.description ? { description: scope.description } : {}),
+    }));
+    const summary = options.changes?.summary(dir);
+    return {
+      project,
+      ...(meta ? { _meta: meta } : {}),
+      ...(changesets.length > 0 ? { changesets } : {}),
+      ...(summary?.files ? { changes: summary } : {}),
+    };
+  };
+
+  /**
+   * Ask git again, and tell everyone if the answer moved.
+   *
+   * A branch changes underneath a session - somebody checks one out in a
+   * terminal - so it is re-read when a turn ends rather than only when a
+   * session starts. `session/metaChanged` replaces `_meta` whole, which is
+   * what `metaOf` writes.
+   */
+  const refreshFacts = (dir: string): void => {
+    /** Every session in that directory, since a fact is the directory's. */
+    const inThere = (): string[] => [...sessions.keys()].filter((uri) => dirOf(uri) === dir);
+
+    void options.directories?.refresh?.(dir).then((moved) => {
+      if (!moved) return;
+      for (const uri of inThere()) {
+        const meta = options.directories?.meta(dir);
+        dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
+        catalogueMoved(uri, 'root/sessionSummaryChanged');
+      }
+    }).catch(() => {});
+
+    /*
+     * And what it changed.
+     *
+     * The catalogue entry rather than the changeset itself: the protocol has
+     * `session/changesetsChanged` carry the *list* a session offers, and a
+     * client that is watching one re-reads it from its own channel. Sending
+     * the files here would be the same answer from two places.
+     */
+    void options.changes?.refresh?.(dir).then((moved) => {
+      if (!moved) return;
+      const scopes = options.changes?.scopes(dir) ?? [];
+      for (const uri of inThere()) {
+        dispatch(uri, {
+          type: 'session/changesetsChanged',
+          changesets: scopes.map((scope) => ({
+            label: scope.label,
+            uriTemplate: `${uri}/changeset/${scope.id}`,
+            ...(scope.description ? { description: scope.description } : {}),
+          })),
+        });
+        catalogueMoved(uri, 'root/sessionSummaryChanged');
+      }
+    }).catch(() => {});
+  };
+
   const spawn = (
     agent: Agent,
     uri: string,
@@ -373,6 +503,12 @@ export function createHost(options: HostOptions): Host {
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
         catalogueMoved(uri, 'root/sessionSummaryChanged');
+        // And a finished turn is when the branch is worth asking about again:
+        // the agent may have changed it, or somebody may have in a terminal.
+        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
+          const dir = dirOf(uri);
+          if (dir !== undefined) refreshFacts(dir);
+        }
       },
       onHandshake: () => { learnModels(uri); },
     });
@@ -460,6 +596,7 @@ export function createHost(options: HostOptions): Host {
           createdAt: row.createdAt,
           modifiedAt: row.modifiedAt,
           workingDirectories: row.workingDirectories,
+          ...describes(resource),
         });
       }
     }
@@ -484,6 +621,7 @@ export function createHost(options: HostOptions): Host {
         createdAt: modifiedOf(held),
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
+        ...describes(uri),
       });
     }
     return found;
@@ -542,6 +680,22 @@ export function createHost(options: HostOptions): Host {
     const terminal = terminals.get(channel);
     if (terminal)
       return { resource: channel, state: terminal.state(), fromSeq: serverSeq };
+    /*
+     * A changeset, which lives under the session it belongs to.
+     *
+     * `<sessionUri>/changeset/<scope>`. Nested on purpose: disposing a session
+     * tears down every changeset it had by string-prefix scan, and the reverse
+     * lookup - which session is this - is the same scan.
+     */
+    const cut = channel.indexOf('/changeset/');
+    if (cut > 0) {
+      const owner = channel.slice(0, cut);
+      const scope = channel.slice(cut + '/changeset/'.length);
+      const dir = dirOf(owner);
+      const state = dir === undefined ? undefined : await options.changes?.state(dir, scope);
+      if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
+      return { resource: channel, state, fromSeq: serverSeq };
+    }
     const held = sessions.get(channel);
     const lead = held && leadOf(held);
     if (held && lead) {
@@ -556,6 +710,7 @@ export function createHost(options: HostOptions): Host {
        */
       const state = {
         ...lead.sessionState(),
+        ...describes(channel),
         status: statusOf(channel),
         modifiedAt: modifiedOf(held),
         defaultChat: held.defaultChat,
@@ -603,6 +758,7 @@ export function createHost(options: HostOptions): Host {
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
+          ...describes(`ahp-session:/${id}`),
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
           customizations: about(owner.provider).seeds,
@@ -801,7 +957,10 @@ export function createHost(options: HostOptions): Host {
             // Relative to the session's own directory, which is what a person
             // means by a path while talking to an agent working there.
             const base = chat_?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
-            const paths = await complete(typed_, base, browsable());
+            // Nothing rather than an error: this same command serves `/`,
+            // and a host with no filesystem still has commands to offer.
+            if (!options.resources) return { items: [] };
+            const paths = await options.resources.complete(typed_, base, browsable());
             return {
               items: paths.map((path) => ({
                 insertText: `@${path}`,
@@ -914,6 +1073,10 @@ export function createHost(options: HostOptions): Host {
          * hands out a shell wherever it is asked.
          */
         createTerminal: async (params) => {
+          // Before the URI is looked at. A host that opens no shells at all
+          // should say that, not complain about the argument to a request it
+          // was never going to answer.
+          const shells = need(options.terminals, 'createTerminal');
           const uri = String(params.channel ?? '');
           if (!uri.startsWith('ahp-terminal:'))
             throw new RpcError(-32602, `${uri} is not a terminal URI`);
@@ -927,7 +1090,7 @@ export function createHost(options: HostOptions): Host {
           const claim = (typeof params.claim === 'object' && params.claim !== null
             ? params.claim
             : { kind: 'client', clientId: connection.clientId }) as Record<string, unknown>;
-          const terminal = createTerminal({
+          const terminal = shells.create({
             uri,
             cwd: asked,
             claim,
@@ -953,14 +1116,22 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         resourceList: async (params) => ({
-          entries: await listResources(String(params.uri ?? ''), browsable()),
+          entries: await need(options.resources, 'resourceList').list(String(params.uri ?? ''), browsable()),
         }),
-        resourceRead: async (params) => await readResource(
-          String(params.uri ?? ''),
-          browsable(),
-          typeof params.encoding === 'string' ? params.encoding : undefined,
-        ),
-        resourceResolve: async (params) => await resolveResource(
+        resourceRead: async (params) => {
+          const uri = String(params.uri ?? '');
+          // The `before` side of an edit is not a file on disk - it is what a
+          // file used to be - so the changeset source is asked first, and
+          // answers only for the URIs it minted.
+          const own = await options.changes?.read?.(uri);
+          if (own) return own;
+          return await need(options.resources, 'resourceRead').read(
+            uri,
+            browsable(),
+            typeof params.encoding === 'string' ? params.encoding : undefined,
+          );
+        },
+        resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),
           browsable(),
           params.followSymlinks !== false,
@@ -1319,6 +1490,21 @@ export function createHost(options: HostOptions): Host {
                 if (key === 'effortLevel') {
                   if (session.setEffort(String(value))) {
                     dispatch(session.uri, { type: 'session/configChanged', config: { effortLevel: String(value) } });
+                  }
+                  continue;
+                }
+                if (key === 'outputStyle') {
+                  // Every chat in the session, like the permission mode: they
+                  // are peers on one config, and a voice set on one of them is
+                  // a session where two conversations answer differently.
+                  for (const chat of everywhere) {
+                    if (chat !== session) chat.setOutputStyle(String(value));
+                  }
+                  if (session.setOutputStyle(String(value))) {
+                    dispatch(session.uri, { type: 'session/configChanged', config: { outputStyle: String(value) } });
+                  }
+                  else {
+                    log(`the CLI has no output style called ${String(value)}`);
                   }
                   continue;
                 }

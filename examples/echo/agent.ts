@@ -333,6 +333,7 @@ export function echo(options: EchoOptions): Agent {
       setModel: async () => false,
       setPermissionMode: () => false,
       setEffort: () => false,
+      setOutputStyle: () => false,
 
       settings: () => ({ ...settings }),
       close: () => { closed = true; },

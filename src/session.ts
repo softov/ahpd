@@ -363,7 +363,18 @@ export function createSession(options: SessionOptions): Session {
       const text = str(bag(event.delta).text) ?? str(bag(event.delta).thinking);
       if (text === undefined) return;
       part.content = `${String(part.content ?? '')}${text}`;
-      emit('chat', { type: 'chat/delta', turnId: active?.id, partId: part.id, content: text });
+      /*
+       * The append action follows the part it appends to.
+       *
+       * `chat/delta` is defined against a *markdown* part and `chat/reasoning`
+       * against a *reasoning* one, and the canonical reducer enforces the
+       * pairing rather than being lenient about it - a delta naming a
+       * reasoning part is returned unchanged. Sending thinking as a delta
+       * therefore opens the part and never fills it, which draws a thinking
+       * header with nothing under it for as long as the model thinks.
+       */
+      const append = part.kind === 'reasoning' ? 'chat/reasoning' : 'chat/delta';
+      emit('chat', { type: append, turnId: active?.id, partId: part.id, content: text });
     }
   };
 
@@ -679,6 +690,15 @@ export function createSession(options: SessionOptions): Session {
     }
   };
 
+  /*
+   * Output styles this CLI has, learned at the handshake.
+   *
+   * Empty until then, which is why `setOutputStyle` does not refuse on an
+   * empty list: not knowing the styles and knowing there are none are
+   * different answers and only one of them is a reason to say no.
+   */
+  let styles: string[] = [];
+
   /** The server name behind an `mcp:` customization id, if it is one. */
   const serverNamed = (id: string): string | undefined =>
     (id.startsWith('mcp:') ? id.slice(4) : undefined);
@@ -699,6 +719,23 @@ export function createSession(options: SessionOptions): Session {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '');
+    styles = list(init.available_output_styles).filter((s): s is string => typeof s === 'string');
+    /*
+     * The style, settled both ways.
+     *
+     * A style chosen at creation is only a *setting* until the CLI is told,
+     * and the CLI is not there to be told until now. One that was not chosen
+     * is whatever the CLI already runs on, and reporting anything else would
+     * draw a control sitting on a value that is not in force.
+     */
+    const asked = settings.outputStyle;
+    const running = str(init.output_style);
+    if (asked !== undefined && asked !== running) {
+      await handle.applyFlagSettings({ outputStyle: asked }).catch(() => {});
+    }
+    else if (asked === undefined && running !== undefined) {
+      settings.outputStyle = running;
+    }
     customizations = customizationsOf(init, mcp, skills);
     if (customizations.length > 0) {
       emit('session', { type: 'session/customizationsChanged', customizations });
@@ -899,6 +936,22 @@ export function createSession(options: SessionOptions): Session {
       if (!found) return false;
       settings.effortLevel = found;
       void handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
+      return true;
+    },
+
+    /**
+     * The voice it answers in.
+     *
+     * Validated against what the CLI said it has, once it has said so. Before
+     * then the list is not known and refusing would refuse every style there
+     * is, so an unvalidated one is taken and the CLI is left to disagree - the
+     * only wrong answer here is a control that reports success and changes
+     * nothing.
+     */
+    setOutputStyle: (name) => {
+      if (styles.length > 0 && !styles.includes(name)) return false;
+      settings.outputStyle = name;
+      void handle.applyFlagSettings({ outputStyle: name }).catch(() => {});
       return true;
     },
 

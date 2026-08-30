@@ -22,15 +22,28 @@ alone owns. Bridging the two is all this daemon does.
 imports no backend at all: it takes agents, and Claude is one of them.
 
 ```ts
-import { createHost, listen, claude } from 'ahpd';
+import { createHost, listen, claude, fileResources, shellTerminals, gitBranches, gitChanges } from 'ahpd';
 
 const host = createHost({
   path: process.cwd(),
   agents: [claude({ paths: [process.cwd()] }), myAgent()],
+  // The parts that touch the machine. Each is optional, and a host given none
+  // of them still serves the whole conversation.
+  resources: fileResources(),   // files a client may read, and `@` completion
+  changes: gitChanges(),        // what the working tree has that HEAD does not
+  terminals: shellTerminals(),  // a shell, as a terminal channel
+  directories: gitBranches(),   // which branch each served directory is on
 });
 
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
+
+`createHost` imports no filesystem, no subprocess and no `git`. Reading a file
+is `node:fs` on one runtime and something else on another; a terminal is a
+subprocess; a branch is a *binary* that may not be installed at all. So each
+arrives as a port rather than a built-in, and a host without one refuses the
+commands it cannot answer - `-32601`, the same answer it gives for anything
+else it does not serve - rather than failing part-way through one.
 
 An agent says what it is called, what a session of its kind can be configured
 with, which sessions it already has, and how to start one. Everything the
@@ -155,7 +168,7 @@ Only stdout says where the token came from, never what it is.
 | `ping` | ✅ |
 | `subscribe` / `unsubscribe` | ✅ root, session and chat channels |
 | `listSessions` | ✅ most-recently-modified first, live sessions included |
-| `resolveSessionConfig` | ✅ permission mode, effort, thinking - the same schema a session reports, so a row is configurable before it is resumed |
+| `resolveSessionConfig` | ✅ permission mode, effort, output style, thinking - the same schema a session reports, so a row is configurable before it is resumed. The output styles are the harness's own, learned by the boot probe, so the control is absent rather than empty on a harness that has none |
 | capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
 | skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
 | `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
@@ -170,21 +183,24 @@ Only stdout says where the token came from, never what it is.
 | queued messages | ✅ held by the host and started as the next turn, named on the turn that consumed it |
 | what it is doing | ✅ `chat/activityChanged` and the session's mirror of it, so a catalogue row says which session is busy with what |
 | token counts, retitling | ✅ `chat/usage` before the turn completes, `session/titleChanged` when it gets one |
-| file changes | ⬜ no changeset channel, so the changes screen is always empty |
+| file changes | ✅ the `uncommitted` scope, through the `changes` port - `<sessionUri>/changeset/uncommitted`, a roll-up on the catalogue row, and both sides of every edit: `after` is the file, `before` is `git show HEAD:` behind a URI this host resolves itself |
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
-| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve |
+| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
-| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered |
+| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
-| the write half of `resource*`, file changes | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
+| the write half of `resource*`, per-turn changesets | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
 `Removed`, `chat/responsePart`, `chat/delta`, `chat/toolCallStart` / `Ready` /
-`Complete`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
-`chat/error` - plus `root/sessionAdded` / `Removed` / `sessionSummaryChanged`
+`Complete`, `chat/reasoning`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
+`chat/error`, `session/metaChanged`, `session/changesetsChanged` - plus
+`root/sessionAdded` / `Removed` /
+`sessionSummaryChanged`
 on the root channel.
 
 Rules it is careful about, because each is a silent failure otherwise:
@@ -193,6 +209,11 @@ Rules it is careful about, because each is a silent failure otherwise:
   emit a `chat/responsePart` to create the target part, then use
   [`chat/delta`] to append text to it."* A delta naming a part nobody opened
   appends to nothing.
+- **The append action follows the part.** `chat/delta` is defined against a
+  *markdown* part and `chat/reasoning` against a *reasoning* one, and the
+  canonical reducer returns the part unchanged when they do not match. Sending
+  thinking as a `chat/delta` therefore opens the part and never fills it - a
+  thinking header with nothing under it, for as long as the model thinks.
 - **The running turn is `activeTurn`, and is not in `turns`.** A client reading
   only the history shows an empty conversation for exactly as long as somebody
   is watching one happen.
