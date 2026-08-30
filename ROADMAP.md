@@ -51,11 +51,8 @@ host computes a changeset and does not act on one. Committing, reverting and
 marking a file reviewed are operations, and each is a write to somebody's
 repository from a daemon that may be reached from another machine.
 
-The reference is readable locally: `/github/externals/vscode` is a blobless
-sparse checkout of `src/vs/platform/agentHost` (35 MB, `git pull` to update).
-`common/changesetUri.ts` is the scoping; `node/agentHostChangesetService.ts` and
-`node/agentHostChangesetFileMonitorCoordinator.ts` are how it is kept fresh. It
-is MIT-licensed: read it for the design, keep our own prose.
+[REFERENCE.md](REFERENCE.md) says where the host that already does this is
+checked out, and which files in it answered which question.
 
 ## A-01-03 - What is left of the protocol
 

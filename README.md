@@ -45,6 +45,10 @@ arrives as a port rather than a built-in, and a host without one refuses the
 commands it cannot answer - `-32601`, the same answer it gives for anything
 else it does not serve - rather than failing part-way through one.
 
+[`src/git.ts`](src/git.ts) is the smallest port and the one to copy if you are
+writing your own; [REFERENCE.md](REFERENCE.md) is where the specification and
+the other implementation of it are, and what each has already settled.
+
 An agent says what it is called, what a session of its kind can be configured
 with, which sessions it already has, and how to start one. Everything the
 protocol requires - version negotiation, snapshots, subscriptions, sequence
