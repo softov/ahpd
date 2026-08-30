@@ -402,7 +402,7 @@ export function createHost(options: HostOptions): Host {
     // The changesets this session can be asked about, as URIs a client
     // subscribes to. A template with no variables in it is the whole scope;
     // the ones with `{turnId}` are not served yet.
-    const scopes = options.changes?.scopes(dir) ?? [];
+    const scopes = options.changes?.scopes(dir, uri) ?? [];
     const changesets = scopes.map((scope) => ({
       label: scope.label,
       uriTemplate: `${uri}/changeset/${scope.id}`,
@@ -448,8 +448,9 @@ export function createHost(options: HostOptions): Host {
      */
     void options.changes?.refresh?.(dir).then((moved) => {
       if (!moved) return;
-      const scopes = options.changes?.scopes(dir) ?? [];
       for (const uri of inThere()) {
+        // Asked per session, because two of the scopes are the session's own.
+        const scopes = options.changes?.scopes(dir, uri) ?? [];
         dispatch(uri, {
           type: 'session/changesetsChanged',
           changesets: scopes.map((scope) => ({
@@ -509,6 +510,18 @@ export function createHost(options: HostOptions): Host {
           const dir = dirOf(uri);
           if (dir !== undefined) refreshFacts(dir);
         }
+      },
+      /*
+       * A file the agent is about to change, on its way to the changeset.
+       *
+       * The session says which file and when, because it is the thing that
+       * can see its own tools; the source reads it, because it is the thing
+       * with a filesystem. Neither has to know about the other.
+       */
+      onFileEdit: (turnId, path, phase) => {
+        const dir = dirOf(uri);
+        if (dir === undefined) return;
+        options.changes?.observe?.(dir, uri, turnId, path, phase);
       },
       onHandshake: () => { learnModels(uri); },
     });
@@ -692,7 +705,7 @@ export function createHost(options: HostOptions): Host {
       const owner = channel.slice(0, cut);
       const scope = channel.slice(cut + '/changeset/'.length);
       const dir = dirOf(owner);
-      const state = dir === undefined ? undefined : await options.changes?.state(dir, scope);
+      const state = dir === undefined ? undefined : await options.changes?.state(dir, owner, scope);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
       return { resource: channel, state, fromSeq: serverSeq };
     }

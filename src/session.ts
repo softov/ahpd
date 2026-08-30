@@ -247,6 +247,21 @@ export function createSession(options: SessionOptions): Session {
   };
 
   /** One line for a tool that is running. The name alone says too little. */
+  /**
+   * The file a tool is about to change, if it is one of the tools that do.
+   *
+   * Named tools rather than a guess at the input: a tool called `Bash` may
+   * write a file too, and there is nothing in `rm -rf` that says which. What
+   * this misses is honest - a changeset that claimed a file it could not name
+   * would be worse than one that says nothing about it.
+   */
+  const edits = (name: string, input: Bag): string | undefined => {
+    const known = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+    if (!known.includes(name)) return undefined;
+    const path = str(input.file_path) ?? str(input.notebook_path);
+    return path === '' ? undefined : path;
+  };
+
   const busyWith = (name: string, input: Bag): string => {
     const what = summarize(name, input);
     return (what ? `${name} ${what}` : name).replace(/\s+/g, ' ').slice(0, 80);
@@ -421,6 +436,19 @@ export function createSession(options: SessionOptions): Session {
         parts.set(id, part);
         holdPart(turn, part);
         doing(busyWith(name, bag(block.input)));
+        /*
+         * The file as it is *now*, before the tool has run.
+         *
+         * Announced and executed are concurrent - the SDK yields this block
+         * and runs the tool - so this is a race the tool's own disk I/O
+         * usually loses. Best effort, and the reference host relies on the
+         * same headroom.
+         */
+        const changing = edits(name, bag(block.input));
+        if (changing !== undefined) {
+          editing.set(id, changing);
+          options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
+        }
         emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
         emit('chat', {
           type: 'chat/toolCallReady',
@@ -454,6 +482,13 @@ export function createSession(options: SessionOptions): Session {
       doing('Thinking');
       const text = resultText(block.content);
       if (text !== undefined) call.content = [{ text }];
+      // And as it is now the tool has run. Paired with the `before` above by
+      // the call's own id, which is the only thing that survives the gap.
+      const changed = id === undefined ? undefined : editing.get(id);
+      if (id !== undefined && changed !== undefined) {
+        editing.delete(id);
+        options.onFileEdit?.(str(active?.id) ?? '', changed, 'after');
+      }
       emit('chat', {
         type: 'chat/toolCallComplete',
         turnId: active?.id,
@@ -698,6 +733,9 @@ export function createSession(options: SessionOptions): Session {
    * different answers and only one of them is a reason to say no.
    */
   let styles: string[] = [];
+
+  /** Which file each running edit tool is changing, by its call id. */
+  const editing = new Map<string, string>();
 
   /** The server name behind an `mcp:` customization id, if it is one. */
   const serverNamed = (id: string): string | undefined =>

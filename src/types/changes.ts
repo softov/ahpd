@@ -65,10 +65,17 @@ export interface ChangesetScope {
  * screen.
  */
 export interface ChangesetSource {
-  /** Which scopes this directory can answer. Empty for one that can answer none. */
-  scopes(dir: string): ChangesetScope[];
+  /**
+   * Which scopes can be answered here. Empty for a directory that has none.
+   *
+   * `session` is passed because two of the protocol's scopes are a session's
+   * rather than a directory's - what *this conversation* changed is not what
+   * the working tree looks like, and a directory with three sessions in it has
+   * three different answers.
+   */
+  scopes(dir: string, session: string): ChangesetScope[];
   /** The state behind one of them. */
-  state(dir: string, scope: string): Promise<ChangesetState | undefined>;
+  state(dir: string, session: string, scope: string): Promise<ChangesetState | undefined>;
   /** The roll-up for a catalogue row, cheap enough to ask per row. */
   summary(dir: string): ChangesSummary | undefined;
   /**
@@ -82,4 +89,16 @@ export interface ChangesetSource {
   read?(uri: string): Promise<{ data: string; encoding: string } | undefined>;
   /** Look again, answering whether anything moved. */
   refresh?(dir: string): Promise<boolean>;
+  /**
+   * A file an agent is about to change, and the same file once it has.
+   *
+   * What makes a *turn's* changeset the turn's. Git can only ever say what a
+   * working tree looks like now, so a turn asked about later would be handed
+   * every turn after it as well; capturing both sides as the tool runs is the
+   * only way the answer stays the turn's own.
+   *
+   * Reading the file is this source's business - it is the thing here that
+   * has a filesystem - and the session only says which one and when.
+   */
+  observe?(dir: string, session: string, turnId: string, path: string, phase: 'before' | 'after'): void;
 }

@@ -187,7 +187,7 @@ Only stdout says where the token came from, never what it is.
 | queued messages | ✅ held by the host and started as the next turn, named on the turn that consumed it |
 | what it is doing | ✅ `chat/activityChanged` and the session's mirror of it, so a catalogue row says which session is busy with what |
 | token counts, retitling | ✅ `chat/usage` before the turn completes, `session/titleChanged` when it gets one |
-| file changes | ✅ the `uncommitted` scope, through the `changes` port - `<sessionUri>/changeset/uncommitted`, a roll-up on the catalogue row, and both sides of every edit: `after` is the file, `before` is `git show HEAD:` behind a URI this host resolves itself |
+| file changes | ✅ all three session scopes - `session`, `turn/{turnId}` and `uncommitted` - through the `changes` port - `<sessionUri>/changeset/uncommitted`, a roll-up on the catalogue row, and both sides of every edit: `after` is the file, `before` is `git show HEAD:` behind a URI this host resolves itself |
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
@@ -196,7 +196,7 @@ Only stdout says where the token came from, never what it is.
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
 | project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
-| the write half of `resource*`, per-turn changesets | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| the write half of `resource*`, acting on a changeset | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /

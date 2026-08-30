@@ -194,6 +194,7 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.resume !== undefined ? { resume: start.resume } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
+      ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),
     }),
   };

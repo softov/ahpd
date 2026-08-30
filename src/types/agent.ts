@@ -51,6 +51,13 @@ export interface Start {
   resume?: string;
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
+  /**
+   * A file a tool is about to change, and the same file once it has.
+   *
+   * Optional both ways: a backend that cannot see its own tools does not call
+   * it, and a host with no changeset source does not pass one.
+   */
+  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
   /** Called once the backend has reported what it can do. */
   onHandshake?(): void;
 }

@@ -21,38 +21,43 @@ origin map, and the canonical reducers - rather than read off the prose.
 
 # Missing
 
-## A-01-01 - Per-turn changesets
+## A-01-01 - Acting on a changeset
 
-The `uncommitted` scope is served: `<sessionUri>/changeset/uncommitted` is
-subscribable, a catalogue entry advertises it, `session/changesetsChanged` says
-when it moves, and a roll-up rides on the catalogue row so a list needs no
-subscription. Both sides of every edit are fetchable - `after` is the file
-itself and `before` is `git show HEAD:<path>` behind a URI this host mints and
-resolves, because what a file *used to be* is not a file on disk and the
-filesystem port cannot serve it. `gitChanges()` is passed to `createHost`, so a
-host given none advertises no changesets rather than an empty screen.
-
-What is left is the two scopes git cannot answer:
+All three scopes a session can be asked about are served:
 
 ```
-<sessionUri>/changeset/session                everything this session did
-<sessionUri>/changeset/turn/<turnId>          one turn's changes
+<sessionUri>/changeset/session                everything this conversation changed
+<sessionUri>/changeset/turn/{turnId}          what one turn changed
+<sessionUri>/changeset/uncommitted            the working tree, against HEAD
 ```
 
-Both need the `Edit`/`Write` tool calls, because nothing in a working tree says
-which turn made it look that way. The catalogue advertises them as *templates* -
-`turn/{turnId}` - which a client expands before subscribing, so serving them is
-a second scope beside the first rather than a change to it.
-`node/claude/claudeFileEditObserver.ts` in the reference is the shape, and is
-small.
+The first two are captured rather than derived, which is the only way they can
+be true: git says what a working tree looks like *now*, so a turn asked about
+after two more have run would be handed their work as well. Both sides of every
+file are read as the tool runs - `before` as the call is announced, `after`
+when its result arrives - off the agent's own message stream rather than out of
+a `PreToolUse` hook, because a hook is bypassable from a person's settings and
+the stream is not.
 
-`changeset/*` actions and `invokeChangesetOperation` are still unserved: this
-host computes a changeset and does not act on one. Committing, reverting and
-marking a file reviewed are operations, and each is a write to somebody's
-repository from a daemon that may be reached from another machine.
+What is left is *acting* on one. `invokeChangesetOperation` and the
+`changeset/*` actions are unserved: this host computes a changeset and does
+nothing to it. Committing, reverting and marking a file reviewed are each a
+write to somebody's repository from a daemon that may be reached from another
+machine, which is the same question the write half of `resource*` is waiting
+on - see A-01-03a and A-01-03b, and note that `resourceRequest` is the shape
+that would answer both.
 
-[REFERENCE.md](REFERENCE.md) says where the host that already does this is
-checked out, and which files in it answered which question.
+Of the four scopes the protocol defines, only `compare/<a>/<b>` is left - a
+diff between two turns. It needs nothing new: both turns' captures are already
+held, and it is a subtraction over them.
+
+One thing to know before trusting a `session` changeset: the captures live for
+as long as the host does. A resumed session opens with none, because the turns
+it is resuming happened in a process that has gone. The transcript still has
+them and they could be replayed, which is a decision rather than a gap.
+
+[REFERENCE.md](REFERENCE.md) says where the host that already does all of this
+is checked out, and which files in it answered which question.
 
 ## A-01-03 - What is left of the protocol
 
