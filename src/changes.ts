@@ -98,10 +98,17 @@ export function gitChanges(): ChangesetSource {
   const capturedUri = (session: string, turn: string, path: string, phase: string): string =>
     `${CAPTURED}//${encodeURIComponent(session)}/${encodeURIComponent(turn)}/${phase}${path}`;
 
-  /** Every file a session has touched, newest turn last. */
-  const across = (session: string): Map<string, Captured> => {
+  /**
+   * Fold a run of turns into one edit per file.
+   *
+   * The first `before` and the last `after`, which is what a range of turns
+   * changed taken together: a file edited three times was found in one state
+   * and left in another, and the two states in between are the middle of a
+   * diff nobody asked for.
+   */
+  const fold = (turns: Iterable<Map<string, Captured>>): Map<string, Captured> => {
     const flat = new Map<string, Captured>();
-    for (const [, files] of seen.get(session) ?? []) {
+    for (const files of turns) {
       for (const [path, sides] of files) {
         const already = flat.get(path);
         // The first `before` and the last `after`: a session's changeset is
@@ -115,12 +122,42 @@ export function gitChanges(): ChangesetSource {
     return flat;
   };
 
-  /** Captured sides as the protocol's rows, with both sides fetchable. */
+  /** Every file a session has touched, in the order it touched them. */
+  const across = (session: string): Map<string, Captured> =>
+    fold([...(seen.get(session) ?? new Map()).values()]);
+
+  /**
+   * The turns from one to another, inclusive.
+   *
+   * Insertion order is turn order - a turn is first seen when its first tool
+   * runs - so a range is a slice. Either end being unknown is a question about
+   * something that did not happen, and answers nothing rather than everything.
+   */
+  const between = (session: string, from: string, to: string): Map<string, Captured> | undefined => {
+    const turns = seen.get(session);
+    if (!turns) return undefined;
+    const order = [...turns.keys()];
+    const start = order.indexOf(from);
+    const end = order.indexOf(to);
+    if (start < 0 || end < 0) return undefined;
+    const [lo, hi] = start <= end ? [start, end] : [end, start];
+    return fold(order.slice(lo, hi + 1).map((id) => turns.get(id) as Map<string, Captured>));
+  };
+
+  /**
+   * Captured sides as the protocol's rows, with both sides fetchable.
+   *
+   * Minting a URI and remembering what is behind it are the same act, so they
+   * are done in the same place: a row that names content nothing can resolve
+   * is a row that opens onto an error.
+   */
   const rowsOf = (session: string, turn: string, files: Map<string, Captured>): ChangesetFile[] =>
     [...files].map(([path, sides]) => {
       const uri = `file://${path}`;
       const before = capturedUri(session, turn, path, 'before');
       const after = capturedUri(session, turn, path, 'after');
+      if (sides.before !== undefined) kept.set(before, sides.before);
+      if (sides.after !== undefined) kept.set(after, sides.after);
       return {
         id: uri,
         edit: {
@@ -223,12 +260,21 @@ export function gitChanges(): ChangesetSource {
         : [];
       const turns = seen.get(session);
       if (!turns || turns.size === 0) return scopes;
+      // The session's own first. A client showing one changeset shows the
+      // first that needs no variable filling in, and what a *conversation*
+      // changed is the one that belongs beside a conversation - the working
+      // tree includes whatever else happened to the directory meanwhile.
       return [
-        ...scopes,
         { id: 'session', label: 'This Session', description: 'Everything this conversation changed' },
-        // A template, which is how the protocol offers a scope that has to be
-        // filled in: a client expands `{turnId}` from a turn it can see.
+        ...scopes,
+        // Templates, which is how the protocol offers a scope that has to be
+        // filled in: a client expands them from turns it can already see.
         { id: 'turn/{turnId}', label: 'This Turn', description: 'What one turn changed' },
+        {
+          id: 'compare/{originalTurnId}/{modifiedTurnId}',
+          label: 'Between Two Turns',
+          description: 'What changed from one turn to another',
+        },
       ];
     },
 
@@ -242,6 +288,13 @@ export function gitChanges(): ChangesetSource {
         const files = across(session);
         if (files.size === 0) return { status: 'complete', files: [] };
         return { status: 'complete', files: rowsOf(session, 'session', files) };
+      }
+      if (scope.startsWith('compare/')) {
+        const [from, to] = scope.slice('compare/'.length).split('/');
+        if (!from || !to) return undefined;
+        const files = between(session, from, to);
+        if (!files) return undefined;
+        return { status: 'complete', files: rowsOf(session, `compare/${from}/${to}`, files) };
       }
       if (scope.startsWith('turn/')) {
         const turn = scope.slice('turn/'.length);
@@ -276,11 +329,6 @@ export function gitChanges(): ChangesetSource {
         files.set(path, sides);
 
         kept.set(capturedUri(session, turnId, path, phase), text ?? '');
-        // The session-wide view is assembled from the turns, and its rows mint
-        // URIs of their own, so those have to resolve too.
-        const flat = across(session).get(path);
-        if (flat?.before !== undefined) kept.set(capturedUri(session, 'session', path, 'before'), flat.before);
-        if (flat?.after !== undefined) kept.set(capturedUri(session, 'session', path, 'after'), flat.after);
       })().catch(() => {});
     },
 

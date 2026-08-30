@@ -26,9 +26,10 @@ origin map, and the canonical reducers - rather than read off the prose.
 All three scopes a session can be asked about are served:
 
 ```
-<sessionUri>/changeset/session                everything this conversation changed
-<sessionUri>/changeset/turn/{turnId}          what one turn changed
-<sessionUri>/changeset/uncommitted            the working tree, against HEAD
+<sessionUri>/changeset/session                            everything this conversation changed
+<sessionUri>/changeset/turn/{turnId}                      what one turn changed
+<sessionUri>/changeset/compare/{origTurnId}/{modTurnId}   what changed between two
+<sessionUri>/changeset/uncommitted                        the working tree, against HEAD
 ```
 
 The first two are captured rather than derived, which is the only way they can
@@ -47,9 +48,12 @@ machine, which is the same question the write half of `resource*` is waiting
 on - see A-01-03a and A-01-03b, and note that `resourceRequest` is the shape
 that would answer both.
 
-Of the four scopes the protocol defines, only `compare/<a>/<b>` is left - a
-diff between two turns. It needs nothing new: both turns' captures are already
-held, and it is a subtraction over them.
+All four scopes the protocol defines are served. `compare/<a>/<b>` needed
+nothing new: turn order is the order turns were first seen, so a range is a
+slice, and a range folds the way one turn does - the first `before` and the
+last `after`, because a file edited three times was found in one state and left
+in another, and the states in between are the middle of a diff nobody asked
+for.
 
 One thing to know before trusting a `session` changeset: the captures live for
 as long as the host does. A resumed session opens with none, because the turns
