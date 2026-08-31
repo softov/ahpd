@@ -224,13 +224,16 @@ Only stdout says where the token came from, never what it is.
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
 | project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
-| the write half of `resource*`, acting on a changeset | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| acting on a changeset | ✅ `commit` on the working tree, `discard` on a file, `revert` on a file back to the state the agent found it in - server-advertised per scope, `disabled` while a turn is running, destructive ones carrying the `confirmation` a client MUST show |
+| `resourceRequest` | ✅ the gate on all three: an operation that writes is refused `-32009` until the connection has been granted write on what it would write, and the refusal names the request that would unlock it. Grants are per connection and per resource, and only inside the directories this host was told to serve |
+| the write half of `resource*` | ⬜ see [ROADMAP.md](ROADMAP.md) |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
 `Removed`, `chat/responsePart`, `chat/delta`, `chat/toolCallStart` / `Ready` /
 `Complete`, `chat/reasoning`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
-`chat/error`, `session/metaChanged`, `session/changesetsChanged` - plus
+`chat/error`, `session/metaChanged`, `session/changesetsChanged`,
+`changeset/operationsChanged` / `operationStatusChanged` / `contentChanged` - plus
 `root/sessionAdded` / `Removed` /
 `sessionSummaryChanged`
 on the root channel.

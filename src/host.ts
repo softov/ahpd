@@ -18,7 +18,7 @@
  */
 
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
+import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Terminal } from './types/terminals.js';
@@ -402,6 +402,122 @@ export function createHost(options: HostOptions): Host {
       ...(scope.reviewable ? { capabilities: { review: {} } } : {}),
     }));
 
+  /**
+   * What one changeset URI is a changeset *of*.
+   *
+   * `<sessionUri>/changeset/<scope>` split back into its two halves, which is
+   * wanted in four places now. Undefined for a URI that is not one.
+   */
+  const changesetAt = (channel: string): { owner: string; scope: string; dir: string } | undefined => {
+    const cut = channel.indexOf('/changeset/');
+    if (cut <= 0) return undefined;
+    const owner = channel.slice(0, cut);
+    const dir = dirOf(owner);
+    if (dir === undefined) return undefined;
+    return { owner, scope: channel.slice(cut + '/changeset/'.length), dir };
+  };
+
+  /**
+   * Invocations in flight, and the last one that failed.
+   *
+   * Keyed by changeset and operation, because status is per operation on a
+   * changeset rather than per source: two clients looking at the same
+   * changeset must see the same spinner, which is the whole reason the
+   * protocol reflects an imperative call back into state.
+   */
+  const inFlight = new Set<string>();
+  const lastError = new Map<string, string>();
+  const opKey = (channel: string, id: string): string => `${channel}\u0000${id}`;
+
+  /**
+   * The operations a changeset offers, with the status the host owns.
+   *
+   * The source declares the verbs and this decides what may be pressed:
+   * `Disabled` while the session is mid-turn, because the working tree is
+   * being written by the agent and an operation that mutated it underneath
+   * would race the thing that is doing the work; `Running` while an invocation
+   * is out; `Error` carrying whatever the last one said.
+   */
+  const operationsOf = (channel: string): Bag[] => {
+    const at = changesetAt(channel);
+    if (!at) return [];
+    const busy = (statusOf(at.owner) & Status.InProgress) !== 0;
+    return (options.changes?.operations?.(at.dir, at.owner, at.scope) ?? []).map((operation) => {
+      const key = opKey(channel, operation.id);
+      const failure = lastError.get(key);
+      const status = inFlight.has(key) ? 'running'
+        : busy ? 'disabled'
+          : failure !== undefined ? 'error'
+            : 'idle';
+      return {
+        id: operation.id,
+        label: operation.label,
+        ...(operation.description !== undefined ? { description: operation.description } : {}),
+        scopes: operation.scopes,
+        ...(operation.confirmation !== undefined ? { confirmation: operation.confirmation } : {}),
+        ...(operation.icon !== undefined ? { icon: operation.icon } : {}),
+        ...(operation.group !== undefined ? { group: operation.group } : {}),
+        status,
+        ...(status === 'error' && failure !== undefined ? { error: { message: failure } } : {}),
+      };
+    });
+  };
+
+  /**
+   * Say again what a session's changesets can be told to do.
+   *
+   * Sent on turn boundaries, because that is when the answer changes without
+   * anything in a changeset's *content* moving: a turn starting disables every
+   * operation on every changeset the session has, and nothing else would say
+   * so. Only channels somebody is watching - a changeset nobody subscribed to
+   * has no buttons on screen to correct.
+   */
+  const operationsMoved = (uri: string): void => {
+    const done = new Set<string>();
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        done.add(channel);
+        const operations = operationsOf(channel);
+        // `undefined` is how the protocol clears the list, and an operation
+        // list that went from three to none is exactly that.
+        dispatch(channel, {
+          type: 'changeset/operationsChanged',
+          ...(operations.length > 0 ? { operations } : {}),
+        });
+      }
+    }
+  };
+
+  /**
+   * The changesets themselves, after something wrote to the tree.
+   *
+   * `changeset/contentChanged` rather than a fresh snapshot: a client watching
+   * a changeset is holding a file list, and an operation that reverted one
+   * file has changed that list - which nothing else here says, because the
+   * catalogue action carries the *set* of changesets a session offers and not
+   * what is in any of them.
+   */
+  const contentMoved = async (uri: string): Promise<void> => {
+    const done = new Set<string>();
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        done.add(channel);
+        const at = changesetAt(channel);
+        if (!at) continue;
+        const state = await options.changes?.state(at.dir, at.owner, at.scope);
+        if (!state) continue;
+        const operations = operationsOf(channel);
+        dispatch(channel, {
+          type: 'changeset/contentChanged',
+          files: state.files,
+          ...(operations.length > 0 ? { operations } : {}),
+        });
+      }
+    }
+  };
+
   const describes = (uri: string): Bag => {
     const dir = dirOf(uri);
     if (dir === undefined) return {};
@@ -516,6 +632,11 @@ export function createHost(options: HostOptions): Host {
           const dir = dirOf(uri);
           if (dir !== undefined) refreshFacts(dir);
         }
+        // A turn starting or ending is the whole of what disables and re-enables
+        // a changeset's operations, and it moves nothing inside the changeset
+        // itself - so it has to be said here or it is never said.
+        if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
+          || action.type === 'chat/turnCancelled') operationsMoved(uri);
       },
       /*
        * A file the agent is about to change, on its way to the changeset.
@@ -706,14 +827,19 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
-    const cut = channel.indexOf('/changeset/');
-    if (cut > 0) {
-      const owner = channel.slice(0, cut);
-      const scope = channel.slice(cut + '/changeset/'.length);
-      const dir = dirOf(owner);
-      const state = dir === undefined ? undefined : await options.changes?.state(dir, owner, scope);
+    const at = changesetAt(channel);
+    if (at) {
+      const state = await options.changes?.state(at.dir, at.owner, at.scope);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
-      return { resource: channel, state, fromSeq: serverSeq };
+      // The verbs, alongside the files. Omitted when there are none, which
+      // the protocol asks for and which is what a changeset with nothing to
+      // do to it says.
+      const operations = operationsOf(channel);
+      return {
+        resource: channel,
+        state: { ...state, ...(operations.length > 0 ? { operations } : {}) },
+        fromSeq: serverSeq,
+      };
     }
     const held = sessions.get(channel);
     const lead = held && leadOf(held);
@@ -800,7 +926,7 @@ export function createHost(options: HostOptions): Host {
   return {
     connections: () => connections.size,
     accept(peer: Peer) {
-      const connection = { peer, clientId: '', watching: new Set<string>() };
+      const connection = { peer, clientId: '', watching: new Set<string>(), grants: new Set<string>() };
       connections.add(connection);
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
@@ -1149,6 +1275,129 @@ export function createHost(options: HostOptions): Host {
             browsable(),
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
+        },
+        /**
+         * May I read this, may I write it.
+         *
+         * The negotiated form of a refusal, and the only door onto anything
+         * here that writes. A grant is per resource and per connection: a
+         * client asks about one file, is answered about that file, and a
+         * second client on the same port inherits nothing from the first.
+         *
+         * What this host will grant is the directories it was told to serve,
+         * and nothing else. There is no person at a daemon to prompt, so the
+         * third answer the protocol allows is not available to it - which
+         * makes the served set the whole policy, and makes a request for
+         * anything outside it a refusal rather than a question.
+         */
+        resourceRequest: async (params) => {
+          const uri = String(params.uri ?? '');
+          const path = uri.startsWith('file://') ? uri.slice('file://'.length) : undefined;
+          const inside = path !== undefined
+            && browsable().some((dir_) => path === dir_ || path.startsWith(`${dir_}/`));
+          if (!inside) throw new RpcError(-32009, `This host does not mediate ${uri}`);
+          // Neither flag is a read, which is what the protocol tells receivers
+          // to make of a request that sets nothing.
+          const write = params.write === true;
+          const read = params.read === true || !write;
+          if (read) connection.grants.add(`read:${uri}`);
+          if (write) connection.grants.add(`write:${uri}`);
+          log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
+          return {};
+        },
+        /**
+         * Run one of the verbs a changeset advertised.
+         *
+         * Four gates, and none of them is a flag on this host: the id has to
+         * be one this changeset offers *now*, the target has to be a kind that
+         * operation accepts, the session must not be mid-turn, and an
+         * operation that writes needs a `resourceRequest` grant on what it
+         * would write. The list is the access model - a client can invoke
+         * nothing that was not already put in front of it.
+         */
+        invokeChangesetOperation: async (params) => {
+          const channel = String(params.channel ?? '');
+          const at = changesetAt(channel);
+          if (!at) throw new RpcError(-32001, `No changeset at ${channel}`);
+          const source = need(options.changes, 'invokeChangesetOperation');
+          const operationId = String(params.operationId ?? '');
+          const offered = (source.operations?.(at.dir, at.owner, at.scope) ?? [])
+            .find((one) => one.id === operationId);
+          if (!offered)
+            throw new RpcError(-32602, `No operation called ${operationId} on ${channel}`);
+
+          const raw = params.target as Record<string, unknown> | undefined;
+          const target = raw !== undefined && typeof raw === 'object'
+            ? {
+              kind: raw.kind === 'range' ? 'range' as const : 'resource' as const,
+              resource: String(raw.resource ?? ''),
+              ...(raw.side === 'before' || raw.side === 'after' ? { side: raw.side as 'before' | 'after' } : {}),
+              ...(typeof raw.range === 'object' && raw.range !== null
+                ? { range: raw.range as { startLine: number; endLine: number } }
+                : {}),
+            }
+            : undefined;
+          // No target is the changeset itself, which is how the protocol says
+          // a changeset-scoped invocation.
+          const kind = target?.kind ?? 'changeset';
+          if (!offered.scopes.includes(kind))
+            throw new RpcError(-32602, `${operationId} cannot be invoked on a ${kind}`);
+
+          // Refused rather than queued. The agent is writing to this tree, and
+          // an operation that rewrote a file underneath it would be racing the
+          // thing whose work the changeset is about.
+          if ((statusOf(at.owner) & Status.InProgress) !== 0)
+            throw new RpcError(-32002, `${at.owner} is mid-turn`);
+
+          if (offered.writes === true) {
+            // A file for a targeted operation, the project for a changeset-wide
+            // one: committing is a write to the directory and there is no
+            // single resource to name for it.
+            const wanted = target?.resource ?? `file://${at.dir}`;
+            if (!connection.grants.has(`write:${wanted}`))
+              throw new RpcError(-32009, `Write access to ${wanted} has not been granted`, {
+                request: { channel: ROOT, uri: wanted, write: true },
+              });
+          }
+
+          const key = opKey(channel, operationId);
+          const held = sessions.get(at.owner);
+          const lead = held && leadOf(held);
+          inFlight.add(key);
+          lastError.delete(key);
+          dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
+          try {
+            const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
+              dir: at.dir,
+              session: at.owner,
+              scope: at.scope,
+              operationId,
+              ...(target !== undefined ? { target } : {}),
+              ...(lead ? { subject: lead.title() } : {}),
+            });
+            inFlight.delete(key);
+            dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+            // Something wrote to the tree, so every changeset of this session
+            // is now describing a directory that has moved. The catalogue
+            // first, because `refresh` is what makes the next read fresh.
+            refreshFacts(at.dir);
+            await options.changes?.refresh?.(at.dir).catch(() => false);
+            await contentMoved(at.owner);
+            return { ...(result.message !== undefined ? { message: result.message } : {}) };
+          }
+          catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            inFlight.delete(key);
+            lastError.set(key, message);
+            dispatch(channel, {
+              type: 'changeset/operationStatusChanged',
+              operationId,
+              status: 'error',
+              error: { message },
+            });
+            log(`${operationId} on ${channel} failed: ${message}`);
+            throw new RpcError(INTERNAL_ERROR, message);
+          }
         },
         resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),

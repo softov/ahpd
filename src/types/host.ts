@@ -140,6 +140,15 @@ export interface Connection {
    * not stop the other's stream.
    */
   watching: Set<string>;
+  /**
+   * Resource access this client has been granted, as `read:<uri>` / `write:<uri>`.
+   *
+   * Per connection and never per host: `resourceRequest` is a negotiation
+   * between two peers, and a grant one client talked its way into is not one
+   * every other client on the port inherits. Emptied when the connection goes,
+   * because it goes with the set.
+   */
+  grants: Set<string>;
 }
 
 /** A protocol server. One host serves many connections. */

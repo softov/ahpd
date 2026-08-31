@@ -72,6 +72,94 @@ export interface ChangesetScope {
 }
 
 /**
+ * Where an operation may be invoked.
+ *
+ * The protocol's three: the whole changeset, one file in it, or a line range
+ * within one file. A source declares which it accepts and the host refuses an
+ * invocation whose target is not among them.
+ */
+export type ChangesetOperationScope = 'changeset' | 'resource' | 'range';
+
+/** The file, or the lines of it, an operation was pointed at. */
+export interface ChangesetOperationTarget {
+  kind: 'resource' | 'range';
+  /** The `ChangesetFile.id` of the row, which is a `file://` URI. */
+  resource: string;
+  /** Which side of the edit, where an operation can act on either. */
+  side?: 'before' | 'after';
+  /** Present iff `kind` is `range`. Lines are 1-based, as the protocol has them. */
+  range?: { startLine: number; startColumn?: number; endLine: number; endColumn?: number };
+}
+
+/**
+ * A verb a client may run against a changeset.
+ *
+ * Server-advertised, and that is the whole access model: `invokeChangesetOperation`
+ * carries an `operationId` that must match one this source already offered for
+ * this scope, so a client can ask for nothing that was not put in front of it.
+ *
+ * There is no `status` here because status is not the source's. Whether an
+ * operation is disabled depends on whether the session is mid-turn, and whether
+ * it is running depends on an invocation in flight - both of which the host
+ * knows and a source does not.
+ */
+export interface ChangesetOperation {
+  /** Stable within the changeset, and what an invocation names. */
+  id: string;
+  /** The button. */
+  label: string;
+  /** Longer text, for a tooltip. */
+  description?: string;
+  /** The targets this operation accepts. */
+  scopes: ChangesetOperationScope[];
+  /**
+   * The question to ask before running it.
+   *
+   * Its presence is also how the protocol says "this is destructive": a client
+   * MUST show it, and SHOULD style the affirmative button as a warning.
+   */
+  confirmation?: string;
+  /** A hint, e.g. `git-commit` or `discard`. */
+  icon?: string;
+  /** Operations sharing one are drawn together. */
+  group?: string;
+  /**
+   * Whether running it writes to the working tree.
+   *
+   * What the host gates on: an operation that writes needs a write grant on the
+   * resource, negotiated through `resourceRequest`, and is refused with `-32009`
+   * until one is held. Declared here rather than inferred from the id, because
+   * the host cannot know what a source's verbs do.
+   */
+  writes?: boolean;
+}
+
+/** One invocation, as the host hands it to the source. */
+export interface ChangesetOperationRequest {
+  dir: string;
+  session: string;
+  /** The scope segment, e.g. `uncommitted` or `turn/abc`. */
+  scope: string;
+  operationId: string;
+  /** Absent for a changeset-scoped operation. */
+  target?: ChangesetOperationTarget;
+  /**
+   * What the session is called, offered as a commit subject.
+   *
+   * The host's to know and not this source's: a changeset is a set of files and
+   * a session is a conversation, and the sentence somebody would write on a
+   * commit is in the second one.
+   */
+  subject?: string;
+}
+
+/** What an invocation says for itself. Thrown errors are the failure path. */
+export interface ChangesetOperationResult {
+  /** One line for the client to show. */
+  message?: string;
+}
+
+/**
  * Where a host's file changes come from.
  *
  * A port, like the filesystem and the shell, and for the sharpest version of
@@ -126,4 +214,26 @@ export interface ChangesetSource {
    * has a filesystem - and the session only says which one and when.
    */
   observe?(dir: string, session: string, turnId: string, path: string, phase: 'before' | 'after'): void;
+  /**
+   * The verbs this source offers on one scope, in the order to draw them.
+   *
+   * Asked per scope because the answer differs by scope: the working tree can
+   * be committed and a turn cannot, and what a turn changed can be put back
+   * because both sides of every file in it were captured.
+   *
+   * Empty is a real answer and the one to give for a scope with nothing to do
+   * to it. A source with no method at all advertises none anywhere, which is
+   * what a host serving a directory it may not write looks like.
+   */
+  operations?(dir: string, session: string, scope: string): ChangesetOperation[];
+  /**
+   * Run one.
+   *
+   * The host has already checked that `operationId` is among what this source
+   * offered for this scope, that the target's kind is one the operation
+   * accepts, and that a write grant is held where the operation says it writes.
+   * What is left is doing it, and throwing if it did not work - the protocol
+   * signals failure by rejecting the request, not by a field on the result.
+   */
+  invoke?(request: ChangesetOperationRequest): Promise<ChangesetOperationResult>;
 }

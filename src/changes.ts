@@ -1,9 +1,9 @@
 /** What git says a directory has changed, as a host's `ChangesetSource`. */
 
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import type {
-  ChangesSummary, ChangesetFile, ChangesetSource, ChangesetState,
+  ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetSource, ChangesetState,
 } from './types/changes.js';
 
 /**
@@ -47,6 +47,34 @@ const git = (dir: string, args: string[]): Promise<string | undefined> =>
   });
 
 /**
+ * One `git` run, with the failure kept.
+ *
+ * `git` above answers `undefined` for every kind of not-working, which is the
+ * right shape for a question - a directory that is not a repository has no
+ * diff, and why is not interesting. An *operation* is the other case: somebody
+ * pressed a button, it did not work, and the only useful thing to say is what
+ * git said.
+ */
+const run = (dir: string, args: string[]): Promise<{ ok: boolean; out: string; err: string }> =>
+  new Promise((answer) => {
+    execFile('git', ['-C', dir, ...args], { timeout: 30000, maxBuffer: 32 * 1024 * 1024 },
+      (error, out, errOut) => answer({
+        ok: !error,
+        out: out.toString(),
+        err: errOut.toString().trim() || (error ? error.message : ''),
+      }));
+  });
+
+/** The path a `file://` URI names, or nothing for a URI that names none. */
+const pathIn = (dir: string, uri: string): string | undefined => {
+  if (!uri.startsWith('file://')) return undefined;
+  const path = uri.slice('file://'.length);
+  // Inside the directory this changeset is about, and not merely starting with
+  // its name: `/src/brb` must not reach `/src/brb_framework`.
+  return path === dir || path.startsWith(`${dir}/`) ? path : undefined;
+};
+
+/**
  * The scheme for the side of an edit that is not on disk.
  *
  * `before` is what a file *used to be*, so no `file://` URI addresses it and
@@ -81,6 +109,51 @@ interface Captured {
   before?: string;
   after?: string;
 }
+
+/**
+ * The verbs this source offers, declared once.
+ *
+ * Ids and labels follow the reference host's where it has one - a client that
+ * special-cases `commit` should find it spelled the way it expects - and every
+ * one of them writes, which is what the host gates on.
+ */
+const COMMIT: ChangesetOperation = {
+  id: 'commit',
+  label: 'Commit',
+  description: 'Commit the working tree, including files git has not been told about',
+  scopes: ['changeset'],
+  icon: 'git-commit',
+  group: 'commit',
+  writes: true,
+};
+
+const DISCARD: ChangesetOperation = {
+  id: 'discard',
+  label: 'Discard Changes',
+  description: 'Put this file back the way HEAD has it',
+  scopes: ['resource'],
+  confirmation: 'Discard the changes to this file? This cannot be undone.',
+  icon: 'discard',
+  writes: true,
+};
+
+/**
+ * Undoing the agent rather than undoing the working tree.
+ *
+ * Separate from `discard` because the two put a file back to different places:
+ * `discard` goes to HEAD, which is where a person's own uncommitted work goes
+ * too, and this goes to the state the turn found the file in - which is only
+ * knowable because both sides were captured as the tool ran.
+ */
+const REVERT: ChangesetOperation = {
+  id: 'revert',
+  label: 'Revert This File',
+  description: 'Put this file back the way the agent found it',
+  scopes: ['resource'],
+  confirmation: 'Put this file back the way the agent found it? Anything written since is lost.',
+  icon: 'discard',
+  writes: true,
+};
 
 export function gitChanges(): ChangesetSource {
   /**
@@ -183,6 +256,24 @@ export function gitChanges(): ChangesetSource {
         ...(ticked?.has(uri) ? { reviewed: true } : {}),
       };
     });
+  };
+
+  /**
+   * The files one captured scope holds, by absolute path.
+   *
+   * The same branch `state` takes, wanted twice: an operation on a captured
+   * scope needs the side the turn *found* the file in, and there is nowhere
+   * else that survives - git only ever knows what the tree looks like now.
+   */
+  const capturedFor = (session: string, scope: string): Map<string, Captured> | undefined => {
+    if (scope === 'session') return across(session);
+    if (scope.startsWith('compare/')) {
+      const [from, to] = scope.slice('compare/'.length).split('/');
+      if (!from || !to) return undefined;
+      return between(session, from, to);
+    }
+    if (scope.startsWith('turn/')) return seen.get(session)?.get(scope.slice('turn/'.length));
+    return undefined;
   };
 
   /** The last answer per directory, so a catalogue of rows is not a hundred `git` runs. */
@@ -431,6 +522,96 @@ export function gitChanges(): ChangesetSource {
         if (!isReviewed && ticked.delete(file)) moved = true;
       }
       return moved;
+    },
+
+    /**
+     * What can be done to one scope, and only what can be done *now*.
+     *
+     * A working tree with nothing in it offers no commit, and a scope holding
+     * no captured files offers no revert - an operation advertised against
+     * nothing is a button that fails when pressed, and the protocol's whole
+     * access model is that a client may only invoke what it was offered.
+     */
+    operations: (dir, session, scope) => {
+      // Not a repository. `held` is only ever set for a directory `git status`
+      // answered for, which is the same question as "is there git here".
+      if (!held.has(dir)) return [];
+      if (scope === 'uncommitted') return held.get(dir)?.summary?.files ? [COMMIT, DISCARD] : [];
+      const files = capturedFor(session, scope);
+      return files && files.size > 0 ? [REVERT] : [];
+    },
+
+    /*
+     * Run one.
+     *
+     * Everything about *whether* this is allowed happened before the call: the
+     * host checked the id against what `operations` offered for this scope,
+     * checked the target against the operation's scopes, and checked that a
+     * write grant is held. What is left is the doing, and saying what git said
+     * when it did not work.
+     */
+    invoke: async ({ dir, session, scope, operationId, target, subject }) => {
+      if (operationId === 'commit') {
+        // `-A`, including files git has not been told about: the changeset this
+        // was invoked on counted untracked files as changes, and committing
+        // less than was listed would commit something other than what was
+        // shown.
+        const staged = await run(dir, ['add', '-A']);
+        if (!staged.ok) throw new Error(`Could not stage: ${staged.err}`);
+        // The session's own title, which is the sentence somebody already wrote
+        // about this work. A generated one would need the agent, and running a
+        // turn to commit a turn is a lot of machinery for a subject line.
+        const line = (subject ?? '').split('\n')[0]?.trim();
+        const message = line !== undefined && line !== '' ? line : 'Changes from an agent session';
+        const done = await run(dir, ['commit', '-m', message]);
+        if (!done.ok) throw new Error(`Could not commit: ${done.err || done.out.trim()}`);
+        const at = (await git(dir, ['rev-parse', '--short', 'HEAD']))?.trim();
+        return { message: at ? `Committed ${at}: ${message}` : `Committed: ${message}` };
+      }
+
+      const path = target?.resource === undefined ? undefined : pathIn(dir, target.resource);
+      // Refused rather than clamped: a target outside this directory is a
+      // client asking to write somewhere this changeset is not about.
+      if (path === undefined) throw new Error('That file is not in this directory.');
+      const named = path.slice(dir.length + 1);
+
+      if (operationId === 'discard') {
+        /*
+         * Tracked and untracked are different undos.
+         *
+         * A file git knows goes back to HEAD; a file it does not was never
+         * anywhere else, so putting it back means removing it. `restore` will
+         * not do the second - it fails on a pathspec it has no record of - so
+         * the failure is the signal to try the other one.
+         */
+        const back = await run(dir, ['restore', '--staged', '--worktree', '--source=HEAD', '--', path]);
+        if (!back.ok) {
+          const cleaned = await run(dir, ['clean', '-f', '--', path]);
+          if (!cleaned.ok) throw new Error(`Could not discard: ${back.err || cleaned.err}`);
+        }
+        return { message: `Discarded ${named}` };
+      }
+
+      if (operationId === 'revert') {
+        const sides = capturedFor(session, scope)?.get(path);
+        if (!sides) throw new Error('This changeset does not hold that file.');
+        /*
+         * No `before` is a file the turn created, and putting a creation back
+         * means it should not be there.
+         *
+         * Empty counts as none, which is the same reading `rowsOf` gives when
+         * it decides whether to draw a `before` side at all - one rule, so a
+         * row that shows as a creation reverts as one.
+         */
+        if (sides.before === undefined || sides.before === '') {
+          await rm(path, { force: true });
+          return { message: `Removed ${named}, which this changeset created` };
+        }
+        await writeFile(path, sides.before, 'utf8');
+        return { message: `Reverted ${named}` };
+      }
+
+      throw new Error(`No operation called ${operationId}`);
     },
 
     refresh: async (dir) => {
