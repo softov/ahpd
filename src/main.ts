@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { claude } from './agents/claude.js';
 import { createHost } from './host.js';

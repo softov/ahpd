@@ -136,24 +136,27 @@ Written to the same interface as Node and Bun and never run: Deno is not
 installed here. Until somebody runs it, the third case in `listen.ts` is a
 claim rather than a fact.
 
-## A-01-05 - The convergence
+## A-01-05 - The convergence, from the other side
 
-The textui chat client's `claudeHost` makes this same translation in-process.
-It was the prototype; this is the thing it was a prototype of.
+Done in `ahpc`: `--claude` starts one of these rather than translating the
+Agent SDK itself, and about fifteen hundred lines went with it - the
+translation and its tests. That client no longer depends on the Claude SDK at
+all.
 
-The pieces a client needs are now in place - the catalogue, past sessions,
-turns, models, the slash menu. So `--claude` in that client should mean
-*spawn one of these and connect to it*. That deletes roughly a thousand lines
-of duplicated translation from the client rather than extracting them into a
-package neither repository naturally owns.
+What it bought, immediately: the same client renders the same screens against
+`--claude` and `--host`, because they are now the same path with a different
+daemon at the end of it. There is one translation to be wrong, and it is this
+one.
 
-Until then the duplicate is deliberate. It is also the only conformance test
-that matters: the same client, rendering the same screen, against `--claude`
-and against `--host ws://...`. If they differ, one of them is wrong.
+What it costs, and it is a real cost: that client needs `ahpd` installed where
+it used to need nothing. The shape of a spawned host is worth knowing for
+anything else that embeds one - `--port 0` so two clients never fight over one,
+a token so a daemon nobody else asked for answers nobody else, and killed when
+its client goes.
 
-It has already earned its keep once: thinking was being appended with
-`chat/delta` rather than `chat/reasoning`, which every conformant client would
-have drawn as an empty thinking header and the only client here could not see.
+Left over, and cheap: `ahpd` had `bin` pointing at a file with no shebang, so
+`npm i -g ahpd` installed a command the shell could not run. Fixed, but worth
+remembering as the class of thing only installing it finds.
 
 ## A-01-06 - Automations
 
