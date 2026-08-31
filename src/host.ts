@@ -346,10 +346,17 @@ export function createHost(options: HostOptions): Host {
       const held = about(agent.provider);
       held.commands = offered.commands;
       held.seeds = offered.customizations;
-      if (offered.models.length === 0)
-        return;
-      held.models = offered.models;
-      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s)`);
+      /*
+       * An empty model list is kept out, and says nothing about the rest.
+       *
+       * A harness nobody has signed into enumerates no models and still has
+       * skills and MCP servers, so the guard is on the assignment and not on
+       * the announcement - the root channel has to hear about the
+       * customizations either way, or the only client that ever sees them is
+       * one that connected after the probe answered.
+       */
+      if (offered.models.length > 0) held.models = offered.models;
+      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.seeds.length} customization(s)`);
       dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
     }).catch(() => { });
   }
@@ -677,6 +684,23 @@ export function createHost(options: HostOptions): Host {
     displayName: agent.displayName,
     ...(agent.description ? { description: agent.description } : {}),
     models: about(agent.provider).models,
+    /*
+     * The skills, subagents and MCP servers, before any session exists.
+     *
+     * The protocol puts them here as well as on a session - `AgentInfo` has a
+     * `customizations` list, and says a session created with this agent gets
+     * these entries augmented and propagated into its own. So a client can
+     * show what a harness offers without creating a session to ask, which is
+     * exactly when somebody wants to know: the new-session screen is where a
+     * person picks a skill to open with.
+     *
+     * The same list a session is seeded from, deliberately: two answers to
+     * "what does this harness offer" that could disagree is worse than one
+     * answer that arrives a moment after boot.
+     */
+    ...(about(agent.provider).seeds.length > 0
+      ? { customizations: about(agent.provider).seeds }
+      : {}),
     capabilities: {
       /*
        * Several chats per session, and neither of the source modes.

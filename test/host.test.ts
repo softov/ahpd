@@ -585,6 +585,26 @@ describe('what the harness offers', () => {
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
   });
 
+  it('says what a harness offers on the root channel, before any session exists', async () => {
+    // No models: a harness nobody has signed into enumerates none and still
+    // has skills and servers. This is the case that used to answer nothing.
+    sdk.init = { models: [], commands: [{ name: 'review', description: 'A review pass' }], agents: [] };
+    sdk.skills.push({ name: 'review', description: 'A review pass' });
+    sdk.mcp.push({ name: 'gmail', status: 'needs-auth' });
+    const { client } = await running();
+
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { customizations?: { id: string; type: string }[] }[] } };
+    }).snapshot.state;
+    // The protocol's own place for them: `AgentInfo.customizations`, which it
+    // says are propagated into a session's list when one is created with this
+    // agent. Without it the only way to ask what a harness offers is to create
+    // a session, which is the thing somebody is deciding about.
+    const offered = root.agents[0]?.customizations ?? [];
+    expect(offered.map((one) => one.id).sort()).toEqual(['mcp:gmail', 'skill:review']);
+    expect(offered.find((one) => one.id === 'mcp:gmail')?.type).toBe('mcpServer');
+  });
+
   it('says an MCP server\'s state in the protocol\'s words, not the SDK\'s', async () => {
     sdk.init = { models: [], commands: [], agents: [] };
     sdk.mcp.push(

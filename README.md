@@ -203,6 +203,7 @@ Only stdout says where the token came from, never what it is.
 | `resolveSessionConfig` | ✅ permission mode, effort, output style, thinking - the same schema a session reports, so a row is configurable before it is resumed. The output styles are the harness's own, learned by the boot probe, so the control is absent rather than empty on a harness that has none |
 | capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
 | skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
+| what a harness offers, before a session | ✅ `AgentInfo.customizations` on the root channel - the skills, subagents and MCP servers the boot probe found, so a new-session screen can offer one without creating a session to ask |
 | `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
 | `createSession` / `disposeSession` | ✅ |
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
