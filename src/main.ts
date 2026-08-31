@@ -1,4 +1,7 @@
+#!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { configPath, loadConfig } from './config.js';
+import { running, start, stop as stopDaemon } from './daemon.js';
 import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { gitBranches } from './git.js';
@@ -44,12 +47,18 @@ interface Options {
   tokenFile?: string;
   /** Accept any connection, with no secret at all. */
   open: boolean;
+  /** Read this configuration instead of the one XDG names. */
+  configFile?: string;
   help: boolean;
 }
 
 const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
 
-  ahpd [options]
+  ahpd [options]              run it here, in this terminal
+  ahpd start [options]        run it in the background and let go of it
+  ahpd stop                   stop the one running in the background
+  ahpd status                 say whether one is, and where
+  ahpd config                 say where the configuration is, and what it says
 
   --port <n>                    Listen here. Default 9187; 0 picks a free one.
   --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
@@ -63,7 +72,13 @@ const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
                                 written if the file is not there.
   --without-connection-token    Accept any connection. Only when the port is
                                 already reachable by nobody else.
+  --config-file <p>             Read this instead of the file below.
   --help, -h                    This
+
+Every option above can be a key in the configuration file instead, spelled the
+way it is here without the dashes: port, host, paths, connectionToken,
+connectionTokenFile, withoutConnectionToken. A flag beats the file, because a
+flag is this run and a file is every run until somebody edits it.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
 Authorization: Bearer <secret> header.
@@ -93,6 +108,7 @@ function parse(argv: string[]): Options {
       case '--connection-token': options.token = String(argv[++i]); break;
       case '--connection-token-file': options.tokenFile = String(argv[++i]); break;
       case '--without-connection-token': options.open = true; break;
+      case '--config-file': options.configFile = String(argv[++i]); break;
       case '--help': case '-h': options.help = true; break;
       default:
         if (argv[i]?.startsWith('-')) {
@@ -101,6 +117,23 @@ function parse(argv: string[]): Options {
         }
     }
   }
+  /*
+   * The file, under the flags.
+   *
+   * Each source is narrower than the one below it: a flag is this run and a
+   * file is every run until somebody edits it, so the flag wins. `paths` is
+   * replaced rather than merged - a file that named two directories and a
+   * `--path` that named a third would otherwise serve three, which is not
+   * what either of them said.
+   */
+  const file = loadConfig(options.configFile);
+  if (!argv.includes('--port') && typeof file.port === 'number') options.port = file.port;
+  if (!argv.includes('--host') && typeof file.host === 'string') options.host = file.host;
+  if (options.paths.length === 0 && Array.isArray(file.paths)) options.paths.push(...file.paths);
+  if (options.token === undefined && typeof file.connectionToken === 'string') options.token = file.connectionToken;
+  if (options.tokenFile === undefined && typeof file.connectionTokenFile === 'string') options.tokenFile = file.connectionTokenFile;
+  if (!options.open && file.withoutConnectionToken === true) options.open = true;
+
   if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;
 }
@@ -153,7 +186,60 @@ function secret(options: Options): { token?: string; from: string } {
   return { from: 'no token: loopback only' };
 }
 
-const options = parse(process.argv.slice(2));
+const argv = process.argv.slice(2);
+
+/*
+ * The subcommands, which are about a daemon rather than being one.
+ *
+ * Answered before anything is built: `stop` and `status` need no host, and
+ * `start` is this same program run again with the rest of the line. Keeping
+ * them here means there is one place that knows how to read these options,
+ * and `start` cannot drift from what it starts.
+ */
+const verb = argv[0] !== undefined && !argv[0].startsWith('-') ? argv[0] : undefined;
+if (verb !== undefined) {
+  const rest = argv.slice(1);
+  if (verb === 'start') {
+    // Parsed here as well as by the child, so a bad option is refused now
+    // rather than by something that has already been let go of.
+    parse(rest);
+    try {
+      const begun = await start(rest, process.argv[1] as string);
+      process.stdout.write(`ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`);
+      process.exit(0);
+    }
+    catch (error) {
+      process.stderr.write(`Could not start it: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    }
+  }
+  if (verb === 'stop') {
+    const stopped = stopDaemon();
+    process.stdout.write(stopped ? `Stopped ${stopped.url} (pid ${String(stopped.pid)}).\n` : 'None running.\n');
+    process.exit(stopped ? 0 : 1);
+  }
+  if (verb === 'status') {
+    const found = running();
+    if (!found) { process.stdout.write('None running.\n'); process.exit(1); }
+    process.stdout.write(`ahpd on ${found.url} (pid ${String(found.pid)}), started ${found.startedAt}\n`);
+    if (found.paths.length > 0) process.stdout.write(`sessions in ${found.paths.join(', ')}\n`);
+    process.exit(0);
+  }
+  if (verb === 'config') {
+    const at = argv.includes('--config-file') ? argv[argv.indexOf('--config-file') + 1] as string : configPath();
+    process.stdout.write(`${at}\n`);
+    const found = loadConfig(argv.includes('--config-file') ? at : undefined);
+    const rows = Object.entries(found);
+    process.stdout.write(rows.length === 0
+      ? '  (nothing set)\n'
+      : `${rows.map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`).join('\n')}\n`);
+    process.exit(0);
+  }
+  process.stderr.write(`No command called ${verb}. Try --help.\n`);
+  process.exit(2);
+}
+
+const options = parse(argv);
 if (options.help) {
   process.stdout.write(USAGE);
   process.exit(0);

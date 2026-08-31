@@ -67,6 +67,34 @@ ahpc --host ws://127.0.0.1:9200
 ## Run it
 
 ```bash
+npm i -g ahpd
+
+ahpd --path /where/the/sessions/are    # here, in this terminal
+ahpd start                             # in the background, and let go of it
+ahpd status                            # whether one is, and where
+ahpd stop
+```
+
+`start` detaches, so the daemon outlives the shell that began it - which is the
+point of a *sessions server*: close the terminal and the turn keeps running,
+attach again from somewhere else. It records itself in `daemon.json` beside the
+configuration and writes what it says to `daemon.log`, because a background
+process with no output leaves nothing to read when it misbehaves.
+
+Configuration is XDG - `$XDG_CONFIG_HOME/ahpd/config.json`, or
+`~/.config/ahpd/config.json` - and every flag can be a key in it instead:
+
+```json
+{ "port": 9187, "paths": ["/work/api", "/work/web"] }
+```
+
+A flag beats the file, because a flag is this run and a file is every run until
+somebody edits it. `ahpd config` says where the file is and what it says;
+`--config-file` reads a different one.
+
+From source, or on another runtime:
+
+```bash
 npm install && npm run build
 
 node dist/src/main.js --port 9187 --path /where/the/sessions/are   # Node
