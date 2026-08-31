@@ -47,6 +47,8 @@ const need = <T>(port: T | undefined, method: string): T => {
 };
 
 const ROOT = 'ahp-root://';
+/** The automation catalogue, which belongs to the host rather than to a session. */
+const AUTOMATIONS = 'ahp-automations://';
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
@@ -430,6 +432,36 @@ export function createHost(options: HostOptions): Host {
     void options.directories?.refresh?.(dir_).catch(() => {});
     void options.changes?.refresh?.(dir_).catch(() => {});
   }
+
+  /**
+   * Say an automation moved, on whichever channel is about it.
+   *
+   * The store owns the clock and this owns the channels, so a run that started
+   * on its own reaches a client only through here. Wired once at startup
+   * rather than per request, because the interesting case is the one nobody
+   * asked for.
+   */
+  options.automations?.onChanged?.((event) => {
+    if (event.removed !== undefined) {
+      dispatch(AUTOMATIONS, { type: 'automation/removed', resource: event.removed });
+      return;
+    }
+    if (event.automation !== undefined) {
+      const found = options.automations?.get(event.automation);
+      if (found) dispatch(AUTOMATIONS, { type: 'automation/set', automation: found });
+    }
+    if (event.run !== undefined) {
+      const run = options.automations?.runOf(event.run);
+      if (!run) return;
+      // Two channels, because they answer different questions: the run's own
+      // says what it is doing, and the catalogue's says which session it is
+      // doing it in.
+      dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      if (run.primarySession !== undefined) {
+        dispatch(event.run, { type: 'automationRun/primarySessionChanged', primarySession: run.primarySession });
+      }
+    }
+  });
 
   for (const agent of agents.values()) {
     if (!agent.probe)
@@ -944,6 +976,18 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
+    if (channel === AUTOMATIONS) {
+      return {
+        resource: channel,
+        state: { entries: need(options.automations, 'the automations channel').list() },
+        fromSeq: serverSeq,
+      };
+    }
+    if (channel.startsWith('ahp-automation-run:/')) {
+      const found = options.automations?.runOf(channel);
+      if (!found) throw new RpcError(-32001, `No automation run at ${channel}`);
+      return { resource: channel, state: found, fromSeq: serverSeq };
+    }
     const watching = watches.get(channel);
     if (watching) {
       // The state is what the watch *is*, not what it has seen. The protocol's
@@ -1480,6 +1524,65 @@ export function createHost(options: HostOptions): Host {
           );
         },
         /**
+         * What kinds of trigger this host understands.
+         *
+         * Asked before any automation exists, because it is what a client
+         * needs to draw the form. A store that schedules nothing answers with
+         * no schedule trigger, and the client then offers no cron box - which
+         * is better than a box that takes an expression nothing will ever act
+         * on.
+         */
+        listAutomationTriggerDefinitions: async (params) => ({
+          items: need(options.automations, 'listAutomationTriggerDefinitions').triggers({
+            ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
+            ...(Array.isArray(params.workingDirectories)
+              ? { workingDirectories: params.workingDirectories.filter((one): one is string => typeof one === 'string') }
+              : {}),
+          }),
+        }),
+        /**
+         * Start one now.
+         *
+         * The session is created here rather than in the store, because only
+         * this file knows what a session is - the store is handed a function
+         * and gets a URI back. `requestId` is echoed nowhere: the protocol has
+         * it so a client can match its own request to the run it gets, and the
+         * run URI in the result is that match.
+         */
+        runAutomation: async (params) => {
+          const store = need(options.automations, 'runAutomation');
+          const automation = String(params.automation ?? '');
+          const requestId = String(params.requestId ?? '');
+          const run = await store.run(
+            automation,
+            { kind: 'manual', requestId, clientId: connection.clientId },
+            async (wanted) => {
+              const uri = `ahp-session:/${crypto.randomUUID()}`;
+              await handlers.createSession?.({
+                channel: uri,
+                ...(wanted.provider !== undefined ? { provider: wanted.provider } : {}),
+                ...(wanted.workingDirectory !== undefined
+                  ? { workingDirectories: [`file://${wanted.workingDirectory}`] }
+                  : {}),
+                ...(wanted.config !== undefined ? { config: wanted.config } : {}),
+              });
+              // The first message, which is what the automation is *for*: a
+              // session created and never spoken to is a session that does
+              // nothing, and the whole point is that nobody is at the keyboard.
+              const chatUri = `ahp-chat:/${idOf(uri)}`;
+              byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
+              return uri;
+            },
+          );
+          if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
+          return { resource: run.resource };
+        },
+        /** A page of what one automation has done, newest first. */
+        fetchAutomationRuns: async (params) => need(options.automations, 'fetchAutomationRuns').runs(
+          String(params.automation ?? ''),
+          typeof params.cursor === 'string' ? params.cursor : undefined,
+        ),
+        /**
          * Tell me when that changes.
          *
          * The client gets a channel back and subscribes to it; there is no
@@ -1945,6 +2048,63 @@ export function createHost(options: HostOptions): Host {
            * carried - a client naming somebody else would be a client
            * announcing a presence that is not theirs.
            */
+          /*
+           * A client writing an automation, or patching one.
+           *
+           * Both are *requests* in the protocol's own spelling - the client
+           * says what it wants and the host decides, then says what it
+           * actually holds with `automation/set`. So neither of these echoes:
+           * what goes out is the store's answer, which is not necessarily what
+           * was asked for.
+           */
+          if (type === 'automation/createRequested' || type === 'automation/updateRequested') {
+            const store = options.automations;
+            if (!store) { log(`${type} needs an automations store, and this host has none`); return; }
+            const resource = String(action.resource ?? '');
+            if (!resource.startsWith('ahp-automation:/')) return;
+            const made = type === 'automation/createRequested'
+              ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
+                ? action.definition
+                : {}) as Bag)
+              : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
+                ? action.changes
+                : {}) as Bag);
+            // `onChanged` is what dispatches. A store that told the host
+            // nothing would be one whose own timers were invisible, so
+            // everything goes out the same way.
+            if (!made) log(`no automation at ${resource}`);
+            return;
+          }
+
+          /*
+           * Forgetting one, which the client dispatches and the host checks.
+           *
+           * The protocol is precise about the order: a client may send this
+           * "only while the target advertises `Remove`", and the host
+           * "revalidates that operation before permanently deleting". So the
+           * advertised list is checked here rather than trusted - a client
+           * holding a stale catalogue would otherwise delete something this
+           * host had since decided may not be deleted.
+           */
+          if (type === 'automation/removed') {
+            const store = options.automations;
+            const resource = String(action.resource ?? '');
+            const found = store?.get(resource);
+            // "Removing an unknown resource is a no-op."
+            if (!store || !found) return;
+            if (!found.operations.includes('remove')) {
+              log(`${resource} does not offer remove`);
+              return;
+            }
+            store.remove(resource);
+            return;
+          }
+
+          if (type === 'automationRun/cancelRequested') {
+            log('automationRun/cancelRequested is not served: a run here is a session, and disposing it is how it stops');
+            return;
+          }
+
           if (type === 'session/activeClientSet') {
             if (!sessions.has(channel) && !titles.has(channel)) return;
             const clientId = connection.clientId || 'anonymous';

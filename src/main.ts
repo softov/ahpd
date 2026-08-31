@@ -6,6 +6,7 @@ import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { gitBranches } from './git.js';
 import { gitChanges } from './changes.js';
+import { memoryAutomations } from './automations.js';
 import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
 import { listen } from './listen.js';
@@ -265,6 +266,15 @@ const host = createHost({
   terminals: shellTerminals(),
   directories: gitBranches(),
   changes: gitChanges(),
+  /*
+   * Automations, without a clock.
+   *
+   * Definitions can be written and run; nothing here fires on a schedule, and
+   * the store says so by advertising no schedule trigger - so a client draws
+   * a Run button and no cron box. A daemon that should fire on its own passes
+   * a store that holds a clock, which is what the port is for.
+   */
+  automations: memoryAutomations(),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 

@@ -46,7 +46,7 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **30 commands** and names **56 actions**.
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **33 commands** and names **63 actions**.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
@@ -54,11 +54,13 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 
 **The seven commands not served.** The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
 
+- **A-01-03f — Scheduling.** Automations are served and nothing fires them: `memoryAutomations()` holds no clock, and says so by advertising no schedule trigger rather than by taking a cron expression and ignoring it. The port is where a clock would go, so this is a store to write rather than a change to the host. **Suggestions.** (1) A store over the harness's own scheduled work, which is the backing that made this entry worth naming. (2) A store with a timer and a file, which is a few dozen lines and survives a restart. (3) Leave it: this daemon runs the sessions somebody asks for, and a client can press Run.
+
 - **A-01-03b — `authenticate`**: the client fetches a token and pushes it. The SDK has nowhere to put one, so this host serves the *gesture* — switching on an MCP server that is not ready reconnects it, which is how somebody signs in — and not the token. This one is still a genuine refusal rather than a gap.
 - **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
 - **A-01-03e — OTLP** (`otlp/exportLogs`, `exportMetrics`, `exportTraces`) and **`root/progress`** and **`auth/required`**: a telemetry pipe and two notifications. Nothing here produces them and nothing downstream reads them.
 
-**The 30 state actions never emitted**, by channel:
+**The 33 state actions never emitted**, by channel:
 
 | channel | n | why |
 | --- | ---: | --- |
@@ -75,12 +77,3 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 `ahpc dispatch <uri> <type> --field k=v` sends any client-dispatchable action verbatim, so this list is a thing that can be run rather than read off the types.
 
 **Suggestions.** (1) Leave the rest as named decisions and stop treating the table as a backlog — annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up: serving it against five enums is a method that answers nothing. (3) Take `session/serverToolsChanged` by giving this host tools of its own to contribute — it is empty for a true reason today, and the reason would stop being true the moment there was one.
-
-## A-01-06 — Automations
-
-A session started by a trigger rather than by a person, and watchable while it runs: `runAutomation`, `fetchAutomationRuns`, `listAutomationTriggerDefinitions`, and the `automation/*` and `automationRun/*` channels beneath them.
-
-Declared since 0.9.0 and unserved. **VS Code's client calls all three commands**, which means an editor pointed here has an automations surface driving nothing. It is also the one unserved channel with an obvious backing: the harness already has scheduled and triggered work.
-
-**Suggestions.** (1) Serve the read half first — `listAutomationTriggerDefinitions` and `fetchAutomationRuns` over what the harness already has — so a client can *show* automations before anything can start one. (2) Serve `runAutomation` as a manual trigger only, which is a session created with a named prompt and needs no scheduler at all. (3) Leave it, and record that this daemon runs the sessions somebody asks for and schedules nothing.
-

@@ -4,6 +4,7 @@ import type { Agent } from './agent.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
+import type { AutomationStore } from './automations.js';
 import type { Peer, Request } from './rpc.js';
 
 /**
@@ -171,6 +172,16 @@ export interface HostOptions {
    * is the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
+  /**
+   * The automations this host offers.
+   *
+   * Left out, no `ahp-automations://` channel is advertised and all three
+   * automation commands answer `-32601` - which is the right answer for a
+   * daemon that runs the sessions somebody asks for and schedules nothing.
+   * `memoryAutomations()` is the one that ships with this package: it holds
+   * definitions, runs them when asked, and holds no clock.
+   */
+  automations?: AutomationStore;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
 }

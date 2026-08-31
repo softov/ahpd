@@ -229,6 +229,7 @@ Only stdout says where the token came from, never what it is.
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
+| automations | ✅ `ahp-automations://` with the catalogue, `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns`, and a channel per run - through the `automations` port, so a host given none advertises no channel and answers `-32601`. `memoryAutomations()` holds no clock and says so by advertising no schedule trigger, so a client draws a Run button and no cron box |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
 | project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
 | acting on a changeset | ✅ `commit` on the working tree, `discard` on a file, `revert` on a file back to the state the agent found it in - server-advertised per scope, `disabled` while a turn is running, destructive ones carrying the `confirmation` a client MUST show |
