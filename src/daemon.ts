@@ -1,7 +1,7 @@
 /** Starting one of these in the background, and finding it again. */
 
 import { spawn } from 'node:child_process';
-import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
 
 /** What a detached daemon records about itself. */
@@ -56,6 +56,17 @@ export async function start(argv: string[], self: string): Promise<Running> {
 
   ensureConfigDir();
   /*
+   * Where this run's output will start.
+   *
+   * The log is appended to across runs, so reading the whole file for an
+   * address finds the *previous* daemon's - which is a record pointing at a
+   * port this process never bound, and was.
+   */
+  const from = (() => {
+    try { return statSync(daemonLog()).size; }
+    catch { return 0; }
+  })();
+  /*
    * Its output goes to a file, not to a pipe held here.
    *
    * A pipe dies with the process holding its other end, and this process is
@@ -83,7 +94,7 @@ export async function start(argv: string[], self: string): Promise<Running> {
     const gaveUp = Date.now() + 20_000;
     const look = (): void => {
       let said = '';
-      try { said = readFileSync(daemonLog(), 'utf8'); }
+      try { said = readFileSync(daemonLog(), 'utf8').slice(from); }
       catch { /* not written yet */ }
       const found = /ws:\/\/[^\s,]+/.exec(said);
       if (found) { announced = said; answer(found[0]); return; }
