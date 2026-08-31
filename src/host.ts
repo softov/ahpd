@@ -87,6 +87,17 @@ export function createHost(options: HostOptions): Host {
    * command, and `unsubscribe` is the only handle a client needs - so this is
    * what `unsubscribe` and a dropped connection are checked against.
    */
+  /**
+   * Who is in each session, by session URI and then by client id.
+   *
+   * The protocol calls these `activeClients` and makes membership the host's
+   * to keep: a client announces itself with `session/activeClientSet` and the
+   * host takes it out again when the client unsubscribes or goes. Keyed by
+   * `clientId` rather than by connection, because that is what the protocol
+   * keys it by - a client that reconnects is the same client.
+   */
+  const presence = new Map<string, Map<string, Bag>>();
+
   const watches = new Map<string, {
     state: Bag;
     watcher: { close(): void };
@@ -312,6 +323,45 @@ export function createHost(options: HostOptions): Host {
     held.watcher.close();
     watches.delete(channel);
     log(`released ${channel}`);
+  };
+
+  /** Who this session currently has in it. Always a list, because the field is required. */
+  const activeClientsOf = (uri: string): Bag[] => [...(presence.get(uri)?.values() ?? [])];
+
+  /**
+   * Take a client out of a session, if nothing else is holding it there.
+   *
+   * The protocol names three ways this happens - unsubscribe, disconnect
+   * without reconnecting, reconnect without resubscribing - and they are the
+   * same condition seen from three places: no connection with that client id
+   * is watching that session any more. Checked rather than assumed, because
+   * one person can have two windows open on one session and closing the first
+   * must not remove them from it.
+   */
+  const leaves = (uri: string, clientId: string): void => {
+    const held = presence.get(uri);
+    if (!held?.has(clientId)) return;
+    for (const connection of connections) {
+      if (connection.clientId === clientId && connection.watching.has(uri)) return;
+    }
+    held.delete(clientId);
+    if (held.size === 0) presence.delete(uri);
+    dispatch(uri, { type: 'session/activeClientRemoved', clientId });
+  };
+
+  /**
+   * How many sessions this host is running, said when it changes.
+   *
+   * `sessions.size` and not the catalogue: the protocol asks for the active,
+   * non-disposed sessions *on the server*, and a transcript on disk is a row
+   * somebody can open rather than a session the host is holding. Reporting the
+   * catalogue meant a host running nothing claimed a hundred.
+   */
+  let announced = -1;
+  const activeSessionsMoved = (): void => {
+    if (sessions.size === announced) return;
+    announced = sessions.size;
+    dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: sessions.size });
   };
 
   /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
@@ -841,7 +891,8 @@ export function createHost(options: HostOptions): Host {
   }));
   const rootState = async () => ({
     agents: descriptors(),
-    activeSessions: (await listing()).length,
+    // What this host is running, not what is on disk beside it.
+    activeSessions: sessions.size,
     ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
   });
   /**
@@ -949,6 +1000,10 @@ export function createHost(options: HostOptions): Host {
       const state = {
         ...lead.sessionState(),
         ...describes(channel),
+        // Required by the protocol and empty until somebody announces
+        // themselves, which is a real answer: a session nobody has opened has
+        // nobody in it.
+        activeClients: activeClientsOf(channel),
         status: statusOf(channel),
         modifiedAt: modifiedOf(held),
         defaultChat: held.defaultChat,
@@ -996,6 +1051,7 @@ export function createHost(options: HostOptions): Host {
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
+          activeClients: activeClientsOf(`ahp-session:/${id}`),
           ...describes(`ahp-session:/${id}`),
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
@@ -1122,6 +1178,12 @@ export function createHost(options: HostOptions): Host {
         reconnect: async (params) => {
           const clientId = typeof params.clientId === 'string' ? params.clientId : connection.clientId;
           connection.clientId = clientId;
+          // What this connection was watching before the drop. Whatever it
+          // does not ask back for is the third way the protocol says a client
+          // stops being active in a session: reconnecting without
+          // resubscribing to it.
+          const before = [...connection.watching];
+          connection.watching.clear();
           const wanted = Array.isArray(params.subscriptions)
             ? params.subscriptions.filter((uri): uri is string => typeof uri === 'string')
             : [];
@@ -1141,6 +1203,11 @@ export function createHost(options: HostOptions): Host {
               // on a channel that will never speak again.
               missing.push(channel);
             }
+          }
+
+          // Whatever it did not ask back for, it has left.
+          for (const channel of before) {
+            if (!connection.watching.has(channel)) leaves(channel, clientId);
           }
 
           const oldest = replayable[0]?.serverSeq;
@@ -1700,6 +1767,7 @@ export function createHost(options: HostOptions): Host {
           // there yet.
           dispatch(uri, { type: 'session/ready' });
           catalogueMoved(uri, 'root/sessionAdded');
+          activeSessionsMoved();
           return {};
         },
         /**
@@ -1767,6 +1835,8 @@ export function createHost(options: HostOptions): Host {
             byChat.delete(chatUri);
           }
           sessions.delete(uri);
+          presence.delete(uri);
+          activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
           broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, resource: uri });
           log(`disposed ${uri}`);
@@ -1811,6 +1881,9 @@ export function createHost(options: HostOptions): Host {
           // in as many words: it has no dispose command, so the last
           // unsubscribe is what releases the watcher.
           releaseWatch(channel);
+          // And unsubscribing from a session is one of the three ways the
+          // protocol says a client stops being active in it.
+          leaves(channel, connection.clientId || 'anonymous');
         },
         /**
          * What the client says happened.
@@ -1859,6 +1932,37 @@ export function createHost(options: HostOptions): Host {
             // otherwise have every other client redraw for nothing.
             if (options.changes?.review?.(dir, owner, scope, files, on) !== true) return;
             dispatch(channel, { type, files, reviewed: on });
+            return;
+          }
+
+          /*
+           * Somebody is here, and what they brought.
+           *
+           * Client-dispatchable and host-kept, which is the whole point: one
+           * client says it once and every other client watching the session
+           * learns of it, which is not something they could tell each other.
+           * The id is this connection's own rather than whatever the action
+           * carried - a client naming somebody else would be a client
+           * announcing a presence that is not theirs.
+           */
+          if (type === 'session/activeClientSet') {
+            if (!sessions.has(channel) && !titles.has(channel)) return;
+            const clientId = connection.clientId || 'anonymous';
+            const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
+              ? action.activeClient
+              : {}) as Bag;
+            const activeClient: Bag = {
+              ...carried,
+              clientId,
+              tools: Array.isArray(carried.tools) ? carried.tools : [],
+            };
+            const held = presence.get(channel) ?? new Map<string, Bag>();
+            presence.set(channel, held);
+            // Re-announcing is how a client refreshes what it contributes, so
+            // this replaces rather than merges - a tool taken away has to be
+            // able to go.
+            held.set(clientId, activeClient);
+            dispatch(channel, { type, activeClient });
             return;
           }
 
@@ -2175,10 +2279,15 @@ export function createHost(options: HostOptions): Host {
           return handler(request.params);
         },
         close() {
+          const was = [...connection.watching];
           connections.delete(connection);
           // Before anything else looks: a watch this client owned and never
           // subscribed to has nobody left to subscribe to it.
           for (const channel of [...watches.keys()]) releaseWatch(channel);
+          // Gone without reconnecting, which is the second of the three ways.
+          // Said after the connection is out of the set, so `leaves` does not
+          // find this one still holding the session.
+          for (const channel of was) leaves(channel, connection.clientId || 'anonymous');
           log(`${connection.clientId || 'a client'} went away`);
         },
       };

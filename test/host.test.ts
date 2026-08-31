@@ -210,13 +210,29 @@ describe('the catalogue', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/new');
   });
 
-  it('counts the sessions on the root channel', async () => {
+  it('counts the sessions it is running, not the transcripts beside them', async () => {
+    // The protocol asks for the active, non-disposed sessions *on the server*.
+    // A transcript on disk is a row somebody can open, not a session this host
+    // is holding - counting those meant a host running nothing claimed two.
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
     const client = open();
-    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const first = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { activeSessions: number } }[];
     };
-    expect(result.snapshots[0]?.state.activeSessions).toBe(1);
+    expect(first.snapshots[0]?.state.activeSessions).toBe(0);
+
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const again = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { activeSessions: number } };
+    };
+    expect(again.snapshot.state.activeSessions).toBe(1);
+
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/live' } });
+    const after = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { activeSessions: number } };
+    };
+    expect(after.snapshot.state.activeSessions).toBe(0);
   });
 
   it('refuses a session channel it has no agent for', async () => {

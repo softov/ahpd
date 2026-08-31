@@ -213,6 +213,7 @@ Only stdout says where the token came from, never what it is.
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
 | model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
 | `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |
+| who else is here | ✅ `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is. `activeSessions` on the root channel counts what this host is *running*, not the transcripts beside them |
 | read and archived | ✅ kept per session and told to every client - including for rows no agent is running for |
 | connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
 | `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
