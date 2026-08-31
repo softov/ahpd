@@ -66,3 +66,24 @@ export interface Read {
   /** Sniffed MIME type, where there is one worth reporting. */
   contentType?: string;
 }
+
+/** What happened to one path, in the protocol's three words. */
+export interface ResourceChange {
+  uri: string;
+  type: 'added' | 'updated' | 'deleted';
+}
+
+/** What a watch was asked to report. */
+export interface WatchOptions {
+  /** Report descendants too. Without it, the path itself and its direct children. */
+  recursive?: boolean;
+  /** Globs, relative to the watched root, whose matches are not reported. */
+  excludes?: string[];
+  /** Globs the reported set is restricted to. Absent reports everything not excluded. */
+  includes?: string[];
+}
+
+/** A watch, for as long as somebody wants it. */
+export interface Watcher {
+  close(): void;
+}

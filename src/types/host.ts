@@ -1,7 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { Agent } from './agent.js';
-import type { Entry, Metadata, Read, Write as WriteContent } from './resources.js';
+import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Peer, Request } from './rpc.js';
@@ -84,6 +84,28 @@ export interface ResourceStore {
   move?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
   /** Copy, within the served directories on both ends. */
   copy?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
+
+  /**
+   * Tell me when that changes.
+   *
+   * Optional on its own rather than with the write half: watching is a read,
+   * and a store may perfectly well serve bytes it cannot subscribe to - a
+   * remote filesystem, an archive, a fixture. A host whose store has none
+   * answers `-32601` for `createResourceWatch`, and the protocol's own client
+   * treats that as a reason to degrade rather than to fail.
+   *
+   * `onChange` is called with a *batch*, because the filesystem reports one
+   * event per file and a save is several: the protocol says a server coalesces
+   * them, and an empty batch MUST NOT be dispatched. Closing the returned
+   * handle is the only way to stop it - there is no dispose command, and
+   * `unsubscribe` is what the host turns into this call.
+   */
+  watch?(
+    uri: string,
+    roots: string[],
+    options: WatchOptions,
+    onChange: (changes: ResourceChange[]) => void,
+  ): Promise<Watcher>;
 }
 
 /**

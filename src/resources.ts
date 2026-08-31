@@ -1,7 +1,8 @@
+import { watch as watchPath } from 'node:fs';
 import { copyFile, cp, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { RpcError } from './rpc.js';
-import type { Entry, Metadata, Read, Write } from './types/resources.js';
+import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write } from './types/resources.js';
 import type { ResourceStore } from './types/host.js';
 
 /**
@@ -341,6 +342,119 @@ export async function copy(source: string, destination: string, roots: string[],
 }
 
 /**
+ * One glob, as a regular expression.
+ *
+ * Enough of the syntax to read what the protocol's own example sends -
+ * `**\/.git/**`, `**\/node_modules/**` - and no more. `**` crosses
+ * separators and `*` does not, which is the distinction the whole notation
+ * exists for; everything else is escaped, so a pattern with a dot in it means
+ * a dot.
+ */
+const globbed = (pattern: string): RegExp => {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i] as string;
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        i += 1;
+        // `**/` also matches nothing at all, so `**\/.git/**` finds `.git/config`
+        // at the root and not only in a subdirectory.
+        if (pattern[i + 1] === '/') { i += 1; out += '(?:.*/)?'; }
+        else out += '.*';
+      }
+      else out += '[^/]*';
+    }
+    else if (c === '?') out += '[^/]';
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+};
+
+/** How long to gather events before saying anything. */
+const COALESCE = 50;
+
+/**
+ * Tell me when that changes.
+ *
+ * `node:fs.watch`, and the two things about it worth stating. It reports one
+ * event per file, so a save that rewrites four files is four events and a
+ * `git checkout` is hundreds - hence the window: events are gathered and sent
+ * as one batch, which is what the protocol asks a server to do and what keeps
+ * a client from redrawing per file.
+ *
+ * And its two event names do not line up with the protocol's three. `change`
+ * is a write, which is `updated`. `rename` is create, delete *and* rename, so
+ * which of the other two it was is decided by looking: there, and it appeared;
+ * gone, and it went. An editor that saves atomically - write a temporary file,
+ * rename it over the original - therefore reports `added` for a file that
+ * already existed. A client applying that redraws the file either way, which
+ * is why this is worth a sentence rather than an inventory of the tree.
+ */
+export async function watch(
+  uri: string,
+  roots: string[],
+  options: WatchOptions,
+  onChange: (changes: ResourceChange[]) => void,
+): Promise<Watcher> {
+  const path = await allowed(uri, roots);
+  await stat(path).catch(() => {
+    throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
+  });
+  const excludes = (options.excludes ?? []).map(globbed);
+  const includes = (options.includes ?? []).map(globbed);
+  /** Whether a path relative to the root is one the caller asked about. */
+  const wanted = (relative_: string): boolean => {
+    if (excludes.some((one) => one.test(relative_))) return false;
+    return includes.length === 0 || includes.some((one) => one.test(relative_));
+  };
+
+  /** What has happened since the last batch went out, by path. */
+  const pending = new Map<string, 'change' | 'rename'>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+
+  const flush = (): void => {
+    timer = undefined;
+    const held = [...pending];
+    pending.clear();
+    void (async () => {
+      const items: ResourceChange[] = [];
+      for (const [full, kind] of held) {
+        if (kind === 'change') { items.push({ uri: uriOf(full), type: 'updated' }); continue; }
+        const there = await stat(full).then(() => true, () => false);
+        items.push({ uri: uriOf(full), type: there ? 'added' : 'deleted' });
+      }
+      // "An empty `changes.items` list MUST NOT be dispatched" - and the whole
+      // batch can be empty once every event in it was filtered out.
+      if (items.length > 0 && !closed) onChange(items);
+    })().catch(() => {});
+  };
+
+  const held = watchPath(path, { recursive: options.recursive === true }, (kind, name) => {
+    // A watcher can fire with no filename - the platform knows something moved
+    // and not what. Nothing useful can be said about that, and saying the
+    // directory changed would send a client to re-read the wrong thing.
+    if (name === null || name === undefined) return;
+    const relative_ = String(name).split(sep).join('/');
+    if (!wanted(relative_)) return;
+    pending.set(join(path, String(name)), kind === 'change' ? 'change' : 'rename');
+    if (timer === undefined) timer = setTimeout(flush, COALESCE);
+  });
+  // Never the reason a daemon stays up: a watch is something a client asked
+  // for, and the process should still exit when everything else is done.
+  held.unref?.();
+  held.on('error', () => { /* the directory went; the watch is simply over */ });
+
+  return {
+    close() {
+      closed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      held.close();
+    },
+  };
+}
+
+/**
  * The filesystem this process is on, as a host's `ResourceStore`.
  *
  * Kept out of `createHost` so the protocol imports no runtime: this file is
@@ -354,4 +468,5 @@ export async function copy(source: string, destination: string, roots: string[],
 export const fileResources = (): ResourceStore => ({
   list, read, resolve, complete,
   write, remove, mkdir, move, copy,
+  watch,
 });

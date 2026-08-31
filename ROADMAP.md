@@ -34,6 +34,7 @@ What was checked, against a running daemon and a client sending VS Code's own ha
 | sessions and changesets | `listSessions`, `createSession`, `subscribe`, and a changeset subscribed to by the URI its template became |
 | operations | `commit` and `discard` advertised with status, the destructive one carrying the `confirmation` the client MUST display |
 | the write gate | invoking without a grant is refused `-32009` carrying the `resourceRequest` that would unlock it; after the grant the same call commits, and the commit is in `git log` |
+| watching a file | `createResourceWatch` on the project, then `added` / `updated` / `deleted` as the tree moves. VS Code's own filesystem provider degrades to a no-op watch without it, so a mounted tree used to go stale the moment the agent touched anything |
 | editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
 | the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
 
@@ -43,18 +44,17 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.8.0**, which is the version this host builds against: **37 commands** and **86 state actions** declared, of which this host serves **29 commands** and names **52 actions**.
+Counted against `@microsoft/agent-host-protocol` **0.8.0**, which is the version this host builds against: **37 commands** and **86 state actions** declared, of which this host serves **30 commands** and names **53 actions**.
 
 The version matters and is worth stating rather than glossing. VS Code speaks `1.0.0` and its client calls things 0.8.0 does not declare at all — `runAutomation`, `fetchAutomationRuns`, `listAutomationTriggerDefinitions`. Those are not gaps in this host against its own types; they are a version gap, and closing them starts with the dependency rather than with the code.
 
-**The eight commands not served.** The list starts at `b` because `a` was the write half of `resource*` and it shipped; a letter is not reused any more than a number is.
+**The seven commands not served.** The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
 
 - **A-01-03b — `authenticate`**: the client fetches a token and pushes it. The SDK has nowhere to put one, so this host serves the *gesture* — switching on an MCP server that is not ready reconnects it, which is how somebody signs in — and not the token. This one is still a genuine refusal rather than a gap.
 - **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
-- **A-01-03d — `createResourceWatch`**: A-01-07.
 - **A-01-03e — OTLP** (`otlp/exportLogs`, `exportMetrics`, `exportTraces`) and **`root/progress`** and **`auth/required`**: a telemetry pipe and two notifications. Nothing here produces them and nothing downstream reads them.
 
-**The 34 state actions never emitted**, by channel:
+**The 33 state actions never emitted**, by channel:
 
 | channel | n | why |
 | --- | ---: | --- |
@@ -65,7 +65,6 @@ The version matters and is worth stating rather than glossing. VS Code speaks `1
 | `terminal/*` | 5 | `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` are shell integration, which needs a PTY this daemon does not have; `isPty: false` is the honest form of all four. `cleared` is client-dispatchable |
 | `chat/workingDirectory*`, `session/workingDirectory*` | 5 | directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about |
 | `session/activeClient*`, `root/activeSessionsChanged`, `root/configChanged` | 4 | presence and host-wide config. Presence is the cheapest real gap: several clients on one session is the case this daemon exists for, and none of them can see the others |
-| `resourceWatch/changed` | 1 | A-01-07 |
 
 `chat/truncated` stays refused for a reason worth keeping: it means "drop the turns before this one", and when the harness compacts, every one of them is still in the transcript and still readable. What was compacted is the model's context, not the conversation.
 
@@ -95,18 +94,3 @@ Waits on A-01-08. None of it is in the types this host builds against, so there 
 
 **Suggestions.** (1) After A-01-08, serve the read half first — `listAutomationTriggerDefinitions` and `fetchAutomationRuns` over what the harness already has — so a client can *show* automations before anything can start one. (2) Serve `runAutomation` as a manual trigger only, which is a session created with a named prompt and needs no scheduler at all. (3) Leave it, and record that this daemon runs the sessions somebody asks for and schedules nothing.
 
-## A-01-07 — Resource watches
-
-`createResourceWatch` and `resourceWatch/changed`: a client subscribes to a path and is told when it changes, rather than polling `resourceRead`.
-
-Its cost is now nameable rather than hypothetical. VS Code's `agentHostFileSystemProvider` treats the watch as optional and says so in its own comment — the provider "degrades to a no-op `watch()`" without it. So an editor pointed here mounts the tree, opens a file, and never notices when the agent rewrites it underneath. That is not a refusal, it is a stale editor.
-
-**Suggestions.** (1) Serve it with `node:fs.watch` behind a port, the way every other outside thing here arrives — a host given no watcher advertises none. (2) Fold it into the `changes` port, which already has a reason to know when files move, would otherwise grow a second separate watcher, and would fix A-02-02 in the same pass. (3) Leave it, and accept that a mounted tree goes stale — defensible only for a client that re-reads on `session/changesetsChanged`, which VS Code's filesystem provider does not.
-
-## A-02-02 — The working tree is only re-read on turn boundaries
-
-`gitChanges` caches `git status` per directory and refreshes it at boot and when a turn ends. Anything that changes the tree in between — somebody editing in an editor, a build writing artefacts, a `git checkout` in a terminal this same daemon is serving — is invisible until the next turn finishes.
-
-Found while checking A-01-01 end to end: a file edited between two connections showed an empty `uncommitted` changeset, and the operations that act on it correctly offered nothing, because from the host's point of view there was nothing there. It is the same gap A-01-07 describes from the client's side, which is why the two belong together.
-
-**Suggestions.** (1) Watch the directory and refresh on change, which is A-01-07's suggestion (2) doing double duty — one watcher, two problems. (2) Refresh on subscribe as well as on turn boundaries, which is a one-line fix that makes an opening client correct and leaves a watching one stale. (3) Refresh on a timer, which is the answer that needs no watcher and is wrong for a repository nobody is touching.

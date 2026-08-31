@@ -220,6 +220,7 @@ Only stdout says where the token came from, never what it is.
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
+| `createResourceWatch` | ✅ a channel per watch, `resourceWatch/changed` in coalesced batches, globs for `excludes` and `includes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. A store that cannot watch answers `-32601`, which is what a client degrades on rather than fails on |
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |

@@ -81,6 +81,21 @@ export function createHost(options: HostOptions): Host {
     throw new Error('A host with no agents can serve nothing. Pass at least one.');
   const connections = new Set<Connection>();
   /**
+   * The watches clients have asked for, by the channel each was given.
+   *
+   * The protocol ties a watch's life to its subscription - there is no dispose
+   * command, and `unsubscribe` is the only handle a client needs - so this is
+   * what `unsubscribe` and a dropped connection are checked against.
+   */
+  const watches = new Map<string, {
+    state: Bag;
+    watcher: { close(): void };
+    /** The connection that asked for it, which keeps it alive until it subscribes. */
+    owner: Connection;
+    /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
+    opened: boolean;
+  }>();
+  /**
    * `IsRead` and `IsArchived`, per session.
    *
    * The client flags, and unlike the in-process host these genuinely belong
@@ -272,6 +287,33 @@ export function createHost(options: HostOptions): Host {
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
   };
+  /**
+   * Let a watch go once nobody is listening to it.
+   *
+   * The protocol's rule, and it is a MUST: when every subscriber has
+   * unsubscribed, or the connection drops, the watcher is released. Checked
+   * against every connection rather than the one that just left, because two
+   * clients may watch one channel and the second is still reading.
+   *
+   * The connection that *created* it counts even before it has subscribed:
+   * `createResourceWatch` hands back a channel and the client subscribes after,
+   * so releasing on "nobody is watching" alone would close every watch in the
+   * gap between the two calls.
+   */
+  const releaseWatch = (channel: string): void => {
+    const held = watches.get(channel);
+    if (!held) return;
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) return;
+    }
+    // Handed out and not yet subscribed to. Its owner is still here, so it is
+    // still on its way to being watched rather than finished with.
+    if (!held.opened && connections.has(held.owner)) return;
+    held.watcher.close();
+    watches.delete(channel);
+    log(`released ${channel}`);
+  };
+
   /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
   const catalogueMoved = (uri: string, method: string): void => {
     const held = sessions.get(uri);
@@ -851,8 +893,35 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
+    const watching = watches.get(channel);
+    if (watching) {
+      // The state is what the watch *is*, not what it has seen. The protocol's
+      // reducer keeps no history: `resourceWatch/changed` exists to deliver
+      // events to whoever is subscribed, and a client that arrives later has
+      // missed them the way it misses anything it was not there for.
+      return { resource: channel, state: watching.state, fromSeq: serverSeq };
+    }
     const at = changesetAt(channel);
     if (at) {
+      /*
+       * Asked again, here, because this is the moment somebody reads one.
+       *
+       * `git status` is cached per directory - a catalogue of a hundred rows
+       * must not be a hundred `git` runs - and it used to be refreshed only
+       * when a turn ended. That is right for what the *agent* did and wrong
+       * for everything else: a person editing in an editor, a build writing
+       * artefacts, a `git checkout` in a terminal this same host is serving.
+       * All of it was invisible until the next turn finished, so a client that
+       * opened a changeset in between was shown a working tree that had moved.
+       *
+       * Deliberately not a watcher for this. `fs.watch` recursive costs an
+       * inotify handle per directory, and a host told to serve a home
+       * directory would spend thousands of them before answering anything. A
+       * client that wants to be *told* asks for `createResourceWatch` on a
+       * path it names, which is what the protocol has for it; this is only
+       * about the host's own cache being true at the moment it is read.
+       */
+      await options.changes?.refresh?.(at.dir).catch(() => false);
       const state = await options.changes?.state(at.dir, at.owner, at.scope);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
       // The verbs, alongside the files. Omitted when there are none, which
@@ -1096,6 +1165,10 @@ export function createHost(options: HostOptions): Host {
           const channel = String(params.channel ?? '');
           const snapshot = await snapshotOf(channel);
           connection.watching.add(channel);
+          // From here on, an unsubscribe means something: a watch nobody has
+          // subscribed to yet is not one everybody has finished with.
+          const held = watches.get(channel);
+          if (held) held.opened = true;
           return { snapshot };
         },
         /**
@@ -1338,6 +1411,48 @@ export function createHost(options: HostOptions): Host {
             browsable(),
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
+        },
+        /**
+         * Tell me when that changes.
+         *
+         * The client gets a channel back and subscribes to it; there is no
+         * dispose command, and the last `unsubscribe` is what releases the
+         * watcher. Gated the way `resourceRead` is rather than the way a write
+         * is: watching is a read, and a client already able to read a
+         * directory learns nothing new by being told when it moved.
+         */
+        createResourceWatch: async (params) => {
+          const uri = String(params.uri ?? '');
+          const store = need(options.resources, 'createResourceWatch');
+          const start = need(store.watch, 'createResourceWatch');
+          const items = (value: unknown): string[] => {
+            const held = (typeof value === 'object' && value !== null ? value : {}) as { items?: unknown };
+            return Array.isArray(held.items) ? held.items.filter((one): one is string => typeof one === 'string') : [];
+          };
+          const recursive = params.recursive === true;
+          const excludes = items(params.excludes);
+          const includes = items(params.includes);
+          const channel = `ahp-resource-watch:/${crypto.randomUUID()}`;
+          const watcher = await start.call(store, uri, browsable(), { recursive, excludes, includes }, (changes) => {
+            // Only if it still exists: a batch can be in flight when the last
+            // subscriber leaves, and dispatching to a released channel is a
+            // client being told about a watch it has forgotten.
+            if (!watches.has(channel)) return;
+            dispatch(channel, { type: 'resourceWatch/changed', changes: { items: changes } });
+          });
+          watches.set(channel, {
+            watcher,
+            owner: connection,
+            opened: false,
+            state: {
+              root: uri,
+              recursive,
+              ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
+              ...(includes.length > 0 ? { includes: { items: includes } } : {}),
+            },
+          });
+          log(`${connection.clientId} is watching ${uri}${recursive ? ' and under it' : ''}`);
+          return { channel };
         },
         /*
          * The write half of `resource*`.
@@ -1690,7 +1805,12 @@ export function createHost(options: HostOptions): Host {
         unsubscribe: (params) => {
           // This connection stops watching. Not the channel - doing that to
           // shed one consumer kills the stream the others are reading.
-          connection.watching.delete(String(params.channel ?? ''));
+          const channel = String(params.channel ?? '');
+          connection.watching.delete(channel);
+          // Except for a resource watch, where the protocol says the opposite
+          // in as many words: it has no dispose command, so the last
+          // unsubscribe is what releases the watcher.
+          releaseWatch(channel);
         },
         /**
          * What the client says happened.
@@ -2056,6 +2176,9 @@ export function createHost(options: HostOptions): Host {
         },
         close() {
           connections.delete(connection);
+          // Before anything else looks: a watch this client owned and never
+          // subscribed to has nobody left to subscribe to it.
+          for (const channel of [...watches.keys()]) releaseWatch(channel);
           log(`${connection.clientId || 'a client'} went away`);
         },
       };
