@@ -34,21 +34,21 @@ What was checked, against a running daemon and a client sending VS Code's own ha
 | sessions and changesets | `listSessions`, `createSession`, `subscribe`, and a changeset subscribed to by the URI its template became |
 | operations | `commit` and `discard` advertised with status, the destructive one carrying the `confirmation` the client MUST display |
 | the write gate | invoking without a grant is refused `-32009` carrying the `resourceRequest` that would unlock it; after the grant the same call commits, and the commit is in `git log` |
+| editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
 | the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
 
-So the answer to "will my editor work against this" is yes, for the conversation, the catalogue, the terminals, the read half of the filesystem, and the changesets including acting on them. What it will *not* do is everything in A-01-03 below, and that list is now written against what VS Code actually calls rather than against what this repository's own client happens to need.
+So the answer to "will my editor work against this" is yes, for the conversation, the catalogue, the terminals, the filesystem including saving to it, and the changesets including acting on them. What it will *not* do is everything in A-01-03 below, and that list is now written against what VS Code actually calls rather than against what this repository's own client happens to need.
 
 ---
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.8.0**, which is the version this host builds against: **37 commands** and **86 state actions** declared, of which this host serves **24 commands** and names **52 actions**.
+Counted against `@microsoft/agent-host-protocol` **0.8.0**, which is the version this host builds against: **37 commands** and **86 state actions** declared, of which this host serves **29 commands** and names **52 actions**.
 
 The version matters and is worth stating rather than glossing. VS Code speaks `1.0.0` and its client calls things 0.8.0 does not declare at all — `runAutomation`, `fetchAutomationRuns`, `listAutomationTriggerDefinitions`. Those are not gaps in this host against its own types; they are a version gap, and closing them starts with the dependency rather than with the code.
 
-**The thirteen commands not served.**
+**The eight commands not served.** The list starts at `b` because `a` was the write half of `resource*` and it shipped; a letter is not reused any more than a number is.
 
-- **A-01-03a — The write half of `resource*`**: `resourceWrite`, `resourceDelete`, `resourceMkdir`, `resourceMove`, `resourceCopy`. This was refused on the grounds that a host reachable from another machine should not let any client write anywhere. That reasoning is now half-obsolete: `resourceRequest` is served, it is per connection and per resource, and it is already the gate on every changeset operation that writes. The same gate is what the write half would hang from. **VS Code calls all five** — `agentHostFileSystemProvider.ts` mounts a remote host's tree as a workspace filesystem — so an editor pointed here can browse the project and cannot save a file in it.
 - **A-01-03b — `authenticate`**: the client fetches a token and pushes it. The SDK has nowhere to put one, so this host serves the *gesture* — switching on an MCP server that is not ready reconnects it, which is how somebody signs in — and not the token. This one is still a genuine refusal rather than a gap.
 - **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
 - **A-01-03d — `createResourceWatch`**: A-01-07.
@@ -71,7 +71,7 @@ The version matters and is worth stating rather than glossing. VS Code speaks `1
 
 `ahpc dispatch <uri> <type> --field k=v` sends any client-dispatchable action verbatim, so this list is a thing that can be run rather than read off the types.
 
-**Suggestions.** (1) Take A-01-03a now, behind the `resourceRequest` grant that already exists — it is the largest thing an editor pointed here cannot do, and the gate is written and tested. (2) Take presence — `session/activeClientSet` / `Removed` and `root/activeSessionsChanged` — which is three actions and makes "somebody else is in this session" visible for the first time. (3) Leave the rest as named decisions and stop treating the table as a backlog: annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap.
+**Suggestions.** (1) Take presence — `session/activeClientSet` / `Removed` and `root/activeSessionsChanged` — which is three actions and makes "somebody else is in this session" visible for the first time; several clients on one session is the case this daemon exists for and none of them can see the others. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up — serving it against five enums is a method that answers nothing. (3) Leave the rest as named decisions and stop treating the table as a backlog: annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap.
 
 ## A-01-04 — Deno
 

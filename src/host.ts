@@ -952,6 +952,45 @@ export function createHost(options: HostOptions): Host {
     accept(peer: Peer) {
       const connection = { peer, clientId: '', watching: new Set<string>(), grants: new Set<string>() };
       connections.add(connection);
+      /**
+       * Whether this client has talked its way into writing that.
+       *
+       * A grant on a directory covers what is under it. The alternative is an
+       * exact match per URI, which is defensible and unusable: an editor saves
+       * a file it has open, and a round trip per file turns one negotiation
+       * into one per keystroke-since-last-save. Asking for `file:///project`
+       * and being answered about `file:///project` is what the client did -
+       * this is honouring that answer, not widening it.
+       *
+       * Prefix on a path separator, never on the string: a grant on
+       * `/src/brb` must not reach `/src/brb_framework`.
+       */
+      const mayWrite = (uri: string): boolean => {
+        if (connection.grants.has(`write:${uri}`)) return true;
+        if (!uri.startsWith('file://')) return false;
+        const path = uri.slice('file://'.length);
+        for (const held of connection.grants) {
+          if (!held.startsWith('write:file://')) continue;
+          const root = held.slice('write:file://'.length);
+          if (path === root || path.startsWith(`${root}/`)) return true;
+        }
+        return false;
+      };
+
+      /**
+       * Refuse a write nobody asked permission for, and say how to ask.
+       *
+       * The `request` in the error data is the protocol's own affordance: it
+       * is a `resourceRequest` payload that, sent as-is, would make the same
+       * call work. A refusal without it is a dead end.
+       */
+      const needsWrite = (uri: string): void => {
+        if (mayWrite(uri)) return;
+        throw new RpcError(-32009, `Write access to ${uri} has not been granted`, {
+          request: { channel: ROOT, uri, write: true },
+        });
+      };
+
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
          * The handshake.
@@ -1300,6 +1339,79 @@ export function createHost(options: HostOptions): Host {
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
         },
+        /*
+         * The write half of `resource*`.
+         *
+         * Every one takes the same two gates in the same order, and the order
+         * matters. The grant is checked here, because it is a fact about this
+         * *connection* and the store has never heard of connections; the path
+         * is checked in the store, because only it knows what a path means -
+         * and it resolves the parent rather than the target, so a symlink
+         * pointing out of the served set cannot be written through.
+         *
+         * `need` twice, because there are two ways not to have this: a host
+         * given no `resources` port at all, and one given a store that only
+         * reads. Both answer `-32601`, which is what the protocol has for a
+         * method that is not here, and neither is a refusal about a path.
+         */
+        resourceWrite: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
+          await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, browsable(), {
+            data: String(params.data ?? ''),
+            encoding,
+            ...(typeof params.mode === 'string' ? { mode: params.mode as 'truncate' | 'append' | 'insert' } : {}),
+            ...(typeof params.position === 'number' ? { position: params.position } : {}),
+            ...(params.createOnly === true ? { createOnly: true } : {}),
+            ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
+          });
+          log(`${connection.clientId} wrote ${uri}`);
+          return {};
+        },
+        resourceDelete: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          await need(need(options.resources, 'resourceDelete').remove, 'resourceDelete')(
+            uri, browsable(), params.recursive === true,
+          );
+          log(`${connection.clientId} removed ${uri}`);
+          return {};
+        },
+        resourceMkdir: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri, browsable());
+          return {};
+        },
+        /*
+         * Both ends, because a move writes both.
+         *
+         * The source is emptied and the destination is filled, so a grant on
+         * one of them is permission for half of what would happen. `copy` only
+         * needs the destination - reading the source is what the read half
+         * already allows inside a served directory.
+         */
+        resourceMove: async (params) => {
+          const source = String(params.source ?? '');
+          const destination = String(params.destination ?? '');
+          needsWrite(source);
+          needsWrite(destination);
+          await need(need(options.resources, 'resourceMove').move, 'resourceMove')(
+            source, destination, browsable(), params.failIfExists === true,
+          );
+          log(`${connection.clientId} moved ${source} to ${destination}`);
+          return {};
+        },
+        resourceCopy: async (params) => {
+          const source = String(params.source ?? '');
+          const destination = String(params.destination ?? '');
+          needsWrite(destination);
+          await need(need(options.resources, 'resourceCopy').copy, 'resourceCopy')(
+            source, destination, browsable(), params.failIfExists === true,
+          );
+          return {};
+        },
         /**
          * May I read this, may I write it.
          *
@@ -1373,16 +1485,10 @@ export function createHost(options: HostOptions): Host {
           if ((statusOf(at.owner) & Status.InProgress) !== 0)
             throw new RpcError(-32002, `${at.owner} is mid-turn`);
 
-          if (offered.writes === true) {
-            // A file for a targeted operation, the project for a changeset-wide
-            // one: committing is a write to the directory and there is no
-            // single resource to name for it.
-            const wanted = target?.resource ?? `file://${at.dir}`;
-            if (!connection.grants.has(`write:${wanted}`))
-              throw new RpcError(-32009, `Write access to ${wanted} has not been granted`, {
-                request: { channel: ROOT, uri: wanted, write: true },
-              });
-          }
+          // A file for a targeted operation, the project for a changeset-wide
+          // one: committing is a write to the directory and there is no single
+          // resource to name for it.
+          if (offered.writes === true) needsWrite(target?.resource ?? `file://${at.dir}`);
 
           const key = opKey(channel, operationId);
           const held = sessions.get(at.owner);

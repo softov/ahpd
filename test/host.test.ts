@@ -86,7 +86,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { fileResources } = await import('../src/resources.js');
+const { fileResources, list, read, resolve, complete } = await import('../src/resources.js');
 const { shellTerminals } = await import('../src/terminals.js');
 const { gitBranches } = await import('../src/git.js');
 /*
@@ -1921,13 +1921,48 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     expect(found.uri).toBe('file:///github/ahpd/src');
   });
 
-  it('will not write, and says so rather than pretending', async () => {
+  it('will not write without a grant, and names the request that would give one', async () => {
     const client = await opened();
-    // The write half exists in the protocol and is deliberately not served.
+    // The whole access model for the write half. A refusal that did not carry
+    // the request would be a dead end - the client has nothing to send next.
     await expect(client.handle({
       method: 'resourceWrite',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x' },
-    })).rejects.toMatchObject({ code: -32601 });
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x', encoding: 'utf-8' },
+    })).rejects.toMatchObject({
+      code: -32009,
+      data: { request: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', write: true } },
+    });
+  });
+
+  it('answers -32601 for a store that only reads, which is not a refusal about a path', async () => {
+    // Two different ways not to have this, and they must not be confused: a
+    // host with a read-only store does not serve the method at all, and a
+    // client that gets `-32009` instead would go and ask for a grant it could
+    // never use.
+    const host = createHost({
+      path: '/github/ahpd',
+      agents: [claude({ paths: ['/github/ahpd'] })],
+      resources: { list, read, resolve, complete },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({
+      method: 'resourceRequest',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd', write: true },
+    });
+    for (const method of ['resourceWrite', 'resourceDelete', 'resourceMkdir', 'resourceMove', 'resourceCopy']) {
+      await expect(client.handle({
+        method,
+        params: {
+          channel: 'ahp-root://',
+          uri: 'file:///github/ahpd/x',
+          source: 'file:///github/ahpd/x',
+          destination: 'file:///github/ahpd/y',
+          data: '',
+          encoding: 'utf-8',
+        },
+      }), method).rejects.toMatchObject({ code: -32601 });
+    }
   });
 });
 

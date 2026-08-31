@@ -1,7 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { Agent } from './agent.js';
-import type { Entry, Metadata, Read } from './resources.js';
+import type { Entry, Metadata, Read, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Peer, Request } from './rpc.js';
@@ -58,6 +58,32 @@ export interface ResourceStore {
   resolve(uri: string, roots: string[], followSymlinks?: boolean): Promise<Metadata>;
   /** Paths under `base` that start with what is typed. */
   complete(typed: string, base: string, roots: string[], limit?: number): Promise<string[]>;
+
+  /*
+   * The half that writes.
+   *
+   * Every one is optional and they are optional together: a store that has
+   * none is a read-only filesystem, and the host answers `-32601` for each,
+   * which is a different thing from refusing a particular path. `fileResources()`
+   * has them all; a store over something that cannot be written - an archive,
+   * a read-only mount, a fixture - simply leaves them out and says so by
+   * omission rather than by throwing on every call.
+   *
+   * The host has already checked the client's `resourceRequest` grant before
+   * any of these is reached. What is left to each is the path check, which is
+   * a store's own business because only it knows what a path means.
+   */
+
+  /** Write, create or splice one file. */
+  write?(uri: string, roots: string[], content: WriteContent): Promise<void>;
+  /** Remove a file, or a directory when `recursive`. */
+  remove?(uri: string, roots: string[], recursive?: boolean): Promise<void>;
+  /** Make a directory, and the parents it needs. */
+  mkdir?(uri: string, roots: string[]): Promise<void>;
+  /** Rename, within the served directories on both ends. */
+  move?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
+  /** Copy, within the served directories on both ends. */
+  copy?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
 }
 
 /**
