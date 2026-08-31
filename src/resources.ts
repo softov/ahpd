@@ -374,6 +374,17 @@ const globbed = (pattern: string): RegExp => {
 const COALESCE = 50;
 
 /**
+ * How far before a watch started a file may have been created and still count
+ * as new.
+ *
+ * `Date.now()` and the filesystem's own clock are not the same clock: a file
+ * written immediately after a watch begins stats with a `birthtime` a
+ * millisecond or two *before* the moment the watch recorded. Without an
+ * allowance the first file created under a fresh watch is reported as an edit.
+ */
+const SKEW = 50;
+
+/**
  * Tell me when that changes.
  *
  * `node:fs.watch`, and the two things about it worth stating. It reports one
@@ -382,13 +393,17 @@ const COALESCE = 50;
  * as one batch, which is what the protocol asks a server to do and what keeps
  * a client from redrawing per file.
  *
- * And its two event names do not line up with the protocol's three. `change`
- * is a write, which is `updated`. `rename` is create, delete *and* rename, so
- * which of the other two it was is decided by looking: there, and it appeared;
- * gone, and it went. An editor that saves atomically - write a temporary file,
- * rename it over the original - therefore reports `added` for a file that
- * already existed. A client applying that redraws the file either way, which
- * is why this is worth a sentence rather than an inventory of the tree.
+ * And its event names are not the protocol's, nor even the same across
+ * runtimes: creating a file is `rename` on Node and `change` on Deno, which is
+ * the sort of thing only running it on both ever tells you. So the name is
+ * ignored and the file is *looked at*. Gone is `deleted`. There and created
+ * since this watch started is `added`. Anything else is `updated`.
+ *
+ * `birthtime` rather than an inventory of the tree, because the tree may be a
+ * hundred thousand files and the question is only ever asked about the handful
+ * that moved. A path already reported as `added` is `updated` from then on, so
+ * a file created and then written twice is one appearance and two edits rather
+ * than three appearances.
  */
 export async function watch(
   uri: string,
@@ -408,8 +423,11 @@ export async function watch(
     return includes.length === 0 || includes.some((one) => one.test(relative_));
   };
 
-  /** What has happened since the last batch went out, by path. */
-  const pending = new Map<string, 'change' | 'rename'>();
+  /** Paths that have moved since the last batch went out. */
+  const pending = new Set<string>();
+  /** Paths already reported as having appeared, so they are edits from then on. */
+  const announced = new Set<string>();
+  const since = Date.now() - SKEW;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
 
@@ -419,10 +437,16 @@ export async function watch(
     pending.clear();
     void (async () => {
       const items: ResourceChange[] = [];
-      for (const [full, kind] of held) {
-        if (kind === 'change') { items.push({ uri: uriOf(full), type: 'updated' }); continue; }
-        const there = await stat(full).then(() => true, () => false);
-        items.push({ uri: uriOf(full), type: there ? 'added' : 'deleted' });
+      for (const full of held) {
+        const found = await stat(full).catch(() => undefined);
+        if (found === undefined) {
+          announced.delete(full);
+          items.push({ uri: uriOf(full), type: 'deleted' });
+          continue;
+        }
+        const fresh = found.birthtimeMs >= since && !announced.has(full);
+        if (fresh) announced.add(full);
+        items.push({ uri: uriOf(full), type: fresh ? 'added' : 'updated' });
       }
       // "An empty `changes.items` list MUST NOT be dispatched" - and the whole
       // batch can be empty once every event in it was filtered out.
@@ -437,7 +461,9 @@ export async function watch(
     if (name === null || name === undefined) return;
     const relative_ = String(name).split(sep).join('/');
     if (!wanted(relative_)) return;
-    pending.set(join(path, String(name)), kind === 'change' ? 'change' : 'rename');
+    // `kind` is deliberately unread: see above.
+    void kind;
+    pending.add(join(path, String(name)));
     if (timer === undefined) timer = setTimeout(flush, COALESCE);
   });
   // Never the reason a daemon stays up: a watch is something a client asked

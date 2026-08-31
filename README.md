@@ -104,8 +104,12 @@ deno run -A dist/src/main.js --port 9187 --path /where/…           # Deno
 
 The runtime is detected at startup and named in the first line of output. Node
 needs the optional `ws` dependency, having no WebSocket server of its own; Bun
-and Deno use their built-in servers and need nothing. Node and Bun are tested;
-Deno is written to the same interface but has not been run here.
+and Deno use their built-in servers and need nothing. All three are run: Deno
+was proved on **2.9.6** against the built output, driving a whole session -
+handshake, catalogue, changeset, operations, the write half and a resource
+watch. Run `dist/` rather than `src/` there, or pass `--sloppy-imports`: the
+sources import `./x.js` the way the emitted output does, and Deno reads that
+literally.
 
 ### While you are changing it
 

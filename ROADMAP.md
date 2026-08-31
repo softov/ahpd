@@ -38,6 +38,8 @@ What was checked, against a running daemon and a client sending VS Code's own ha
 | editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
 | the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
 
+And on Deno as well as Node, which is what closed A-01-04: the same drive, on the same built output, under `deno 2.9.6`. It found one real difference — creating a file is a `rename` event on Node and a `change` event on Deno — so the watcher stopped reading the runtime's event names and looks at the file instead.
+
 So the answer to "will my editor work against this" is yes, for the conversation, the catalogue, the terminals, the filesystem including saving to it, and the changesets including acting on them. What it will *not* do is everything in A-01-03 below, and that list is now written against what VS Code actually calls rather than against what this repository's own client happens to need.
 
 ---
@@ -71,12 +73,6 @@ The version matters and is worth stating rather than glossing. VS Code speaks `1
 `ahpc dispatch <uri> <type> --field k=v` sends any client-dispatchable action verbatim, so this list is a thing that can be run rather than read off the types.
 
 **Suggestions.** (1) Take presence — `session/activeClientSet` / `Removed` and `root/activeSessionsChanged` — which is three actions and makes "somebody else is in this session" visible for the first time; several clients on one session is the case this daemon exists for and none of them can see the others. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up — serving it against five enums is a method that answers nothing. (3) Leave the rest as named decisions and stop treating the table as a backlog: annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap.
-
-## A-01-04 — Deno
-
-Written to the same interface as Node and Bun and never run: Deno is not installed here. Until somebody runs it, the third case in `listen.ts` is a claim rather than a fact.
-
-**Suggestions.** (1) Install Deno and run the suite against it, then say so in the README with the version it was proved on. (2) Delete the Deno case and say the daemon runs on Node and Bun — untested code that claims support is worse than no claim. (3) Keep it, and mark it in the README as written-not-run, which is what is true today and costs nothing.
 
 ## A-01-08 — Speak 1.0.0
 
