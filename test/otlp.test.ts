@@ -1,0 +1,97 @@
+import { expect, it } from 'vitest';
+import { createHost } from '../src/host.js';
+import { echo } from '../examples/echo/agent.js';
+import type { Peer } from '../src/types/rpc.js';
+
+/*
+ * The host's own log, as a channel.
+ *
+ * Worth its own file for one reason: it is the only thing here that is a
+ * *notification* rather than an action. It carries no `serverSeq`, moves no
+ * state and is not replayed - so the assertions are about what a subscriber
+ * gets and, just as much, about what it does not.
+ */
+
+const DIR = '/tmp/otlp';
+
+function peer(): Peer & { notes: { method: string; params: unknown }[] } {
+  const notes: { method: string; params: unknown }[] = [];
+  return { notes, send: () => {}, notify: (method, params) => notes.push({ method, params }), close: () => {} };
+}
+
+async function connected() {
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
+  const p = peer();
+  const client = host.accept(p);
+  const hello = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { telemetry?: { logs?: string } };
+  return { host, client, peer: p, hello };
+}
+
+const logs = (p: ReturnType<typeof peer>) => p.notes
+  .filter((n) => n.method === 'otlp/exportLogs')
+  .map((n) => n.params as { channel: string; payload: Record<string, unknown> });
+
+it('advertises the logs channel as a template, because the variable is the severity', async () => {
+  const { hello } = await connected();
+  // A client expands this before subscribing. A literal URI would mean every
+  // subscriber gets every line whether or not it wanted them.
+  expect(hello.telemetry?.logs).toBe('ahp-otlp://logs/{level}');
+});
+
+it('sends nothing to a client that has not subscribed', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'echo' } });
+  expect(logs(p)).toEqual([]);
+});
+
+it('subscribes without a snapshot, because the channel is a stream', async () => {
+  const { client } = await connected();
+  const opened = await client.handle({
+    method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' },
+  }) as { snapshot: { state: Record<string, unknown> } };
+  // Refusing would tell a client the channel does not exist; an empty state
+  // tells it there is nothing yet, which is what is true.
+  expect(opened.snapshot.state).toEqual({});
+});
+
+it('carries what the host logs as an OTLP request the client can parse', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'echo' } });
+
+  const sent = logs(p);
+  expect(sent.length).toBeGreaterThan(0);
+  expect(sent[0]?.channel).toBe('ahp-otlp://logs/info');
+  // The payload is an `ExportLogsServiceRequest` verbatim - AHP does not
+  // redeclare the OpenTelemetry type system, so the shape has to be right or
+  // a client parsing it with an OTel schema gets nothing.
+  const first = sent[0]?.payload as {
+    resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string }; severityText: string }[] }[] }[];
+  };
+  const record = first.resourceLogs[0]?.scopeLogs[0]?.logRecords[0];
+  expect(record?.severityText).toBe('INFO');
+  expect(typeof record?.body.stringValue).toBe('string');
+  expect(sent.some((one) => (one.payload as typeof first)
+    .resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body.stringValue.includes('ahp-session:/a'))).toBe(true);
+});
+
+it('is not replayed, which is what stateless means', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://logs/info' } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'echo' } });
+  const had = logs(p).length;
+  expect(had).toBeGreaterThan(0);
+
+  // A reconnect replays actions from a `serverSeq`. These are notifications
+  // and carry none, so a client that dropped and came back has missed them -
+  // and must not be handed them again as if it had not.
+  const again = await client.handle({
+    method: 'reconnect',
+    params: { clientId: 'a', subscriptions: ['ahp-otlp://logs/info'], lastSeenServerSeq: 0 },
+  }) as { type: string; actions?: unknown[] };
+  const replayed = (again.actions ?? []) as { action?: { type?: string } }[];
+  expect(replayed.some((one) => String(one.action?.type ?? '').startsWith('otlp/'))).toBe(false);
+});

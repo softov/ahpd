@@ -234,7 +234,64 @@ export function createHost(options: HostOptions): Host {
   const REPLAY = 1000;
   /** The last `REPLAY` action envelopes, oldest first. */
   const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: undefined }[] = [];
-  const log = (message: string): void => options.onEvent?.(message);
+  /**
+   * The host's own log, as OTLP.
+   *
+   * `ahp-otlp://logs/{level}` is a template rather than a channel: the
+   * variable is severity, so a client that only wants warnings subscribes to
+   * one and is not sent the rest. Everything this host logs already goes
+   * through `log`, so this is the same lines with a second destination rather
+   * than a new source of them.
+   *
+   * Stateless and ephemeral, as the protocol says: nothing is replayed on
+   * reconnect, and a subscriber gets only what was emitted after it arrived.
+   * There is no state to snapshot either, which is why `subscribe` answers an
+   * empty one rather than refusing.
+   */
+  const LOGS = 'ahp-otlp://logs';
+  const startedAt = new Date().toISOString();
+  const log = (message: string): void => {
+    options.onEvent?.(message);
+    /*
+     * OTLP/JSON, verbatim, because the protocol says so: the payload is an
+     * `ExportLogsServiceRequest` and AHP deliberately does not redeclare the
+     * OpenTelemetry type system, so a client parses it with an OTel schema.
+     * Building it by hand here is a dozen lines and saves a dependency that
+     * would exist only to serialise one shape.
+     */
+    const at = String(Date.now() * 1_000_000);
+    const payload = {
+      resourceLogs: [{
+        resource: {
+          attributes: [
+            { key: 'service.name', value: { stringValue: 'ahpd' } },
+            { key: 'service.start_time', value: { stringValue: startedAt } },
+          ],
+        },
+        scopeLogs: [{
+          scope: { name: 'ahpd' },
+          logRecords: [{
+            timeUnixNano: at,
+            observedTimeUnixNano: at,
+            // One severity, because this host has one kind of line. A `log`
+            // that took a level would be a second thing to keep in step with
+            // every call site, and every call site here is an event.
+            severityNumber: 9,
+            severityText: 'INFO',
+            body: { stringValue: message },
+          }],
+        }],
+      }],
+    };
+    for (const level of ['info', '']) {
+      const channel = level === '' ? LOGS : `${LOGS}/${level}`;
+      for (const connection of connections) {
+        // A notification, not an action: it carries no `serverSeq` and moves
+        // no state, so it does not belong in the replay buffer.
+        if (connection.watching.has(channel)) connection.peer.notify('otlp/exportLogs', { channel, payload });
+      }
+    }
+  };
   /**
    * A session's status, with the client flags folded in.
    *
@@ -976,6 +1033,13 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
+    if (channel === LOGS || channel.startsWith(`${LOGS}/`)) {
+      // Nothing to snapshot: the channel is a stream, and the protocol says a
+      // subscriber receives only what was emitted after it arrived. Answering
+      // with an empty state is how a client is told it is subscribed rather
+      // than refused.
+      return { resource: channel, state: {}, fromSeq: serverSeq };
+    }
     if (channel === AUTOMATIONS) {
       return {
         resource: channel,
@@ -1203,6 +1267,10 @@ export function createHost(options: HostOptions): Host {
             // Without this the client has no reason to believe either means
             // anything here, and types them into the chat as text.
             completionTriggerCharacters: ['/', '@'],
+            // What this host emits, so a client knows there is a log to watch.
+            // A template, because the variable is the severity a subscriber
+            // wants rather than something the host fills in.
+            telemetry: { logs: `${LOGS}/{level}` },
           };
         },
         ping: async () => ({}),

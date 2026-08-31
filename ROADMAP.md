@@ -46,19 +46,21 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **33 commands** and names **63 actions**.
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
 What the bump did close is the automation channel, which 0.8.0 did not declare at all. It is now declared and unserved, which is an ordinary gap rather than a version gap — see A-01-06.
 
-**The seven commands not served.** The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
+**The seven commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
 
 - **A-01-03f — Scheduling.** Automations are served and nothing fires them: `memoryAutomations()` holds no clock, and says so by advertising no schedule trigger rather than by taking a cron expression and ignoring it. The port is where a clock would go, so this is a store to write rather than a change to the host. **Suggestions.** (1) A store over the harness's own scheduled work, which is the backing that made this entry worth naming. (2) A store with a timer and a file, which is a few dozen lines and survives a restart. (3) Leave it: this daemon runs the sessions somebody asks for, and a client can press Run.
 
-- **A-01-03b — `authenticate`**: the client fetches a token and pushes it. The SDK has nowhere to put one, so this host serves the *gesture* — switching on an MCP server that is not ready reconnects it, which is how somebody signs in — and not the token. This one is still a genuine refusal rather than a gap.
+- **A-01-03b — `authenticate`**: called a refusal here for a long time on the grounds that "the SDK has nowhere to put a token". That was **wrong**, and checking it is what found it: the SDK's `query()` takes `env`, and its own documentation names `ANTHROPIC_API_KEY` as the credential the subprocess reads. So there is somewhere to put one, and this is a gap. See A-02-03.
 - **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
-- **A-01-03e — OTLP** (`otlp/exportLogs`, `exportMetrics`, `exportTraces`) and **`root/progress`** and **`auth/required`**: a telemetry pipe and two notifications. Nothing here produces them and nothing downstream reads them.
+- **A-01-03e — `otlp/exportTraces` and `exportMetrics`**: VS Code's client says `// Not recorded, yet` against both, so there is nothing on the other end. A genuine refusal, and one the reference implementation makes for us.
+- **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
+- **A-01-03h — `auth/required`**: pairs with A-01-03b. Consumed by VS Code, and unemitted here for the same reason `authenticate` is unserved.
 
 **The 33 state actions never emitted**, by channel:
 

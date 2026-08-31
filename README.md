@@ -215,6 +215,7 @@ Only stdout says where the token came from, never what it is.
 | `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |
 | who else is here | ✅ `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is. `activeSessions` on the root channel counts what this host is *running*, not the transcripts beside them |
 | read and archived | ✅ kept per session and told to every client - including for rows no agent is running for |
+| `otlp/exportLogs` | ✅ `ahp-otlp://logs/{level}`, advertised at the handshake and carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines this daemon writes to stdout, so a client can watch the host's log instead of reading the terminal it was started in. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
 | connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
 | `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
 | `completions` | ✅ `/` against the session's commands, falling back to the harness-wide list |
