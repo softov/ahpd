@@ -53,6 +53,22 @@ export interface ChangesetScope {
   /** What a client shows, e.g. `Uncommitted Changes`. */
   label: string;
   description?: string;
+  /**
+   * What kind of changeset this is, so a client can group and sort without
+   * parsing the URI. The protocol names `session`, `branch`, `uncommitted`,
+   * `turn` and `compare-turns`, and says a client should fall back sensibly
+   * on one it does not know.
+   */
+  changeKind: string;
+  /**
+   * Whether files in this changeset can be marked reviewed.
+   *
+   * A presence flag on the catalogue entry, which is what lets a client decide
+   * whether to draw the checkbox *before* it subscribes to anything. Review is
+   * not an operation: the client dispatches `changeset/filesReviewChanged` and
+   * the server keeps the flag.
+   */
+  reviewable?: boolean;
 }
 
 /**
@@ -89,6 +105,15 @@ export interface ChangesetSource {
   read?(uri: string): Promise<{ data: string; encoding: string } | undefined>;
   /** Look again, answering whether anything moved. */
   refresh?(dir: string): Promise<boolean>;
+  /**
+   * Mark files reviewed, or clear them.
+   *
+   * A person's bookkeeping about a diff they are reading, not a change to
+   * anything on disk - which is why it is the one thing here a client may
+   * write. Answers whether anything moved, so an idempotent toggle tells
+   * nobody about a state it already had.
+   */
+  review?(dir: string, session: string, scope: string, files: string[], reviewed: boolean): boolean;
   /**
    * A file an agent is about to change, and the same file once it has.
    *

@@ -21,47 +21,37 @@ origin map, and the canonical reducers - rather than read off the prose.
 
 # Missing
 
-## A-01-01 - Acting on a changeset
+## A-01-01 - Operations on a changeset
 
-All three scopes a session can be asked about are served:
+Review is served: every session scope advertises `capabilities.review`, files
+carry `reviewed`, and `changeset/filesReviewChanged` is answered on the
+changeset's own channel. It is deliberately **not** an operation - the protocol
+has clients dispatch that action and the server keep the flag - which is also
+why it needed no decision: ticking a file off is a reader's bookkeeping and
+writes nothing to anybody's repository.
 
-```
-<sessionUri>/changeset/session                            everything this conversation changed
-<sessionUri>/changeset/turn/{turnId}                      what one turn changed
-<sessionUri>/changeset/compare/{origTurnId}/{modTurnId}   what changed between two
-<sessionUri>/changeset/uncommitted                        the working tree, against HEAD
-```
+A tick does not survive its file changing. The protocol makes that the server's
+job, since the server is the authority on what changed, so a later turn editing
+a file clears the flag rather than leaving it standing against content nobody
+has read.
 
-The first two are captured rather than derived, which is the only way they can
-be true: git says what a working tree looks like *now*, so a turn asked about
-after two more have run would be handed their work as well. Both sides of every
-file are read as the tool runs - `before` as the call is announced, `after`
-when its result arrives - off the agent's own message stream rather than out of
-a `PreToolUse` hook, because a hook is bypassable from a person's settings and
-the stream is not.
+What is left is `operations` and `invokeChangesetOperation` - commit, revert,
+discard. The protocol's own gate is the right one and is finer than a flag:
+`ChangesetState.operations` is a list the *server* advertises, and
+`invokeChangesetOperation` takes an `operationId` that must match one from it,
+so a client can only invoke what this host has already offered. Advertising
+none is conformant - the field is optional, "omit when no operations are
+available" - which is what it does today.
 
-What is left is *acting* on one. `invokeChangesetOperation` and the
-`changeset/*` actions are unserved: this host computes a changeset and does
-nothing to it. Committing, reverting and marking a file reviewed are each a
-write to somebody's repository from a daemon that may be reached from another
-machine, which is the same question the write half of `resource*` is waiting
-on - see A-01-03a and A-01-03b, and note that `resourceRequest` is the shape
-that would answer both.
+Two rules to copy when it is served, both from the reference: an operation is
+`Disabled` while a turn is active, so the working tree cannot be mutated
+mid-request; and anything destructive carries `confirmation`, which a client
+MUST show before invoking.
 
-All four scopes the protocol defines are served. `compare/<a>/<b>` needed
-nothing new: turn order is the order turns were first seen, so a range is a
-slice, and a range folds the way one turn does - the first `before` and the
-last `after`, because a file edited three times was found in one state and left
-in another, and the states in between are the middle of a diff nobody asked
-for.
-
-One thing to know before trusting a `session` changeset: the captures live for
-as long as the host does. A resumed session opens with none, because the turns
-it is resuming happened in a process that has gone. The transcript still has
-them and they could be replayed, which is a decision rather than a gap.
-
-[REFERENCE.md](REFERENCE.md) says where the host that already does all of this
-is checked out, and which files in it answered which question.
+The open question is not *how* but *whether*: committing and reverting are
+writes to somebody's repository from a daemon that may be reached from another
+machine, and that is the same question the write half of `resource*` is waiting
+on. See A-01-03a and A-01-03b.
 
 ## A-01-03 - What is left of the protocol
 

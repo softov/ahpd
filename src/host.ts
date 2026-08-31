@@ -383,6 +383,25 @@ export function createHost(options: HostOptions): Host {
    * because a row and the session it opens disagreeing is the bug this is
    * meant to avoid.
    */
+  /**
+   * The changesets a session advertises, as catalogue entries.
+   *
+   * One builder, because there are two places that say them - a session's
+   * state and the action that says they moved - and an entry that carried a
+   * capability in one and not the other would be a client drawing a checkbox
+   * that vanished when anything changed.
+   */
+  const catalogueOf = (uri: string, dir: string): Bag[] =>
+    (options.changes?.scopes(dir, uri) ?? []).map((scope) => ({
+      label: scope.label,
+      uriTemplate: `${uri}/changeset/${scope.id}`,
+      changeKind: scope.changeKind,
+      ...(scope.description ? { description: scope.description } : {}),
+      // A presence flag, and on the *catalogue* entry so a client can decide
+      // whether to draw a checkbox before it subscribes to anything.
+      ...(scope.reviewable ? { capabilities: { review: {} } } : {}),
+    }));
+
   const describes = (uri: string): Bag => {
     const dir = dirOf(uri);
     if (dir === undefined) return {};
@@ -402,12 +421,7 @@ export function createHost(options: HostOptions): Host {
     // The changesets this session can be asked about, as URIs a client
     // subscribes to. A template with no variables in it is the whole scope;
     // the ones with `{turnId}` are not served yet.
-    const scopes = options.changes?.scopes(dir, uri) ?? [];
-    const changesets = scopes.map((scope) => ({
-      label: scope.label,
-      uriTemplate: `${uri}/changeset/${scope.id}`,
-      ...(scope.description ? { description: scope.description } : {}),
-    }));
+    const changesets = catalogueOf(uri, dir);
     const summary = options.changes?.summary(dir);
     return {
       project,
@@ -450,15 +464,7 @@ export function createHost(options: HostOptions): Host {
       if (!moved) return;
       for (const uri of inThere()) {
         // Asked per session, because two of the scopes are the session's own.
-        const scopes = options.changes?.scopes(dir, uri) ?? [];
-        dispatch(uri, {
-          type: 'session/changesetsChanged',
-          changesets: scopes.map((scope) => ({
-            label: scope.label,
-            uriTemplate: `${uri}/changeset/${scope.id}`,
-            ...(scope.description ? { description: scope.description } : {}),
-          })),
-        });
+        dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
         catalogueMoved(uri, 'root/sessionSummaryChanged');
       }
     }).catch(() => {});
@@ -1331,6 +1337,32 @@ export function createHost(options: HostOptions): Host {
            * does from the catalogue - and starting an agent to record a bit
            * would start one per row scrolled past.
            */
+          /*
+           * Ticking a file off a diff, which belongs to no session's agent.
+           *
+           * Answered here for the same reason the flags below are: it is a
+           * reader's bookkeeping about a changeset, it writes nothing to disk,
+           * and it arrives on the changeset's own channel rather than a
+           * session's. Review is deliberately not an *operation* - the
+           * protocol has clients dispatch this and the server keep the flag.
+           */
+          if (type === 'changeset/filesReviewChanged') {
+            const cut = channel.indexOf('/changeset/');
+            const owner = cut > 0 ? channel.slice(0, cut) : '';
+            const scope = cut > 0 ? channel.slice(cut + '/changeset/'.length) : '';
+            const dir = owner === '' ? undefined : dirOf(owner);
+            const files = Array.isArray(action.files)
+              ? action.files.filter((one): one is string => typeof one === 'string')
+              : [];
+            const on = action.reviewed === true;
+            if (dir === undefined || files.length === 0) return;
+            // Only when it moved. A client ticking a file already ticked would
+            // otherwise have every other client redraw for nothing.
+            if (options.changes?.review?.(dir, owner, scope, files, on) !== true) return;
+            dispatch(channel, { type, files, reviewed: on });
+            return;
+          }
+
           if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
             const uri = `ahp-session:/${idOf(channel)}`;
             const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;

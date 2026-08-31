@@ -95,6 +95,16 @@ export function gitChanges(): ChangesetSource {
   /** The text held for a captured side, by the URI minted for it. */
   const kept = new Map<string, string>();
 
+  /**
+   * Which files somebody has ticked off, per changeset.
+   *
+   * A reader's bookkeeping rather than anything about the files: keyed by the
+   * scope being read, because reviewing a turn is not reviewing the session
+   * that contains it.
+   */
+  const reviewed = new Map<string, Set<string>>();
+  const reviewKey = (session: string, scope: string): string => `${session}\u0000${scope}`;
+
   const capturedUri = (session: string, turn: string, path: string, phase: string): string =>
     `${CAPTURED}//${encodeURIComponent(session)}/${encodeURIComponent(turn)}/${phase}${path}`;
 
@@ -151,8 +161,9 @@ export function gitChanges(): ChangesetSource {
    * are done in the same place: a row that names content nothing can resolve
    * is a row that opens onto an error.
    */
-  const rowsOf = (session: string, turn: string, files: Map<string, Captured>): ChangesetFile[] =>
-    [...files].map(([path, sides]) => {
+  const rowsOf = (session: string, turn: string, files: Map<string, Captured>): ChangesetFile[] => {
+    const ticked = reviewed.get(reviewKey(session, turn));
+    return [...files].map(([path, sides]) => {
       const uri = `file://${path}`;
       const before = capturedUri(session, turn, path, 'before');
       const after = capturedUri(session, turn, path, 'after');
@@ -167,8 +178,12 @@ export function gitChanges(): ChangesetSource {
           ...(sides.after !== undefined ? { after: { uri, content: { uri: after } } } : {}),
           diff: counted(sides.before ?? '', sides.after ?? ''),
         },
+        // Absent is not-yet-reviewed, which is what the protocol says a
+        // missing value means, so only a tick is worth sending.
+        ...(ticked?.has(uri) ? { reviewed: true } : {}),
       };
     });
+  };
 
   /** The last answer per directory, so a catalogue of rows is not a hundred `git` runs. */
   const held = new Map<string, { files: ChangesetFile[]; summary: ChangesSummary }>();
@@ -256,7 +271,15 @@ export function gitChanges(): ChangesetSource {
   return {
     scopes: (dir, session) => {
       const scopes = held.has(dir)
-        ? [{ id: 'uncommitted', label: 'Uncommitted Changes', description: 'The working tree, against HEAD' }]
+        ? [{
+          id: 'uncommitted',
+          label: 'Uncommitted Changes',
+          description: 'The working tree, against HEAD',
+          changeKind: 'uncommitted',
+          // Not reviewable: the working tree is whatever it is now, and a
+          // tick against a file that something else may rewrite underneath it
+          // is bookkeeping about a thing that has moved.
+        }]
         : [];
       const turns = seen.get(session);
       if (!turns || turns.size === 0) return scopes;
@@ -265,15 +288,29 @@ export function gitChanges(): ChangesetSource {
       // changed is the one that belongs beside a conversation - the working
       // tree includes whatever else happened to the directory meanwhile.
       return [
-        { id: 'session', label: 'This Session', description: 'Everything this conversation changed' },
+        {
+          id: 'session',
+          label: 'This Session',
+          description: 'Everything this conversation changed',
+          changeKind: 'session',
+          reviewable: true,
+        },
         ...scopes,
         // Templates, which is how the protocol offers a scope that has to be
         // filled in: a client expands them from turns it can already see.
-        { id: 'turn/{turnId}', label: 'This Turn', description: 'What one turn changed' },
+        {
+          id: 'turn/{turnId}',
+          label: 'This Turn',
+          description: 'What one turn changed',
+          changeKind: 'turn',
+          reviewable: true,
+        },
         {
           id: 'compare/{originalTurnId}/{modifiedTurnId}',
           label: 'Between Two Turns',
           description: 'What changed from one turn to another',
+          changeKind: 'compare-turns',
+          reviewable: true,
         },
       ];
     },
@@ -329,6 +366,20 @@ export function gitChanges(): ChangesetSource {
         files.set(path, sides);
 
         kept.set(capturedUri(session, turnId, path, phase), text ?? '');
+
+        /*
+         * A file that has changed again is not the file that was reviewed.
+         *
+         * The protocol makes this the server's job - it is the authority on
+         * what changed - and says to reset explicitly rather than leave a tick
+         * standing against content nobody has read. Only on `after`, because
+         * `before` is the state a tick was about.
+         */
+        if (phase === 'after') {
+          for (const scope of [turnId, 'session']) {
+            reviewed.get(reviewKey(session, scope))?.delete(`file://${path}`);
+          }
+        }
       })().catch(() => {});
     },
 
@@ -360,6 +411,26 @@ export function gitChanges(): ChangesetSource {
       // A file that is not in HEAD has no before, and empty is the truthful
       // answer for one: it did not exist.
       return { data: data ?? '', encoding: 'utf-8' };
+    },
+
+    /*
+     * Ticked off, or cleared.
+     *
+     * The one thing a client may write here, and it writes nothing to disk:
+     * it is a reader's note about a diff they are working through. Answers
+     * whether it moved, so a client that ticks a file already ticked does not
+     * make every other client redraw.
+     */
+    review: (_dir, session, scope, files, isReviewed) => {
+      const key = reviewKey(session, scope);
+      const ticked = reviewed.get(key) ?? new Set<string>();
+      reviewed.set(key, ticked);
+      let moved = false;
+      for (const file of files) {
+        if (isReviewed && !ticked.has(file)) { ticked.add(file); moved = true; }
+        if (!isReviewed && ticked.delete(file)) moved = true;
+      }
+      return moved;
     },
 
     refresh: async (dir) => {
