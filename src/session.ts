@@ -204,7 +204,20 @@ export function createSession(options: SessionOptions): Session {
 
   const turns: Bag[] = [...(options.seed ?? [])];
   let active: Bag | undefined;
-  let pending: PendingInput | undefined;
+  /**
+   * Everything the agent is waiting on, by request id.
+   *
+   * A map because a turn can ask twice at once. The CLI calls `canUseTool`
+   * per tool call and an agent that fires two in parallel produces two live
+   * questions - this used to be a single slot, so the second overwrote the
+   * first, the first's `settle` became unreachable and that tool waited for
+   * an answer no one could give any more. Approving the surviving one then
+   * did nothing, because the id no longer matched.
+   *
+   * The protocol has always modelled it this way: `inputNeeded` is a list and
+   * `session/inputNeededSet` says it adds or updates *matched by id*.
+   */
+  const pending = new Map<string, PendingInput>();
   let title = str(bag(bag((options.seed ?? [])[0]).message).text)?.slice(0, 60) || 'New session';
   let modified = new Date().toISOString();
   let failed: string | undefined;
@@ -327,17 +340,26 @@ export function createSession(options: SessionOptions): Session {
     return Object.keys(info).length > 0 ? info : undefined;
   };
 
-  const status = (): number => (pending ? Status.InputNeeded
+  const status = (): number => (pending.size > 0 ? Status.InputNeeded
     : active ? Status.InProgress
       : failed ? Status.Error
         : Status.Idle);
 
   /** The session-level summary of what is wanted. Set with the tool call, cleared with it. */
+  /*
+   * One request at a time, named by its id.
+   *
+   * `session/inputNeededSet` carries `request` and adds or updates the entry
+   * with that id; `session/inputNeededRemoved` carries the `id` to drop. This
+   * sent `inputNeeded: [entry]` and a bare removal, so a client reducing the
+   * actions could neither add the second question nor tell which one had been
+   * answered.
+   */
   const inputNeededSet = (entry: Bag): void => {
-    emit('session', { type: 'session/inputNeededSet', inputNeeded: [entry] });
+    emit('session', { type: 'session/inputNeededSet', request: entry });
   };
-  const inputNeededRemoved = (): void => {
-    emit('session', { type: 'session/inputNeededRemoved' });
+  const inputNeededRemoved = (id: string): void => {
+    emit('session', { type: 'session/inputNeededRemoved', id });
   };
 
   // ------------------------------------------------------------- translation
@@ -602,8 +624,9 @@ export function createSession(options: SessionOptions): Session {
           };
         });
         const request = { id, message: str(raw.header) ?? 'The agent has a question', questions };
-        const entry: Bag = { id, kind: 'chatInput', request };
-        pending = { id, entry, questions: list(raw.questions), asked, settle };
+        // `chat` is required on every input request and was never sent.
+        const entry: Bag = { id, chat: chatUri, kind: 'chatInput', request };
+        pending.set(id, { id, entry, questions: list(raw.questions), asked, settle });
         emit('chat', { type: 'chat/inputRequested', turnId: turn.id, request });
         inputNeededSet(entry);
         touch();
@@ -651,15 +674,17 @@ export function createSession(options: SessionOptions): Session {
       });
 
       doing(`Waiting on you: ${displayName}`);
-      const entry: Bag = { id, kind: 'toolConfirmation', toolCall: call };
-      pending = {
+      // `chat` and `turnId` are both required on a tool confirmation and
+      // neither was sent.
+      const entry: Bag = { id, chat: chatUri, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
+      pending.set(id, {
         id,
         entry,
         asked: new Map(),
         settle: (result) => settle(result.behavior === 'allow'
           ? { behavior: 'allow', updatedInput: raw }
           : result),
-      };
+      });
       inputNeededSet(entry);
       touch();
     });
@@ -1021,7 +1046,7 @@ export function createSession(options: SessionOptions): Session {
         : {}),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.
-      ...(pending ? { inputNeeded: [pending.entry] } : {}),
+      ...(pending.size > 0 ? { inputNeeded: [...pending.values()].map((one) => one.entry) } : {}),
       ...(failed ? { error: failed } : {}),
     }),
 
@@ -1266,8 +1291,13 @@ export function createSession(options: SessionOptions): Session {
     cancel: (turnId) => {
       // A turn blocked on a person is stopped by answering no, not by leaving
       // a promise nobody will settle - the subprocess would sit there for ever.
-      pending?.settle({ behavior: 'deny', message: 'The turn was stopped' });
-      if (pending) { pending = undefined; inputNeededRemoved(); }
+      // All of them, not the last one: a turn stopped while two questions
+      // were open used to leave the other tool waiting for ever.
+      for (const one of [...pending.values()]) {
+        pending.delete(one.id);
+        one.settle({ behavior: 'deny', message: 'The turn was stopped' });
+        inputNeededRemoved(one.id);
+      }
       void handle.interrupt().catch(() => {});
       const turn = active;
       if (turn) {
@@ -1285,11 +1315,16 @@ export function createSession(options: SessionOptions): Session {
     },
 
     confirm: (toolCallId, approved) => {
-      if (!pending || pending.entry.kind !== 'toolConfirmation') return;
-      if (str(bag(pending.entry.toolCall).toolCallId) !== toolCallId) return;
-      const settle = pending.settle;
-      pending = undefined;
-      inputNeededRemoved();
+      // Found by id rather than assumed to be the only one. This used to
+      // compare against whichever question happened to be held and return
+      // silently when it did not match - which, with two tool calls open, is
+      // a person pressing Approve and nothing at all happening.
+      const held = [...pending.values()].find((one) => one.entry.kind === 'toolConfirmation'
+        && str(bag(one.entry.toolCall).toolCallId) === toolCallId);
+      if (!held) return;
+      const settle = held.settle;
+      pending.delete(held.id);
+      inputNeededRemoved(held.id);
       const part = parts.get(toolCallId);
       if (part) bag(part.toolCall).status = approved ? 'running' : 'cancelled';
       doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
@@ -1318,10 +1353,10 @@ export function createSession(options: SessionOptions): Session {
      * the tool cannot process and a turn that stalls rather than errors.
      */
     answer: (requestId, accepted, answers) => {
-      if (!pending || pending.id !== requestId) return;
-      const held = pending;
-      pending = undefined;
-      inputNeededRemoved();
+      const held = pending.get(requestId);
+      if (!held) return;
+      pending.delete(requestId);
+      inputNeededRemoved(requestId);
 
       if (!accepted) {
         held.settle({ behavior: 'deny', message: 'The person declined to answer' });
@@ -1344,7 +1379,10 @@ export function createSession(options: SessionOptions): Session {
     close: () => {
       closed = true;
       wake?.();
-      pending?.settle({ behavior: 'deny', message: 'The session was disposed' });
+      for (const one of [...pending.values()]) {
+        pending.delete(one.id);
+        one.settle({ behavior: 'deny', message: 'The session was disposed' });
+      }
       handle.close();
     },
   };
