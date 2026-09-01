@@ -626,6 +626,17 @@ export function createSession(options: SessionOptions): Session {
     options: {
       cwd,
       includePartialMessages: true,
+      /*
+       * Over the daemon's own environment, never instead of it.
+       *
+       * The SDK's `env` *replaces* the subprocess environment rather than
+       * merging with it, so handing it a lone credential is a subprocess with
+       * no `PATH` and no `HOME` - which fails as something that has nothing to
+       * do with authentication. Absent when nobody pushed a token, and then
+       * the subprocess simply inherits, which is how every session worked
+       * before this and how an automation's still does.
+       */
+      ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
       ...(settings.permissionMode ? { permissionMode: settings.permissionMode } : {}),

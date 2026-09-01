@@ -68,6 +68,16 @@ Both live ones are fixed. `lifecycle` goes out beside the flat `exitCode`, becau
 
 **Suggestions.** (1) Do this diff on every protocol bump, and say in the commit which fields moved and which were live here — the count of commands and actions says nothing about shapes. (2) Type the wire payloads against the package's own interfaces at the few places they are constructed, so the next removal is a compile error rather than an audit. That is a real change in how this host is written and it would have caught all four. (3) Leave it as a habit rather than a mechanism, which is what it is today.
 
+## A-01-09 — An MCP server that needs signing in cannot be signed into
+
+`authenticate` ships, and this is the half of it that does not work.
+
+The correction first, because the old entry had it backwards. It claimed `McpServerAuthRequiredState` was `{ kind }` and carried no `resource`, so the MCP half was unreachable in 0.9.0. That was **wrong**: it extends `McpAuthRequirement`, which carries a *required* `resource: ProtectedResourceMetadata`, a `reason`, and an optional `oauthClient`. The protocol is fine. This host is the one at fault — it reports `kind: 'authRequired'` and stops, so the state it emits is missing a field the type says is required, and a client is told an MCP server needs authentication without being told what to authenticate against.
+
+What stops it being a five-line fix is that the words are not available. The SDK's `McpServerStatus` is `{ name, status, serverInfo?, error? }` — `status: 'needs-auth'` and nothing else. No resource identifier, no authorization server, no scopes. There is nothing here to put in `resource` that would not be invented, and an invented one is worse than an absent one: the protocol says a client's `authenticate` `resource` MUST match one the server advertised, so a made-up identifier is a token the host would then have to refuse.
+
+**Suggestions.** (1) Ask the SDK for it — this is a gap in what the CLI reports rather than in the protocol, and the fix belongs there. (2) Read the MCP server's own configuration, which this host has in `.mcp.json` and friends, and synthesise the metadata from the URL: honest for an HTTP server with a well-known OAuth endpoint, a guess for anything else. (3) Leave it, and stop reporting `authRequired` at all — say `error` with the harness's words, which is at least a state a client can render without being invited to do something it cannot.
+
 ## A-01-03 — What is left of the protocol
 
 Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**.
@@ -76,17 +86,12 @@ The version is worth stating rather than glossing, and the thing it used to expl
 
 What the bump did close is the automation channel, which 0.8.0 did not declare at all. It is now declared and served, on a clock: `scheduledAutomations()` reads the protocol's own five-field cron in a named time zone, keeps definitions in `automations.json`, and catches up at most one missed occurrence — which is what `misfirePolicy: runOnce` means and is its default.
 
-**The six commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list starts at `b` and skips `d` and `f`: `a` was the write half of `resource*`, `d` was `createResourceWatch`, `f` was the clock, and all three shipped. A letter is not reused any more than a number is.
+**The five commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list skips `a`, `b`, `d` and `f`: `a` was the write half of `resource*`, `b` was `authenticate`, `d` was `createResourceWatch`, `f` was the clock, and all four shipped. A letter is not reused any more than a number is.
 
-- **A-01-03b — `authenticate`**: called a refusal here for a long time on the grounds that "the SDK has nowhere to put a token". That was **wrong**, and checking it is what found it: the SDK's `query()` takes `env`, and its own documentation names `ANTHROPIC_API_KEY` as the credential the subprocess reads. So there is somewhere to put one, and this is a gap.
-
-  What it would take: advertise `https://api.anthropic.com` in `AgentInfo.protectedResources` — the protocol says a server MUST accept any `resource` it has itself advertised, and this host advertises none, so no client can legally call `authenticate` today — hold the pushed token, and pass it as `ANTHROPIC_API_KEY` in the `env` handed to `query()`. The MCP half is not reachable in 0.9.0: `McpServerAuthRequiredState` is `{ kind }` and carries no `resource`, so a client cannot name an MCP server to authenticate.
-
-  **Suggestions.** (1) Do it, and hold the token per host rather than per connection — a session outlives the connection that created it, and the credential is consumed when its subprocess is spawned. (2) Do it per connection, which is stricter and means a session started by one client cannot be resumed with another's credential; more correct and more surprising. (3) Leave it and say so in the README: this host runs as whoever started it, and the credential is that person's environment. That is what is true today, and it is a real answer for a daemon on your own machine and a poor one for `a shared machine`.
 - **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
 - **A-01-03e — `otlp/exportTraces` and `exportMetrics`**: VS Code's client says `// Not recorded, yet` against both, so there is nothing on the other end. A genuine refusal, and one the reference implementation makes for us.
 - **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
-- **A-01-03h — `auth/required`**: pairs with A-01-03b. Consumed by VS Code, and unemitted here for the same reason `authenticate` is unserved.
+- **A-01-03h — `auth/required`**: `authenticate` shipped and this did not. It is what a host sends when a token it accepted has expired or when a resource newly needs one, and nothing here can tell: this host does not verify a token, so it never learns that one has gone stale — a session started with a dead key fails inside the harness, and the harness's words are what a client sees. Emitting it would mean recognising an authentication failure in the agent's own error output, which is a guess about another program's strings. A refusal, and a thinner one than it looks: the moment this host verifies a token, it can say when one stopped working.
 
 **The 33 state actions never emitted**, by channel:
 

@@ -60,6 +60,19 @@ export interface Start {
   onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
   /** Called once the backend has reported what it can do. */
   onHandshake?(): void;
+  /**
+   * Tokens for this backend's protected resources, by resource identifier.
+   *
+   * Only resources this agent advertised, and only what the connection
+   * asking for the session pushed - authentication is per connection, so a
+   * token one client offered is never spent on another's session. Absent for
+   * a session nobody asked for: an automation firing at nine in the morning
+   * has no connection behind it and runs on the daemon's own credentials.
+   *
+   * What to *do* with one is the backend's business. The host knows a token
+   * belongs to a resource and nothing else about it.
+   */
+  credentials?: Record<string, string>;
 }
 
 /**
@@ -81,6 +94,20 @@ export interface Agent {
   displayName: string;
   /** One line about what this backend is. */
   description?: string;
+
+  /**
+   * OAuth protected resources this backend can be given a token for.
+   *
+   * RFC 9728 metadata, served on `AgentInfo.protectedResources`, and the only
+   * thing that makes `authenticate` callable: the protocol says a client's
+   * `resource` MUST match one the server has itself advertised, so a host that
+   * advertises none can be sent no token at all.
+   *
+   * `required: false` on an entry is a backend saying it works without one -
+   * this daemon runs as whoever started it and inherits their credentials, so
+   * a token is an override rather than a precondition.
+   */
+  protectedResources?: Bag[];
 
   /**
    * What a session of this kind can be told to do differently.

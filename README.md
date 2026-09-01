@@ -210,6 +210,7 @@ Only stdout says where the token came from, never what it is.
 | what a harness offers, before a session | ✅ `AgentInfo.customizations` on the root channel - the skills, subagents and MCP servers the boot probe found, so a new-session screen can offer one without creating a session to ask |
 | `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
 | `createSession` / `disposeSession` | ✅ |
+| `authenticate` | ✅ the Claude agent advertises `https://api.anthropic.com` in `AgentInfo.protectedResources` as `required: false` - a token is an override, because this daemon inherits the credentials of whoever started it and works with none pushed. A pushed token is held **per connection**, as the specification requires, and spent only on sessions that client asks for; it is passed to the harness as `ANTHROPIC_API_KEY` over the daemon's own environment, never instead of it. An automation firing with nobody connected has no token and runs on the daemon's credentials |
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
 | model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
 | `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |

@@ -27,6 +27,14 @@ export interface SessionOptions {
   seedCustomizations?: Bag[];
   /** Where state actions go. */
   emit: Emit;
+  /**
+   * Environment for the agent's own process.
+   *
+   * Merged over `process.env` by the session, never handed to the SDK alone:
+   * the SDK's `env` *replaces* the subprocess environment rather than adding
+   * to it, so passing only a credential is a subprocess with no `PATH`.
+   */
+  env?: Record<string, string>;
   /** An existing agent session to continue, rather than starting a new one. */
   resume?: string;
   /** Turns already known, so a resumed session does not open empty. */

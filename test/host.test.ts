@@ -2317,6 +2317,122 @@ describe('a shell on this machine', () => {
   });
 });
 
+/*
+ * A token, pushed by the client that will spend it.
+ *
+ * `authenticate` was unserved here for a long time on the grounds that the SDK
+ * had nowhere to put a credential. It does - `query()` takes `env` - and the
+ * reason it was unreachable was this host advertising no protected resource,
+ * which the protocol requires before a client may name one.
+ */
+describe('authenticating', () => {
+  const ANTHROPIC = 'https://api.anthropic.com';
+  const DIR = '/home/softov';
+
+  /** A host serving one directory, and a client that has said hello. */
+  const opened = async () => {
+    const host = serving(DIR);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    return { host, client };
+  };
+
+  it('advertises the resource a token would be for', async () => {
+    const { client } = await opened();
+    const root = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { provider: string; protectedResources?: { resource: string; required?: boolean }[] }[] } };
+    };
+    const found = root.snapshot.state.agents.find((one) => one.provider === 'claude');
+    expect(found?.protectedResources?.[0]?.resource).toBe(ANTHROPIC);
+    // Not required, and that is the truthful declaration: this daemon runs as
+    // whoever started it and works with nothing pushed at all.
+    expect(found?.protectedResources?.[0]?.required).toBe(false);
+  });
+
+  it('takes a token for it', async () => {
+    const { client } = await opened();
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-test-1' },
+    })).resolves.toEqual({});
+  });
+
+  it('refuses one for a resource it never advertised', async () => {
+    const { client } = await opened();
+    // -32602 and not -32007: it is a bad parameter, not a demand to
+    // authenticate, and answering the latter sends a client round a loop it
+    // cannot get out of.
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: 'https://api.github.com', token: 't' },
+    })).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it('refuses an empty token', async () => {
+    const { client } = await opened();
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: '' },
+    })).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it('spends it on the session that client then opens', async () => {
+    const { client } = await opened();
+    await client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-test-2' },
+    });
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/authed', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    });
+    await settle();
+
+    const env = sessionQueries().at(-1)?.options.env as Record<string, string> | undefined;
+    expect(env?.ANTHROPIC_API_KEY).toBe('sk-test-2');
+    // Over the daemon's environment rather than instead of it: the SDK's
+    // `env` replaces the subprocess environment outright, so a lone
+    // credential is a subprocess with no PATH.
+    expect(env?.PATH).toBe(process.env.PATH);
+  });
+
+  it('leaves a session alone when nothing was pushed', async () => {
+    const { client } = await opened();
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/plain', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    });
+    await settle();
+    // Absent, so the subprocess inherits - which is how every session worked
+    // before there was anything to push, and how an automation's still does.
+    expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
+  });
+
+  it('does not lend a token to a session another client asked for', async () => {
+    const { host, client } = await opened();
+    await client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-mine' },
+    });
+
+    // A second client on the same host, who pushed nothing.
+    const other = host.accept(peer());
+    await other.handle({
+      method: 'initialize',
+      params: { clientId: 'b', protocolVersions: ['0.9.0'] },
+    });
+    await other.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/theirs', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    });
+    await settle();
+
+    // Per connection, which the specification is explicit about. A token one
+    // client offered is theirs.
+    expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
+  });
+});
+
 describe('more than one chat in a session', () => {
   const second = 'ahp-chat:/other';
 

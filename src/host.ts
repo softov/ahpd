@@ -789,10 +789,12 @@ export function createHost(options: HostOptions): Host {
     config: Record<string, string>,
     resuming?: { resume: string; seed: Bag[] },
     workingDirectory?: string,
+    credentials?: Record<string, string>,
   ): Session => {
     const session = agent.create({
       uri,
       chatUri,
+      ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(resuming ? { resume: resuming.resume, seed: resuming.seed } : {}),
       settings: { ...agent.defaults(), ...config },
@@ -873,6 +875,17 @@ export function createHost(options: HostOptions): Host {
     displayName: agent.displayName,
     ...(agent.description ? { description: agent.description } : {}),
     models: about(agent.provider).models,
+    /*
+     * What a client may send a token for.
+     *
+     * The protocol says `authenticate`'s `resource` MUST match one the server
+     * has itself advertised, so this list is not decoration - it is the whole
+     * door. A host advertising none can be handed no credential at all, which
+     * is what this one used to be.
+     */
+    ...(agent.protectedResources && agent.protectedResources.length > 0
+      ? { protectedResources: agent.protectedResources }
+      : {}),
     /*
      * The skills, subagents and MCP servers, before any session exists.
      *
@@ -1193,6 +1206,18 @@ export function createHost(options: HostOptions): Host {
     // says about a session whose agent has gone.
     throw new RpcError(-32001, `No agent for session ${channel}`);
   };
+  /** Every resource identifier any agent here advertised. */
+  const advertised = (): Set<string> => {
+    const out = new Set<string>();
+    for (const agent of agents.values()) {
+      for (const one of agent.protectedResources ?? []) {
+        const id = (one as { resource?: unknown }).resource;
+        if (typeof id === 'string') out.add(id);
+      }
+    }
+    return out;
+  };
+
   /**
    * Start a session.
    *
@@ -1208,6 +1233,7 @@ export function createHost(options: HostOptions): Host {
     config: Record<string, string>,
     where: string | undefined,
     origin?: { kind: 'automation'; automation: string; run: string },
+    credentials?: Record<string, string>,
   ): void => {
     if (!uri.startsWith('ahp-session:/')) {
       throw new RpcError(-32602, `${uri} is not a session URI`);
@@ -1218,7 +1244,7 @@ export function createHost(options: HostOptions): Host {
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
     try {
-      spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where);
+      spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where, credentials);
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -1286,7 +1312,29 @@ export function createHost(options: HostOptions): Host {
   return {
     connections: () => connections.size,
     accept(peer: Peer) {
-      const connection = { peer, clientId: '', watching: new Set<string>(), grants: new Set<string>() };
+      const connection = {
+        peer, clientId: '', watching: new Set<string>(), grants: new Set<string>(),
+        tokens: new Map<string, string>(),
+      };
+
+      /**
+       * What this client pushed, narrowed to what that backend asked for.
+       *
+       * Narrowed rather than handed over whole: a token for one resource is
+       * not a token for another, and a backend has no business seeing a
+       * credential meant for something it does not speak to.
+       */
+      const tokensFor = (provider: string): Record<string, string> => {
+        const agent = agents.get(provider);
+        const out: Record<string, string> = {};
+        for (const one of agent?.protectedResources ?? []) {
+          const id = (one as { resource?: unknown }).resource;
+          if (typeof id !== 'string') continue;
+          const token = connection.tokens.get(id);
+          if (token !== undefined) out[id] = token;
+        }
+        return out;
+      };
       connections.add(connection);
       /**
        * Whether this client has talked its way into writing that.
@@ -1749,6 +1797,36 @@ export function createHost(options: HostOptions): Host {
           if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
           return { resource: run.resource };
         },
+        /**
+         * A token for something this host advertised.
+         *
+         * Held against this connection and nowhere else: the specification is
+         * explicit that authentication status is per connection, each client
+         * authenticating independently, which is also why it is a command and
+         * a notification rather than anything in root state.
+         *
+         * The resource is checked against what was advertised because the
+         * protocol requires it to match, and because the alternative is a host
+         * that accepts credentials for things it has never heard of. An
+         * unknown one is `-32602`: it is a bad parameter, not a demand to
+         * authenticate, and answering `-32007` would send a client round a
+         * loop it cannot get out of.
+         *
+         * The token itself is not verified. This host has no way to ask
+         * Anthropic whether a key is good without spending a request on the
+         * question, and a session started with a bad one fails saying so.
+         */
+        authenticate: async (params) => {
+          const resource = String(params.resource ?? '');
+          const token = String(params.token ?? '');
+          if (!advertised().has(resource)) {
+            throw new RpcError(-32602, `${resource || 'That'} is not a resource this host advertises`);
+          }
+          if (token === '') throw new RpcError(-32602, 'A token cannot be empty');
+          connection.tokens.set(resource, token);
+          log(`${connection.clientId || 'a client'} authenticated for ${resource}`);
+          return {};
+        },
         /** A page of what one automation has done, newest first. */
         fetchAutomationRuns: async (params) => need(options.automations, 'fetchAutomationRuns').runs(
           String(params.automation ?? ''),
@@ -2021,7 +2099,10 @@ export function createHost(options: HostOptions): Host {
           const where = typeof asked === 'string'
             ? asked.replace(/^file:\/\//, '')
             : undefined;
-          openSession(uri, provider, config, where);
+          // This connection's tokens and no other's. A client that pushed
+          // nothing gets a session on the daemon's own credentials, which is
+          // how every session worked before there was anything to push.
+          openSession(uri, provider, config, where, undefined, tokensFor(provider));
           return {};
         },
         /**
