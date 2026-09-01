@@ -52,6 +52,15 @@ export interface StartSession {
   config?: Record<string, string>;
   /** The first message, which is what the automation is *for*. */
   text: string;
+  /**
+   * The run this session will belong to.
+   *
+   * Passed down rather than looked up, because it becomes the session's own
+   * `origin` and a catalogue is where it is read: a session that started at
+   * nine with nobody at the keyboard is otherwise a row with no account of
+   * itself, sitting among rows somebody typed.
+   */
+  origin?: { kind: 'automation'; automation: string; run: string };
 }
 
 /**
@@ -64,9 +73,10 @@ export interface StartSession {
  * channel and answers `-32601` for all three commands - which is a true answer
  * rather than an empty screen.
  *
- * Nothing here schedules. `run` is called when a person presses Run or when
- * whatever *is* holding a clock decides it is time; deciding it is time is the
- * store's business and this interface does not describe it.
+ * Deciding it is time is the store's business. `run` is called when a person
+ * presses Run or when a store holding a clock says one is due through
+ * `onDue` - so what a schedule means, and when it comes round, is behind this
+ * interface and not in front of it.
  */
 export interface AutomationStore {
   /** Every automation, for the catalogue channel's snapshot. */
@@ -75,12 +85,13 @@ export interface AutomationStore {
   get(resource: string): Automation | undefined;
 
   /**
-   * The kinds of trigger this store understands.
+   * The *event* triggers this store understands.
    *
-   * Asked before any automation exists, because it is what a client needs to
-   * draw the form: a store that schedules nothing answers with the event
-   * triggers it has and no schedule, and a client then offers no cron box.
-   * Empty is a real answer.
+   * Only event triggers: a schedule trigger is protocol-defined, is never
+   * listed here, and may always be written - what a client learns from a host
+   * that will not fire one is the absent `nextRunAt`, not an absence here.
+   * Manual is not a trigger either; an empty trigger list on a definition is
+   * what manual-only means. So empty is a real answer, and the usual one.
    */
   triggers(options: { provider?: string; workingDirectories?: string[] }): Bag[];
 
@@ -116,4 +127,22 @@ export interface AutomationStore {
    * only way an automation that fired on its own reaches anybody.
    */
   onChanged?(observer: (event: { automation?: string; run?: string; removed?: string }) => void): void;
+
+  /**
+   * Called when this store's clock says one is due.
+   *
+   * The counterpart of `run`, and the reason that method takes `start` rather
+   * than holding it: a store that fires on its own still cannot create a
+   * session, so it says *which* automation is due and with what origin, and
+   * the host - the only thing that knows what a session is - calls `run`. A
+   * store with no clock never calls this, and a host that never wired it is a
+   * host where nothing fires by itself.
+   *
+   * The origin is the store's because only it knows which trigger came round,
+   * which occurrence it was, and whether it is catching one up.
+   */
+  onDue?(observer: (event: { automation: string; origin: Bag }) => void): void;
+
+  /** Let go of the clock, so a daemon shutting down is not held open by one. */
+  close?(): void;
 }

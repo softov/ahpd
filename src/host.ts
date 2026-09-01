@@ -27,6 +27,7 @@ import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
+import type { StartSession } from './types/automations.js';
 import type { Peer } from './types/rpc.js';
 
 /** `file://` and a path. A string, so this file needs no filesystem to say it. */
@@ -137,6 +138,13 @@ export function createHost(options: HostOptions): Host {
   }
   /** Live sessions, by their own uri. */
   const sessions = new Map<string, Held>();
+  /**
+   * What started a session, for the ones nothing did.
+   *
+   * Only automations put anything here. A session somebody opened has no
+   * origin, which is what the protocol says absent means.
+   */
+  const origins = new Map<string, { kind: 'automation'; automation: string; run: string }>();
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
@@ -955,6 +963,7 @@ export function createHost(options: HostOptions): Host {
       const lead = leadOf(held);
       if (!lead)
         continue;
+      const started = origins.get(uri);
       found.unshift({
         resource: uri,
         provider: held.agent.provider,
@@ -966,6 +975,7 @@ export function createHost(options: HostOptions): Host {
         createdAt: modifiedOf(held),
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
+        ...(started !== undefined ? { origin: started } : {}),
         ...describes(uri),
       });
     }
@@ -1180,6 +1190,96 @@ export function createHost(options: HostOptions): Host {
     // says about a session whose agent has gone.
     throw new RpcError(-32001, `No agent for session ${channel}`);
   };
+  /**
+   * Start a session.
+   *
+   * At host scope rather than inside a connection because there are two ways
+   * in and only one of them has a client: `createSession` is a request
+   * somebody made, and an automation coming round at nine in the morning is
+   * not. Both need the same eight steps, and a second copy of them would be a
+   * second answer to what creating a session means.
+   */
+  const openSession = (
+    uri: string,
+    provider: string,
+    config: Record<string, string>,
+    where: string | undefined,
+    origin?: { kind: 'automation'; automation: string; run: string },
+  ): void => {
+    if (!uri.startsWith('ahp-session:/')) {
+      throw new RpcError(-32602, `${uri} is not a session URI`);
+    }
+    if (sessions.has(uri))
+      throw new RpcError(-32003, `${uri} already exists`);
+    const agent = agents.get(provider);
+    if (!agent)
+      throw new RpcError(-32002, `No provider called ${provider}`);
+    try {
+      spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where);
+    }
+    catch (error) {
+      // The backend's own words. It is the thing that knows which
+      // directories it serves, and a refusal a client can read beats an
+      // internal error it cannot.
+      throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+    }
+    if (origin !== undefined) origins.set(uri, origin);
+    log(`created ${uri}${where ? ` in ${where}` : ''}`);
+    // Ready, then announced. A client that hears about a session before
+    // it can be subscribed to has been told about something that is not
+    // there yet.
+    dispatch(uri, { type: 'session/ready' });
+    catalogueMoved(uri, 'root/sessionAdded');
+    activeSessionsMoved();
+  };
+
+  /**
+   * What a store is handed when a run starts, however it started.
+   *
+   * The session *and* the first message: a session created and never spoken to
+   * is a session that does nothing, and the whole point of an automation is
+   * that nobody is at the keyboard to say the first thing.
+   */
+  const startForAutomation = async (wanted: StartSession): Promise<string> => {
+    const uri = `ahp-session:/${crypto.randomUUID()}`;
+    openSession(
+      uri,
+      wanted.provider ?? first.provider,
+      wanted.config ?? {},
+      wanted.workingDirectory,
+      wanted.origin,
+    );
+    const chatUri = `ahp-chat:/${idOf(uri)}`;
+    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
+    return uri;
+  };
+
+  /**
+   * The clock, wired to the only thing that can act on it.
+   *
+   * A store holding one says an automation is due and this starts the run,
+   * which is what makes a schedule fire with nobody connected. Wired here,
+   * after `startForAutomation` exists, because a store may report what it
+   * missed while this daemon was down the moment it is asked.
+   *
+   * A run that will not start is logged and not thrown: there is no client to
+   * answer, and a daemon that died because nine o'clock came round would be
+   * worse than one that says so.
+   */
+  options.automations?.onDue?.(({ automation, origin }) => {
+    void (async () => {
+      try {
+        const run = await options.automations?.run(automation, origin, startForAutomation);
+        log(run
+          ? `${automation} was due and started ${run.primarySession ?? run.resource}`
+          : `${automation} was due and is switched off or gone`);
+      }
+      catch (error) {
+        log(`${automation} was due and failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    })();
+  });
+
   return {
     connections: () => connections.size,
     accept(peer: Peer) {
@@ -1624,23 +1724,7 @@ export function createHost(options: HostOptions): Host {
           const run = await store.run(
             automation,
             { kind: 'manual', requestId, clientId: connection.clientId },
-            async (wanted) => {
-              const uri = `ahp-session:/${crypto.randomUUID()}`;
-              await handlers.createSession?.({
-                channel: uri,
-                ...(wanted.provider !== undefined ? { provider: wanted.provider } : {}),
-                ...(wanted.workingDirectory !== undefined
-                  ? { workingDirectories: [`file://${wanted.workingDirectory}`] }
-                  : {}),
-                ...(wanted.config !== undefined ? { config: wanted.config } : {}),
-              });
-              // The first message, which is what the automation is *for*: a
-              // session created and never spoken to is a session that does
-              // nothing, and the whole point is that nobody is at the keyboard.
-              const chatUri = `ahp-chat:/${idOf(uri)}`;
-              byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
-              return uri;
-            },
+            startForAutomation,
           );
           if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
           return { resource: run.resource };
@@ -1899,12 +1983,7 @@ export function createHost(options: HostOptions): Host {
           if (!uri.startsWith('ahp-session:/')) {
             throw new RpcError(-32602, `${uri} is not a session URI`);
           }
-          if (sessions.has(uri))
-            throw new RpcError(-32003, `${uri} already exists`);
           const provider = String(params.provider ?? first.provider);
-          const agent = agents.get(provider);
-          if (!agent)
-            throw new RpcError(-32002, `No provider called ${provider}`);
           const config = (typeof params.config === 'object' && params.config !== null
             ? params.config
             : {}) as Record<string, string>;
@@ -1922,23 +2001,7 @@ export function createHost(options: HostOptions): Host {
           const where = typeof asked === 'string'
             ? asked.replace(/^file:\/\//, '')
             : undefined;
-          let session;
-          try {
-            session = spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where);
-          }
-          catch (error) {
-            // The backend's own words. It is the thing that knows which
-            // directories it serves, and a refusal a client can read beats an
-            // internal error it cannot.
-            throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
-          }
-          log(`created ${uri}${where ? ` in ${where}` : ''}`);
-          // Ready, then announced. A client that hears about a session before
-          // it can be subscribed to has been told about something that is not
-          // there yet.
-          dispatch(uri, { type: 'session/ready' });
-          catalogueMoved(uri, 'root/sessionAdded');
-          activeSessionsMoved();
+          openSession(uri, provider, config, where);
           return {};
         },
         /**
@@ -2006,6 +2069,7 @@ export function createHost(options: HostOptions): Host {
             byChat.delete(chatUri);
           }
           sessions.delete(uri);
+          origins.delete(uri);
           presence.delete(uri);
           activeSessionsMoved();
           // Every other client is told, because the session was theirs too.

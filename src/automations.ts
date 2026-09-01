@@ -68,19 +68,15 @@ export function memoryAutomations(): AutomationStore {
     },
 
     /*
-     * What this store understands, which is one thing.
+     * What this store understands, which is nothing.
      *
-     * No schedule trigger, because nothing here holds a clock - and saying so
-     * is the point: a client reads this to decide which controls to draw, so a
-     * store that advertised a cron trigger it would never fire would be asking
-     * somebody to fill in a box that does nothing.
+     * This command answers with *event* triggers. Schedule triggers are
+     * protocol-defined and never listed here, and manual is not a trigger at
+     * all - the protocol says an empty trigger list is what manual-only means.
+     * So a store with no event triggers answers with none, and a client reads
+     * "this host will not fire that" from the absent `nextRunAt` instead.
      */
-    triggers: () => [{
-      type: 'manual',
-      title: 'Manually',
-      description: 'Runs when somebody presses Run, and at no other time',
-      events: [],
-    }],
+    triggers: () => [],
 
     create: (resource, definition) => {
       const at = now();
@@ -156,6 +152,7 @@ export function memoryAutomations(): AutomationStore {
           ? { config: template.config as Record<string, string> }
           : {}),
         text: typeof message.text === 'string' ? message.text : String(found.definition.title ?? ''),
+        origin: { kind: 'automation', automation: resource, run: run.resource },
       };
 
       try {

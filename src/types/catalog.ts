@@ -16,4 +16,11 @@ export interface Summary {
   modifiedAt: string;
   /** Directories the agent has tool access to, as `file://` URIs. */
   workingDirectories: string[];
+  /**
+   * What started it, when it was not a person.
+   *
+   * Absent for a session somebody opened, which is what the protocol says
+   * absent means. Only automations set it.
+   */
+  origin?: { kind: 'automation'; automation: string; run: string };
 }

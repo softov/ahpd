@@ -55,6 +55,16 @@ export const daemonPath = (): string => join(configDir(), 'daemon.json');
  */
 export const daemonLog = (): string => join(configDir(), 'daemon.log');
 
+/**
+ * Where automations are kept.
+ *
+ * Beside the configuration and not inside it: `config.json` is a file a person
+ * edits and this one is written by the daemon every time somebody adds an
+ * automation, and a tool that rewrites a hand-edited file loses the comments
+ * and the ordering somebody put there.
+ */
+export const automationsPath = (): string => join(configDir(), 'automations.json');
+
 /** Make sure the directory is there, so a write into it can succeed. */
 export const ensureConfigDir = (): void => { mkdirSync(configDir(), { recursive: true }); };
 

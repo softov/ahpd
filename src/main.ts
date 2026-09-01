@@ -6,7 +6,7 @@ import { claude } from './agents/claude.js';
 import { createHost } from './host.js';
 import { gitBranches } from './git.js';
 import { gitChanges } from './changes.js';
-import { memoryAutomations } from './automations.js';
+import { scheduledAutomations } from './scheduled.js';
 import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
 import { listen } from './listen.js';
@@ -267,14 +267,20 @@ const host = createHost({
   directories: gitBranches(),
   changes: gitChanges(),
   /*
-   * Automations, without a clock.
+   * Automations, with a clock.
    *
-   * Definitions can be written and run; nothing here fires on a schedule, and
-   * the store says so by advertising no schedule trigger - so a client draws
-   * a Run button and no cron box. A daemon that should fire on its own passes
-   * a store that holds a clock, which is what the port is for.
+   * A daemon is the case the port was written for: it is already running at
+   * nine in the morning, which is the only way an automation fires with
+   * nobody connected. Definitions live in a file beside the configuration and
+   * come back on a restart; the runs do not, because they name sessions that
+   * went when the process did.
+   *
+   * A host embedded in something that already schedules passes its own store
+   * instead, and one that should fire nothing passes `memoryAutomations()`.
    */
-  automations: memoryAutomations(),
+  automations: scheduledAutomations({
+    onProblem: (message) => process.stdout.write(`${message}\n`),
+  }),
   onEvent: (message) => process.stdout.write(`${message}\n`),
 });
 

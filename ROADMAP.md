@@ -37,6 +37,9 @@ What was checked, against a running daemon and a client sending VS Code's own ha
 | watching a file | `createResourceWatch` on the project, then `added` / `updated` / `deleted` as the tree moves. VS Code's own filesystem provider degrades to a no-op watch without it, so a mounted tree used to go stale the moment the agent touched anything |
 | editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
 | the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
+| automations, on a clock | a definition loaded from `automations.json` at boot, its `nextRunAt` computed in `America/Sao_Paulo`, and `* * * * *` firing twice a minute apart **with nobody connected** — which is the whole point of a daemon holding the clock. Then over a socket: `runAutomation`, the run's session carrying `origin`, and switching one off clearing both its next run and its `run` verb |
+
+Two bugs came out of that drive and neither was visible from the source. An automation switched off still announced its *old* next run, because the inner store says "this changed" from inside its own `update` and the host reads the entry straight back — the clock was recomputed a moment too late. And the session an automation started carried no `origin` at all: the run knew which session it had made, and the session knew nothing about the run, which is the half a catalogue actually shows.
 
 And on Deno as well as Node, which is what closed A-01-04: the same drive, on the same built output, under `deno 2.9.6`. It found one real difference — creating a file is a `rename` event on Node and a `change` event on Deno — so the watcher stopped reading the runtime's event names and looks at the file instead.
 
@@ -44,17 +47,25 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ---
 
+## A-02-01 — A terminal's exit code is still sent the 0.8.0 way
+
+This host builds against 0.9.0 and `terminalInfo()` still emits a flat `exitCode`. In 0.9.0 that field moved inside `lifecycle`, which is a union — `{ status: 'running' }` or `{ status: 'exited', exitCode? }` — and the flat one is gone from the type.
+
+Nothing is visibly broken, which is why it survived the bump: `ahpc` reads both spellings, and a client reading only the new one sees a terminal that never exits rather than an error. That is the bad kind of quiet — the host is advertising 0.9.0 and describing a terminal in the previous version's shape, so the client that behaves correctly is the one that gets it wrong.
+
+Found while bumping the client, not while bumping the host: the host's own bump moved no types because every payload here is a `Bag`, which is exactly what let a stale shape through.
+
+**Suggestions.** (1) Emit `lifecycle` and drop the flat field, which is what 0.9.0 says and what a client negotiating 0.9.0 is entitled to. (2) Emit both for a release, on the grounds that a client written against 0.8.0 may still be connected — although this host answers 0.9.0 only when a client asked for it. (3) Audit the rest of the root channel the same way before doing either, since `Bag` will have hidden any other field that moved.
+
 ## A-01-03 — What is left of the protocol
 
 Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
-What the bump did close is the automation channel, which 0.8.0 did not declare at all. It is now declared and unserved, which is an ordinary gap rather than a version gap — see A-01-06.
+What the bump did close is the automation channel, which 0.8.0 did not declare at all. It is now declared and served, on a clock: `scheduledAutomations()` reads the protocol's own five-field cron in a named time zone, keeps definitions in `automations.json`, and catches up at most one missed occurrence — which is what `misfirePolicy: runOnce` means and is its default.
 
-**The seven commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
-
-- **A-01-03f — Scheduling.** Automations are served and nothing fires them: `memoryAutomations()` holds no clock, and says so by advertising no schedule trigger rather than by taking a cron expression and ignoring it. The port is where a clock would go, so this is a store to write rather than a change to the host. **Suggestions.** (1) A store over the harness's own scheduled work, which is the backing that made this entry worth naming. (2) A store with a timer and a file, which is a few dozen lines and survives a restart. (3) Leave it: this daemon runs the sessions somebody asks for, and a client can press Run.
+**The six commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list starts at `b` and skips `d` and `f`: `a` was the write half of `resource*`, `d` was `createResourceWatch`, `f` was the clock, and all three shipped. A letter is not reused any more than a number is.
 
 - **A-01-03b — `authenticate`**: called a refusal here for a long time on the grounds that "the SDK has nowhere to put a token". That was **wrong**, and checking it is what found it: the SDK's `query()` takes `env`, and its own documentation names `ANTHROPIC_API_KEY` as the credential the subprocess reads. So there is somewhere to put one, and this is a gap.
 
