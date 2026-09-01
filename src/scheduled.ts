@@ -89,6 +89,7 @@ export function scheduledAutomations(options: ScheduledOptions = {}): Automation
   /** Written timestamps, kept here so they survive a reload rather than becoming the load time. */
   const stamps = new Map<string, { createdAt: string; modifiedAt: string }>();
   const due: ((event: { automation: string; origin: Bag }) => void)[] = [];
+  const changed: ((event: { automation?: string; run?: string; removed?: string }) => void)[] = [];
   let timer: { cancel(): void } | undefined;
 
   /**
@@ -282,6 +283,24 @@ export function scheduledAutomations(options: ScheduledOptions = {}): Automation
   const wasWaiting = load();
   rearm();
 
+  /*
+   * Everything the inner store announces, announced again once the clock has
+   * caught up.
+   *
+   * The ordering matters and cost a wrong answer on the wire: the inner store
+   * says "this changed" from *inside* its own `update`, and whoever is
+   * listening immediately reads the entry back. Rearming after that call
+   * returned meant the entry went out carrying the previous `nextRunAt` - so
+   * switching an automation off announced it as still firing at nine.
+   */
+  inner.onChanged?.((event) => {
+    if (event.automation !== undefined || event.removed !== undefined) {
+      rearm();
+      save();
+    }
+    for (const listener of changed) listener(event);
+  });
+
   return {
     ...inner,
     list: () => inner.list().map(dressed),
@@ -304,7 +323,8 @@ export function scheduledAutomations(options: ScheduledOptions = {}): Automation
     create: (resource, definition) => {
       const made = inner.create(resource, definition);
       stamps.set(resource, { createdAt: made.createdAt, modifiedAt: made.modifiedAt });
-      rearm();
+      // `onChanged` above has already rearmed and written; the stamp is set
+      // before this returns so what it wrote carries the right one.
       save();
       return dressed(inner.get(resource) ?? made);
     },
@@ -314,7 +334,6 @@ export function scheduledAutomations(options: ScheduledOptions = {}): Automation
       if (!after) return undefined;
       const stamp = stamps.get(resource);
       if (stamp) stamps.set(resource, { ...stamp, modifiedAt: after.modifiedAt });
-      rearm();
       save();
       return dressed(inner.get(resource) ?? after);
     },
@@ -324,17 +343,12 @@ export function scheduledAutomations(options: ScheduledOptions = {}): Automation
       if (!gone) return false;
       stamps.delete(resource);
       nextAt.delete(resource);
-      rearm();
       save();
       return true;
     },
 
-    /** A run happened, so the next occurrence is a different one. */
-    run: async (resource, origin, start) => {
-      const done = await inner.run(resource, origin, start);
-      rearm();
-      return done;
-    },
+    /** Subscribed through, so the clock is caught up before anybody reads back. */
+    onChanged: (observer) => { changed.push(observer); },
 
     onDue: (observer) => {
       due.push(observer);

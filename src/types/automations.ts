@@ -52,6 +52,15 @@ export interface StartSession {
   config?: Record<string, string>;
   /** The first message, which is what the automation is *for*. */
   text: string;
+  /**
+   * The run this session will belong to.
+   *
+   * Passed down rather than looked up, because it becomes the session's own
+   * `origin` and a catalogue is where it is read: a session that started at
+   * nine with nobody at the keyboard is otherwise a row with no account of
+   * itself, sitting among rows somebody typed.
+   */
+  origin?: { kind: 'automation'; automation: string; run: string };
 }
 
 /**

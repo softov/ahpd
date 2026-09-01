@@ -137,6 +137,32 @@ describe('when the time comes', () => {
     expect(clock.armed).toBeDefined();
   });
 
+  /*
+   * Found by driving a real daemon, not by reading this file.
+   *
+   * The inner store announces "this changed" from inside its own `update`, and
+   * a host listening reads the entry straight back. Rearming after that call
+   * returned meant the entry went out still carrying the old occurrence - so a
+   * client that switched an automation off was told it would fire at nine
+   * anyway. Every test here passed because they all read the store afterwards
+   * rather than listening to it.
+   */
+  it('announces the change with the clock already caught up', () => {
+    const clock = clockwork();
+    store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+    store.create(ONE, nightly());
+
+    const announced: (string | undefined)[] = [];
+    store.onChanged?.((event) => {
+      if (event.automation === undefined) return;
+      // Read the way a host reads it: the moment it is told.
+      announced.push(store?.get(event.automation)?.nextRunAt);
+    });
+
+    store.update(ONE, { enabled: false });
+    expect(announced).toEqual([undefined]);
+  });
+
   it('does not fire one that was switched off before its time', () => {
     const clock = clockwork();
     store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
@@ -299,5 +325,15 @@ describe('a schedule that reaches the host', () => {
     // And the run knows which session it was, which is what a client opens.
     const run = store.get(ONE)?.runs[0] as { primarySession?: string } | undefined;
     expect(run?.primarySession).toBe(found.items[0]?.resource);
+    /*
+     * And the session says what started it.
+     *
+     * Also found against a real daemon. Everything above proved the run knew
+     * about the session; nothing proved the session knew about the run, and a
+     * catalogue is where somebody looks - a row that appeared at nine with no
+     * account of itself, among rows somebody typed.
+     */
+    const started = found.items[0] as { origin?: { kind: string; automation: string } };
+    expect(started.origin).toMatchObject({ kind: 'automation', automation: ONE });
   });
 });

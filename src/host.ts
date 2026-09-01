@@ -138,6 +138,13 @@ export function createHost(options: HostOptions): Host {
   }
   /** Live sessions, by their own uri. */
   const sessions = new Map<string, Held>();
+  /**
+   * What started a session, for the ones nothing did.
+   *
+   * Only automations put anything here. A session somebody opened has no
+   * origin, which is what the protocol says absent means.
+   */
+  const origins = new Map<string, { kind: 'automation'; automation: string; run: string }>();
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
@@ -956,6 +963,7 @@ export function createHost(options: HostOptions): Host {
       const lead = leadOf(held);
       if (!lead)
         continue;
+      const started = origins.get(uri);
       found.unshift({
         resource: uri,
         provider: held.agent.provider,
@@ -967,6 +975,7 @@ export function createHost(options: HostOptions): Host {
         createdAt: modifiedOf(held),
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
+        ...(started !== undefined ? { origin: started } : {}),
         ...describes(uri),
       });
     }
@@ -1195,6 +1204,7 @@ export function createHost(options: HostOptions): Host {
     provider: string,
     config: Record<string, string>,
     where: string | undefined,
+    origin?: { kind: 'automation'; automation: string; run: string },
   ): void => {
     if (!uri.startsWith('ahp-session:/')) {
       throw new RpcError(-32602, `${uri} is not a session URI`);
@@ -1213,6 +1223,7 @@ export function createHost(options: HostOptions): Host {
       // internal error it cannot.
       throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
     }
+    if (origin !== undefined) origins.set(uri, origin);
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
     // Ready, then announced. A client that hears about a session before
     // it can be subscribed to has been told about something that is not
@@ -1231,7 +1242,13 @@ export function createHost(options: HostOptions): Host {
    */
   const startForAutomation = async (wanted: StartSession): Promise<string> => {
     const uri = `ahp-session:/${crypto.randomUUID()}`;
-    openSession(uri, wanted.provider ?? first.provider, wanted.config ?? {}, wanted.workingDirectory);
+    openSession(
+      uri,
+      wanted.provider ?? first.provider,
+      wanted.config ?? {},
+      wanted.workingDirectory,
+      wanted.origin,
+    );
     const chatUri = `ahp-chat:/${idOf(uri)}`;
     byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
     return uri;
@@ -2052,6 +2069,7 @@ export function createHost(options: HostOptions): Host {
             byChat.delete(chatUri);
           }
           sessions.delete(uri);
+          origins.delete(uri);
           presence.delete(uri);
           activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
