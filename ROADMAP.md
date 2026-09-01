@@ -37,12 +37,25 @@ What was checked, against a running daemon and a client sending VS Code's own ha
 | watching a file | `createResourceWatch` on the project, then `added` / `updated` / `deleted` as the tree moves. VS Code's own filesystem provider degrades to a no-op watch without it, so a mounted tree used to go stale the moment the agent touched anything |
 | editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
 | the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
+| automations, on a clock | a definition loaded from `automations.json` at boot, its `nextRunAt` computed in `America/Sao_Paulo`, and `* * * * *` firing twice a minute apart **with nobody connected** — which is the whole point of a daemon holding the clock. Then over a socket: `runAutomation`, the run's session carrying `origin`, and switching one off clearing both its next run and its `run` verb |
+
+Two bugs came out of that drive and neither was visible from the source. An automation switched off still announced its *old* next run, because the inner store says "this changed" from inside its own `update` and the host reads the entry straight back — the clock was recomputed a moment too late. And the session an automation started carried no `origin` at all: the run knew which session it had made, and the session knew nothing about the run, which is the half a catalogue actually shows.
 
 And on Deno as well as Node, which is what closed A-01-04: the same drive, on the same built output, under `deno 2.9.6`. It found one real difference — creating a file is a `rename` event on Node and a `change` event on Deno — so the watcher stopped reading the runtime's event names and looks at the file instead.
 
 So the answer to "will my editor work against this" is yes, for the conversation, the catalogue, the terminals, the filesystem including saving to it, and the changesets including acting on them. What it will *not* do is everything in A-01-03 below, and that list is now written against what VS Code actually calls rather than against what this repository's own client happens to need.
 
 ---
+
+## A-02-01 — A terminal's exit code is still sent the 0.8.0 way
+
+This host builds against 0.9.0 and `terminalInfo()` still emits a flat `exitCode`. In 0.9.0 that field moved inside `lifecycle`, which is a union — `{ status: 'running' }` or `{ status: 'exited', exitCode? }` — and the flat one is gone from the type.
+
+Nothing is visibly broken, which is why it survived the bump: `ahpc` reads both spellings, and a client reading only the new one sees a terminal that never exits rather than an error. That is the bad kind of quiet — the host is advertising 0.9.0 and describing a terminal in the previous version's shape, so the client that behaves correctly is the one that gets it wrong.
+
+Found while bumping the client, not while bumping the host: the host's own bump moved no types because every payload here is a `Bag`, which is exactly what let a stale shape through.
+
+**Suggestions.** (1) Emit `lifecycle` and drop the flat field, which is what 0.9.0 says and what a client negotiating 0.9.0 is entitled to. (2) Emit both for a release, on the grounds that a client written against 0.8.0 may still be connected — although this host answers 0.9.0 only when a client asked for it. (3) Audit the rest of the root channel the same way before doing either, since `Bag` will have hidden any other field that moved.
 
 ## A-01-03 — What is left of the protocol
 
