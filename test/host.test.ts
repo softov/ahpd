@@ -415,6 +415,61 @@ describe('driving a turn', () => {
     expect(actions(p, chatUri).map((e) => e.action.type)).toContain('chat/turnComplete');
   });
 
+  /*
+   * A turn that failed says why, in the turn.
+   *
+   * 0.9.0 took `error` off `Turn` and gave the reason a response part instead.
+   * This host set the state to `error` and put the words nowhere the protocol
+   * defines, so a client saw a turn that stopped and no account of it - which
+   * is the shape a reader is least able to do anything about.
+   */
+  it('puts the reason a turn failed inside the turn', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Working' }] } });
+    await emit({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      errors: ['the tool exploded'], duration_ms: 7,
+    });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { state: string; responseParts: { kind: string; error?: { message?: string } }[] }[] } };
+    };
+    const turn = after.snapshot.state.turns[0];
+    expect(turn?.state).toBe('error');
+    const failure = turn?.responseParts.find((one) => one.kind === 'error');
+    expect(failure?.error?.message).toBe('the tool exploded');
+    // After what the agent managed to say, not instead of it: three things
+    // said and then a failure is a turn with four parts.
+    expect(turn?.responseParts.map((one) => one.kind)).toEqual(['markdown', 'error']);
+    // And announced as it happens, so a client watching does not have to
+    // re-read the channel to find out.
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/responsePart'
+      && (e.action.part as { kind?: string } | undefined)?.kind === 'error')).toBe(true);
+  });
+
+  it('says a turn ended badly even when the harness gave no words', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    // A subtype that is not `success` and no `errors` at all - which happens,
+    // and used to leave the turn silent.
+    await emit({ type: 'result', subtype: 'error_max_turns', duration_ms: 3 });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { responseParts: { kind: string; error?: { message?: string } }[] }[] } };
+    };
+    const failure = after.snapshot.state.turns[0]?.responseParts.find((one) => one.kind === 'error');
+    expect(failure?.error?.message).toContain('error_max_turns');
+  });
+
   it('blocks on a confirmation and runs the tool when it is approved', async () => {
     const { client, peer: p, uri } = await running();
     client.handle({
@@ -2187,6 +2242,78 @@ describe('a shell on this machine', () => {
     }
     // Reporting nothing would read as still running.
     expect(actions(p, uri).find((e) => e.action.type === 'terminal/exited')?.action.exitCode).toBe(3);
+
+    /*
+     * And in the shape 0.9.0 asks for.
+     *
+     * That version moved the exit code inside `lifecycle` and made the field
+     * required, so a terminal described without it is one a client cannot ask
+     * about: `lifecycle.status` comes back undefined, which reads as a process
+     * that never exits. The flat `exitCode` stays beside it because this host
+     * negotiates down to 0.5.1, and every version before 0.9.0 reads that.
+     */
+    const after = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { lifecycle?: { status?: string; exitCode?: number }; exitCode?: number } };
+    };
+    expect(after.snapshot.state.lifecycle).toEqual({ status: 'exited', exitCode: 3 });
+    expect(after.snapshot.state.exitCode).toBe(3);
+  });
+
+  /*
+   * The catalogue has to hear about an exit too.
+   *
+   * `root/terminalsChanged` fired when a terminal was created and when it was
+   * disposed, and not when the shell inside it went - so the root channel went
+   * on describing a dead terminal as running until somebody closed it. Older
+   * than 0.9.0 and made worse by it: the old shape simply had no exit code to
+   * report, and this one says `{ status: 'running' }` out loud.
+   */
+  it('tells the root channel when the shell goes, not only when it is closed', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/six';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: 'exit 5\n' } },
+    });
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
+    }
+    await settle();
+
+    const listed = actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .at(-1)?.action.terminals as { resource: string; lifecycle?: { status?: string; exitCode?: number } }[] | undefined;
+    expect(listed?.find((one) => one.resource === uri)?.lifecycle)
+      .toEqual({ status: 'exited', exitCode: 5 });
+  });
+
+  it('says a terminal that is still running is running', async () => {
+    const { client } = await opened();
+    const uri = 'ahp-terminal:/alive';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' },
+    });
+    const found = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { lifecycle?: { status?: string }; exitCode?: number } };
+    };
+    // Required, and not the absence of an exit code: a client should not have
+    // to infer "running" from a field that is not there.
+    expect(found.snapshot.state.lifecycle).toEqual({ status: 'running' });
+    expect(found.snapshot.state.exitCode).toBeUndefined();
+
+    // The root channel lists the same fact, and 0.9.0 requires it there too.
+    const root = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { terminals?: { resource: string; lifecycle?: { status?: string } }[] } };
+    };
+    expect(root.snapshot.state.terminals?.find((one) => one.resource === uri)?.lifecycle)
+      .toEqual({ status: 'running' });
   });
 });
 

@@ -986,6 +986,9 @@ export function createHost(options: HostOptions): Host {
     resource: held.uri,
     title: held.title(),
     claim: held.claim(),
+    // Required in 0.9.0's `TerminalInfo`, and read by everything older as the
+    // flat field beside it. See the terminal's own state for why both.
+    lifecycle: held.lifecycle(),
     ...(held.exitCode() !== undefined ? { exitCode: held.exitCode() } : {}),
   }));
   const rootState = async () => ({
@@ -1657,7 +1660,24 @@ export function createHost(options: HostOptions): Host {
             ...(typeof params.name === 'string' ? { name: params.name } : {}),
             ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
             ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
-            emit: (_channel, action) => { dispatch(uri, action); },
+            emit: (_channel, action) => {
+              dispatch(uri, action);
+              /*
+               * A terminal that exited is a different row on the root channel
+               * as well, and that list only moved when one was created or
+               * disposed - so the catalogue went on describing a dead shell as
+               * running until somebody closed it.
+               *
+               * Worse since 0.9.0 rather than new: the old shape said nothing
+               * about a terminal that had not exited, and this one says
+               * `{ status: 'running' }` out loud. A stale silence is a client
+               * with less to go on; a stale assertion is a client that has
+               * been told something untrue.
+               */
+              if ((action as Bag).type === 'terminal/exited') {
+                dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+              }
+            },
           });
           terminals.set(uri, terminal);
           log(`opened ${uri} in ${asked}`);

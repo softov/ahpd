@@ -34,6 +34,14 @@ export interface Terminal {
   claim(): Claim;
   /** The process's exit code, once it has one. Undefined while it runs. */
   exitCode(): number | undefined;
+  /**
+   * Running, or exited and with what.
+   *
+   * 0.9.0 moved the exit code in here and made this required, so a terminal
+   * described without it is a terminal a client cannot ask about. `exitCode`
+   * above stays for the versions this host still negotiates down to.
+   */
+  lifecycle(): { status: 'running' } | { status: 'exited'; exitCode?: number };
   /** The channel's state, for a subscription snapshot. */
   state(): Bag;
 

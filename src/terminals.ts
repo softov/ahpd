@@ -74,6 +74,9 @@ export function createTerminal(options: TerminalOptions): Terminal {
     title: () => title,
     claim: () => claim,
     exitCode: () => exitCode,
+    lifecycle: () => (exitCode === undefined
+      ? { status: 'running' as const }
+      : { status: 'exited' as const, exitCode }),
 
     state: () => ({
       title,
@@ -86,6 +89,18 @@ export function createTerminal(options: TerminalOptions): Terminal {
       claim,
       supportsCommandDetection: false,
       isPty: false,
+      /*
+       * Both spellings, because this host speaks five versions.
+       *
+       * `lifecycle` is what 0.9.0 requires and is not optional there - a
+       * client reading `lifecycle.status` on a 0.8.0-shaped terminal gets
+       * `undefined`, which reads as a process that never exits. The flat
+       * `exitCode` is what every version before it reads, and this daemon
+       * negotiates down to 0.5.1.
+       */
+      lifecycle: exitCode === undefined
+        ? { status: 'running' }
+        : { status: 'exited', exitCode },
       ...(exitCode !== undefined ? { exitCode } : {}),
     }),
 

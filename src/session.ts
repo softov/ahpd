@@ -340,6 +340,27 @@ export function createSession(options: SessionOptions): Session {
     (turn.responseParts as Bag[]).push(part);
   };
 
+  /**
+   * Why a turn stopped, as a part of it.
+   *
+   * 0.9.0 took `error` off `Turn` and gave the reason a response part instead,
+   * which is the better home for it: what the agent said before it failed
+   * still stands, and the failure belongs after those three things rather than
+   * beside them. Without this the state says `error` and nothing anywhere says
+   * what went wrong.
+   *
+   * No `resumable`. It is only ever `true` to offer a resume, and this host
+   * cannot resume a turn - saying so with a `false` it never varies would be
+   * answering a question nobody asked.
+   */
+  const addFailure = (turn: Bag, why: string): void => {
+    addPart(turn, {
+      kind: 'error',
+      id: `${str(turn.id) ?? 'turn'}:error`,
+      error: { errorType: 'turnFailed', message: why },
+    });
+  };
+
   const streamed = (event: Bag): void => {
     const type = str(event.type);
 
@@ -833,6 +854,17 @@ export function createSession(options: SessionOptions): Session {
 
         if (type === 'result') {
           const turn = active;
+          /*
+           * Read before the turn is pushed, because the reason goes inside it.
+           * `is_error` carries the words; a subtype that is not `success` is a
+           * turn that ended badly with none, and saying which is better than
+           * an error part that says only that there was one.
+           */
+          const wrong = message.is_error === true
+            ? (list(message.errors).map(String).join('\n') || 'The turn failed')
+            : str(message.subtype) !== 'success'
+              ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
+              : undefined;
           if (turn) {
             if (str(message.subtype) !== 'success') turn.state = 'error';
             turn.duration = typeof message.duration_ms === 'number' ? message.duration_ms : Date.now() - startedAt;
@@ -844,6 +876,7 @@ export function createSession(options: SessionOptions): Session {
               turn.usage = used;
               emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
             }
+            if (wrong !== undefined) addFailure(turn, wrong);
             turns.push(turn);
             active = undefined;
             parts.clear();
@@ -851,7 +884,7 @@ export function createSession(options: SessionOptions): Session {
             emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
           }
           if (message.is_error === true) {
-            failed = list(message.errors).map(String).join('\n') || 'The turn failed';
+            failed = wrong ?? 'The turn failed';
             emit('chat', { type: 'chat/error', message: failed });
           }
           doing(undefined);
@@ -865,6 +898,7 @@ export function createSession(options: SessionOptions): Session {
       if (turn) {
         turn.state = 'error';
         turn.duration = Date.now() - startedAt;
+        addFailure(turn, failed);
         turns.push(turn);
         active = undefined;
         emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
