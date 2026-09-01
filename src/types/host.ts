@@ -208,6 +208,19 @@ export interface Connection {
    * because it goes with the set.
    */
   grants: Set<string>;
+  /**
+   * Tokens this client pushed, by protected resource identifier.
+   *
+   * Per connection for the same reason grants are, and the specification says
+   * so outright: authentication status is per connection, each client
+   * authenticating independently. A token one client offered is theirs, spent
+   * only on sessions they ask for, and gone when they hang up.
+   *
+   * Which is also why an automation that fires with nobody connected has
+   * none: it is the host's own work rather than any client's, and it runs on
+   * the credentials the daemon was started with.
+   */
+  tokens: Map<string, string>;
 }
 
 /** A protocol server. One host serves many connections. */

@@ -6,6 +6,16 @@ import type { Bag } from '../types/common.js';
 import type { Agent, Start } from '../types/agent.js';
 
 /**
+ * The resource a token for this backend is for.
+ *
+ * Named once, because it is the identifier a client must send back verbatim:
+ * the protocol says `authenticate`'s `resource` MUST match one the server
+ * advertised, so this string appearing twice with a typo between them is a
+ * token nothing will accept.
+ */
+const ANTHROPIC = 'https://api.anthropic.com';
+
+/**
  * Claude Code, as an agent backend.
  *
  * Everything the host would otherwise have to know about one particular
@@ -184,6 +194,22 @@ export function claude(options: ClaudeOptions): Agent {
       return undefined;
     },
 
+    /*
+     * The one resource this backend can be given a token for.
+     *
+     * `required: false`, and that is the honest declaration rather than the
+     * lenient one: this daemon runs as whoever started it and inherits their
+     * `claude login` or `ANTHROPIC_API_KEY`, so it works with nothing pushed
+     * at all. Saying `required: true` would refuse clients that would
+     * otherwise be perfectly able to open a session.
+     */
+    protectedResources: [{
+      resource: ANTHROPIC,
+      resource_name: 'Anthropic API',
+      authorization_servers: ['https://console.anthropic.com'],
+      required: false,
+    }],
+
     create: (start: Start) => createSession({
       uri: start.uri,
       chatUri: start.chatUri,
@@ -196,6 +222,17 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),
+      /*
+       * A pushed token, as the variable the CLI reads.
+       *
+       * Which variable that is, is this file's business and not the host's:
+       * the host knows a token belongs to `https://api.anthropic.com` and
+       * stops there, which is what keeps `createHost` the protocol and
+       * nothing else.
+       */
+      ...(start.credentials?.[ANTHROPIC]
+        ? { env: { ANTHROPIC_API_KEY: start.credentials[ANTHROPIC] } }
+        : {}),
     }),
   };
 }
