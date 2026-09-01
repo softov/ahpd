@@ -47,15 +47,26 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ---
 
-## A-02-01 — A terminal's exit code is still sent the 0.8.0 way
+## A-02-02 — What else moved under 0.9.0, and what it cost
 
-This host builds against 0.9.0 and `terminalInfo()` still emits a flat `exitCode`. In 0.9.0 that field moved inside `lifecycle`, which is a union — `{ status: 'running' }` or `{ status: 'exited', exitCode? }` — and the flat one is gone from the type.
+A-02-01 is closed, and the audit it asked for is done: every `state.ts` in the protocol package diffed 0.8.0 against 0.9.0, field by field, and each removal checked against what this host actually emits.
 
-Nothing is visibly broken, which is why it survived the bump: `ahpc` reads both spellings, and a client reading only the new one sees a terminal that never exits rather than an error. That is the bad kind of quiet — the host is advertising 0.9.0 and describing a terminal in the previous version's shape, so the client that behaves correctly is the one that gets it wrong.
+**Four things moved. Two of them were live here.**
 
-Found while bumping the client, not while bumping the host: the host's own bump moved no types because every payload here is a `Bag`, which is exactly what let a stale shape through.
+| moved | this host |
+| --- | --- |
+| terminal `exitCode` → `lifecycle`, and *required* in both `TerminalInfo` and `TerminalState` | emitted neither — a 0.9.0 client read `lifecycle.status` as `undefined` |
+| `Turn.error` removed; a failure is now an `ErrorResponsePart` in `responseParts` | emitted neither — the state said `error` and nothing said why |
+| session `creationFailed` → `failed` | never emitted the old name |
+| `chat` added to `TerminalSessionClaim` | only ever emits a client claim |
 
-**Suggestions.** (1) Emit `lifecycle` and drop the flat field, which is what 0.9.0 says and what a client negotiating 0.9.0 is entitled to. (2) Emit both for a release, on the grounds that a client written against 0.8.0 may still be connected — although this host answers 0.9.0 only when a client asked for it. (3) Audit the rest of the root channel the same way before doing either, since `Bag` will have hidden any other field that moved.
+Both live ones are fixed. `lifecycle` goes out beside the flat `exitCode`, because this host really does negotiate down to 0.5.1 and every version before 0.9.0 reads the flat one. A failed turn now carries its reason as a part, which is the better home for it anyway: what the agent said before it failed still stands, so the failure belongs after those things rather than beside them.
+
+**And one the audit found that has nothing to do with 0.9.0.** `root/terminalsChanged` fired when a terminal was created and when it was disposed, and not when the shell inside it exited — so the catalogue described a dead terminal as running until somebody closed it. That was true before the bump and invisible: the old shape had no exit code to be wrong about. The new one says `{ status: 'running' }` out loud, which is what made it findable. A stale silence leaves a client with less to go on; a stale assertion tells it something untrue.
+
+**What the audit says about the method, which is the part worth keeping.** The 0.9.0 bump moved zero types here and needed no code change, because every wire payload in this host is a `Bag`. That is what makes the shape of a release invisible, and it is why this had to be done by diffing the protocol's own sources rather than by waiting for a compiler. The same is true of the next release.
+
+**Suggestions.** (1) Do this diff on every protocol bump, and say in the commit which fields moved and which were live here — the count of commands and actions says nothing about shapes. (2) Type the wire payloads against the package's own interfaces at the few places they are constructed, so the next removal is a compile error rather than an audit. That is a real change in how this host is written and it would have caught all four. (3) Leave it as a habit rather than a mechanism, which is what it is today.
 
 ## A-01-03 — What is left of the protocol
 
