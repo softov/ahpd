@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Status } from './catalog.js';
 import { tail } from './transcript.js';
+import type { ActiveTurn, McpServerState } from '@microsoft/agent-host-protocol';
+import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Session, SessionOptions } from './types/session.js';
 
@@ -165,7 +167,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * message, and the state is one this host can satisfy completely. See
      * A-01-09.
      */
-    const state = reported === 'connected' ? { kind: 'ready' }
+    const state: OnWire<McpServerState> = reported === 'connected' ? { kind: 'ready' }
       : reported === 'disabled' ? { kind: 'stopped' }
         : reported === 'failed'
           ? {
@@ -344,13 +346,24 @@ export function createSession(options: SessionOptions): Session {
     if (active) return active;
     // A turn the client did not begin: the agent spoke first, which happens on
     // a resumed session. Better an id of our own than a turn with none.
-    active = { id: `turn-${Date.now()}`, startedAt: new Date().toISOString(), message: { text: '' }, responseParts: [] };
+    // `usage` is required on an `ActiveTurn` and means "not measured yet".
+    // Leaving the key off put a turn on the wire that did not satisfy its own
+    // type, which nothing here would have noticed.
+    active = {
+      id: `turn-${Date.now()}`,
+      startedAt: new Date().toISOString(),
+      // The agent spoke first, so the message in front of this turn is its
+      // own. `Message.origin` is required and used to be left off entirely.
+      message: { text: '', origin: { kind: 'agent' } },
+      responseParts: [],
+      usage: undefined,
+    } satisfies WireTurn<ActiveTurn> as Bag;
     startedAt = Date.now();
     emit('chat', {
       type: 'chat/turnStarted',
       turnId: active.id,
       startedAt: active.startedAt,
-      message: { text: '' },
+      message: { text: '', origin: { kind: 'agent' } },
     });
     return active;
   };
@@ -702,9 +715,10 @@ export function createSession(options: SessionOptions): Session {
     active = {
       id: turnId,
       startedAt: new Date().toISOString(),
-      message: { text, ...(chosen ? { model: { id: chosen } } : {}) },
+      message: { text, origin: { kind: 'user' }, ...(chosen ? { model: { id: chosen } } : {}) },
       responseParts: [],
-    };
+      usage: undefined,
+    } satisfies WireTurn<ActiveTurn> as Bag;
     startedAt = Date.now();
     // Said back, including to the client that started it. A host that only
     // reduced this privately would go on to emit `chat/responsePart` for a
@@ -909,7 +923,17 @@ export function createSession(options: SessionOptions): Session {
               ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
               : undefined;
           if (turn) {
-            if (str(message.subtype) !== 'success') turn.state = 'error';
+            /*
+             * Every turn that ends says how it ended.
+             *
+             * `Turn.state` is required and this only ever set it when
+             * something went wrong, so a turn that simply worked went into
+             * the history with no state at all. A client driven by actions
+             * never saw it - its reducer fills the state in on
+             * `chat/turnComplete` - but a client that subscribes afterwards
+             * reads the snapshot, and the snapshot is this.
+             */
+            turn.state = str(message.subtype) !== 'success' ? 'error' : 'complete';
             turn.duration = typeof message.duration_ms === 'number' ? message.duration_ms : Date.now() - startedAt;
             // Before the turn completes, not after: the reducer hangs usage on
             // `activeTurn`, and `chat/turnComplete` is what moves that into
@@ -1190,7 +1214,7 @@ export function createSession(options: SessionOptions): Session {
      * leave rather than one that was never there.
      */
     queue: (id, text, model) => {
-      const entry: Bag = { id, message: { text, ...(model ? { model: { id: model } } : {}) } };
+      const entry: Bag = { id, message: { text, origin: { kind: 'user' }, ...(model ? { model: { id: model } } : {}) } };
       const at = queued.findIndex((held) => str(held.id) === id);
       // The same id again edits what is waiting; a fresh one appends. That is
       // the client's spelling for "change my mind" and it costs nothing here.

@@ -18,10 +18,12 @@
  */
 
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import type { TerminalInfo } from '@microsoft/agent-host-protocol';
+import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
-import type { Terminal } from './types/terminals.js';
+import type { Claim, Terminal } from './types/terminals.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
@@ -50,6 +52,36 @@ const need = <T>(port: T | undefined, method: string): T => {
 const ROOT = 'ahp-root://';
 /** The automation catalogue, which belongs to the host rather than to a session. */
 const AUTOMATIONS = 'ahp-automations://';
+
+/**
+ * A claim off the wire, or nothing.
+ *
+ * Parsed rather than cast, which the types are what forced: a claim used to be
+ * a `Bag` and anything at all was accepted, so a client could take a terminal
+ * with `{}` and the state went out saying so. The two kinds carry different
+ * fields and each is checked for its own.
+ */
+function claimOf(value: unknown): Claim | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const held = value as Record<string, unknown>;
+  if (held.kind === 'client') {
+    return typeof held.clientId === 'string'
+      ? { kind: 'client', clientId: held.clientId }
+      : undefined;
+  }
+  if (held.kind === 'session') {
+    if (typeof held.session !== 'string' || typeof held.chat !== 'string') return undefined;
+    return {
+      kind: 'session',
+      session: held.session,
+      chat: held.chat,
+      ...(typeof held.turnId === 'string' ? { turnId: held.turnId } : {}),
+      ...(typeof held.toolCallId === 'string' ? { toolCallId: held.toolCallId } : {}),
+    };
+  }
+  return undefined;
+}
+
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
@@ -995,15 +1027,21 @@ export function createHost(options: HostOptions): Host {
     return found;
   };
   /** Every terminal, as the root channel lists them. */
-  const terminalInfo = () => [...terminals.values()].map((held) => ({
-    resource: held.uri,
-    title: held.title(),
-    claim: held.claim(),
-    // Required in 0.9.0's `TerminalInfo`, and read by everything older as the
-    // flat field beside it. See the terminal's own state for why both.
-    lifecycle: held.lifecycle(),
-    ...(held.exitCode() !== undefined ? { exitCode: held.exitCode() } : {}),
-  }));
+  const terminalInfo = (): (OnWire<TerminalInfo> & { exitCode?: number })[] =>
+    [...terminals.values()].map((held) => {
+      // Read once so it narrows: `exactOptionalPropertyTypes` will not take a
+      // `number | undefined` for a `number?`.
+      const code = held.exitCode();
+      return {
+        resource: held.uri,
+        title: held.title(),
+        claim: held.claim(),
+        // Required in 0.9.0's `TerminalInfo`, and read by everything older as
+        // the flat field beside it. See the terminal's own state for why both.
+        lifecycle: held.lifecycle(),
+        ...(code !== undefined ? { exitCode: code } : {}),
+      };
+    });
   const rootState = async () => ({
     agents: descriptors(),
     // What this host is running, not what is on disk beside it.
@@ -1698,9 +1736,20 @@ export function createHost(options: HostOptions): Host {
           if (!roots.some((root) => asked === root || asked.startsWith(`${root}/`))) {
             throw new RpcError(-32009, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
           }
-          const claim = (typeof params.claim === 'object' && params.claim !== null
-            ? params.claim
-            : { kind: 'client', clientId: connection.clientId }) as Record<string, unknown>;
+          /*
+           * Whose terminal this is, checked rather than taken.
+           *
+           * A claim used to be a `Bag` and anything at all was accepted, so a
+           * client could take a terminal with `{}` and the channel then said
+           * so to everyone watching. Absent is this connection, which is the
+           * ordinary case; present and malformed is a refusal, because a
+           * client that meant to name a session and got it wrong should hear
+           * about it rather than quietly become the owner.
+           */
+          const claim = params.claim === undefined
+            ? { kind: 'client' as const, clientId: connection.clientId }
+            : claimOf(params.claim);
+          if (!claim) throw new RpcError(-32602, 'That is not a terminal claim');
           const terminal = shells.create({
             uri,
             cwd: asked,
@@ -2397,11 +2446,15 @@ export function createHost(options: HostOptions): Host {
               case 'terminal/titleChanged':
                 terminal.setTitle(String(action.title ?? ''));
                 break;
-              case 'terminal/claimed':
-                terminal.setClaim((typeof action.claim === 'object' && action.claim !== null
-                  ? action.claim
-                  : {}) as Record<string, unknown>);
+              case 'terminal/claimed': {
+                // A notification, so a malformed one is dropped rather than
+                // refused - and dropped is right: the alternative was setting
+                // the claim to `{}`, which told every other client that
+                // nobody owned it.
+                const claimed = claimOf(action.claim);
+                if (claimed) terminal.setClaim(claimed);
                 break;
+              }
               default:
                 log(`dispatchAction ${type} is not served on a terminal`);
             }
