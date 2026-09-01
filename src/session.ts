@@ -143,22 +143,54 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const name = str(server.name);
     if (!name) continue;
     const reported = str(server.status);
-    // The protocol's words, not the SDK's: the CLI says `connected` and
-    // `failed`, a client reads `ready` and `error`.
-    const kind = reported === 'connected' ? 'ready'
-      : reported === 'failed' ? 'error'
-        : reported === 'needs-auth' ? 'authRequired'
-          : reported === 'disabled' ? 'stopped' : 'starting';
+    const said = str(server.error);
+    /*
+     * The state, in the shape the kind it claims actually requires.
+     *
+     * The protocol's words, not the SDK's: the CLI says `connected` and
+     * `failed`, a client reads `ready` and `error`. Each kind carries
+     * different fields and only `error` carries any - `ready`, `starting` and
+     * `stopped` are `{ kind }` and nothing else, and `error` needs a whole
+     * `ErrorInfo` rather than the bare `message` this used to send.
+     *
+     * **A server needing a sign-in is reported as an error, and that is the
+     * closest to the specification this host can get.**
+     * `McpServerAuthRequiredState` requires two things it cannot produce: a
+     * `reason`, and a `resource` whose identifier is the canonical MCP server
+     * URI with `authorization_servers` the MCP authorization spec calls
+     * REQUIRED. All the SDK reports is a name and `needs-auth`. Emitting the
+     * state anyway would be two required fields short - a client told to sign
+     * in with nothing to sign into, which is a button that cannot be wired to
+     * anything. So the fact goes where a person can still read it, in the
+     * message, and the state is one this host can satisfy completely. See
+     * A-01-09.
+     */
+    const state = reported === 'connected' ? { kind: 'ready' }
+      : reported === 'disabled' ? { kind: 'stopped' }
+        : reported === 'failed'
+          ? {
+            kind: 'error',
+            error: { errorType: 'mcpServerFailed', message: said ?? 'The server did not start.' },
+          }
+          : reported === 'needs-auth'
+            ? {
+              kind: 'error',
+              error: {
+                errorType: 'mcpAuthRequired',
+                message: said ?? 'This server needs signing in, and it did not say where.',
+              },
+            }
+            : { kind: 'starting' };
     out.push({
       type: 'mcpServer',
       id: `mcp:${name}`,
       name,
       uri: name,
-      enabled: kind !== 'error' && kind !== 'stopped',
-      state: {
-        kind,
-        ...(str(server.error) ? { message: str(server.error) as string } : {}),
-      },
+      // Off the CLI's own word rather than off the kind above, so a server
+      // that needs signing in stays switched *on* - it is enabled and
+      // unreachable, which is not the same as somebody having turned it off.
+      enabled: reported !== 'failed' && reported !== 'disabled',
+      state,
     });
   }
 
@@ -1063,8 +1095,8 @@ export function createSession(options: SessionOptions): Session {
          * one.
          *
          * `toggleMcpServer` only lifts the disabled flag - a server that was
-         * off *because* nobody had signed in comes straight back
-         * `authRequired`, which reads as a switch that flips itself off.
+         * off *because* nobody had signed in comes straight back needing a
+         * sign-in, which reads as a switch that flips itself off.
          * `reconnectMcpServer` is the one that makes the CLI run its own
          * sign-in.
          */
@@ -1078,8 +1110,8 @@ export function createSession(options: SessionOptions): Session {
         }
       }
       catch {
-        // What it actually is now, which after a failed sign-in is still
-        // `authRequired` rather than anything this host invented.
+        // What it actually is now, which after a failed sign-in is still the
+        // CLI's own `needs-auth` rather than anything this host invented.
         await refreshMcp();
         return true;
       }

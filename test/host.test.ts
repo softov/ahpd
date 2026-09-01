@@ -686,18 +686,40 @@ describe('what the harness offers', () => {
     );
     const { client, uri } = await running();
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { customizations: { id: string; enabled: boolean; state?: { kind: string; message?: string } }[] } };
+      snapshot: {
+        state: {
+          customizations: {
+            id: string; enabled: boolean;
+            state?: { kind: string; error?: { errorType?: string; message?: string } };
+          }[];
+        };
+      };
     }).snapshot.state;
 
     const byId = new Map(state.customizations.map((c) => [c.id, c]));
     expect(byId.get('mcp:ok')?.state?.kind).toBe('ready');
-    expect(byId.get('mcp:gmail')?.state?.kind).toBe('authRequired');
     expect(byId.get('mcp:broken')?.state?.kind).toBe('error');
     // Why it is not ready, in the host's own words - the whole value of
-    // showing the row rather than hiding it.
-    expect(byId.get('mcp:broken')?.state?.message).toBe('spawn ENOENT');
+    // showing the row rather than hiding it. An `ErrorInfo` and not a bare
+    // `message`, which is what `McpServerErrorState` actually requires.
+    expect(byId.get('mcp:broken')?.state?.error?.message).toBe('spawn ENOENT');
     expect(byId.get('mcp:broken')?.enabled).toBe(false);
     expect(byId.get('mcp:off')?.state?.kind).toBe('stopped');
+
+    /*
+     * A server needing a sign-in is an error, not `authRequired`.
+     *
+     * `McpServerAuthRequiredState` requires a `reason` and a `resource` whose
+     * identifier is the canonical MCP server URI with `authorization_servers`
+     * the MCP authorization spec calls REQUIRED. The CLI reports a name and
+     * `needs-auth` and nothing else, so emitting that state would be two
+     * required fields short - a client told to sign in with nowhere to do it.
+     */
+    expect(byId.get('mcp:gmail')?.state?.kind).toBe('error');
+    expect(byId.get('mcp:gmail')?.state?.error?.errorType).toBe('mcpAuthRequired');
+    // Still switched on: it is enabled and unreachable, which is not the same
+    // as somebody having turned it off.
+    expect(byId.get('mcp:gmail')?.enabled).toBe(true);
   });
 
   it('tells the client that a slash is worth asking about', async () => {
