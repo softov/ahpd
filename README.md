@@ -104,8 +104,12 @@ deno run -A dist/src/main.js --port 9187 --path /where/…           # Deno
 
 The runtime is detected at startup and named in the first line of output. Node
 needs the optional `ws` dependency, having no WebSocket server of its own; Bun
-and Deno use their built-in servers and need nothing. Node and Bun are tested;
-Deno is written to the same interface but has not been run here.
+and Deno use their built-in servers and need nothing. All three are run: Deno
+was proved on **2.9.6** against the built output, driving a whole session -
+handshake, catalogue, changeset, operations, the write half and a resource
+watch. Run `dist/` rather than `src/` there, or pass `--sloppy-imports`: the
+sources import `./x.js` the way the emitted output does, and Deno reads that
+literally.
 
 ### While you are changing it
 
@@ -203,12 +207,15 @@ Only stdout says where the token came from, never what it is.
 | `resolveSessionConfig` | ✅ permission mode, effort, output style, thinking - the same schema a session reports, so a row is configurable before it is resumed. The output styles are the harness's own, learned by the boot probe, so the control is absent rather than empty on a harness that has none |
 | capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
 | skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
+| what a harness offers, before a session | ✅ `AgentInfo.customizations` on the root channel - the skills, subagents and MCP servers the boot probe found, so a new-session screen can offer one without creating a session to ask |
 | `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
 | `createSession` / `disposeSession` | ✅ |
 | past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
 | model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
 | `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |
+| who else is here | ✅ `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is. `activeSessions` on the root channel counts what this host is *running*, not the transcripts beside them |
 | read and archived | ✅ kept per session and told to every client - including for rows no agent is running for |
+| `otlp/exportLogs` | ✅ `ahp-otlp://logs/{level}`, advertised at the handshake and carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines this daemon writes to stdout, so a client can watch the host's log instead of reading the terminal it was started in. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
 | connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
 | `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
 | `completions` | ✅ `/` against the session's commands, falling back to the harness-wide list |
@@ -219,18 +226,23 @@ Only stdout says where the token came from, never what it is.
 | toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
 | toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
+| `createResourceWatch` | ✅ a channel per watch, `resourceWatch/changed` in coalesced batches, globs for `excludes` and `includes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. A store that cannot watch answers `-32601`, which is what a client degrades on rather than fails on |
 | `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
 | shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
 | terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
+| automations | ✅ `ahp-automations://` with the catalogue, `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns`, and a channel per run - through the `automations` port, so a host given none advertises no channel and answers `-32601`. `memoryAutomations()` holds no clock and says so by advertising no schedule trigger, so a client draws a Run button and no cron box |
 | several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
 | project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
-| the write half of `resource*`, acting on a changeset | ⬜ see [ROADMAP.md](ROADMAP.md) |
+| acting on a changeset | ✅ `commit` on the working tree, `discard` on a file, `revert` on a file back to the state the agent found it in - server-advertised per scope, `disabled` while a turn is running, destructive ones carrying the `confirmation` a client MUST show |
+| `resourceRequest` | ✅ the gate on all three: an operation that writes is refused `-32009` until the connection has been granted write on what it would write, and the refusal names the request that would unlock it. Grants are per connection and per resource, and only inside the directories this host was told to serve |
+| `resourceWrite` / `Delete` / `Mkdir` / `Move` / `Copy` | ✅ behind the same grant, and behind the same port - a store with no write half answers `-32601`, which is not a refusal about a path. All three write modes: `truncate`, `append` (position counts back from EOF), `insert`. `createOnly` refuses with `-32010`, `ifMatch` against the `etag` on `resourceResolve` refuses a lost update with `-32011`. The *parent* is resolved before writing, so a symlink out of the served set cannot be written through |
 | everything else | `-32601`, said rather than silently accepted |
 
 Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
 `Removed`, `chat/responsePart`, `chat/delta`, `chat/toolCallStart` / `Ready` /
 `Complete`, `chat/reasoning`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
-`chat/error`, `session/metaChanged`, `session/changesetsChanged` - plus
+`chat/error`, `session/metaChanged`, `session/changesetsChanged`,
+`changeset/operationsChanged` / `operationStatusChanged` / `contentChanged` - plus
 `root/sessionAdded` / `Removed` /
 `sessionSummaryChanged`
 on the root channel.

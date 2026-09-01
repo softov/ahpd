@@ -1,180 +1,85 @@
 # What is next, and why
 
-Ordered by what unblocks a client, not by what is interesting to build. Each
-entry says what it costs a person today, because a roadmap that only lists
-features cannot be argued with.
+Ordered by what unblocks a client, not by what is interesting to build. Each entry says what it costs a person today, and each ends with the two or three ways it could go — so a decision is a choice between named options rather than an open question.
 
-Each entry carries a **reference code** so a conversation, a commit or an issue
-can name one without quoting it. `A-01-xx` is something missing; `A-02-xx` is
-something wrong. The code belongs to the entry for as long as the entry exists
-and is not reused after it is removed; a number that came back meaning
-something else would make every older reference to it silently wrong.
+Each entry carries a **reference code** so a conversation, a commit or an issue can name one without quoting it. `A-01-xx` is something missing; `A-02-xx` is something wrong. A code belongs to its entry for as long as the entry exists and is not reused after it is removed — a number that came back meaning something else would make every older reference to it silently wrong, which is why the numbering has gaps.
 
-What has shipped is not listed here. This file is what is left; `git log` is
-what was done, and it says it in the words the change was made in.
-
-Verified against a live daemon on 2026-08-29, and audited the same day against
-the protocol's own `types/` - the action enum, the generated client/server
-origin map, and the canonical reducers - rather than read off the prose.
+What has shipped is not listed. This file is what is left; `git log` is what was done, in the words the change was made in.
 
 ---
 
-# Missing
+# Who this is a host for
 
-## A-01-01 - Acting on a changeset
+This is the part that decides everything below it, so it goes first.
 
-All three scopes a session can be asked about are served:
+**This daemon is not ahpc's server.** It is an AHP host, and the protocol has more than one client. VS Code is the other implementation, it connects over a plain WebSocket, and it has been connected to this one — so "nothing calls that" is not a reason to leave anything unserved, because the thing that calls it is an editor somebody is already running. Every judgement further down is made against *a client*, not against ours.
 
+Point VS Code at it, in `settings.json`:
+
+```json
+"chat.remoteAgentHostsEnabled": true,
+"chat.remoteAgentHosts": [
+  { "name": "ahpd", "address": "ws://127.0.0.1:9187", "connectionToken": "…" }
+]
 ```
-<sessionUri>/changeset/session                            everything this conversation changed
-<sessionUri>/changeset/turn/{turnId}                      what one turn changed
-<sessionUri>/changeset/compare/{origTurnId}/{modTurnId}   what changed between two
-<sessionUri>/changeset/uncommitted                        the working tree, against HEAD
-```
 
-The first two are captured rather than derived, which is the only way they can
-be true: git says what a working tree looks like *now*, so a turn asked about
-after two more have run would be handed their work as well. Both sides of every
-file are read as the tool runs - `before` as the call is announced, `after`
-when its result arrives - off the agent's own message stream rather than out of
-a `PreToolUse` hook, because a hook is bypassable from a person's settings and
-the stream is not.
+`address` may be bare (`127.0.0.1:9187`) or a full `ws://` / `wss://` URL; the token goes on the URL as `?tkn=` by the client, which is one of the two forms this host already accepts. `connectionToken` may be left out for a loopback host started without one.
 
-What is left is *acting* on one. `invokeChangesetOperation` and the
-`changeset/*` actions are unserved: this host computes a changeset and does
-nothing to it. Committing, reverting and marking a file reviewed are each a
-write to somebody's repository from a daemon that may be reached from another
-machine, which is the same question the write half of `resource*` is waiting
-on - see A-01-03a and A-01-03b, and note that `resourceRequest` is the shape
-that would answer both.
+What was checked, against a running daemon and a client sending VS Code's own handshake verbatim:
 
-All four scopes the protocol defines are served. `compare/<a>/<b>` needed
-nothing new: turn order is the order turns were first seen, so a range is a
-slice, and a range folds the way one turn does - the first `before` and the
-last `after`, because a file edited three times was found in one state and left
-in another, and the states in between are the middle of a diff nobody asked
-for.
+| what | result |
+| --- | --- |
+| version negotiation | the client offers `1.0.0, 0.8.0, 0.7.0, 0.6.0, 0.5.2, 0.5.1`; this host answers `0.8.0`, which is the newest both know. Negotiating down is what the client's own comment says it is for, so an editor newer than this daemon connects rather than refusing |
+| `initialize` | `serverInfo`, the root snapshot, `defaultDirectory` and `completionTriggerCharacters` come back in the shape the client reads |
+| sessions and changesets | `listSessions`, `createSession`, `subscribe`, and a changeset subscribed to by the URI its template became |
+| operations | `commit` and `discard` advertised with status, the destructive one carrying the `confirmation` the client MUST display |
+| the write gate | invoking without a grant is refused `-32009` carrying the `resourceRequest` that would unlock it; after the grant the same call commits, and the commit is in `git log` |
+| watching a file | `createResourceWatch` on the project, then `added` / `updated` / `deleted` as the tree moves. VS Code's own filesystem provider degrades to a no-op watch without it, so a mounted tree used to go stale the moment the agent touched anything |
+| editing a file | `resourceResolve` hands back an `etag`, `resourceWrite` without a grant is refused `-32009` carrying the request that would unlock it, sending that request back verbatim grants it, and the save then goes through with `ifMatch`. Re-using the stale etag is refused `-32011`, which is the lost update the field exists to stop |
+| the boundary | `resourceRequest` for `file:///etc/shadow` is refused, because it is not in a served directory |
 
-One thing to know before trusting a `session` changeset: the captures live for
-as long as the host does. A resumed session opens with none, because the turns
-it is resuming happened in a process that has gone. The transcript still has
-them and they could be replayed, which is a decision rather than a gap.
+And on Deno as well as Node, which is what closed A-01-04: the same drive, on the same built output, under `deno 2.9.6`. It found one real difference — creating a file is a `rename` event on Node and a `change` event on Deno — so the watcher stopped reading the runtime's event names and looks at the file instead.
 
-[REFERENCE.md](REFERENCE.md) says where the host that already does all of this
-is checked out, and which files in it answered which question.
+So the answer to "will my editor work against this" is yes, for the conversation, the catalogue, the terminals, the filesystem including saving to it, and the changesets including acting on them. What it will *not* do is everything in A-01-03 below, and that list is now written against what VS Code actually calls rather than against what this repository's own client happens to need.
 
-## A-01-03 - What is left of the protocol
+---
 
-The complete count, so the gap is a decision rather than an oversight. The
-protocol defines **32 commands** and **96 state actions** (52 server-origin, 44
-client-dispatchable). This host serves 19 commands and 48 actions.
+## A-01-03 — What is left of the protocol
 
-**The thirteen commands not served** - and, at A-01-03h, two channels that
-define no commands at all:
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**.
 
-- **A-01-03a - The write half of `resource*`** - `resourceWrite`,
-  `resourceDelete`, `resourceMkdir`, `resourceMove`, `resourceCopy`.
-  Deliberate: a host that lets any connected client write anywhere is a
-  different proposition from one that lets it read the project it is working
-  on, and this daemon is meant to be reachable from another machine.
-- **A-01-03b - `resourceRequest`** - the access handshake, `Client ↔ Server`,
-  by which a peer asks for read or write on a resource and is answered
-  `-32009` or granted. It is the negotiated form of the refusal above, and the
-  honest way to open the write half later: granted per resource rather than by
-  serving the commands to everyone.
-- **A-01-03c - `authenticate`** - the client fetches a token and pushes it. The
-  SDK has nowhere to put one, so this host serves the *gesture* - switching on
-  an MCP server that is not ready reconnects it, which is how somebody signs in
-  - and not the token.
-- **A-01-03d - `sessionConfigCompletions`** - config values that need looking
-  up. Every key this host offers is an enum.
-- **A-01-03e - `invokeChangesetOperation`** - part of A-01-01, and blocked on
-  the same decision.
-- **A-01-03f - `runAutomation`, `fetchAutomationRuns`,
-  `listAutomationTriggerDefinitions`** - see A-01-06.
-- **A-01-03g - `createResourceWatch`** - see A-01-07.
-- **A-01-03h - Annotations** (`annotations/*`, five client-dispatchable
-  actions and no commands) and **OTLP** (`otlp/exportLogs`, `exportMetrics`,
-  `exportTraces`) - an editor's furniture and a telemetry pipe. Neither has a
-  caller here, and neither is on the path a client takes to hold a
-  conversation.
+The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
-**The 24 server-origin actions this host never emits**, by channel, with the
-reason each is a decision:
+What the bump did close is the automation channel, which 0.8.0 did not declare at all. It is now declared and unserved, which is an ordinary gap rather than a version gap — see A-01-06.
+
+**The seven commands not served.** Audited one at a time rather than labelled in a group, because "named refusal" turned out to be covering for two things that were not. The list starts at `b` and skips `d`, because `a` was the write half of `resource*` and `d` was `createResourceWatch`, and both shipped; a letter is not reused any more than a number is.
+
+- **A-01-03f — Scheduling.** Automations are served and nothing fires them: `memoryAutomations()` holds no clock, and says so by advertising no schedule trigger rather than by taking a cron expression and ignoring it. The port is where a clock would go, so this is a store to write rather than a change to the host. **Suggestions.** (1) A store over the harness's own scheduled work, which is the backing that made this entry worth naming. (2) A store with a timer and a file, which is a few dozen lines and survives a restart. (3) Leave it: this daemon runs the sessions somebody asks for, and a client can press Run.
+
+- **A-01-03b — `authenticate`**: called a refusal here for a long time on the grounds that "the SDK has nowhere to put a token". That was **wrong**, and checking it is what found it: the SDK's `query()` takes `env`, and its own documentation names `ANTHROPIC_API_KEY` as the credential the subprocess reads. So there is somewhere to put one, and this is a gap.
+
+  What it would take: advertise `https://api.anthropic.com` in `AgentInfo.protectedResources` — the protocol says a server MUST accept any `resource` it has itself advertised, and this host advertises none, so no client can legally call `authenticate` today — hold the pushed token, and pass it as `ANTHROPIC_API_KEY` in the `env` handed to `query()`. The MCP half is not reachable in 0.9.0: `McpServerAuthRequiredState` is `{ kind }` and carries no `resource`, so a client cannot name an MCP server to authenticate.
+
+  **Suggestions.** (1) Do it, and hold the token per host rather than per connection — a session outlives the connection that created it, and the credential is consumed when its subprocess is spawned. (2) Do it per connection, which is stricter and means a session started by one client cannot be resumed with another's credential; more correct and more surprising. (3) Leave it and say so in the README: this host runs as whoever started it, and the credential is that person's environment. That is what is true today, and it is a real answer for a daemon on your own machine and a poor one for `a shared machine`.
+- **A-01-03c — `sessionConfigCompletions`**: config values that need looking up. Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does.
+- **A-01-03e — `otlp/exportTraces` and `exportMetrics`**: VS Code's client says `// Not recorded, yet` against both, so there is nothing on the other end. A genuine refusal, and one the reference implementation makes for us.
+- **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
+- **A-01-03h — `auth/required`**: pairs with A-01-03b. Consumed by VS Code, and unemitted here for the same reason `authenticate` is unserved.
+
+**The 33 state actions never emitted**, by channel:
 
 | channel | n | why |
 | --- | ---: | --- |
-| `changeset/*` | 7 | Computing a changeset is served; acting on one is not - see A-01-01 |
-| `automation` + `automationRun` | 5 | A-01-06 |
-| `terminal/*` | 4 | `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` are shell integration, which needs a PTY this daemon does not have. `isPty: false` is the honest form of all four. |
-| `session/*` | 3 | `customizationRemoved` is not: the list goes out whole, and nothing removes one alone. `creationFailed` is not needed rather than missing - `createSession` finishes or throws inside the request, so a client never holds a session in `creating` and `lifecycle: 'ready'` is true by the time anything can read it. `serverToolsChanged` is the correct field, empty for a true reason: `serverTools` are tools the *host* contributes - `SdkMcpToolDefinition`, being `name`, `description`, `inputSchema` - and this host defines none. The CLI's own built-in tools are never enumerated by the SDK at all, so they could not go here even if wanted. The day this host adds a tool of its own, it is two lines. |
-| `chat/*` | 3 | `toolCallDelta` is deliberate and already said in the code: a tool call's arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete. `toolCallAuthRequired` / `AuthResolved` are mid-call MCP authentication, a moment the SDK does not surface. |
-| `resourceWatch/changed` | 1 | A-01-07 |
-| `root/activeSessionsChanged` | 1 | presence, with `session/activeClient*` below |
+| `annotations/*` | 5 | an editor's furniture — a client marks a range and the marks are shared. VS Code has a whole service for it. Nothing here produces one, and it is the one group where "no caller" is still true from both ends |
+| `chat/*` | 7 | `toolCallDelta` is deliberate and said in the code: arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete. `toolCallAuthRequired` / `AuthResolved` are mid-call MCP authentication, a moment the SDK does not surface. `truncated`, `inputAnswerChanged`, `toolCallResultConfirmed`, `toolCallContentChanged` are client-dispatchable and would be ignored |
+| `changeset/*` | 4 | `fileSet`, `fileRemoved`, `cleared`, `statusChanged` are the incremental form of a changeset. This host now emits `contentChanged` after an operation, which is the coarse form of the same thing — worth replacing with the fine one only once a changeset is big enough that re-sending it is felt |
+| `session/*` | 5 | `customizationRemoved` — the list goes out whole and nothing removes one alone. `creationFailed` is not needed rather than missing: `createSession` finishes or throws inside the request. `serverToolsChanged` is empty for a true reason — `serverTools` are tools the *host* contributes, and this host defines none. The `workingDirectory*` set is below |
+| `terminal/*` | 5 | `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` are shell integration, which needs a PTY this daemon does not have; `isPty: false` is the honest form of all four. `cleared` is client-dispatchable |
+| `chat/workingDirectory*`, `session/workingDirectory*` | 5 | directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about |
+| `root/configChanged` | 1 | host-wide configuration, which this daemon has none of that a client may change |
 
-**The 24 client-dispatchable actions it does not handle** - each a control a
-client may offer that this host would ignore. `ahpc dispatch <uri> <type>
---field k=v` sends any of them verbatim, so this list is now a thing that can
-be run rather than a thing that was read off the types: `session/workingDirectorySet` /
-`Removed` / `Replaced` and `chat/workingDirectorySet` / `Removed` (directories
-are fixed at creation here, and a session that moves is a conversation whose
-second half cannot see the files its first half was about);
-`session/activeClientSet` / `Removed`; `chat/turnResume`,
-`chat/inputAnswerChanged`, `chat/toolCallResultConfirmed`,
-`chat/toolCallContentChanged`, `chat/truncated`;
-`changeset/filesReviewChanged`; `terminal/cleared`; `root/configChanged`; and
-the whole `annotations/*` set (5) and `automation*` set (4).
+`chat/truncated` stays refused for a reason worth keeping: it means "drop the turns before this one", and when the harness compacts, every one of them is still in the transcript and still readable. What was compacted is the model's context, not the conversation.
 
-`chat/truncated` stays refused for a reason worth keeping: it means "drop the
-turns before this one", and when the harness compacts, every one of them is
-still in the transcript and still readable. What was compacted is the model's
-context, not the conversation.
+`ahpc dispatch <uri> <type> --field k=v` sends any client-dispatchable action verbatim, so this list is a thing that can be run rather than read off the types.
 
-## A-01-04 - Deno
-
-Written to the same interface as Node and Bun and never run: Deno is not
-installed here. Until somebody runs it, the third case in `listen.ts` is a
-claim rather than a fact.
-
-## A-01-05 - The convergence, from the other side
-
-Done in `ahpc`: `--claude` starts one of these rather than translating the
-Agent SDK itself, and about fifteen hundred lines went with it - the
-translation and its tests. That client no longer depends on the Claude SDK at
-all.
-
-What it bought, immediately: the same client renders the same screens against
-`--claude` and `--host`, because they are now the same path with a different
-daemon at the end of it. There is one translation to be wrong, and it is this
-one.
-
-What it costs, and it is a real cost: that client needs `ahpd` installed where
-it used to need nothing. The shape of a spawned host is worth knowing for
-anything else that embeds one - `--port 0` so two clients never fight over one,
-a token so a daemon nobody else asked for answers nobody else, and killed when
-its client goes.
-
-Left over, and cheap: `ahpd` had `bin` pointing at a file with no shebang, so
-`npm i -g ahpd` installed a command the shell could not run. Fixed, but worth
-remembering as the class of thing only installing it finds.
-
-## A-01-06 - Automations
-
-A whole channel, unserved and until now unnamed: `runAutomation`,
-`fetchAutomationRuns`, `listAutomationTriggerDefinitions`, the
-`automation/*` actions and the `automationRun/*` channel beneath them - a
-session started by a trigger rather than by a person, and watchable while it
-runs.
-
-It is the one unserved channel with an obvious backing here, which is why it is
-worth naming rather than dismissing: the harness already has scheduled and
-triggered work. Nothing calls it today, and a client that offered the screen
-would drive nothing.
-
-## A-01-07 - Resource watches
-
-`createResourceWatch` and `resourceWatch/changed`: a client subscribes to a
-path and is told when it changes, rather than polling `resourceRead`. The read
-half of `resource*` is served, so this is the notification the served half
-implies and does not provide. No caller yet, and it wants a file watcher this
-daemon does not have.
+**Suggestions.** (1) Leave the rest as named decisions and stop treating the table as a backlog — annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up: serving it against five enums is a method that answers nothing. (3) Take `session/serverToolsChanged` by giving this host tools of its own to contribute — it is empty for a true reason today, and the reason would stop being true the moment there was one.

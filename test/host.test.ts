@@ -86,7 +86,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { fileResources } = await import('../src/resources.js');
+const { fileResources, list, read, resolve, complete } = await import('../src/resources.js');
 const { shellTerminals } = await import('../src/terminals.js');
 const { gitBranches } = await import('../src/git.js');
 /*
@@ -210,13 +210,29 @@ describe('the catalogue', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/new');
   });
 
-  it('counts the sessions on the root channel', async () => {
+  it('counts the sessions it is running, not the transcripts beside them', async () => {
+    // The protocol asks for the active, non-disposed sessions *on the server*.
+    // A transcript on disk is a row somebody can open, not a session this host
+    // is holding - counting those meant a host running nothing claimed two.
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
     const client = open();
-    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const first = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { activeSessions: number } }[];
     };
-    expect(result.snapshots[0]?.state.activeSessions).toBe(1);
+    expect(first.snapshots[0]?.state.activeSessions).toBe(0);
+
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const again = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { activeSessions: number } };
+    };
+    expect(again.snapshot.state.activeSessions).toBe(1);
+
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/live' } });
+    const after = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { activeSessions: number } };
+    };
+    expect(after.snapshot.state.activeSessions).toBe(0);
   });
 
   it('refuses a session channel it has no agent for', async () => {
@@ -583,6 +599,26 @@ describe('what the harness offers', () => {
     // models before any client has connected, so the change is dispatched to
     // nobody - and the snapshot above is how every client actually finds out.
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('says what a harness offers on the root channel, before any session exists', async () => {
+    // No models: a harness nobody has signed into enumerates none and still
+    // has skills and servers. This is the case that used to answer nothing.
+    sdk.init = { models: [], commands: [{ name: 'review', description: 'A review pass' }], agents: [] };
+    sdk.skills.push({ name: 'review', description: 'A review pass' });
+    sdk.mcp.push({ name: 'gmail', status: 'needs-auth' });
+    const { client } = await running();
+
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { customizations?: { id: string; type: string }[] }[] } };
+    }).snapshot.state;
+    // The protocol's own place for them: `AgentInfo.customizations`, which it
+    // says are propagated into a session's list when one is created with this
+    // agent. Without it the only way to ask what a harness offers is to create
+    // a session, which is the thing somebody is deciding about.
+    const offered = root.agents[0]?.customizations ?? [];
+    expect(offered.map((one) => one.id).sort()).toEqual(['mcp:gmail', 'skill:review']);
+    expect(offered.find((one) => one.id === 'mcp:gmail')?.type).toBe('mcpServer');
   });
 
   it('says an MCP server\'s state in the protocol\'s words, not the SDK\'s', async () => {
@@ -1901,13 +1937,48 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     expect(found.uri).toBe('file:///github/ahpd/src');
   });
 
-  it('will not write, and says so rather than pretending', async () => {
+  it('will not write without a grant, and names the request that would give one', async () => {
     const client = await opened();
-    // The write half exists in the protocol and is deliberately not served.
+    // The whole access model for the write half. A refusal that did not carry
+    // the request would be a dead end - the client has nothing to send next.
     await expect(client.handle({
       method: 'resourceWrite',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x' },
-    })).rejects.toMatchObject({ code: -32601 });
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x', encoding: 'utf-8' },
+    })).rejects.toMatchObject({
+      code: -32009,
+      data: { request: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', write: true } },
+    });
+  });
+
+  it('answers -32601 for a store that only reads, which is not a refusal about a path', async () => {
+    // Two different ways not to have this, and they must not be confused: a
+    // host with a read-only store does not serve the method at all, and a
+    // client that gets `-32009` instead would go and ask for a grant it could
+    // never use.
+    const host = createHost({
+      path: '/github/ahpd',
+      agents: [claude({ paths: ['/github/ahpd'] })],
+      resources: { list, read, resolve, complete },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({
+      method: 'resourceRequest',
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd', write: true },
+    });
+    for (const method of ['resourceWrite', 'resourceDelete', 'resourceMkdir', 'resourceMove', 'resourceCopy']) {
+      await expect(client.handle({
+        method,
+        params: {
+          channel: 'ahp-root://',
+          uri: 'file:///github/ahpd/x',
+          source: 'file:///github/ahpd/x',
+          destination: 'file:///github/ahpd/y',
+          data: '',
+          encoding: 'utf-8',
+        },
+      }), method).rejects.toMatchObject({ code: -32601 });
+    }
   });
 });
 

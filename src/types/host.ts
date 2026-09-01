@@ -1,9 +1,10 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { Agent } from './agent.js';
-import type { Entry, Metadata, Read } from './resources.js';
+import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
+import type { AutomationStore } from './automations.js';
 import type { Peer, Request } from './rpc.js';
 
 /**
@@ -58,6 +59,54 @@ export interface ResourceStore {
   resolve(uri: string, roots: string[], followSymlinks?: boolean): Promise<Metadata>;
   /** Paths under `base` that start with what is typed. */
   complete(typed: string, base: string, roots: string[], limit?: number): Promise<string[]>;
+
+  /*
+   * The half that writes.
+   *
+   * Every one is optional and they are optional together: a store that has
+   * none is a read-only filesystem, and the host answers `-32601` for each,
+   * which is a different thing from refusing a particular path. `fileResources()`
+   * has them all; a store over something that cannot be written - an archive,
+   * a read-only mount, a fixture - simply leaves them out and says so by
+   * omission rather than by throwing on every call.
+   *
+   * The host has already checked the client's `resourceRequest` grant before
+   * any of these is reached. What is left to each is the path check, which is
+   * a store's own business because only it knows what a path means.
+   */
+
+  /** Write, create or splice one file. */
+  write?(uri: string, roots: string[], content: WriteContent): Promise<void>;
+  /** Remove a file, or a directory when `recursive`. */
+  remove?(uri: string, roots: string[], recursive?: boolean): Promise<void>;
+  /** Make a directory, and the parents it needs. */
+  mkdir?(uri: string, roots: string[]): Promise<void>;
+  /** Rename, within the served directories on both ends. */
+  move?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
+  /** Copy, within the served directories on both ends. */
+  copy?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
+
+  /**
+   * Tell me when that changes.
+   *
+   * Optional on its own rather than with the write half: watching is a read,
+   * and a store may perfectly well serve bytes it cannot subscribe to - a
+   * remote filesystem, an archive, a fixture. A host whose store has none
+   * answers `-32601` for `createResourceWatch`, and the protocol's own client
+   * treats that as a reason to degrade rather than to fail.
+   *
+   * `onChange` is called with a *batch*, because the filesystem reports one
+   * event per file and a save is several: the protocol says a server coalesces
+   * them, and an empty batch MUST NOT be dispatched. Closing the returned
+   * handle is the only way to stop it - there is no dispose command, and
+   * `unsubscribe` is what the host turns into this call.
+   */
+  watch?(
+    uri: string,
+    roots: string[],
+    options: WatchOptions,
+    onChange: (changes: ResourceChange[]) => void,
+  ): Promise<Watcher>;
 }
 
 /**
@@ -123,6 +172,16 @@ export interface HostOptions {
    * is the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
+  /**
+   * The automations this host offers.
+   *
+   * Left out, no `ahp-automations://` channel is advertised and all three
+   * automation commands answer `-32601` - which is the right answer for a
+   * daemon that runs the sessions somebody asks for and schedules nothing.
+   * `memoryAutomations()` is the one that ships with this package: it holds
+   * definitions, runs them when asked, and holds no clock.
+   */
+  automations?: AutomationStore;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
 }
@@ -140,6 +199,15 @@ export interface Connection {
    * not stop the other's stream.
    */
   watching: Set<string>;
+  /**
+   * Resource access this client has been granted, as `read:<uri>` / `write:<uri>`.
+   *
+   * Per connection and never per host: `resourceRequest` is a negotiation
+   * between two peers, and a grant one client talked its way into is not one
+   * every other client on the port inherits. Emptied when the connection goes,
+   * because it goes with the set.
+   */
+  grants: Set<string>;
 }
 
 /** A protocol server. One host serves many connections. */

@@ -18,7 +18,7 @@
  */
 
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
+import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Terminal } from './types/terminals.js';
@@ -47,6 +47,8 @@ const need = <T>(port: T | undefined, method: string): T => {
 };
 
 const ROOT = 'ahp-root://';
+/** The automation catalogue, which belongs to the host rather than to a session. */
+const AUTOMATIONS = 'ahp-automations://';
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
@@ -80,6 +82,32 @@ export function createHost(options: HostOptions): Host {
   if (!first)
     throw new Error('A host with no agents can serve nothing. Pass at least one.');
   const connections = new Set<Connection>();
+  /**
+   * The watches clients have asked for, by the channel each was given.
+   *
+   * The protocol ties a watch's life to its subscription - there is no dispose
+   * command, and `unsubscribe` is the only handle a client needs - so this is
+   * what `unsubscribe` and a dropped connection are checked against.
+   */
+  /**
+   * Who is in each session, by session URI and then by client id.
+   *
+   * The protocol calls these `activeClients` and makes membership the host's
+   * to keep: a client announces itself with `session/activeClientSet` and the
+   * host takes it out again when the client unsubscribes or goes. Keyed by
+   * `clientId` rather than by connection, because that is what the protocol
+   * keys it by - a client that reconnects is the same client.
+   */
+  const presence = new Map<string, Map<string, Bag>>();
+
+  const watches = new Map<string, {
+    state: Bag;
+    watcher: { close(): void };
+    /** The connection that asked for it, which keeps it alive until it subscribes. */
+    owner: Connection;
+    /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
+    opened: boolean;
+  }>();
   /**
    * `IsRead` and `IsArchived`, per session.
    *
@@ -206,7 +234,64 @@ export function createHost(options: HostOptions): Host {
   const REPLAY = 1000;
   /** The last `REPLAY` action envelopes, oldest first. */
   const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: undefined }[] = [];
-  const log = (message: string): void => options.onEvent?.(message);
+  /**
+   * The host's own log, as OTLP.
+   *
+   * `ahp-otlp://logs/{level}` is a template rather than a channel: the
+   * variable is severity, so a client that only wants warnings subscribes to
+   * one and is not sent the rest. Everything this host logs already goes
+   * through `log`, so this is the same lines with a second destination rather
+   * than a new source of them.
+   *
+   * Stateless and ephemeral, as the protocol says: nothing is replayed on
+   * reconnect, and a subscriber gets only what was emitted after it arrived.
+   * There is no state to snapshot either, which is why `subscribe` answers an
+   * empty one rather than refusing.
+   */
+  const LOGS = 'ahp-otlp://logs';
+  const startedAt = new Date().toISOString();
+  const log = (message: string): void => {
+    options.onEvent?.(message);
+    /*
+     * OTLP/JSON, verbatim, because the protocol says so: the payload is an
+     * `ExportLogsServiceRequest` and AHP deliberately does not redeclare the
+     * OpenTelemetry type system, so a client parses it with an OTel schema.
+     * Building it by hand here is a dozen lines and saves a dependency that
+     * would exist only to serialise one shape.
+     */
+    const at = String(Date.now() * 1_000_000);
+    const payload = {
+      resourceLogs: [{
+        resource: {
+          attributes: [
+            { key: 'service.name', value: { stringValue: 'ahpd' } },
+            { key: 'service.start_time', value: { stringValue: startedAt } },
+          ],
+        },
+        scopeLogs: [{
+          scope: { name: 'ahpd' },
+          logRecords: [{
+            timeUnixNano: at,
+            observedTimeUnixNano: at,
+            // One severity, because this host has one kind of line. A `log`
+            // that took a level would be a second thing to keep in step with
+            // every call site, and every call site here is an event.
+            severityNumber: 9,
+            severityText: 'INFO',
+            body: { stringValue: message },
+          }],
+        }],
+      }],
+    };
+    for (const level of ['info', '']) {
+      const channel = level === '' ? LOGS : `${LOGS}/${level}`;
+      for (const connection of connections) {
+        // A notification, not an action: it carries no `serverSeq` and moves
+        // no state, so it does not belong in the replay buffer.
+        if (connection.watching.has(channel)) connection.peer.notify('otlp/exportLogs', { channel, payload });
+      }
+    }
+  };
   /**
    * A session's status, with the client flags folded in.
    *
@@ -272,6 +357,72 @@ export function createHost(options: HostOptions): Host {
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
   };
+  /**
+   * Let a watch go once nobody is listening to it.
+   *
+   * The protocol's rule, and it is a MUST: when every subscriber has
+   * unsubscribed, or the connection drops, the watcher is released. Checked
+   * against every connection rather than the one that just left, because two
+   * clients may watch one channel and the second is still reading.
+   *
+   * The connection that *created* it counts even before it has subscribed:
+   * `createResourceWatch` hands back a channel and the client subscribes after,
+   * so releasing on "nobody is watching" alone would close every watch in the
+   * gap between the two calls.
+   */
+  const releaseWatch = (channel: string): void => {
+    const held = watches.get(channel);
+    if (!held) return;
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) return;
+    }
+    // Handed out and not yet subscribed to. Its owner is still here, so it is
+    // still on its way to being watched rather than finished with.
+    if (!held.opened && connections.has(held.owner)) return;
+    held.watcher.close();
+    watches.delete(channel);
+    log(`released ${channel}`);
+  };
+
+  /** Who this session currently has in it. Always a list, because the field is required. */
+  const activeClientsOf = (uri: string): Bag[] => [...(presence.get(uri)?.values() ?? [])];
+
+  /**
+   * Take a client out of a session, if nothing else is holding it there.
+   *
+   * The protocol names three ways this happens - unsubscribe, disconnect
+   * without reconnecting, reconnect without resubscribing - and they are the
+   * same condition seen from three places: no connection with that client id
+   * is watching that session any more. Checked rather than assumed, because
+   * one person can have two windows open on one session and closing the first
+   * must not remove them from it.
+   */
+  const leaves = (uri: string, clientId: string): void => {
+    const held = presence.get(uri);
+    if (!held?.has(clientId)) return;
+    for (const connection of connections) {
+      if (connection.clientId === clientId && connection.watching.has(uri)) return;
+    }
+    held.delete(clientId);
+    if (held.size === 0) presence.delete(uri);
+    dispatch(uri, { type: 'session/activeClientRemoved', clientId });
+  };
+
+  /**
+   * How many sessions this host is running, said when it changes.
+   *
+   * `sessions.size` and not the catalogue: the protocol asks for the active,
+   * non-disposed sessions *on the server*, and a transcript on disk is a row
+   * somebody can open rather than a session the host is holding. Reporting the
+   * catalogue meant a host running nothing claimed a hundred.
+   */
+  let announced = -1;
+  const activeSessionsMoved = (): void => {
+    if (sessions.size === announced) return;
+    announced = sessions.size;
+    dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: sessions.size });
+  };
+
   /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
   const catalogueMoved = (uri: string, method: string): void => {
     const held = sessions.get(uri);
@@ -339,6 +490,36 @@ export function createHost(options: HostOptions): Host {
     void options.changes?.refresh?.(dir_).catch(() => {});
   }
 
+  /**
+   * Say an automation moved, on whichever channel is about it.
+   *
+   * The store owns the clock and this owns the channels, so a run that started
+   * on its own reaches a client only through here. Wired once at startup
+   * rather than per request, because the interesting case is the one nobody
+   * asked for.
+   */
+  options.automations?.onChanged?.((event) => {
+    if (event.removed !== undefined) {
+      dispatch(AUTOMATIONS, { type: 'automation/removed', resource: event.removed });
+      return;
+    }
+    if (event.automation !== undefined) {
+      const found = options.automations?.get(event.automation);
+      if (found) dispatch(AUTOMATIONS, { type: 'automation/set', automation: found });
+    }
+    if (event.run !== undefined) {
+      const run = options.automations?.runOf(event.run);
+      if (!run) return;
+      // Two channels, because they answer different questions: the run's own
+      // says what it is doing, and the catalogue's says which session it is
+      // doing it in.
+      dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      if (run.primarySession !== undefined) {
+        dispatch(event.run, { type: 'automationRun/primarySessionChanged', primarySession: run.primarySession });
+      }
+    }
+  });
+
   for (const agent of agents.values()) {
     if (!agent.probe)
       continue;
@@ -346,10 +527,17 @@ export function createHost(options: HostOptions): Host {
       const held = about(agent.provider);
       held.commands = offered.commands;
       held.seeds = offered.customizations;
-      if (offered.models.length === 0)
-        return;
-      held.models = offered.models;
-      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s)`);
+      /*
+       * An empty model list is kept out, and says nothing about the rest.
+       *
+       * A harness nobody has signed into enumerates no models and still has
+       * skills and MCP servers, so the guard is on the assignment and not on
+       * the announcement - the root channel has to hear about the
+       * customizations either way, or the only client that ever sees them is
+       * one that connected after the probe answered.
+       */
+      if (offered.models.length > 0) held.models = offered.models;
+      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.seeds.length} customization(s)`);
       dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
     }).catch(() => { });
   }
@@ -383,6 +571,141 @@ export function createHost(options: HostOptions): Host {
    * because a row and the session it opens disagreeing is the bug this is
    * meant to avoid.
    */
+  /**
+   * The changesets a session advertises, as catalogue entries.
+   *
+   * One builder, because there are two places that say them - a session's
+   * state and the action that says they moved - and an entry that carried a
+   * capability in one and not the other would be a client drawing a checkbox
+   * that vanished when anything changed.
+   */
+  const catalogueOf = (uri: string, dir: string): Bag[] =>
+    (options.changes?.scopes(dir, uri) ?? []).map((scope) => ({
+      label: scope.label,
+      uriTemplate: `${uri}/changeset/${scope.id}`,
+      changeKind: scope.changeKind,
+      ...(scope.description ? { description: scope.description } : {}),
+      // A presence flag, and on the *catalogue* entry so a client can decide
+      // whether to draw a checkbox before it subscribes to anything.
+      ...(scope.reviewable ? { capabilities: { review: {} } } : {}),
+    }));
+
+  /**
+   * What one changeset URI is a changeset *of*.
+   *
+   * `<sessionUri>/changeset/<scope>` split back into its two halves, which is
+   * wanted in four places now. Undefined for a URI that is not one.
+   */
+  const changesetAt = (channel: string): { owner: string; scope: string; dir: string } | undefined => {
+    const cut = channel.indexOf('/changeset/');
+    if (cut <= 0) return undefined;
+    const owner = channel.slice(0, cut);
+    const dir = dirOf(owner);
+    if (dir === undefined) return undefined;
+    return { owner, scope: channel.slice(cut + '/changeset/'.length), dir };
+  };
+
+  /**
+   * Invocations in flight, and the last one that failed.
+   *
+   * Keyed by changeset and operation, because status is per operation on a
+   * changeset rather than per source: two clients looking at the same
+   * changeset must see the same spinner, which is the whole reason the
+   * protocol reflects an imperative call back into state.
+   */
+  const inFlight = new Set<string>();
+  const lastError = new Map<string, string>();
+  const opKey = (channel: string, id: string): string => `${channel}\u0000${id}`;
+
+  /**
+   * The operations a changeset offers, with the status the host owns.
+   *
+   * The source declares the verbs and this decides what may be pressed:
+   * `Disabled` while the session is mid-turn, because the working tree is
+   * being written by the agent and an operation that mutated it underneath
+   * would race the thing that is doing the work; `Running` while an invocation
+   * is out; `Error` carrying whatever the last one said.
+   */
+  const operationsOf = (channel: string): Bag[] => {
+    const at = changesetAt(channel);
+    if (!at) return [];
+    const busy = (statusOf(at.owner) & Status.InProgress) !== 0;
+    return (options.changes?.operations?.(at.dir, at.owner, at.scope) ?? []).map((operation) => {
+      const key = opKey(channel, operation.id);
+      const failure = lastError.get(key);
+      const status = inFlight.has(key) ? 'running'
+        : busy ? 'disabled'
+          : failure !== undefined ? 'error'
+            : 'idle';
+      return {
+        id: operation.id,
+        label: operation.label,
+        ...(operation.description !== undefined ? { description: operation.description } : {}),
+        scopes: operation.scopes,
+        ...(operation.confirmation !== undefined ? { confirmation: operation.confirmation } : {}),
+        ...(operation.icon !== undefined ? { icon: operation.icon } : {}),
+        ...(operation.group !== undefined ? { group: operation.group } : {}),
+        status,
+        ...(status === 'error' && failure !== undefined ? { error: { message: failure } } : {}),
+      };
+    });
+  };
+
+  /**
+   * Say again what a session's changesets can be told to do.
+   *
+   * Sent on turn boundaries, because that is when the answer changes without
+   * anything in a changeset's *content* moving: a turn starting disables every
+   * operation on every changeset the session has, and nothing else would say
+   * so. Only channels somebody is watching - a changeset nobody subscribed to
+   * has no buttons on screen to correct.
+   */
+  const operationsMoved = (uri: string): void => {
+    const done = new Set<string>();
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        done.add(channel);
+        const operations = operationsOf(channel);
+        // `undefined` is how the protocol clears the list, and an operation
+        // list that went from three to none is exactly that.
+        dispatch(channel, {
+          type: 'changeset/operationsChanged',
+          ...(operations.length > 0 ? { operations } : {}),
+        });
+      }
+    }
+  };
+
+  /**
+   * The changesets themselves, after something wrote to the tree.
+   *
+   * `changeset/contentChanged` rather than a fresh snapshot: a client watching
+   * a changeset is holding a file list, and an operation that reverted one
+   * file has changed that list - which nothing else here says, because the
+   * catalogue action carries the *set* of changesets a session offers and not
+   * what is in any of them.
+   */
+  const contentMoved = async (uri: string): Promise<void> => {
+    const done = new Set<string>();
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        done.add(channel);
+        const at = changesetAt(channel);
+        if (!at) continue;
+        const state = await options.changes?.state(at.dir, at.owner, at.scope);
+        if (!state) continue;
+        const operations = operationsOf(channel);
+        dispatch(channel, {
+          type: 'changeset/contentChanged',
+          files: state.files,
+          ...(operations.length > 0 ? { operations } : {}),
+        });
+      }
+    }
+  };
+
   const describes = (uri: string): Bag => {
     const dir = dirOf(uri);
     if (dir === undefined) return {};
@@ -402,12 +725,7 @@ export function createHost(options: HostOptions): Host {
     // The changesets this session can be asked about, as URIs a client
     // subscribes to. A template with no variables in it is the whole scope;
     // the ones with `{turnId}` are not served yet.
-    const scopes = options.changes?.scopes(dir, uri) ?? [];
-    const changesets = scopes.map((scope) => ({
-      label: scope.label,
-      uriTemplate: `${uri}/changeset/${scope.id}`,
-      ...(scope.description ? { description: scope.description } : {}),
-    }));
+    const changesets = catalogueOf(uri, dir);
     const summary = options.changes?.summary(dir);
     return {
       project,
@@ -450,15 +768,7 @@ export function createHost(options: HostOptions): Host {
       if (!moved) return;
       for (const uri of inThere()) {
         // Asked per session, because two of the scopes are the session's own.
-        const scopes = options.changes?.scopes(dir, uri) ?? [];
-        dispatch(uri, {
-          type: 'session/changesetsChanged',
-          changesets: scopes.map((scope) => ({
-            label: scope.label,
-            uriTemplate: `${uri}/changeset/${scope.id}`,
-            ...(scope.description ? { description: scope.description } : {}),
-          })),
-        });
+        dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
         catalogueMoved(uri, 'root/sessionSummaryChanged');
       }
     }).catch(() => {});
@@ -510,6 +820,11 @@ export function createHost(options: HostOptions): Host {
           const dir = dirOf(uri);
           if (dir !== undefined) refreshFacts(dir);
         }
+        // A turn starting or ending is the whole of what disables and re-enables
+        // a changeset's operations, and it moves nothing inside the changeset
+        // itself - so it has to be said here or it is never said.
+        if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
+          || action.type === 'chat/turnCancelled') operationsMoved(uri);
       },
       /*
        * A file the agent is about to change, on its way to the changeset.
@@ -550,6 +865,23 @@ export function createHost(options: HostOptions): Host {
     displayName: agent.displayName,
     ...(agent.description ? { description: agent.description } : {}),
     models: about(agent.provider).models,
+    /*
+     * The skills, subagents and MCP servers, before any session exists.
+     *
+     * The protocol puts them here as well as on a session - `AgentInfo` has a
+     * `customizations` list, and says a session created with this agent gets
+     * these entries augmented and propagated into its own. So a client can
+     * show what a harness offers without creating a session to ask, which is
+     * exactly when somebody wants to know: the new-session screen is where a
+     * person picks a skill to open with.
+     *
+     * The same list a session is seeded from, deliberately: two answers to
+     * "what does this harness offer" that could disagree is worse than one
+     * answer that arrives a moment after boot.
+     */
+    ...(about(agent.provider).seeds.length > 0
+      ? { customizations: about(agent.provider).seeds }
+      : {}),
     capabilities: {
       /*
        * Several chats per session, and neither of the source modes.
@@ -648,7 +980,8 @@ export function createHost(options: HostOptions): Host {
   }));
   const rootState = async () => ({
     agents: descriptors(),
-    activeSessions: (await listing()).length,
+    // What this host is running, not what is on disk beside it.
+    activeSessions: sessions.size,
     ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
   });
   /**
@@ -700,14 +1033,65 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
-    const cut = channel.indexOf('/changeset/');
-    if (cut > 0) {
-      const owner = channel.slice(0, cut);
-      const scope = channel.slice(cut + '/changeset/'.length);
-      const dir = dirOf(owner);
-      const state = dir === undefined ? undefined : await options.changes?.state(dir, owner, scope);
+    if (channel === LOGS || channel.startsWith(`${LOGS}/`)) {
+      // Nothing to snapshot: the channel is a stream, and the protocol says a
+      // subscriber receives only what was emitted after it arrived. Answering
+      // with an empty state is how a client is told it is subscribed rather
+      // than refused.
+      return { resource: channel, state: {}, fromSeq: serverSeq };
+    }
+    if (channel === AUTOMATIONS) {
+      return {
+        resource: channel,
+        state: { entries: need(options.automations, 'the automations channel').list() },
+        fromSeq: serverSeq,
+      };
+    }
+    if (channel.startsWith('ahp-automation-run:/')) {
+      const found = options.automations?.runOf(channel);
+      if (!found) throw new RpcError(-32001, `No automation run at ${channel}`);
+      return { resource: channel, state: found, fromSeq: serverSeq };
+    }
+    const watching = watches.get(channel);
+    if (watching) {
+      // The state is what the watch *is*, not what it has seen. The protocol's
+      // reducer keeps no history: `resourceWatch/changed` exists to deliver
+      // events to whoever is subscribed, and a client that arrives later has
+      // missed them the way it misses anything it was not there for.
+      return { resource: channel, state: watching.state, fromSeq: serverSeq };
+    }
+    const at = changesetAt(channel);
+    if (at) {
+      /*
+       * Asked again, here, because this is the moment somebody reads one.
+       *
+       * `git status` is cached per directory - a catalogue of a hundred rows
+       * must not be a hundred `git` runs - and it used to be refreshed only
+       * when a turn ended. That is right for what the *agent* did and wrong
+       * for everything else: a person editing in an editor, a build writing
+       * artefacts, a `git checkout` in a terminal this same host is serving.
+       * All of it was invisible until the next turn finished, so a client that
+       * opened a changeset in between was shown a working tree that had moved.
+       *
+       * Deliberately not a watcher for this. `fs.watch` recursive costs an
+       * inotify handle per directory, and a host told to serve a home
+       * directory would spend thousands of them before answering anything. A
+       * client that wants to be *told* asks for `createResourceWatch` on a
+       * path it names, which is what the protocol has for it; this is only
+       * about the host's own cache being true at the moment it is read.
+       */
+      await options.changes?.refresh?.(at.dir).catch(() => false);
+      const state = await options.changes?.state(at.dir, at.owner, at.scope);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
-      return { resource: channel, state, fromSeq: serverSeq };
+      // The verbs, alongside the files. Omitted when there are none, which
+      // the protocol asks for and which is what a changeset with nothing to
+      // do to it says.
+      const operations = operationsOf(channel);
+      return {
+        resource: channel,
+        state: { ...state, ...(operations.length > 0 ? { operations } : {}) },
+        fromSeq: serverSeq,
+      };
     }
     const held = sessions.get(channel);
     const lead = held && leadOf(held);
@@ -724,6 +1108,10 @@ export function createHost(options: HostOptions): Host {
       const state = {
         ...lead.sessionState(),
         ...describes(channel),
+        // Required by the protocol and empty until somebody announces
+        // themselves, which is a real answer: a session nobody has opened has
+        // nobody in it.
+        activeClients: activeClientsOf(channel),
         status: statusOf(channel),
         modifiedAt: modifiedOf(held),
         defaultChat: held.defaultChat,
@@ -771,6 +1159,7 @@ export function createHost(options: HostOptions): Host {
           defaultChat: `ahp-chat:/${id}`,
           chats: [{ resource: `ahp-chat:/${id}`, title }],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
+          activeClients: activeClientsOf(`ahp-session:/${id}`),
           ...describes(`ahp-session:/${id}`),
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
@@ -794,8 +1183,47 @@ export function createHost(options: HostOptions): Host {
   return {
     connections: () => connections.size,
     accept(peer: Peer) {
-      const connection = { peer, clientId: '', watching: new Set<string>() };
+      const connection = { peer, clientId: '', watching: new Set<string>(), grants: new Set<string>() };
       connections.add(connection);
+      /**
+       * Whether this client has talked its way into writing that.
+       *
+       * A grant on a directory covers what is under it. The alternative is an
+       * exact match per URI, which is defensible and unusable: an editor saves
+       * a file it has open, and a round trip per file turns one negotiation
+       * into one per keystroke-since-last-save. Asking for `file:///project`
+       * and being answered about `file:///project` is what the client did -
+       * this is honouring that answer, not widening it.
+       *
+       * Prefix on a path separator, never on the string: a grant on
+       * `/src/brb` must not reach `/src/brb_framework`.
+       */
+      const mayWrite = (uri: string): boolean => {
+        if (connection.grants.has(`write:${uri}`)) return true;
+        if (!uri.startsWith('file://')) return false;
+        const path = uri.slice('file://'.length);
+        for (const held of connection.grants) {
+          if (!held.startsWith('write:file://')) continue;
+          const root = held.slice('write:file://'.length);
+          if (path === root || path.startsWith(`${root}/`)) return true;
+        }
+        return false;
+      };
+
+      /**
+       * Refuse a write nobody asked permission for, and say how to ask.
+       *
+       * The `request` in the error data is the protocol's own affordance: it
+       * is a `resourceRequest` payload that, sent as-is, would make the same
+       * call work. A refusal without it is a dead end.
+       */
+      const needsWrite = (uri: string): void => {
+        if (mayWrite(uri)) return;
+        throw new RpcError(-32009, `Write access to ${uri} has not been granted`, {
+          request: { channel: ROOT, uri, write: true },
+        });
+      };
+
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
          * The handshake.
@@ -839,6 +1267,10 @@ export function createHost(options: HostOptions): Host {
             // Without this the client has no reason to believe either means
             // anything here, and types them into the chat as text.
             completionTriggerCharacters: ['/', '@'],
+            // What this host emits, so a client knows there is a log to watch.
+            // A template, because the variable is the severity a subscriber
+            // wants rather than something the host fills in.
+            telemetry: { logs: `${LOGS}/{level}` },
           };
         },
         ping: async () => ({}),
@@ -858,6 +1290,12 @@ export function createHost(options: HostOptions): Host {
         reconnect: async (params) => {
           const clientId = typeof params.clientId === 'string' ? params.clientId : connection.clientId;
           connection.clientId = clientId;
+          // What this connection was watching before the drop. Whatever it
+          // does not ask back for is the third way the protocol says a client
+          // stops being active in a session: reconnecting without
+          // resubscribing to it.
+          const before = [...connection.watching];
+          connection.watching.clear();
           const wanted = Array.isArray(params.subscriptions)
             ? params.subscriptions.filter((uri): uri is string => typeof uri === 'string')
             : [];
@@ -877,6 +1315,11 @@ export function createHost(options: HostOptions): Host {
               // on a channel that will never speak again.
               missing.push(channel);
             }
+          }
+
+          // Whatever it did not ask back for, it has left.
+          for (const channel of before) {
+            if (!connection.watching.has(channel)) leaves(channel, clientId);
           }
 
           const oldest = replayable[0]?.serverSeq;
@@ -901,6 +1344,10 @@ export function createHost(options: HostOptions): Host {
           const channel = String(params.channel ?? '');
           const snapshot = await snapshotOf(channel);
           connection.watching.add(channel);
+          // From here on, an unsubscribe means something: a watch nobody has
+          // subscribed to yet is not one everybody has finished with.
+          const held = watches.get(channel);
+          if (held) held.opened = true;
           return { snapshot };
         },
         /**
@@ -1144,6 +1591,297 @@ export function createHost(options: HostOptions): Host {
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
         },
+        /**
+         * What kinds of trigger this host understands.
+         *
+         * Asked before any automation exists, because it is what a client
+         * needs to draw the form. A store that schedules nothing answers with
+         * no schedule trigger, and the client then offers no cron box - which
+         * is better than a box that takes an expression nothing will ever act
+         * on.
+         */
+        listAutomationTriggerDefinitions: async (params) => ({
+          items: need(options.automations, 'listAutomationTriggerDefinitions').triggers({
+            ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
+            ...(Array.isArray(params.workingDirectories)
+              ? { workingDirectories: params.workingDirectories.filter((one): one is string => typeof one === 'string') }
+              : {}),
+          }),
+        }),
+        /**
+         * Start one now.
+         *
+         * The session is created here rather than in the store, because only
+         * this file knows what a session is - the store is handed a function
+         * and gets a URI back. `requestId` is echoed nowhere: the protocol has
+         * it so a client can match its own request to the run it gets, and the
+         * run URI in the result is that match.
+         */
+        runAutomation: async (params) => {
+          const store = need(options.automations, 'runAutomation');
+          const automation = String(params.automation ?? '');
+          const requestId = String(params.requestId ?? '');
+          const run = await store.run(
+            automation,
+            { kind: 'manual', requestId, clientId: connection.clientId },
+            async (wanted) => {
+              const uri = `ahp-session:/${crypto.randomUUID()}`;
+              await handlers.createSession?.({
+                channel: uri,
+                ...(wanted.provider !== undefined ? { provider: wanted.provider } : {}),
+                ...(wanted.workingDirectory !== undefined
+                  ? { workingDirectories: [`file://${wanted.workingDirectory}`] }
+                  : {}),
+                ...(wanted.config !== undefined ? { config: wanted.config } : {}),
+              });
+              // The first message, which is what the automation is *for*: a
+              // session created and never spoken to is a session that does
+              // nothing, and the whole point is that nobody is at the keyboard.
+              const chatUri = `ahp-chat:/${idOf(uri)}`;
+              byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
+              return uri;
+            },
+          );
+          if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
+          return { resource: run.resource };
+        },
+        /** A page of what one automation has done, newest first. */
+        fetchAutomationRuns: async (params) => need(options.automations, 'fetchAutomationRuns').runs(
+          String(params.automation ?? ''),
+          typeof params.cursor === 'string' ? params.cursor : undefined,
+        ),
+        /**
+         * Tell me when that changes.
+         *
+         * The client gets a channel back and subscribes to it; there is no
+         * dispose command, and the last `unsubscribe` is what releases the
+         * watcher. Gated the way `resourceRead` is rather than the way a write
+         * is: watching is a read, and a client already able to read a
+         * directory learns nothing new by being told when it moved.
+         */
+        createResourceWatch: async (params) => {
+          const uri = String(params.uri ?? '');
+          const store = need(options.resources, 'createResourceWatch');
+          const start = need(store.watch, 'createResourceWatch');
+          const items = (value: unknown): string[] => {
+            const held = (typeof value === 'object' && value !== null ? value : {}) as { items?: unknown };
+            return Array.isArray(held.items) ? held.items.filter((one): one is string => typeof one === 'string') : [];
+          };
+          const recursive = params.recursive === true;
+          const excludes = items(params.excludes);
+          const includes = items(params.includes);
+          const channel = `ahp-resource-watch:/${crypto.randomUUID()}`;
+          const watcher = await start.call(store, uri, browsable(), { recursive, excludes, includes }, (changes) => {
+            // Only if it still exists: a batch can be in flight when the last
+            // subscriber leaves, and dispatching to a released channel is a
+            // client being told about a watch it has forgotten.
+            if (!watches.has(channel)) return;
+            dispatch(channel, { type: 'resourceWatch/changed', changes: { items: changes } });
+          });
+          watches.set(channel, {
+            watcher,
+            owner: connection,
+            opened: false,
+            state: {
+              root: uri,
+              recursive,
+              ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
+              ...(includes.length > 0 ? { includes: { items: includes } } : {}),
+            },
+          });
+          log(`${connection.clientId} is watching ${uri}${recursive ? ' and under it' : ''}`);
+          return { channel };
+        },
+        /*
+         * The write half of `resource*`.
+         *
+         * Every one takes the same two gates in the same order, and the order
+         * matters. The grant is checked here, because it is a fact about this
+         * *connection* and the store has never heard of connections; the path
+         * is checked in the store, because only it knows what a path means -
+         * and it resolves the parent rather than the target, so a symlink
+         * pointing out of the served set cannot be written through.
+         *
+         * `need` twice, because there are two ways not to have this: a host
+         * given no `resources` port at all, and one given a store that only
+         * reads. Both answer `-32601`, which is what the protocol has for a
+         * method that is not here, and neither is a refusal about a path.
+         */
+        resourceWrite: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
+          await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, browsable(), {
+            data: String(params.data ?? ''),
+            encoding,
+            ...(typeof params.mode === 'string' ? { mode: params.mode as 'truncate' | 'append' | 'insert' } : {}),
+            ...(typeof params.position === 'number' ? { position: params.position } : {}),
+            ...(params.createOnly === true ? { createOnly: true } : {}),
+            ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
+          });
+          log(`${connection.clientId} wrote ${uri}`);
+          return {};
+        },
+        resourceDelete: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          await need(need(options.resources, 'resourceDelete').remove, 'resourceDelete')(
+            uri, browsable(), params.recursive === true,
+          );
+          log(`${connection.clientId} removed ${uri}`);
+          return {};
+        },
+        resourceMkdir: async (params) => {
+          const uri = String(params.uri ?? '');
+          needsWrite(uri);
+          await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri, browsable());
+          return {};
+        },
+        /*
+         * Both ends, because a move writes both.
+         *
+         * The source is emptied and the destination is filled, so a grant on
+         * one of them is permission for half of what would happen. `copy` only
+         * needs the destination - reading the source is what the read half
+         * already allows inside a served directory.
+         */
+        resourceMove: async (params) => {
+          const source = String(params.source ?? '');
+          const destination = String(params.destination ?? '');
+          needsWrite(source);
+          needsWrite(destination);
+          await need(need(options.resources, 'resourceMove').move, 'resourceMove')(
+            source, destination, browsable(), params.failIfExists === true,
+          );
+          log(`${connection.clientId} moved ${source} to ${destination}`);
+          return {};
+        },
+        resourceCopy: async (params) => {
+          const source = String(params.source ?? '');
+          const destination = String(params.destination ?? '');
+          needsWrite(destination);
+          await need(need(options.resources, 'resourceCopy').copy, 'resourceCopy')(
+            source, destination, browsable(), params.failIfExists === true,
+          );
+          return {};
+        },
+        /**
+         * May I read this, may I write it.
+         *
+         * The negotiated form of a refusal, and the only door onto anything
+         * here that writes. A grant is per resource and per connection: a
+         * client asks about one file, is answered about that file, and a
+         * second client on the same port inherits nothing from the first.
+         *
+         * What this host will grant is the directories it was told to serve,
+         * and nothing else. There is no person at a daemon to prompt, so the
+         * third answer the protocol allows is not available to it - which
+         * makes the served set the whole policy, and makes a request for
+         * anything outside it a refusal rather than a question.
+         */
+        resourceRequest: async (params) => {
+          const uri = String(params.uri ?? '');
+          const path = uri.startsWith('file://') ? uri.slice('file://'.length) : undefined;
+          const inside = path !== undefined
+            && browsable().some((dir_) => path === dir_ || path.startsWith(`${dir_}/`));
+          if (!inside) throw new RpcError(-32009, `This host does not mediate ${uri}`);
+          // Neither flag is a read, which is what the protocol tells receivers
+          // to make of a request that sets nothing.
+          const write = params.write === true;
+          const read = params.read === true || !write;
+          if (read) connection.grants.add(`read:${uri}`);
+          if (write) connection.grants.add(`write:${uri}`);
+          log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
+          return {};
+        },
+        /**
+         * Run one of the verbs a changeset advertised.
+         *
+         * Four gates, and none of them is a flag on this host: the id has to
+         * be one this changeset offers *now*, the target has to be a kind that
+         * operation accepts, the session must not be mid-turn, and an
+         * operation that writes needs a `resourceRequest` grant on what it
+         * would write. The list is the access model - a client can invoke
+         * nothing that was not already put in front of it.
+         */
+        invokeChangesetOperation: async (params) => {
+          const channel = String(params.channel ?? '');
+          const at = changesetAt(channel);
+          if (!at) throw new RpcError(-32001, `No changeset at ${channel}`);
+          const source = need(options.changes, 'invokeChangesetOperation');
+          const operationId = String(params.operationId ?? '');
+          const offered = (source.operations?.(at.dir, at.owner, at.scope) ?? [])
+            .find((one) => one.id === operationId);
+          if (!offered)
+            throw new RpcError(-32602, `No operation called ${operationId} on ${channel}`);
+
+          const raw = params.target as Record<string, unknown> | undefined;
+          const target = raw !== undefined && typeof raw === 'object'
+            ? {
+              kind: raw.kind === 'range' ? 'range' as const : 'resource' as const,
+              resource: String(raw.resource ?? ''),
+              ...(raw.side === 'before' || raw.side === 'after' ? { side: raw.side as 'before' | 'after' } : {}),
+              ...(typeof raw.range === 'object' && raw.range !== null
+                ? { range: raw.range as { startLine: number; endLine: number } }
+                : {}),
+            }
+            : undefined;
+          // No target is the changeset itself, which is how the protocol says
+          // a changeset-scoped invocation.
+          const kind = target?.kind ?? 'changeset';
+          if (!offered.scopes.includes(kind))
+            throw new RpcError(-32602, `${operationId} cannot be invoked on a ${kind}`);
+
+          // Refused rather than queued. The agent is writing to this tree, and
+          // an operation that rewrote a file underneath it would be racing the
+          // thing whose work the changeset is about.
+          if ((statusOf(at.owner) & Status.InProgress) !== 0)
+            throw new RpcError(-32002, `${at.owner} is mid-turn`);
+
+          // A file for a targeted operation, the project for a changeset-wide
+          // one: committing is a write to the directory and there is no single
+          // resource to name for it.
+          if (offered.writes === true) needsWrite(target?.resource ?? `file://${at.dir}`);
+
+          const key = opKey(channel, operationId);
+          const held = sessions.get(at.owner);
+          const lead = held && leadOf(held);
+          inFlight.add(key);
+          lastError.delete(key);
+          dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
+          try {
+            const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
+              dir: at.dir,
+              session: at.owner,
+              scope: at.scope,
+              operationId,
+              ...(target !== undefined ? { target } : {}),
+              ...(lead ? { subject: lead.title() } : {}),
+            });
+            inFlight.delete(key);
+            dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+            // Something wrote to the tree, so every changeset of this session
+            // is now describing a directory that has moved. The catalogue
+            // first, because `refresh` is what makes the next read fresh.
+            refreshFacts(at.dir);
+            await options.changes?.refresh?.(at.dir).catch(() => false);
+            await contentMoved(at.owner);
+            return { ...(result.message !== undefined ? { message: result.message } : {}) };
+          }
+          catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            inFlight.delete(key);
+            lastError.set(key, message);
+            dispatch(channel, {
+              type: 'changeset/operationStatusChanged',
+              operationId,
+              status: 'error',
+              error: { message },
+            });
+            log(`${operationId} on ${channel} failed: ${message}`);
+            throw new RpcError(INTERNAL_ERROR, message);
+          }
+        },
         resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),
           browsable(),
@@ -1200,6 +1938,7 @@ export function createHost(options: HostOptions): Host {
           // there yet.
           dispatch(uri, { type: 'session/ready' });
           catalogueMoved(uri, 'root/sessionAdded');
+          activeSessionsMoved();
           return {};
         },
         /**
@@ -1267,6 +2006,8 @@ export function createHost(options: HostOptions): Host {
             byChat.delete(chatUri);
           }
           sessions.delete(uri);
+          presence.delete(uri);
+          activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
           broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, resource: uri });
           log(`disposed ${uri}`);
@@ -1305,7 +2046,15 @@ export function createHost(options: HostOptions): Host {
         unsubscribe: (params) => {
           // This connection stops watching. Not the channel - doing that to
           // shed one consumer kills the stream the others are reading.
-          connection.watching.delete(String(params.channel ?? ''));
+          const channel = String(params.channel ?? '');
+          connection.watching.delete(channel);
+          // Except for a resource watch, where the protocol says the opposite
+          // in as many words: it has no dispose command, so the last
+          // unsubscribe is what releases the watcher.
+          releaseWatch(channel);
+          // And unsubscribing from a session is one of the three ways the
+          // protocol says a client stops being active in it.
+          leaves(channel, connection.clientId || 'anonymous');
         },
         /**
          * What the client says happened.
@@ -1331,6 +2080,120 @@ export function createHost(options: HostOptions): Host {
            * does from the catalogue - and starting an agent to record a bit
            * would start one per row scrolled past.
            */
+          /*
+           * Ticking a file off a diff, which belongs to no session's agent.
+           *
+           * Answered here for the same reason the flags below are: it is a
+           * reader's bookkeeping about a changeset, it writes nothing to disk,
+           * and it arrives on the changeset's own channel rather than a
+           * session's. Review is deliberately not an *operation* - the
+           * protocol has clients dispatch this and the server keep the flag.
+           */
+          if (type === 'changeset/filesReviewChanged') {
+            const cut = channel.indexOf('/changeset/');
+            const owner = cut > 0 ? channel.slice(0, cut) : '';
+            const scope = cut > 0 ? channel.slice(cut + '/changeset/'.length) : '';
+            const dir = owner === '' ? undefined : dirOf(owner);
+            const files = Array.isArray(action.files)
+              ? action.files.filter((one): one is string => typeof one === 'string')
+              : [];
+            const on = action.reviewed === true;
+            if (dir === undefined || files.length === 0) return;
+            // Only when it moved. A client ticking a file already ticked would
+            // otherwise have every other client redraw for nothing.
+            if (options.changes?.review?.(dir, owner, scope, files, on) !== true) return;
+            dispatch(channel, { type, files, reviewed: on });
+            return;
+          }
+
+          /*
+           * Somebody is here, and what they brought.
+           *
+           * Client-dispatchable and host-kept, which is the whole point: one
+           * client says it once and every other client watching the session
+           * learns of it, which is not something they could tell each other.
+           * The id is this connection's own rather than whatever the action
+           * carried - a client naming somebody else would be a client
+           * announcing a presence that is not theirs.
+           */
+          /*
+           * A client writing an automation, or patching one.
+           *
+           * Both are *requests* in the protocol's own spelling - the client
+           * says what it wants and the host decides, then says what it
+           * actually holds with `automation/set`. So neither of these echoes:
+           * what goes out is the store's answer, which is not necessarily what
+           * was asked for.
+           */
+          if (type === 'automation/createRequested' || type === 'automation/updateRequested') {
+            const store = options.automations;
+            if (!store) { log(`${type} needs an automations store, and this host has none`); return; }
+            const resource = String(action.resource ?? '');
+            if (!resource.startsWith('ahp-automation:/')) return;
+            const made = type === 'automation/createRequested'
+              ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
+                ? action.definition
+                : {}) as Bag)
+              : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
+                ? action.changes
+                : {}) as Bag);
+            // `onChanged` is what dispatches. A store that told the host
+            // nothing would be one whose own timers were invisible, so
+            // everything goes out the same way.
+            if (!made) log(`no automation at ${resource}`);
+            return;
+          }
+
+          /*
+           * Forgetting one, which the client dispatches and the host checks.
+           *
+           * The protocol is precise about the order: a client may send this
+           * "only while the target advertises `Remove`", and the host
+           * "revalidates that operation before permanently deleting". So the
+           * advertised list is checked here rather than trusted - a client
+           * holding a stale catalogue would otherwise delete something this
+           * host had since decided may not be deleted.
+           */
+          if (type === 'automation/removed') {
+            const store = options.automations;
+            const resource = String(action.resource ?? '');
+            const found = store?.get(resource);
+            // "Removing an unknown resource is a no-op."
+            if (!store || !found) return;
+            if (!found.operations.includes('remove')) {
+              log(`${resource} does not offer remove`);
+              return;
+            }
+            store.remove(resource);
+            return;
+          }
+
+          if (type === 'automationRun/cancelRequested') {
+            log('automationRun/cancelRequested is not served: a run here is a session, and disposing it is how it stops');
+            return;
+          }
+
+          if (type === 'session/activeClientSet') {
+            if (!sessions.has(channel) && !titles.has(channel)) return;
+            const clientId = connection.clientId || 'anonymous';
+            const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
+              ? action.activeClient
+              : {}) as Bag;
+            const activeClient: Bag = {
+              ...carried,
+              clientId,
+              tools: Array.isArray(carried.tools) ? carried.tools : [],
+            };
+            const held = presence.get(channel) ?? new Map<string, Bag>();
+            presence.set(channel, held);
+            // Re-announcing is how a client refreshes what it contributes, so
+            // this replaces rather than merges - a tool taken away has to be
+            // able to go.
+            held.set(clientId, activeClient);
+            dispatch(channel, { type, activeClient });
+            return;
+          }
+
           if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
             const uri = `ahp-session:/${idOf(channel)}`;
             const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
@@ -1644,7 +2507,15 @@ export function createHost(options: HostOptions): Host {
           return handler(request.params);
         },
         close() {
+          const was = [...connection.watching];
           connections.delete(connection);
+          // Before anything else looks: a watch this client owned and never
+          // subscribed to has nobody left to subscribe to it.
+          for (const channel of [...watches.keys()]) releaseWatch(channel);
+          // Gone without reconnecting, which is the second of the three ways.
+          // Said after the connection is out of the set, so `leaves` does not
+          // find this one still holding the session.
+          for (const channel of was) leaves(channel, connection.clientId || 'anonymous');
           log(`${connection.clientId || 'a client'} went away`);
         },
       };
