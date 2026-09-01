@@ -7,10 +7,12 @@ import type { Peer } from '../src/types/rpc.js';
 /*
  * Automations, on a host that holds no clock.
  *
- * What is checked is the half that is served and the half that is refused, in
- * the same breath: definitions are written, patched and run, and nothing here
- * schedules - which the store says out loud by advertising no schedule
- * trigger rather than by accepting one and never firing it.
+ * `memoryAutomations` is half a store on purpose, and this is the half it has:
+ * definitions written, patched and run by somebody pressing Run. What it will
+ * not do it says by leaving `nextRunAt` off rather than by refusing the
+ * definition - a client reads that as "this host will not fire that".
+ *
+ * The other half is `scheduledAutomations`, and it has its own file.
  */
 
 const DIR = '/tmp/autos';
@@ -75,15 +77,17 @@ const DEFINITION = {
   triggers: [],
 };
 
-it('advertises no schedule trigger, because it holds no clock', async () => {
+it('advertises no event triggers, and manual is not one', async () => {
   const { client } = await connected();
   const found = await client.handle({
     method: 'listAutomationTriggerDefinitions', params: { channel: 'ahp-root://' },
   }) as { items: { type: string }[] };
-  // The client draws its form from this. A store that offered a cron trigger
-  // it would never fire would be asking somebody to fill in a box that does
-  // nothing.
-  expect(found.items.map((one) => one.type)).toEqual(['manual']);
+  // This command answers with *event* triggers only. A schedule is
+  // protocol-defined and never listed here, and manual is not a trigger at
+  // all - an empty trigger list on a definition is what manual-only means. A
+  // store that put `manual` here would be offering a type a client would then
+  // save as an event trigger nothing ever fires.
+  expect(found.items).toEqual([]);
 });
 
 it('answers -32601 for the whole channel when the host was given no store', async () => {
