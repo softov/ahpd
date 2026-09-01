@@ -432,6 +432,72 @@ describe('driving a turn', () => {
    * were found by typing the construction sites against the package rather
    * than by anything failing - which is the whole argument for doing it.
    */
+  /*
+   * Two tools asking at once, which is the ordinary case and used to break.
+   *
+   * The CLI calls `canUseTool` per tool call, and an agent that fires two in
+   * parallel asks twice before either is answered. This host held one pending
+   * input, so the second overwrote the first: the first tool waited for an
+   * answer nobody could give any more, and approving it did nothing at all -
+   * `confirm` compared the id against the survivor, missed, and returned
+   * without a word.
+   */
+  it('asks about two tools at once and answers each of them', async () => {
+    const { client, peer: p, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
+    });
+    await settle();
+
+    // Both in flight before either is answered.
+    const first = sdk.canUseTool?.('WebFetch', { url: 'https://example.test' }, { toolUseID: 'call-a' });
+    const second = sdk.canUseTool?.('WebSearch', { query: 'rain' }, { toolUseID: 'call-b' });
+    await settle();
+
+    const asked = actions(p, uri)
+      .filter((e) => e.action.type === 'session/inputNeededSet')
+      .map((e) => (e.action.request as { id: string }).id);
+    expect(asked).toEqual(['call-a', 'call-b']);
+
+    // Both are on the session, because `inputNeeded` is a list.
+    const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { inputNeeded?: { id: string }[] } };
+    };
+    expect(state.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-a', 'call-b']);
+
+    // Answer the *first* one, which is the one that used to be unreachable.
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action' },
+      },
+    });
+    await settle();
+    await expect(first).resolves.toMatchObject({ behavior: 'allow' });
+
+    // And the other is still waiting, named by its own id.
+    const after = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { inputNeeded?: { id: string }[] } };
+    };
+    expect(after.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-b']);
+    const dropped = actions(p, uri)
+      .filter((e) => e.action.type === 'session/inputNeededRemoved')
+      .map((e) => e.action.id);
+    expect(dropped).toEqual(['call-a']);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-b', approved: false, reason: 'denied' },
+      },
+    });
+    await settle();
+    await expect(second).resolves.toMatchObject({ behavior: 'deny' });
+  });
+
   it('finishes a turn with a state and an origin on its message', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({
@@ -514,8 +580,13 @@ describe('driving a turn', () => {
     await settle();
 
     const needed = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet');
-    const entry = (needed?.action.inputNeeded as Record<string, unknown>[])[0] as Record<string, unknown>;
+    // `request`, singular, which is what the action carries - it adds or
+    // updates the entry with that id rather than replacing a whole list.
+    const entry = needed?.action.request as Record<string, unknown>;
     expect(entry.kind).toBe('toolConfirmation');
+    // Both required on an input request, and neither used to be sent.
+    expect(typeof entry.chat).toBe('string');
+    expect(typeof entry.turnId).toBe('string');
     const callId = (entry.toolCall as { toolCallId: string }).toolCallId;
 
     const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
