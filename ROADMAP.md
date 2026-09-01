@@ -66,7 +66,13 @@ Both live ones are fixed. `lifecycle` goes out beside the flat `exitCode`, becau
 
 **What the audit says about the method, which is the part worth keeping.** The 0.9.0 bump moved zero types here and needed no code change, because every wire payload in this host is a `Bag`. That is what makes the shape of a release invisible, and it is why this had to be done by diffing the protocol's own sources rather than by waiting for a compiler. The same is true of the next release.
 
-**Suggestions.** (1) Do this diff on every protocol bump, and say in the commit which fields moved and which were live here — the count of commands and actions says nothing about shapes. (2) Type the wire payloads against the package's own interfaces at the few places they are constructed, so the next removal is a compile error rather than an audit. That is a real change in how this host is written and it would have caught all four. (3) Leave it as a habit rather than a mechanism, which is what it is today.
+**Suggestion (2) is now done, and it found more than the audit did.** The payloads are typed against the package at the places they are constructed — `src/types/wire.ts` says how and why. Turning it on surfaced two shape defects nothing had noticed and no test had failed on: every *successful* turn went into the history with no `state`, because that field was only ever set when something went wrong, and every `Message` this host built went out with no `origin`, which the protocol requires on all of them. Both are the same class as the terminal and MCP ones, and neither showed up in an audit that was looking for exactly this — because they were not *changed* by 0.9.0, they had simply always been wrong.
+
+What is checked now: the terminal channel end to end, a terminal claim off the wire (which is parsed rather than cast, and refuses a malformed one), the root channel's terminal list, an MCP server's state, a turn as it is built, and every message inside one.
+
+**What is left.** `responseParts` is still a `Bag[]` — seven part kinds and an eight-state tool call, built up piece by piece as an agent talks. It is named as `WireTurn` rather than left implicit so the gap is visible. Worth closing before the next bump for the same reason the rest was: a `Bag` nobody wrote down is how this started.
+
+**Suggestions.** (1) Type `responseParts` too, which is the last of it. (2) Do the 0.8.0-against-0.9.0 diff on every protocol bump anyway — typing catches a removal, and it will not catch a field the protocol *adds* that this host should now be sending. That is what an audit is for, and it is how the automation channel and the error part were found. (3) Leave the rest as a habit.
 
 ## A-01-09 — An MCP server that needs signing in cannot be signed into
 

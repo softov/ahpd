@@ -1,10 +1,18 @@
 /** A shell on the host machine, as a terminal channel. */
 
+import type { TerminalClaim, TerminalLifecycleState, TerminalState } from '@microsoft/agent-host-protocol';
+import type { OnWire } from './wire.js';
 import type { Bag } from './common.js';
 import type { Emit } from './session.js';
 
 /** Who currently holds a terminal: a connected client, or a session. */
-export type Claim = Bag;
+/**
+ * Who is holding a terminal, in the protocol's own type.
+ *
+ * A client, or a session and the chat inside it. Was `Bag`, which meant a
+ * claim missing the fields its own kind requires compiled perfectly.
+ */
+export type Claim = OnWire<TerminalClaim>;
 
 /** How to start one. */
 export interface TerminalOptions {
@@ -41,9 +49,23 @@ export interface Terminal {
    * described without it is a terminal a client cannot ask about. `exitCode`
    * above stays for the versions this host still negotiates down to.
    */
-  lifecycle(): { status: 'running' } | { status: 'exited'; exitCode?: number };
+  lifecycle(): OnWire<TerminalLifecycleState>;
   /** The channel's state, for a subscription snapshot. */
-  state(): Bag;
+  /**
+   * The terminal channel's snapshot, in the protocol's own type.
+   *
+   * Typed against the package rather than as a `Bag`, which is the point:
+   * `Bag` is why 0.9.0 moved the exit code inside `lifecycle` and this host
+   * went on sending the old shape with a clean compile. A field removed or
+   * renamed upstream is a type error here now, at the one place the payload
+   * is built.
+   *
+   * The intersection is the deliberate part. This host negotiates down to
+   * 0.5.1 and every version before 0.9.0 reads a flat `exitCode`, so it sends
+   * both - and saying so in the type is the difference between a divergence
+   * somebody chose and one nobody noticed.
+   */
+  state(): OnWire<TerminalState> & { exitCode?: number };
 
   /** Send input. Ignored once the process has exited. */
   write(data: string): void;

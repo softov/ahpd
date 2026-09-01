@@ -423,6 +423,38 @@ describe('driving a turn', () => {
    * defines, so a client saw a turn that stopped and no account of it - which
    * is the shape a reader is least able to do anything about.
    */
+  /*
+   * A turn that worked says so, and says who asked for it.
+   *
+   * `Turn.state` is required and was only ever set when something went wrong,
+   * so a turn that simply worked went into the history with none. `Message`
+   * requires an `origin` and this host sent none anywhere it built one. Both
+   * were found by typing the construction sites against the package rather
+   * than by anything failing - which is the whole argument for doing it.
+   */
+  it('finishes a turn with a state and an origin on its message', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { state?: string; usage?: unknown; message?: { origin?: { kind?: string } } }[] } };
+    };
+    const turn = after.snapshot.state.turns[0];
+    // A client driven by actions never saw this - its reducer fills the state
+    // in on `chat/turnComplete`. One that subscribes afterwards reads the
+    // snapshot, and the snapshot is this.
+    expect(turn?.state).toBe('complete');
+    expect(turn?.message?.origin?.kind).toBe('user');
+    // Present and undefined, not absent: `usage` is a required key meaning
+    // "not measured".
+    expect(turn && 'usage' in turn).toBe(true);
+  });
+
   it('puts the reason a turn failed inside the turn', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
@@ -1541,7 +1573,10 @@ describe('a message typed while a turn is running', () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { queuedMessages: { id: string; message: { text: string } }[] } };
     };
-    expect(opened.snapshot.state.queuedMessages).toEqual([{ id: 'q1', message: { text: 'second' } }]);
+    // With its origin, which `Message` requires and this host used to omit
+    // everywhere it built one.
+    expect(opened.snapshot.state.queuedMessages)
+      .toEqual([{ id: 'q1', message: { text: 'second', origin: { kind: 'user' } } }]);
     // And the agent has not been told about it yet.
     expect(sdk.said).toEqual(['first']);
   });

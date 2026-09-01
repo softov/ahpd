@@ -75,8 +75,8 @@ export function createTerminal(options: TerminalOptions): Terminal {
     claim: () => claim,
     exitCode: () => exitCode,
     lifecycle: () => (exitCode === undefined
-      ? { status: 'running' as const }
-      : { status: 'exited' as const, exitCode }),
+      ? { status: 'running' }
+      : { status: 'exited', exitCode }),
 
     state: () => ({
       title,

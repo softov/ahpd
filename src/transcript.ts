@@ -1,4 +1,6 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import type { Turn } from '@microsoft/agent-host-protocol';
+import type { WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Page } from './types/transcript.js';
 
@@ -46,7 +48,7 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
     return [];
   }
 
-  const built: Bag[] = [];
+  const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
 
   for (const entry of messages) {
@@ -77,8 +79,16 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
       built.push({
         id: str(frame.uuid) ?? `u${built.length}`,
         startedAt: at,
-        message: { text: said },
+        // Who produced it, which `Message` requires and this never sent.
+        message: { text: said, origin: { kind: 'user' } },
         responseParts: [],
+        // A turn out of a transcript is one that already happened, so it is
+        // complete by definition. `Turn.state` is required and used to be
+        // left off, which put every past turn on the wire without one.
+        state: 'complete',
+        // Required too, and meaning "not measured" rather than "none": the
+        // transcript does not record token counts.
+        usage: undefined,
       });
       continue;
     }
@@ -126,8 +136,11 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
     built.push({
       id: str(frame.uuid) ?? `a${built.length}`,
       startedAt: at,
-      message: { text: '' },
+      // The agent's own turn: there is no user message in front of it.
+      message: { text: '', origin: { kind: 'agent' } },
       responseParts: parts,
+      state: 'complete',
+      usage: undefined,
     });
   }
 
