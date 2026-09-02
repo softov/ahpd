@@ -393,7 +393,17 @@ export function createHost(options: HostOptions): Host {
     const envelope = { channel, action, serverSeq, origin: undefined };
     // Kept whether or not anyone was listening: a client that dropped is by
     // definition not listening, and it is the one that will ask for these.
-    replayable.push(envelope);
+    //
+    // Kept as a *value*, for the reason a snapshot is one. These actions are
+    // built out of the host's live structures - the `part` a
+    // `chat/responsePart` announces is the object the deltas after it are
+    // still writing into - and an envelope held for replay is serialised long
+    // after it was made. By reference, a response part replayed to a client
+    // that arrived late already carries the text of every delta that
+    // followed, and the client then applies those deltas too: the word
+    // written twice. The live broadcast below is serialised in this same
+    // tick, so it is the copy in the buffer that has to be frozen.
+    replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
   };
@@ -1083,13 +1093,34 @@ export function createHost(options: HostOptions): Host {
     history.set(id, built);
     return built;
   };
+  /**
+   * A snapshot is a value, not a view of one.
+   *
+   * The state assembled below is built out of the host's own live objects -
+   * the turn being written into, the array a delta appends to - and the
+   * response carrying it is serialised after this function returns, not
+   * inside it. Handed back by reference it is therefore a promise about the
+   * present that is kept in the future: the client receives whatever those
+   * objects had become by the time the socket got to them, under a `fromSeq`
+   * naming the moment they were read. That number is the whole basis on which
+   * a client decides what it has already seen, so a snapshot newer than its
+   * own sequence is one that gets a turn applied to it twice - once from the
+   * state, once from the action that produced it.
+   *
+   * `structuredClone` rather than a JSON round-trip, because a key that is
+   * present and undefined is not the same as an absent one here - `usage` is
+   * required and means "not measured" - and JSON cannot tell those apart.
+   */
+  const value = (snapshot: Record<string, unknown>): Record<string, unknown> =>
+    structuredClone(snapshot);
+
   const snapshotOf = async (channel: string): Promise<Record<string, unknown>> => {
     if (channel === ROOT) {
-      return { resource: ROOT, state: await rootState(), fromSeq: serverSeq };
+      return value({ resource: ROOT, state: await rootState(), fromSeq: serverSeq });
     }
     const terminal = terminals.get(channel);
     if (terminal)
-      return { resource: channel, state: terminal.state(), fromSeq: serverSeq };
+      return value({ resource: channel, state: terminal.state(), fromSeq: serverSeq });
     /*
      * A changeset, which lives under the session it belongs to.
      *
@@ -1102,19 +1133,19 @@ export function createHost(options: HostOptions): Host {
       // subscriber receives only what was emitted after it arrived. Answering
       // with an empty state is how a client is told it is subscribed rather
       // than refused.
-      return { resource: channel, state: {}, fromSeq: serverSeq };
+      return value({ resource: channel, state: {}, fromSeq: serverSeq });
     }
     if (channel === AUTOMATIONS) {
-      return {
+      return value({
         resource: channel,
         state: { entries: need(options.automations, 'the automations channel').list() },
         fromSeq: serverSeq,
-      };
+      });
     }
     if (channel.startsWith('ahp-automation-run:/')) {
       const found = options.automations?.runOf(channel);
       if (!found) throw new RpcError(-32001, `No automation run at ${channel}`);
-      return { resource: channel, state: found, fromSeq: serverSeq };
+      return value({ resource: channel, state: found, fromSeq: serverSeq });
     }
     const watching = watches.get(channel);
     if (watching) {
@@ -1122,7 +1153,7 @@ export function createHost(options: HostOptions): Host {
       // reducer keeps no history: `resourceWatch/changed` exists to deliver
       // events to whoever is subscribed, and a client that arrives later has
       // missed them the way it misses anything it was not there for.
-      return { resource: channel, state: watching.state, fromSeq: serverSeq };
+      return value({ resource: channel, state: watching.state, fromSeq: serverSeq });
     }
     const at = changesetAt(channel);
     if (at) {
@@ -1151,11 +1182,11 @@ export function createHost(options: HostOptions): Host {
       // the protocol asks for and which is what a changeset with nothing to
       // do to it says.
       const operations = operationsOf(channel);
-      return {
+      return value({
         resource: channel,
         state: { ...state, ...(operations.length > 0 ? { operations } : {}) },
         fromSeq: serverSeq,
-      };
+      });
     }
     const held = sessions.get(channel);
     const lead = held && leadOf(held);
@@ -1182,11 +1213,11 @@ export function createHost(options: HostOptions): Host {
         chats: [...held.chats].map(([uri_, chat_]) => chatSummary(uri_, chat_)),
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
       };
-      return { resource: channel, state, fromSeq: serverSeq };
+      return value({ resource: channel, state, fromSeq: serverSeq });
     }
     const talking = byChat.get(channel);
     if (talking)
-      return { resource: channel, state: talking.chat.chatState(), fromSeq: serverSeq };
+      return value({ resource: channel, state: talking.chat.chatState(), fromSeq: serverSeq });
     /*
      * A session in the catalogue that this host is not running.
      *
@@ -1199,7 +1230,7 @@ export function createHost(options: HostOptions): Host {
     if (turns) {
       const title = titles.get(id) ?? 'Session';
       if (channel.startsWith('ahp-chat:/')) {
-        return {
+        return value({
           resource: channel,
           state: {
             resource: channel,
@@ -1210,9 +1241,9 @@ export function createHost(options: HostOptions): Host {
             queuedMessages: [],
           },
           fromSeq: serverSeq,
-        };
+        });
       }
-      return {
+      return value({
         resource: channel,
         state: {
           resource: channel,
@@ -1237,7 +1268,7 @@ export function createHost(options: HostOptions): Host {
           },
         },
         fromSeq: serverSeq,
-      };
+      });
     }
     // Not running and not in the catalogue. Refusing is the honest answer and
     // the one a client already knows how to render - it is what a real host
@@ -1529,6 +1560,27 @@ export function createHost(options: HostOptions): Host {
           for (const channel of resumed) snapshots.push(await snapshotOf(channel));
           return { type: 'snapshot', snapshots };
         },
+        /**
+         * A snapshot, and everything that happened while it was being taken.
+         *
+         * `snapshotOf` is asynchronous, and until it returns this connection
+         * is not on the watch list - so an action dispatched in that window
+         * goes to nobody, and is in no snapshot taken before it happened. It
+         * is a small window and it is wide enough: a client that subscribes
+         * and sends in the same breath - which is what opening a session from
+         * a composer *is* - loses the `chat/turnStarted` its own message
+         * caused. What follows is worse than one missing action, because
+         * every delta after it names a turn the client was never told about
+         * and the reducer drops each one in turn: the transcript stays empty
+         * for the rest of the session, and nothing anywhere reports an error.
+         *
+         * Replayed from the buffer rather than closed by joining the watch
+         * list first, because that order has a hole of its own - the client
+         * would be sent actions the snapshot already contains, and a
+         * `chat/delta` applied twice is the word written twice. The sequence
+         * number is what tells "already in the snapshot" from "after it", and
+         * this host keeps one for exactly this reason.
+         */
         subscribe: async (params) => {
           const channel = String(params.channel ?? '');
           const snapshot = await snapshotOf(channel);
@@ -1537,6 +1589,16 @@ export function createHost(options: HostOptions): Host {
           // subscribed to yet is not one everybody has finished with.
           const held = watches.get(channel);
           if (held) held.opened = true;
+          // Nothing is awaited between the line above and this one, so
+          // nothing can be dispatched in between: what the filter finds is
+          // the whole of what was missed, and what it leaves is already in
+          // the snapshot or still to come by the ordinary route.
+          const at = typeof snapshot.fromSeq === 'number' ? snapshot.fromSeq : 0;
+          for (const envelope of replayable) {
+            if (envelope.channel === channel && envelope.serverSeq > at) {
+              connection.peer.notify('action', envelope);
+            }
+          }
           return { snapshot };
         },
         /**
