@@ -432,12 +432,21 @@ export function createSession(options: SessionOptions): Session {
    * cannot resume a turn - saying so with a `false` it never varies would be
    * answering a question nobody asked.
    */
-  const addFailure = (turn: Bag, why: string): void => {
-    addPart(turn, {
-      kind: 'error',
-      id: `${str(turn.id) ?? 'turn'}:error`,
-      error: { errorType: 'turnFailed', message: why },
-    });
+  /*
+   * Why a turn stopped, held for the snapshot rather than announced.
+   *
+   * `chat/error` *carries* this part and appends it itself, so a
+   * `chat/responsePart` for the same thing is the failure printed twice. The
+   * part is `{ kind, error }` and nothing else: `ErrorResponsePart` has no id.
+   */
+  const failurePart = (why: string): Bag => ({
+    kind: 'error',
+    error: { errorType: 'turnFailed', message: why },
+  });
+  const addFailure = (turn: Bag, why: string): Bag => {
+    const part = failurePart(why);
+    (turn.responseParts as Bag[]).push(part);
+    return part;
   };
 
   const streamed = (event: Bag): void => {
@@ -576,12 +585,47 @@ export function createSession(options: SessionOptions): Session {
       const part = id ? parts.get(id) : undefined;
       if (!part) continue;
       const call = bag(part.toolCall);
-      call.status = block.is_error === true ? 'failed' : 'completed';
+      /*
+       * A tool that failed is `completed`, and says so in its result.
+       *
+       * `ToolCallStatus` has no `failed`: the seven are `streaming`,
+       * `pending-confirmation`, `running`, `auth-required`,
+       * `pending-result-confirmation`, `completed` and `cancelled`. A tool that
+       * ran and went wrong ran - what went wrong is `result.success` and
+       * `result.error`, which is also the only place a client looks for it.
+       */
+      const ok = block.is_error !== true;
+      call.status = 'completed';
       // Back to thinking. Leaving the last tool's name up makes a session look
       // busy with something that finished.
       doing('Thinking');
       const text = resultText(block.content);
-      if (text !== undefined) call.content = [{ text }];
+      /*
+       * The result, as one object, because that is the only part of the action
+       * a client reads.
+       *
+       * `ToolCallCompletedState` extends `ToolCallResult`, and the reducer
+       * builds it by spreading `action.result` over the call - so `status` and
+       * `content` sent beside the action rather than inside it are dropped
+       * without a word, and every tool's output stopped at this host. `success`
+       * and `pastTenseMessage` are required; `content` blocks are MCP's, and
+       * carry a `type`.
+       *
+       * The past-tense sentence is the CLI's own invocation message, which is
+       * the best text there is: the alternative is a sentence rebuilt here out
+       * of a tool name, and the CLI knows what it asked for.
+       */
+      const said = str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      const result: Bag = {
+        success: ok,
+        pastTenseMessage: said,
+        ...(text !== undefined ? { content: [{ type: 'text', text }] } : {}),
+        ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
+      };
+      if (text !== undefined) call.content = [{ type: 'text', text }];
+      call.success = ok;
+      call.pastTenseMessage = said;
+      if (!ok) call.error = { message: text ?? 'The tool failed' };
       // And as it is now the tool has run. Paired with the `before` above by
       // the call's own id, which is the only thing that survives the gap.
       const changed = id === undefined ? undefined : editing.get(id);
@@ -593,8 +637,7 @@ export function createSession(options: SessionOptions): Session {
         type: 'chat/toolCallComplete',
         turnId: active?.id,
         toolCallId: id,
-        status: call.status,
-        ...(text !== undefined ? { content: [{ text }] } : {}),
+        result,
       });
     }
   };
@@ -981,17 +1024,33 @@ export function createSession(options: SessionOptions): Session {
               turn.usage = used;
               emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
             }
-            if (wrong !== undefined) addFailure(turn, wrong);
+            const part = wrong === undefined ? undefined : addFailure(turn, wrong);
             turns.push(turn);
             active = undefined;
             parts.clear();
             streaming = undefined;
-            emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
+            /*
+             * One action ends a turn, and which one says how it went.
+             *
+             * `chat/error` is not a message beside a completed turn - it *is*
+             * the ending, with `turnId`, a required `duration` and the error
+             * part it appends. This sent `chat/turnComplete` and then a
+             * `chat/error` carrying only `message`: the turn landed in the
+             * history as a success, and the second action reached a reducer
+             * with no open turn left to end and did nothing at all. So a turn
+             * that failed was drawn as one that worked, and the reason was in
+             * the snapshot and nowhere in the stream.
+             */
+            if (part !== undefined) {
+              emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
+            }
+            else {
+              emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
+            }
           }
-          if (message.is_error === true) {
-            failed = wrong ?? 'The turn failed';
-            emit('chat', { type: 'chat/error', message: failed });
-          }
+          // About the session rather than the turn: it reads into
+          // `Status.Error` and into the summary, and the next turn clears it.
+          if (message.is_error === true) failed = wrong ?? 'The turn failed';
           doing(undefined);
           touch();
           startNext();
@@ -1003,12 +1062,11 @@ export function createSession(options: SessionOptions): Session {
       if (turn) {
         turn.state = 'error';
         turn.duration = Date.now() - startedAt;
-        addFailure(turn, failed);
+        const part = addFailure(turn, failed);
         turns.push(turn);
         active = undefined;
-        emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
+        emit('chat', { type: 'chat/error', turnId: turn.id, duration: turn.duration, part });
       }
-      emit('chat', { type: 'chat/error', message: failed });
       doing(undefined);
       touch();
     }

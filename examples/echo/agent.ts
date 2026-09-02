@@ -307,12 +307,26 @@ export function echo(options: EchoOptions): Agent {
         const turn = active;
         if (!turn) return;
         turn.state = 'cancelled';
+        /*
+         * `duration` is required, and required in earnest.
+         *
+         * A client's reducer clamps it with `Math.max(0, duration)` and then
+         * adds it to the turn's start - so an absent one is `NaN` rather than
+         * a missing number, and the reducer throws building a timestamp out of
+         * it. Which stops that client reading the channel at all, over a turn
+         * somebody merely cancelled.
+         */
+        turn.duration = Date.now() - Date.parse(String(turn.startedAt));
         turns.push(turn);
         active = undefined;
         doing(undefined);
         touch();
         remember();
-        start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id) });
+        start.emit('chat', {
+          type: 'chat/turnCancelled',
+          turnId: turnId || String(turn.id),
+          duration: turn.duration,
+        });
       },
 
       // Nothing here ever asks, so there is never anything to answer. A

@@ -1,5 +1,9 @@
 # A host of your own
 
+[docs/AGENT.md](../../docs/AGENT.md) is the contract in reference form; this is
+the shortest thing that satisfies it, running.
+
+
 `ahpd` is a daemon that runs Claude Code, and the parts to build a host that
 runs something else. This is the something else: a backend that answers by
 saying it back, with no model and no subprocess behind it.
@@ -99,6 +103,8 @@ reading before writing a backend. Each cost this repository a bug.
   without it means *pending confirmation*, and the conversation is then drawn
   as a queue of questions nobody asked.
 
-`echo` has no tools, so it only has to keep the first three. `src/session.ts`
-is a backend that keeps all five, against a real harness, and is worth reading
-next.
+`echo` has no tools, so it only has to keep the first three.
+[`examples/notes`](../notes) keeps all five and is the next one to read: it has
+tools, so `confirm` and `answer` are implemented there rather than left empty,
+and its README is the rules for asking. `src/session.ts` keeps them against a
+real harness.

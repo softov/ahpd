@@ -135,6 +135,18 @@ export interface Session {
   setModel(model: string): Promise<boolean>;
   /** Change how much the agent may do before asking. False when the mode is not one. */
   setPermissionMode(mode: string): boolean;
+  /**
+   * Change any other key of this backend's own schema. False when it is not one.
+   *
+   * `permissionMode`, `model`, `effortLevel` and `outputStyle` have their own
+   * setters because they mean something to the host - a permission mode and an
+   * output style are set on every chat in a session, not only the one that was
+   * asked. Everything else a backend published in `schema()` arrives here, and
+   * a backend without this takes none of them: a client draws its controls from
+   * that schema, so a key that reaches nothing is a control that moves and
+   * changes the session not at all.
+   */
+  setConfig?(key: string, value: string): boolean | Promise<boolean>;
   /** Change how hard it thinks. False when the level is not one. */
   setEffort(level: string): boolean;
   /** Change the voice it answers in. False when the CLI has no such style. */
