@@ -259,6 +259,19 @@ export function createHost(options: HostOptions): Host {
    */
   const births = new Map<string, string>();
   /**
+   * Every client this host has handshaken with, by the id it gave.
+   *
+   * What `reconnect` is answerable *against*. A client comes back saying "I am
+   * this id and I had seen up to here", and both halves are meaningless to a
+   * host that has never met it: this one's sequence numbers are its own, so
+   * "everything after 419" means nothing if 419 was another process's.
+   *
+   * Per host and for its lifetime, because that is the span the sequence
+   * covers. A daemon that restarts has genuinely forgotten every client, and
+   * saying so is the point - see the refusal in `reconnect`.
+   */
+  const known = new Set<string>();
+  /**
    * Config chosen for a session that has no agent running.
    *
    * A row read from its transcript is configurable before it is resumed, and
@@ -1725,6 +1738,8 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32005, 'No protocol version in common', { supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
           }
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
+          // Met, so a later `reconnect` under this id is answerable.
+          known.add(connection.clientId);
           const wanted = Array.isArray(params.initialSubscriptions)
             ? params.initialSubscriptions.filter((uri) => typeof uri === 'string')
             : [];
@@ -1793,6 +1808,29 @@ export function createHost(options: HostOptions): Host {
          */
         reconnect: async (params) => {
           const clientId = typeof params.clientId === 'string' ? params.clientId : connection.clientId;
+          /*
+           * A client this host has never met, refused - and refused with this
+           * code in particular.
+           *
+           * `reconnect` resumes a conversation about *this* host's sequence
+           * numbers. To a client it has never seen, the honest answer is not an
+           * empty replay - "you have missed nothing" - because that is a claim
+           * about a stream the client was never reading. It answered exactly
+           * that to a VS Code returning after a daemon restart, saying up to
+           * 419 to a host that had issued nine, and was believed: the client
+           * concluded its state was current and never subscribed to anything
+           * again, so every pane it had stayed empty against a host that was
+           * working perfectly.
+           *
+           * `-32008` is what the reference host answers here, and its client
+           * reads that one code as "the server forgot me" and falls back to a
+           * fresh `initialize` - which is the only path on which it restores
+           * its subscriptions. Any other error is rethrown and the connection
+           * fails, so this is not a detail: it is the whole recovery.
+           */
+          if (!known.has(clientId)) {
+            throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
+          }
           connection.clientId = clientId;
           // What this connection was watching before the drop. Whatever it
           // does not ask back for is the third way the protocol says a client
@@ -1828,8 +1866,11 @@ export function createHost(options: HostOptions): Host {
 
           const oldest = replayable[0]?.serverSeq;
           // Nothing buffered means nothing has happened since, which is a
-          // replay of nothing rather than a reason to re-snapshot.
-          const replayable_ = oldest === undefined || since >= oldest - 1;
+          // replay of nothing rather than a reason to re-snapshot. A client
+          // ahead of this host is the other way round and cannot be replayed to
+          // at all - whatever it counted, it was not this stream - so it is
+          // sent state rather than a difference.
+          const replayable_ = since <= serverSeq && (oldest === undefined || since >= oldest - 1);
           if (replayable_) {
             log(`${clientId} came back at ${since}, replaying`);
             return {
@@ -2785,7 +2826,17 @@ export function createHost(options: HostOptions): Host {
           // client announcing itself in a session read from a transcript - the
           // ordinary way one is opened - was dropped in silence. It became
           // audible only once dropping stopped being silent.
-          if (!sessions.has(channel) && !titles.has(idOf(channel))) {
+          /*
+           * Known to this host, which is not the same as running here.
+           *
+           * `owners` is every session the catalogue has listed and every one
+           * this host started; `titles` is only the ones whose transcript
+           * somebody has opened. Asking `titles` turned away a client
+           * announcing itself in a row `listSessions` had returned a moment
+           * earlier - which is the ordinary case, because a client announces
+           * itself when it opens a row rather than after reading it.
+           */
+          if (!sessions.has(channel) && !owners.has(channel)) {
             no(`${channel} is not a session here`);
             return;
           }

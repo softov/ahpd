@@ -3060,3 +3060,78 @@ describe('a chat asked for by the name a client computed', () => {
       .rejects.toMatchObject({ code: -32001 });
   });
 });
+
+/*
+ * Coming back to a host that never met you.
+ *
+ * `reconnect` is a question about this host's own sequence numbers, and a
+ * client it has not handshaken with is asking about somebody else's. Answering
+ * an empty replay to one is telling it that it has missed nothing, which is a
+ * claim about a stream it was never reading - and the reference client believes
+ * it, keeps the state it had, and never subscribes to anything again.
+ */
+describe('a client this host has not met', () => {
+  it('is refused with the code its client reads as "forgotten"', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await expect(client.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'never-said-hello', lastSeenServerSeq: 419, subscriptions: ['ahp-root://'] },
+    })).rejects.toMatchObject({ code: -32008 });
+  });
+
+  it('is answered once it has handshaken', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const back = host.accept(peer());
+    const result = await back.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: ['ahp-root://'] },
+    }) as { type: string };
+    expect(result.type).toBe('replay');
+  });
+
+  it('sends state, not a difference, to one that claims to be ahead', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const back = host.accept(peer());
+    const result = await back.handle({
+      method: 'reconnect',
+      // Counted against a previous run of this daemon. Whatever it saw, it was
+      // not this stream, so there is no difference to send it.
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 419, subscriptions: ['ahp-root://'] },
+    }) as { type: string; snapshots: { resource: string }[] };
+    expect(result.type).toBe('snapshot');
+    expect(result.snapshots.map((one) => one.resource)).toEqual(['ahp-root://']);
+  });
+});
+
+it('takes a client into a session the catalogue has listed, before anybody reads it', async () => {
+  sdk.sessions.push({ sessionId: 'listed', summary: 'A real title', lastModified: 1, cwd: '/home/softov' });
+  const host = serving('/home/softov');
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle(hello(['0.9.0']));
+  // Listing is what a client does before it opens a row, and announcing itself
+  // is what it does *as* it opens one - before anything has read the transcript.
+  await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+
+  const uri = 'ahp-session:/listed';
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, clientSeq: 5, action: { type: 'session/activeClientSet', activeClient: {} } },
+  });
+  await settle();
+
+  // Nothing refused it...
+  expect(actions(p).some((e) => e.rejectionReason !== undefined)).toBe(false);
+  // ...and the host kept it, which is the half a second client reads. The echo
+  // itself goes to whoever is watching the session, which this client is not
+  // yet - announcing yourself is what you do on the way in.
+  const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { activeClients: { clientId: string }[] } };
+  }).snapshot.state;
+  expect(state.activeClients.map((one) => one.clientId)).toEqual(['probe']);
+});
