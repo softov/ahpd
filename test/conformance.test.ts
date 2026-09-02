@@ -134,6 +134,13 @@ const dispatch = (client: { handle(r: { method: string; params: unknown }): unkn
 };
 
 /** The reducer for a channel, by the scheme of its URI. */
+/** Every action this host sent on one channel, in order. */
+const actions = (p: ReturnType<typeof peer>, channel: string): Record<string, unknown>[] => p.notes
+  .filter((n) => n.method === 'action')
+  .map((n) => n.params as { channel: string; action: Record<string, unknown> })
+  .filter((e) => e.channel === channel)
+  .map((e) => e.action);
+
 const reducerFor = (channel: string): ((state: never, action: never) => unknown) => {
   if (channel.startsWith('ahp-root:')) return rootReducer as never;
   // Before the session test, because a changeset URI is a session URI with a
@@ -398,4 +405,303 @@ it('reduces a changeset, through an operation and a turn', async () => {
   expect(state.operations?.map((one) => one.id)).toEqual(['commit']);
   expect(state.operations?.[0]?.status).toBe('idle');
   expect(state.files).toHaveLength(1);
+});
+
+/*
+ * What VS Code pushes the moment it connects.
+ *
+ * Its own config schema says so in as many words: `defaultShell` is "normally
+ * pushed by the connected VS Code client from
+ * `terminal.integrated.agentHostProfile.<os>`", and `githubEnterpriseUri` the
+ * same way. This host used to answer all of it with `dispatchAction
+ * root/configChanged on unknown ahp-root://` - so the shell somebody chose went
+ * nowhere and every terminal opened whatever `$SHELL` happened to be.
+ */
+it('keeps what a client pushes on the root channel, and says it back', async () => {
+  const { client, peer: p, opened } = await running();
+
+  dispatch(client, 'ahp-root://', {
+    type: 'root/configChanged',
+    config: { defaultShell: '/usr/bin/fish', githubEnterpriseUri: 'https://ghe.example.com' },
+  });
+  await settle();
+
+  // Said back, because nothing in a client applies its own dispatch and a
+  // second client watching the root learns of it only from here.
+  const echoed = actions(p, 'ahp-root://').filter((one) => one.type === 'root/configChanged');
+  expect(echoed).toHaveLength(1);
+
+  const root = held(p, opened)['ahp-root://'] as { config?: { values: Record<string, unknown> } };
+  expect(root.config?.values).toMatchObject({
+    defaultShell: '/usr/bin/fish',
+    // Kept although this host acts on none of it: `values` is state a client
+    // reads back, and dropping what is not understood reports a setting that
+    // silently reverted.
+    githubEnterpriseUri: 'https://ghe.example.com',
+  });
+
+  // And it is in the snapshot a client subscribing later reads.
+  const again = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+    snapshot: { state: { config: { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> } } };
+  };
+  expect(again.snapshot.state.config.values.defaultShell).toBe('/usr/bin/fish');
+  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('defaultShell');
+});
+
+it('carries a root config on every snapshot, so a client can ever apply one', async () => {
+  const { opened } = await running();
+  /*
+   * `rootReducer` returns the state *unchanged* when there is no `config` on
+   * it. A host that left this out of its snapshot made every
+   * `root/configChanged` a no-op on every client - including the one that had
+   * just pushed it - and nothing anywhere said so.
+   */
+  const root = opened['ahp-root://'] as { config?: unknown };
+  expect(root.config).toBeDefined();
+});
+
+it('takes a key back, and replaces the lot when asked to', async () => {
+  const { client, peer: p, opened } = await running();
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/bin/zsh', a: 1 } });
+  await settle();
+  // JSON has no `undefined`, so a client takes a key back with a null.
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { a: null } });
+  await settle();
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { b: 2 }, replace: true });
+  await settle();
+
+  const state = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+    snapshot: { state: { config: { values: Record<string, unknown> } } };
+  };
+  expect(state.snapshot.state.config.values).toEqual({ b: 2 });
+  expect(actions(p, 'ahp-root://').filter((one) => one.type === 'root/configChanged')).toHaveLength(3);
+});
+
+it('opens a terminal on the shell a client asked for', async () => {
+  const asked: (string | undefined)[] = [];
+  const host = createHost({
+    path: '/home/softov',
+    agents: [claude({ paths: ['/home/softov'] })],
+    terminals: {
+      create: (options) => {
+        asked.push(options.shell);
+        return {
+          uri: options.uri,
+          title: () => 'sh',
+          claim: () => options.claim,
+          lifecycle: () => 'running',
+          state: () => ({ resource: options.uri, title: 'sh', content: [], lifecycle: 'running', isPty: false }),
+          write: () => {},
+          resize: () => {},
+          setClaim: () => {},
+          exitCode: () => undefined,
+          close: () => {},
+        } as never;
+      },
+    },
+  });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] },
+  });
+
+  await client.handle({
+    method: 'createTerminal',
+    params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+  });
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/usr/bin/fish' } });
+  await settle();
+  await client.handle({
+    method: 'createTerminal',
+    params: { channel: 'ahp-terminal:/b', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+  });
+
+  // The store's own choice before anybody said, and the client's after.
+  expect(asked).toEqual([undefined, '/usr/bin/fish']);
+});
+
+/*
+ * The channel URI is the client's to name.
+ *
+ * VS Code names a session after its provider - `claude:/<uuid>`, with the
+ * provider as the *scheme*, which is how `AgentSession.provider()` reads it
+ * back - and its terminals `agenthost-terminal:/<uuid>`. This host demanded a
+ * literal `ahp-session:/` and `ahp-terminal:`, so every session and every
+ * terminal an editor opened was refused `is not a session URI`, and the
+ * protocol's `ahp-session:/<uuid>` is an example in a doc comment rather than
+ * a rule.
+ */
+it('takes the session URI VS Code chose, and answers on it', async () => {
+  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] },
+  });
+
+  const uri = 'claude:/57c93452-c939-4ebf-a18b-1a13711c749e';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { resource: string; defaultChat: string; provider: string } };
+  };
+  // Echoed, not renamed: a client that named a channel subscribes to that one.
+  expect(opened.snapshot.state.resource).toBe(uri);
+  expect(opened.snapshot.state.provider).toBe('claude');
+
+  // And the chat it announces is a channel that answers.
+  const chat = opened.snapshot.state.defaultChat;
+  const conversation = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+    snapshot: { state: { resource: string } };
+  };
+  expect(conversation.snapshot.state.resource).toBe(chat);
+
+  dispatch(client, chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+  await settle();
+  expect(actions(p, chat).map((one) => one.type)).toContain('chat/turnStarted');
+});
+
+it('takes the terminal URI VS Code chose', async () => {
+  const host = createHost({
+    path: '/home/softov',
+    agents: [claude({ paths: ['/home/softov'] })],
+    terminals: {
+      create: (options) => ({
+        uri: options.uri,
+        title: () => 'sh',
+        claim: () => options.claim,
+        lifecycle: () => 'running',
+        state: () => ({ resource: options.uri, title: 'sh', content: [], lifecycle: 'running', isPty: false }),
+        write: () => {},
+        resize: () => {},
+        setClaim: () => {},
+        exitCode: () => undefined,
+        close: () => {},
+      }) as never,
+    },
+  });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] },
+  });
+
+  const uri = 'agenthost-terminal:/2ac915b3-86ef-4bf1-be2d-25b7e4c61838';
+  await client.handle({
+    method: 'createTerminal',
+    params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
+  });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { resource: string } };
+  };
+  expect(opened.snapshot.state.resource).toBe(uri);
+
+  // And a resize reaches it rather than falling through as an unknown channel.
+  dispatch(client, uri, { type: 'terminal/resized', cols: 100, rows: 30 });
+  await settle();
+});
+
+it('still refuses something that is not a URI at all', async () => {
+  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] },
+  });
+  for (const bad of ['', 'nonsense', 'claude:', 'claude:/']) {
+    await expect(client.handle({
+      method: 'createSession', params: { channel: bad, provider: 'claude' },
+    })).rejects.toMatchObject({ code: -32602 });
+  }
+});
+
+/*
+ * Keys VS Code sends whatever a host advertises.
+ *
+ * `autoApprove` and `mode` are conventional names a client dispatches on its
+ * own - this host advertises `permissionMode` and its own four values, as the
+ * protocol asks a backend to, and VS Code's own hosts advertise different
+ * properties for Copilot and for Claude. So the schema stays ours and the
+ * mapping happens on the way in; this used to answer `autoApprove is not a
+ * config key this backend takes` and leave the session where it was.
+ */
+const { permissionFor } = await import('../src/session.js');
+
+it('advertises the five modes the CLI has, under the name it has them', async () => {
+  const { client } = await running();
+  const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
+    schema: { properties: Record<string, { enum?: string[] }> };
+  };
+  /*
+   * One axis, not two, and this is deliberate rather than incomplete. VS
+   * Code's own Claude host advertises exactly this and *omits* `autoApprove`,
+   * `mode`, `isolation` and `branch` - its pickers key off property names, so
+   * omitting them suppresses a mode and branch UI that means nothing on this
+   * harness. `auto` was missing here and is a real mode the CLI takes.
+   */
+  expect(Object.keys(cfg.schema.properties)).not.toContain('autoApprove');
+  expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
+  expect(cfg.schema.properties.permissionMode?.enum)
+    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+});
+
+it('maps the keys a client sends onto the mode this harness takes', () => {
+  expect(permissionFor('autoApprove', 'default')).toBe('default');
+  // The inexact one: VS Code means "assess the risk first" and this harness
+  // has no risk model, so it gets the rung it does have.
+  expect(permissionFor('autoApprove', 'assisted')).toBe('acceptEdits');
+  expect(permissionFor('autoApprove', 'autoApprove')).toBe('bypassPermissions');
+  // The value VS Code's own migration moved onto the mode axis, still read.
+  expect(permissionFor('autoApprove', 'autopilot')).toBe('bypassPermissions');
+  expect(permissionFor('mode', 'interactive')).toBe('default');
+  expect(permissionFor('mode', 'plan')).toBe('plan');
+  expect(permissionFor('mode', 'autopilot')).toBe('bypassPermissions');
+  // Neither a key nor a value this means anything for.
+  expect(permissionFor('mode', 'yolo')).toBeUndefined();
+  expect(permissionFor('isolation', 'worktree')).toBeUndefined();
+});
+
+it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
+  const { client, peer: p, uri } = await running();
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { mode: 'plan' } } },
+  });
+  await settle();
+  // Confirmed back, so every client agrees rather than each showing whatever
+  // it last chose for itself.
+  expect(actions(p, uri).some((one) => one.type === 'session/configChanged'
+    && (one.config as { mode?: string }).mode === 'plan')).toBe(true);
+
+  // And the key this host *advertises* is the one that moved, so the control a
+  // client drew from the schema shows where the session actually is.
+  const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { config: { values: Record<string, string> } } };
+  };
+  expect(state.snapshot.state.config.values.permissionMode).toBe('plan');
+
+  const before = actions(p, uri).filter((one) => one.type === 'session/configChanged').length;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { mode: 'yolo' } } },
+  });
+  await settle();
+  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toHaveLength(before);
+});
+
+it('still starts the harness on what the schema says', async () => {
+  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] },
+  });
+  await client.handle({
+    method: 'createSession',
+    params: { channel: 'ahp-session:/one', provider: 'claude', config: { permissionMode: 'bypassPermissions' } },
+  });
+  await settle();
+  expect(sessionQueries().at(-1)?.options.permissionMode).toBe('bypassPermissions');
 });
