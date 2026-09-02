@@ -545,10 +545,25 @@ describe('driving a turn', () => {
     // After what the agent managed to say, not instead of it: three things
     // said and then a failure is a turn with four parts.
     expect(turn?.responseParts.map((one) => one.kind)).toEqual(['markdown', 'error']);
-    // And announced as it happens, so a client watching does not have to
-    // re-read the channel to find out.
+    /*
+     * And announced as it happens, on the action that ends the turn.
+     *
+     * `chat/error` is the ending, not a message beside one: it carries the
+     * `turnId`, a required `duration` and the error part it appends. So there
+     * is no `chat/turnComplete` for a turn that failed, and no
+     * `chat/responsePart` for the failure either - the part travels on the
+     * action, and sending it twice is the reason printed twice.
+     */
+    const ending = actions(p, chatUri).map((e) => e.action).filter((one) => one.type === 'chat/error'
+      || one.type === 'chat/turnComplete');
+    expect(ending.map((one) => one.type)).toEqual(['chat/error']);
+    expect(ending[0]).toMatchObject({
+      turnId: 't1',
+      duration: 7,
+      part: { kind: 'error', error: { message: 'the tool exploded' } },
+    });
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/responsePart'
-      && (e.action.part as { kind?: string } | undefined)?.kind === 'error')).toBe(true);
+      && (e.action.part as { kind?: string } | undefined)?.kind === 'error')).toBe(false);
   });
 
   /**

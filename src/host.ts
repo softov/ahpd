@@ -2671,7 +2671,25 @@ export function createHost(options: HostOptions): Host {
                   log('thinking is fixed when the session is created');
                   continue;
                 }
-                log(`config key ${key} is not served yet`);
+                /*
+                 * Anything else is the backend's own, and is delivered.
+                 *
+                 * The four keys above are routed by name because they mean
+                 * something *here* - a permission mode and an output style are
+                 * set on every chat in the session, not only the one that was
+                 * asked. Every other key is a property of whatever schema this
+                 * backend published, and a client draws its controls from that
+                 * schema: a key that reached nothing was a control that moved
+                 * and changed the session not at all.
+                 */
+                if (session.setConfig === undefined) {
+                  log(`${key} is not a config key this backend takes`);
+                  continue;
+                }
+                void Promise.resolve(session.setConfig(key, String(value))).then((took) => {
+                  if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: String(value) } });
+                  else log(`${key} is not a config key this backend takes`);
+                });
               }
               break;
             }
@@ -2760,11 +2778,24 @@ export function createHost(options: HostOptions): Host {
             case 'chat/toolCallConfirmed':
               session.confirm(String(action.toolCallId ?? ''), action.approved === true);
               break;
-            case 'chat/inputCompleted':
-              session.answer(String(action.requestId ?? action.id ?? ''), action.accepted !== false, (typeof action.answers === 'object' && action.answers !== null
+            case 'chat/inputCompleted': {
+              /*
+               * `response`, which is the field the action has.
+               *
+               * `ChatInputResponseKind` is `accept`, `decline` or `cancel`, and
+               * this read `accepted` - a key no client sends - so every answer
+               * arrived as an accept and a person declining a question was
+               * indistinguishable from one answering it. `accepted` is still
+               * honoured for anything that sent it before this, but `response`
+               * decides when both are there.
+               */
+              const response = typeof action.response === 'string' ? action.response : undefined;
+              const accepted = response !== undefined ? response === 'accept' : action.accepted !== false;
+              session.answer(String(action.requestId ?? action.id ?? ''), accepted, (typeof action.answers === 'object' && action.answers !== null
                 ? action.answers
                 : {}) as Record<string, unknown>);
               break;
+            }
             default:
               log(`dispatchAction ${type} is not served yet`);
           }
