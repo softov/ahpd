@@ -24,6 +24,15 @@ export interface TerminalOptions {
   claim: Claim;
   /** Display name. The shell's own if none is given. */
   name?: string;
+  /**
+   * The shell to run, absolute. The store's own choice if none is given.
+   *
+   * A connected client pushes this: VS Code sends `defaultShell` on the root
+   * channel out of `terminal.integrated.agentHostProfile.<os>`, because the
+   * shell somebody wants a host-managed terminal to open is a preference of
+   * theirs rather than a fact about the machine.
+   */
+  shell?: string;
   /** Width in columns, as the client draws it. */
   cols?: number;
   /** Height in rows. */

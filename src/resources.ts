@@ -2,6 +2,7 @@ import { watch as watchPath } from 'node:fs';
 import { copyFile, cp, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { RpcError } from './rpc.js';
+import { within } from './paths.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write } from './types/resources.js';
 import type { ResourceStore } from './types/host.js';
 
@@ -36,11 +37,6 @@ export const pathOf = (uri: string): string => {
 export const uriOf = (path: string): string => `file://${path}`;
 
 /** Whether `path` is `root` or is under it. */
-const within = (root: string, path: string): boolean => {
-  const step = relative(root, path);
-  return step === '' || (!step.startsWith('..') && !isAbsolute(step));
-};
-
 /**
  * The real path, if the client may see it.
  *
