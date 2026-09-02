@@ -135,11 +135,27 @@ const dispatch = (client: { handle(r: { method: string; params: unknown }): unkn
 
 /** The reducer for a channel, by the scheme of its URI. */
 /** Every action this host sent on one channel, in order. */
+/**
+ * The actions on one channel, as a client would reduce them.
+ *
+ * An envelope carrying `rejectionReason` is skipped, which is what a client
+ * has to do with one: the action inside it is the client's own, refused, and
+ * reducing it would apply the very change the host declined to make. That is
+ * also why these are counted apart - a refusal is an answer to a dispatch, not
+ * a movement of state.
+ */
 const actions = (p: ReturnType<typeof peer>, channel: string): Record<string, unknown>[] => p.notes
   .filter((n) => n.method === 'action')
-  .map((n) => n.params as { channel: string; action: Record<string, unknown> })
-  .filter((e) => e.channel === channel)
+  .map((n) => n.params as { channel: string; action: Record<string, unknown>; rejectionReason?: string })
+  .filter((e) => e.channel === channel && e.rejectionReason === undefined)
   .map((e) => e.action);
+
+/** What the host refused on one channel, and what it said about each. */
+const refusals = (p: ReturnType<typeof peer>, channel: string): string[] => p.notes
+  .filter((n) => n.method === 'action')
+  .map((n) => n.params as { channel: string; rejectionReason?: string })
+  .filter((e) => e.channel === channel && e.rejectionReason !== undefined)
+  .map((e) => e.rejectionReason as string);
 
 const reducerFor = (channel: string): ((state: never, action: never) => unknown) => {
   if (channel.startsWith('ahp-root:')) return rootReducer as never;
@@ -689,6 +705,13 @@ it('takes one on a running session, and leaves the advertised control saying wha
   });
   await settle();
   expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toHaveLength(before);
+  // And said no rather than said nothing. The client applied this before
+  // sending it, so a host that dropped it left a control showing a mode the
+  // session was never in and nothing anywhere to put it back.
+  // The backend's own answer, which is a bare no: `setConfig` reports whether
+  // it took the pair, so what comes back names the key rather than the value
+  // it would not take.
+  expect(refusals(p, uri).some((why) => why.startsWith('mode is not a config key'))).toBe(true);
 });
 
 it('still starts the harness on what the schema says', async () => {

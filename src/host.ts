@@ -184,6 +184,17 @@ export function createHost(options: HostOptions): Host {
     config: Record<string, string>;
     /** Where they work, when the client named a directory. */
     workingDirectory: string | undefined;
+    /**
+     * ISO 8601, when the session was first started.
+     *
+     * Not when it last moved. `createdAt` is an identity field - the protocol
+     * says it never changes, and that it MUST be left out of a summary
+     * *change* - and this used to be answered with the modification time, so a
+     * row's age moved every time somebody said something to it. A resumed
+     * session takes the catalogue's value rather than the moment it was
+     * resumed, because it was not created then either.
+     */
+    createdAt: string;
   }
   /** Live sessions, by their own uri. */
   const sessions = new Map<string, Held>();
@@ -240,6 +251,14 @@ export function createHost(options: HostOptions): Host {
   /** Where a browsed session ran, as its own catalogue reported it. */
   const wheres = new Map<string, string[]>();
   /**
+   * When a browsed session was started, as its own catalogue reported it.
+   *
+   * Kept for the same reason `wheres` is: a session resumed from a transcript
+   * was created when its backend created it, and this host was not there. The
+   * alternative is a row whose age is the moment somebody happened to open it.
+   */
+  const births = new Map<string, string>();
+  /**
    * Config chosen for a session that has no agent running.
    *
    * A row read from its transcript is configurable before it is resumed, and
@@ -290,7 +309,7 @@ export function createHost(options: HostOptions): Host {
    */
   const REPLAY = 1000;
   /** The last `REPLAY` action envelopes, oldest first. */
-  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: undefined }[] = [];
+  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined }[] = [];
   /**
    * The host's own log, as OTLP.
    *
@@ -397,6 +416,33 @@ export function createHost(options: HostOptions): Host {
       connection.peer.notify(method, params);
     }
   };
+  /** Which client's dispatch an action is the echo of. */
+  interface Origin {
+    clientId: string;
+    clientSeq: number;
+  }
+  /**
+   * Whose dispatch is being applied right now.
+   *
+   * The protocol's write-ahead loop is: a client applies an action to its own
+   * state, sends it with a `clientSeq`, and waits for this host to echo it
+   * back carrying that number. Without the echo a client cannot tell its own
+   * write from somebody else's, and cannot do the optimistic half at all.
+   *
+   * A variable rather than an argument threaded through everything, because
+   * the echo is usually several layers down: a client's `chat/turnStarted`
+   * arrives here as a notification, is handed to `Session.begin`, and is
+   * emitted from inside the session as the turn opens. Carrying an origin
+   * through that would be a parameter on every method a client action reaches.
+   *
+   * It is only ever held across *synchronous* work - `dispatchAction` sets it,
+   * applies, and clears it in a `finally` with nothing awaited in between - so
+   * nothing else can run while it is set and no action can be attributed to a
+   * client that did not cause it. Anything that answers in a later turn of the
+   * event loop, like a config key the backend has to be asked about, reads
+   * nothing from here and is passed an origin of its own.
+   */
+  let applying: Origin | undefined;
   /**
    * One state action, to everyone watching that channel.
    *
@@ -405,9 +451,9 @@ export function createHost(options: HostOptions): Host {
    * client knows it missed nothing - so the counter has to advance with state,
    * never with messages.
    */
-  const dispatch = (channel: string, action: Record<string, unknown>): void => {
+  const dispatch = (channel: string, action: Record<string, unknown>, origin = applying): void => {
     serverSeq += 1;
-    const envelope = { channel, action, serverSeq, origin: undefined };
+    const envelope = { channel, action, serverSeq, origin };
     // Kept whether or not anyone was listening: a client that dropped is by
     // definition not listening, and it is the one that will ask for these.
     //
@@ -423,6 +469,42 @@ export function createHost(options: HostOptions): Host {
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
+  };
+  /**
+   * A client's action, refused in that client's hearing.
+   *
+   * The other half of the write-ahead loop. A client applies an action before
+   * sending it, so a host that decides not to apply one has to *say so*: an
+   * envelope carrying `rejectionReason` is what tells the client to put its own
+   * state back. Dropping it - which is what every one of these sites used to do
+   * - leaves the client holding a change this host never made, with nothing
+   * anywhere to correct it. The log line goes to the daemon's stdout, where no
+   * client is looking.
+   *
+   * Three things it deliberately does not do.
+   *
+   * `serverSeq` does not move, because no state did. The counter's whole job is
+   * to let a client tell what it has already seen from what is still to come,
+   * and a refusal is neither: it carries the sequence this host is *still* at.
+   *
+   * It is not buffered for replay, for the same reason. A client that comes
+   * back is asking what it missed of the state, and this changed none of it.
+   *
+   * It goes to the one connection that sent it rather than to everyone watching
+   * the channel. A refusal answers one client's dispatch; nobody else applied
+   * it optimistically, so nobody else has anything to put back - and a client
+   * that reduced a rejected envelope would apply the very change this host
+   * refused.
+   */
+  const refuse = (
+    peer: Peer,
+    channel: string,
+    action: Record<string, unknown>,
+    origin: Origin | undefined,
+    reason: string,
+  ): void => {
+    log(`${channel}: ${reason}`);
+    peer.notify('action', { channel, action, serverSeq, origin, rejectionReason: reason });
   };
   /**
    * Let a watch go once nobody is listening to it.
@@ -490,29 +572,62 @@ export function createHost(options: HostOptions): Host {
     dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: sessions.size });
   };
 
-  /** The catalogue moved. Carries no payload: `listSessions` is how you read it. */
-  const catalogueMoved = (uri: string, method: string): void => {
+  /**
+   * One live session, as a catalogue row.
+   *
+   * Undefined for a session this host is not running, which is not an error: a
+   * row read from a transcript is in the catalogue and has no `Held`.
+   */
+  const summaryOf = (uri: string): Bag | undefined => {
     const held = sessions.get(uri);
     const lead = held && leadOf(held);
-    broadcast(ROOT, method, {
-      channel: ROOT,
+    if (!held || !lead) return undefined;
+    return {
       resource: uri,
-      ...(held && lead
-        ? {
-          summary: {
-            resource: uri,
-            provider: held.agent.provider,
-            title: lead.title(),
-            status: statusOf(uri),
-            ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
-            createdAt: modifiedOf(held),
-            modifiedAt: modifiedOf(held),
-            workingDirectories: lead.workingDirectories(),
-            ...describes(uri),
-          },
-        }
-        : {}),
-    });
+      provider: held.agent.provider,
+      title: lead.title(),
+      status: statusOf(uri),
+      ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+      createdAt: held.createdAt,
+      modifiedAt: modifiedOf(held),
+      workingDirectories: lead.workingDirectories(),
+      ...describes(uri),
+    };
+  };
+  /** A session appeared. Carries the whole row, because no client has one yet. */
+  const sessionAdded = (uri: string): void => {
+    const summary = summaryOf(uri);
+    if (!summary) return;
+    broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
+  };
+  /**
+   * A session already in the catalogue moved.
+   *
+   * `session` and `changes`, which are the names the protocol gives these. This
+   * carried `resource` and a whole `summary` under names of its own, so a
+   * client read `undefined` for both and its cached list never moved.
+   *
+   * `changes` is a *partial*: only fields that can change belong in it, and the
+   * three identity fields - `resource`, `provider`, `createdAt` - MUST be left
+   * out. Every mutable field goes rather than a computed diff, because they are
+   * all read off live objects in one pass anyway and a client applying a field
+   * to the value it already had is a no-op.
+   *
+   * A session with no agent running still has a status - read and archived are
+   * this host's bits and belong to the row rather than to any process - so the
+   * fallback is that one field rather than silence. Silence is what this did
+   * before, and it was exactly the case that needed saying: marking a row read
+   * is something somebody does from the catalogue, to a session nobody has
+   * opened.
+   */
+  const summaryMoved = (uri: string): void => {
+    const summary = summaryOf(uri);
+    let changes: Bag = { status: statusOf(uri) };
+    if (summary !== undefined) {
+      const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
+      changes = mutable;
+    }
+    broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };
   /**
    * Fill in the models, once there is a CLI to ask.
@@ -773,6 +888,34 @@ export function createHost(options: HostOptions): Host {
     }
   };
 
+  /**
+   * The changesets this session can be asked about, as URIs a client
+   * subscribes to.
+   *
+   * A field of `SessionState`, and of nothing else. It used to be part of
+   * `describes`, which is spread into a `SessionSummary` as well - so every
+   * catalogue row and every `root/sessionSummaryChanged` carried a key the
+   * protocol does not declare on a summary, and carried it once per row. A
+   * receiver ignores what it does not understand, so nothing broke; what it
+   * cost was weight on the busiest notification this host sends, and a second
+   * place to read an answer the session channel already gives.
+   *
+   * A template with no variables in it is the whole scope; the ones with
+   * `{turnId}` are not served yet.
+   */
+  const changesetsOf = (uri: string): Bag => {
+    const dir = dirOf(uri);
+    if (dir === undefined) return {};
+    const changesets = catalogueOf(uri, dir);
+    return changesets.length > 0 ? { changesets } : {};
+  };
+  /**
+   * What is true of a session because of where it is.
+   *
+   * Spread into a `SessionState` and into a `SessionSummary` alike, so only
+   * fields both declare belong here - see `changesetsOf` for the one that had
+   * to come out.
+   */
   const describes = (uri: string): Bag => {
     const dir = dirOf(uri);
     if (dir === undefined) return {};
@@ -789,15 +932,10 @@ export function createHost(options: HostOptions): Host {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const meta = options.directories?.meta(dir);
-    // The changesets this session can be asked about, as URIs a client
-    // subscribes to. A template with no variables in it is the whole scope;
-    // the ones with `{turnId}` are not served yet.
-    const changesets = catalogueOf(uri, dir);
     const summary = options.changes?.summary(dir);
     return {
       project,
       ...(meta ? { _meta: meta } : {}),
-      ...(changesets.length > 0 ? { changesets } : {}),
       ...(summary?.files ? { changes: summary } : {}),
     };
   };
@@ -819,7 +957,7 @@ export function createHost(options: HostOptions): Host {
       for (const uri of inThere()) {
         const meta = options.directories?.meta(dir);
         dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-        catalogueMoved(uri, 'root/sessionSummaryChanged');
+        summaryMoved(uri);
       }
     }).catch(() => {});
 
@@ -836,7 +974,7 @@ export function createHost(options: HostOptions): Host {
       for (const uri of inThere()) {
         // Asked per session, because two of the scopes are the session's own.
         dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
-        catalogueMoved(uri, 'root/sessionSummaryChanged');
+        summaryMoved(uri);
       }
     }).catch(() => {});
   };
@@ -882,7 +1020,7 @@ export function createHost(options: HostOptions): Host {
         }
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
-        catalogueMoved(uri, 'root/sessionSummaryChanged');
+        summaryMoved(uri);
         // And a finished turn is when the branch is worth asking about again:
         // the agent may have changed it, or somebody may have in a terminal.
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
@@ -915,7 +1053,14 @@ export function createHost(options: HostOptions): Host {
       defaultChat: chatUri,
       config,
       workingDirectory,
+      // The catalogue's value for a session being resumed; now, for one being
+      // started. A second chat in a session that already exists takes the
+      // session's own, because `sessions.get` answered above.
+      createdAt: births.get(uri) ?? new Date().toISOString(),
     };
+    // Said back to the catalogue, so a row listed after this agrees with the
+    // session channel about when it began.
+    births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
     byChat.set(chatUri, { uri, chat: session });
@@ -1011,6 +1156,7 @@ export function createHost(options: HostOptions): Host {
         // transcript, and the URI says neither whose it is nor where it ran.
         owners.set(resource, agent);
         wheres.set(resource, row.workingDirectories);
+        births.set(resource, row.createdAt);
         found.push({
           resource,
           provider: agent.provider,
@@ -1044,7 +1190,7 @@ export function createHost(options: HostOptions): Host {
         // What it is doing, so a list of twenty sessions says which one is
         // busy with what rather than only which one is busy.
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
-        createdAt: modifiedOf(held),
+        createdAt: held.createdAt,
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
         ...(started !== undefined ? { origin: started } : {}),
@@ -1259,6 +1405,7 @@ export function createHost(options: HostOptions): Host {
       const state = {
         ...lead.sessionState(),
         ...describes(channel),
+        ...changesetsOf(channel),
         // Required by the protocol and empty until somebody announces
         // themselves, which is a real answer: a session nobody has opened has
         // nobody in it.
@@ -1312,6 +1459,7 @@ export function createHost(options: HostOptions): Host {
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           activeClients: activeClientsOf(`ahp-session:/${id}`),
           ...describes(`ahp-session:/${id}`),
+          ...changesetsOf(`ahp-session:/${id}`),
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
           customizations: about(owner.provider).seeds,
@@ -1381,7 +1529,7 @@ export function createHost(options: HostOptions): Host {
     // it can be subscribed to has been told about something that is not
     // there yet.
     dispatch(uri, { type: 'session/ready' });
-    catalogueMoved(uri, 'root/sessionAdded');
+    sessionAdded(uri);
     activeSessionsMoved();
   };
 
@@ -1513,7 +1661,12 @@ export function createHost(options: HostOptions): Host {
             : [];
           const agreed = offered.find((version) => SUPPORTED_PROTOCOL_VERSIONS.includes(version));
           if (!agreed) {
-            throw new RpcError(-32005, 'No protocol version in common', { supportedProtocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
+            // `supportedVersions`, which is the name the protocol gives this
+            // field and the only reason the error is recoverable: it is what a
+            // client reads to pick a version to retry with. Under any other
+            // spelling, the one way out of a version mismatch reads
+            // `undefined`.
+            throw new RpcError(-32005, 'No protocol version in common', { supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
           }
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
           const wanted = Array.isArray(params.initialSubscriptions)
@@ -1545,6 +1698,27 @@ export function createHost(options: HostOptions): Host {
             // A template, because the variable is the severity a subscriber
             // wants rather than something the host fills in.
             telemetry: { logs: `${LOGS}/{level}` },
+            /*
+             * Whether there are automations here at all.
+             *
+             * Presence is what *permits* the feature: the protocol says a
+             * client may subscribe to `ahp-automations://` and dispatch the
+             * automation actions when this is here, and that the host has
+             * neither when it is not. So a host serving the channel and the
+             * three commands while advertising nothing is a host whose
+             * automations no correct client will ever touch - which is what
+             * this was, and it worked only against a client that subscribed
+             * regardless and caught the refusal.
+             *
+             * `create` because every store writes one. `schedules` with no
+             * `minIntervalMinutes` because the cron grammar is the protocol's
+             * own and this host restricts nothing beyond its one-minute
+             * resolution. `runCancellation` is absent because it is not served
+             * - a run here is a session, and disposing it is how it stops - and
+             * `runHistoryLimit` because retention is the store's, which is what
+             * an absent one means.
+             */
+            ...(options.automations ? { automations: { create: {}, schedules: {} } } : {}),
           };
         },
         ping: async () => ({}),
@@ -2182,8 +2356,12 @@ export function createHost(options: HostOptions): Host {
           // Refused rather than queued. The agent is writing to this tree, and
           // an operation that rewrote a file underneath it would be racing the
           // thing whose work the changeset is about.
+          // `-32004`, which the protocol has for exactly this: the operation
+          // requires no active turn and there is one. `-32002` is
+          // `ProviderNotFound`, so a client branching on the code was told to
+          // try another provider when what it should do is wait.
           if ((statusOf(at.owner) & Status.InProgress) !== 0)
-            throw new RpcError(-32002, `${at.owner} is mid-turn`);
+            throw new RpcError(-32004, `${at.owner} is mid-turn`);
 
           // A file for a targeted operation, the project for a changeset-wide
           // one: committing is a write to the directory and there is no single
@@ -2336,7 +2514,11 @@ export function createHost(options: HostOptions): Host {
           presence.delete(uri);
           activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
-          broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, resource: uri });
+          // `session`, which is the name the protocol gives it. Under
+          // `resource` a client reads `undefined` and takes nothing out, so a
+          // disposed session stayed in every catalogue until something else
+          // made that client re-read the list.
+          broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
           log(`disposed ${uri}`);
           return {};
         },
@@ -2368,6 +2550,528 @@ export function createHost(options: HostOptions): Host {
           return { schema: agent.schema(), values: { ...agent.defaults(), ...answered } };
         },
       };
+      /**
+       * One client action, applied.
+       *
+       * Only the actions a client is *allowed* to originate: the rest are
+       * this host telling clients what it did, and one arriving from a client
+       * is a client lying about what happened. The protocol package carries
+       * the authority - `IS_CLIENT_DISPATCHABLE` - and its own docstring says
+       * servers should check it.
+       *
+       * Separate from the notification entry below only so the origin can be
+       * held around the whole of it. `origin` is taken as an argument as well,
+       * for the few sites that answer in a later turn of the event loop: a
+       * config key the backend has to be asked about cannot read `applying`,
+       * because by the time it answers that is nobody's.
+       */
+      const applyDispatch = (params: Record<string, unknown>, origin: Origin): void => {
+        const channel = String(params.channel ?? '');
+        const action = (typeof params.action === 'object' && params.action !== null
+          ? params.action
+          : {}) as Record<string, unknown>;
+        const type = String(action.type ?? '');
+        /** Refuse this dispatch, in the words of whatever would not have it. */
+        const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
+        /*
+         * The client flags, which are the host's to keep.
+         *
+         * Answered before anything looks for a running session, because
+         * these are the two actions that are *about* a session nobody has
+         * opened: marking a row read, or filing it away, is what somebody
+         * does from the catalogue - and starting an agent to record a bit
+         * would start one per row scrolled past.
+         */
+        /*
+         * Ticking a file off a diff, which belongs to no session's agent.
+         *
+         * Answered here for the same reason the flags below are: it is a
+         * reader's bookkeeping about a changeset, it writes nothing to disk,
+         * and it arrives on the changeset's own channel rather than a
+         * session's. Review is deliberately not an *operation* - the
+         * protocol has clients dispatch this and the server keep the flag.
+         */
+        /*
+         * What a client wants of this host, kept and said back.
+         *
+         * On the root channel, so it belongs to no session and there is
+         * nothing to look up. VS Code pushes this at connect and used to be
+         * answered with `dispatchAction root/configChanged on unknown
+         * ahp-root://` - the shell it asked for went nowhere, and every
+         * terminal opened whatever `$SHELL` happened to be.
+         */
+        if (channel === ROOT && type === 'root/configChanged') {
+          const config = (typeof action.config === 'object' && action.config !== null
+            ? action.config
+            : {}) as Record<string, unknown>;
+          if (action.replace === true) for (const key of Object.keys(rootConfig)) delete rootConfig[key];
+          for (const [key, value] of Object.entries(config)) {
+            // `undefined` is how a key is taken back, and JSON has no such
+            // value - so a client saying so sends the key with a null.
+            if (value === null || value === undefined) delete rootConfig[key];
+            else rootConfig[key] = value;
+          }
+          log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
+          // Said back, like every other action a client originates: nothing
+          // in a client applies its own dispatch, and a second client
+          // watching the root learns of it only from here.
+          dispatch(ROOT, action);
+          return;
+        }
+        if (type === 'changeset/filesReviewChanged') {
+          const cut = channel.indexOf('/changeset/');
+          const owner = cut > 0 ? channel.slice(0, cut) : '';
+          const scope = cut > 0 ? channel.slice(cut + '/changeset/'.length) : '';
+          const dir = owner === '' ? undefined : dirOf(owner);
+          const files = Array.isArray(action.files)
+            ? action.files.filter((one): one is string => typeof one === 'string')
+            : [];
+          const on = action.reviewed === true;
+          if (dir === undefined || files.length === 0) {
+            no(`${channel} is not a changeset, or no files were named`);
+            return;
+          }
+          // Only when it moved. A client ticking a file already ticked would
+          // otherwise have every other client redraw for nothing.
+          if (options.changes?.review?.(dir, owner, scope, files, on) !== true) return;
+          dispatch(channel, { type, files, reviewed: on });
+          return;
+        }
+
+        /*
+         * Somebody is here, and what they brought.
+         *
+         * Client-dispatchable and host-kept, which is the whole point: one
+         * client says it once and every other client watching the session
+         * learns of it, which is not something they could tell each other.
+         * The id is this connection's own rather than whatever the action
+         * carried - a client naming somebody else would be a client
+         * announcing a presence that is not theirs.
+         */
+        /*
+         * A client writing an automation, or patching one.
+         *
+         * Both are *requests* in the protocol's own spelling - the client
+         * says what it wants and the host decides, then says what it
+         * actually holds with `automation/set`. So neither of these echoes:
+         * what goes out is the store's answer, which is not necessarily what
+         * was asked for.
+         */
+        if (type === 'automation/createRequested' || type === 'automation/updateRequested') {
+          const store = options.automations;
+          if (!store) { no(`${type} needs an automations store, and this host has none`); return; }
+          const resource = String(action.resource ?? '');
+          if (!resource.startsWith('ahp-automation:/')) {
+            no(`${resource || 'That'} is not an automation URI`);
+            return;
+          }
+          const made = type === 'automation/createRequested'
+            ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
+              ? action.definition
+              : {}) as Bag)
+            : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
+              ? action.changes
+              : {}) as Bag);
+          // `onChanged` is what dispatches. A store that told the host
+          // nothing would be one whose own timers were invisible, so
+          // everything goes out the same way.
+          if (!made) no(`No automation at ${resource}`);
+          return;
+        }
+
+        /*
+         * Forgetting one, which the client dispatches and the host checks.
+         *
+         * The protocol is precise about the order: a client may send this
+         * "only while the target advertises `Remove`", and the host
+         * "revalidates that operation before permanently deleting". So the
+         * advertised list is checked here rather than trusted - a client
+         * holding a stale catalogue would otherwise delete something this
+         * host had since decided may not be deleted.
+         */
+        if (type === 'automation/removed') {
+          const store = options.automations;
+          const resource = String(action.resource ?? '');
+          const found = store?.get(resource);
+          // "Removing an unknown resource is a no-op."
+          if (!store || !found) return;
+          if (!found.operations.includes('remove')) {
+            no(`${resource} does not offer remove`);
+            return;
+          }
+          store.remove(resource);
+          return;
+        }
+
+        if (type === 'automationRun/cancelRequested') {
+          no('A run here is a session, and disposing it is how it stops');
+          return;
+        }
+
+        if (type === 'session/activeClientSet') {
+          // `titles` is keyed by the bare id, so the URI has to come off before
+          // it is asked. Under the whole channel this never matched, and every
+          // client announcing itself in a session read from a transcript - the
+          // ordinary way one is opened - was dropped in silence. It became
+          // audible only once dropping stopped being silent.
+          if (!sessions.has(channel) && !titles.has(idOf(channel))) {
+            no(`${channel} is not a session here`);
+            return;
+          }
+          const clientId = connection.clientId || 'anonymous';
+          const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
+            ? action.activeClient
+            : {}) as Bag;
+          const activeClient: Bag = {
+            ...carried,
+            clientId,
+            tools: Array.isArray(carried.tools) ? carried.tools : [],
+          };
+          const held = presence.get(channel) ?? new Map<string, Bag>();
+          presence.set(channel, held);
+          // Re-announcing is how a client refreshes what it contributes, so
+          // this replaces rather than merges - a tool taken away has to be
+          // able to go.
+          held.set(clientId, activeClient);
+          dispatch(channel, { type, activeClient });
+          return;
+        }
+
+        if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
+          const uri = `ahp-session:/${idOf(channel)}`;
+          const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
+          const on = type === 'session/isReadChanged'
+            ? action.isRead === true
+            : action.isArchived === true;
+          const before = flags.get(uri) ?? 0;
+          const after = on ? before | bit : before & ~bit;
+          if (after === before)
+            return;
+          flags.set(uri, after);
+          // Every client watching, and the catalogue: a flag one client sets
+          // is a flag the others have to see, which is what having a host
+          // for this buys over each client keeping its own.
+          dispatch(uri, action);
+          summaryMoved(uri);
+          return;
+        }
+        const terminal = terminals.get(channel);
+        if (terminal) {
+          switch (type) {
+            /*
+             * Input is side-effect only.
+             *
+             * The reducer changes nothing on it - what comes back is
+             * `terminal/data`, once the shell has actually said something.
+             * Echoing it here would print every keystroke twice on the
+             * client that typed it and once on the ones that did not.
+             */
+            case 'terminal/input':
+              terminal.write(String(action.data ?? ''));
+              break;
+            case 'terminal/resized':
+              terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
+              break;
+            case 'terminal/titleChanged':
+              terminal.setTitle(String(action.title ?? ''));
+              break;
+            case 'terminal/claimed': {
+              // A notification, so a malformed one is dropped rather than
+              // refused - and dropped is right: the alternative was setting
+              // the claim to `{}`, which told every other client that
+              // nobody owned it.
+              const claimed = claimOf(action.claim);
+              if (claimed) terminal.setClaim(claimed);
+              break;
+            }
+            default:
+              no(`${type} is not served on a terminal`);
+          }
+          return;
+        }
+        /*
+         * Which chat a client action is about.
+         *
+         * A chat channel names one; a session channel names the default,
+         * because that is what a client talking to a session without having
+         * asked for a chat means.
+         */
+        const holding = sessions.get(channel);
+        const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
+        /*
+         * Config for a session with no agent yet: remembered, not refused.
+         *
+         * It is applied when the session is resumed, which is what makes the
+         * controls on a browsed row mean something. Starting an agent here
+         * instead would start one per setting somebody tried.
+         */
+        if (!held && type === 'session/configChanged') {
+          const uri = `ahp-session:/${idOf(channel)}`;
+          const config = (typeof action.config === 'object' && action.config !== null
+            ? action.config
+            : {}) as Record<string, unknown>;
+          const kept = { ...chosen.get(uri) };
+          for (const [key, value] of Object.entries(config)) kept[key] = String(value);
+          chosen.set(uri, kept);
+          dispatch(uri, action);
+          return;
+        }
+        /*
+         * A turn on a session this host is not running yet.
+         *
+         * This is where browsing becomes continuing: the row was readable
+         * from its transcript, and saying something is what makes it worth
+         * a subprocess. Resumed rather than replayed - the agent gets the
+         * context it built before, not a transcript it has been shown.
+         */
+        if (!held && type === 'chat/turnStarted') {
+          const id = idOf(channel);
+          void (async () => {
+            const seed = await past(id);
+            if (!seed) {
+              refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
+              return;
+            }
+            const uri = `ahp-session:/${id}`;
+            // `past` is what learned whose session this is.
+            const owner = owners.get(uri);
+            if (!owner) {
+              refuse(connection.peer, channel, action, origin, `No backend owns ${channel}`);
+              return;
+            }
+            // Back where it ran. A session continued in another directory is
+            // a conversation whose second half cannot see the files its
+            // first half was about.
+            const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
+            const session = spawn(owner, uri, `ahp-chat:/${id}`, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
+            log(`resumed ${uri}`);
+            dispatch(uri, { type: 'session/ready' });
+            summaryMoved(uri);
+            const message = (typeof action.message === 'object' && action.message !== null
+              ? action.message
+              : {}) as Record<string, unknown>;
+            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
+          })();
+          return;
+        }
+        const session = held;
+        if (!session) {
+          // With its keys, because the useful half of this line is what was
+          // in the action nobody read - a type alone says only that a client
+          // wanted something.
+          const carried = Object.keys(action).filter((key) => key !== 'type');
+          no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
+          return;
+        }
+        switch (type) {
+          case 'chat/turnStarted': {
+            const message = (typeof action.message === 'object' && action.message !== null
+              ? action.message
+              : {}) as Record<string, unknown>;
+            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
+            break;
+          }
+          /**
+           * One key, merged.
+           *
+           * The action carries only what changed, so writing the whole
+           * object back would revert whatever another client set while this
+           * one had the form open.
+           */
+          case 'session/configChanged': {
+            const config = (typeof action.config === 'object' && action.config !== null
+              ? action.config
+              : {}) as Record<string, unknown>;
+            // Config belongs to the session, so it is remembered there: a
+            // chat opened after this one is answered starts on it too.
+            const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
+            if (owning) {
+              for (const [key, value] of Object.entries(config)) owning.config[key] = String(value);
+            }
+            for (const [key, value] of Object.entries(config)) {
+              const everywhere: Session[] = owning ? [...owning.chats.values()] : [session];
+              if (key === 'permissionMode') {
+                for (const chat of everywhere) {
+                  if (chat !== session) chat.setPermissionMode(String(value));
+                }
+                // Confirmed, like every other key here. Applying it in
+                // silence leaves each client showing whatever it last chose
+                // for itself, and the two disagree the moment there are two.
+                if (session.setPermissionMode(String(value))) {
+                  dispatch(session.uri, { type: 'session/configChanged', config: { permissionMode: String(value) } });
+                }
+                else {
+                  no(`The harness has no permission mode called ${String(value)}`);
+                }
+                continue;
+              }
+              if (key === 'model') {
+                void session.setModel(String(value)).then((took) => {
+                  if (took)
+                    dispatch(session.uri, { type: 'session/configChanged', config: { model: String(value) } }, origin);
+                  else
+                    no(`The harness would not take model ${String(value)}`);
+                });
+                continue;
+              }
+              if (key === 'effortLevel') {
+                if (session.setEffort(String(value))) {
+                  dispatch(session.uri, { type: 'session/configChanged', config: { effortLevel: String(value) } });
+                }
+                continue;
+              }
+              if (key === 'outputStyle') {
+                // Every chat in the session, like the permission mode: they
+                // are peers on one config, and a voice set on one of them is
+                // a session where two conversations answer differently.
+                for (const chat of everywhere) {
+                  if (chat !== session) chat.setOutputStyle(String(value));
+                }
+                if (session.setOutputStyle(String(value))) {
+                  dispatch(session.uri, { type: 'session/configChanged', config: { outputStyle: String(value) } });
+                }
+                else {
+                  no(`The harness has no output style called ${String(value)}`);
+                }
+                continue;
+              }
+              if (key === 'thinking') {
+                // Immutable, and said so rather than accepted and dropped: a
+                // control that reports success and changes nothing is worse
+                // than one that refuses.
+                no('thinking is fixed when the session is created');
+                continue;
+              }
+              /*
+               * Anything else is the backend's own, and is delivered.
+               *
+               * The four keys above are routed by name because they mean
+               * something *here* - a permission mode and an output style are
+               * set on every chat in the session, not only the one that was
+               * asked. Every other key is a property of whatever schema this
+               * backend published, and a client draws its controls from that
+               * schema: a key that reached nothing was a control that moved
+               * and changed the session not at all.
+               */
+              if (session.setConfig === undefined) {
+                no(`${key} is not a config key this backend takes`);
+                continue;
+              }
+              void Promise.resolve(session.setConfig(key, String(value))).then((took) => {
+                if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: String(value) } }, origin);
+                else no(`${key} is not a config key this backend takes`);
+              });
+            }
+            break;
+          }
+          case 'chat/turnCancelled':
+            session.cancel(String(action.turnId ?? ''));
+            break;
+          /**
+           * Say it after the turn that is running.
+           *
+           * The queue is the host's, which is the whole difference between a
+           * queue and a list: it starts the next turn from the head the
+           * moment it goes idle, and every client watching the chat sees the
+           * same one. Held in a client it would never be sent - nothing
+           * there is watching for a turn to end.
+           */
+          case 'chat/pendingMessageSet': {
+            const kind = String(action.kind ?? 'queued');
+            if (kind !== 'queued') {
+              // Steering is injected *into* the running turn. The SDK has
+              // nowhere to put one, and queueing it behind the turn it was
+              // meant for would deliver it to the wrong conversation.
+              no(`${kind} messages are not served yet`);
+              break;
+            }
+            const message = (typeof action.message === 'object' && action.message !== null
+              ? action.message
+              : {}) as Record<string, unknown>;
+            const model = (typeof message.model === 'object' && message.model !== null
+              ? message.model
+              : {}) as Record<string, unknown>;
+            session.queue(
+              String(action.id ?? ''),
+              String(message.text ?? ''),
+              typeof model.id === 'string' ? model.id : undefined,
+            );
+            break;
+          }
+          /**
+           * Turn a skill or an MCP server on or off.
+           *
+           * `enablement` carries a decision per scope - global, workspace,
+           * session - and this host has one scope, so the session's is the
+           * one that matters and anything else is a decision about machines
+           * it does not own.
+           */
+          case 'session/customizationToggled': {
+            const id = String(action.id ?? '');
+            const enablement = Array.isArray(action.enablement) ? action.enablement.map((entry) => (
+              typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
+            )) : [];
+            const wanted = enablement.find((entry) => entry.kind === 'session') ?? enablement[0];
+            const enabled = wanted?.enabled !== false;
+            void session.setCustomizationEnabled(id, enabled).then((took) => {
+              if (took)
+                return;
+              // Said, not swallowed. The customization list is what a client
+              // draws the switch from, so re-reporting it puts the switch
+              // back where it was rather than leaving it showing a change
+              // that did not happen - and the refusal beside it is what tells
+              // the one client that asked why it moved back.
+              no(`${id} has no runtime switch`);
+              dispatch(session.uri, { type: 'session/customizationsChanged', customizations: session.customizations() });
+            });
+            break;
+          }
+          case 'session/mcpServerStartRequested':
+            void session.startMcpServer(String(action.id ?? '')).then((took) => {
+              if (!took) no(`${String(action.id ?? '')} would not start`);
+            });
+            break;
+          case 'session/mcpServerStopRequested':
+            void session.stopMcpServer(String(action.id ?? '')).then((took) => {
+              if (!took) no(`${String(action.id ?? '')} would not stop`);
+            });
+            break;
+          case 'chat/draftChanged':
+            session.setDraft(String(action.draft ?? ''));
+            break;
+          case 'chat/pendingMessageRemoved':
+            session.unqueue(String(action.id ?? ''));
+            break;
+          case 'chat/queuedMessagesReordered':
+            session.reorder(Array.isArray(action.order)
+              ? action.order.filter((id): id is string => typeof id === 'string')
+              : []);
+            break;
+          case 'chat/toolCallConfirmed':
+            session.confirm(String(action.toolCallId ?? ''), action.approved === true);
+            break;
+          case 'chat/inputCompleted': {
+            /*
+             * `response`, which is the field the action has.
+             *
+             * `ChatInputResponseKind` is `accept`, `decline` or `cancel`, and
+             * this read `accepted` - a key no client sends - so every answer
+             * arrived as an accept and a person declining a question was
+             * indistinguishable from one answering it. `accepted` is still
+             * honoured for anything that sent it before this, but `response`
+             * decides when both are there.
+             */
+            const response = typeof action.response === 'string' ? action.response : undefined;
+            const accepted = response !== undefined ? response === 'accept' : action.accepted !== false;
+            session.answer(String(action.requestId ?? action.id ?? ''), accepted, (typeof action.answers === 'object' && action.answers !== null
+              ? action.answers
+              : {}) as Record<string, unknown>);
+            break;
+          }
+          default:
+            no(`${type} is not served yet`);
+        }
+      };
       /** Notifications: no id, no answer, and that is the whole difference. */
       const notifications: Record<string, (params: Record<string, unknown>) => void> = {
         unsubscribe: (params) => {
@@ -2386,501 +3090,21 @@ export function createHost(options: HostOptions): Host {
         /**
          * What the client says happened.
          *
-         * Only the actions a client is *allowed* to originate: the rest are
-         * this host telling clients what it did, and one arriving from a
-         * client is a client lying about what happened. The protocol package
-         * carries the authority - `IS_CLIENT_DISPATCHABLE` - and its own
-         * docstring says servers should check it.
+         * `applying` is held across the whole of `applyDispatch` and cleared
+         * after, so every action the dispatch causes - including the ones
+         * emitted from inside a session, several layers down - goes out
+         * carrying the `clientSeq` the client sent. Nothing in there is
+         * awaited, which is what makes that safe: no second dispatch can
+         * begin while this one is being applied.
          */
         dispatchAction: (params) => {
-          const channel = String(params.channel ?? '');
-          const action = (typeof params.action === 'object' && params.action !== null
-            ? params.action
-            : {}) as Record<string, unknown>;
-          const type = String(action.type ?? '');
-          /*
-           * The client flags, which are the host's to keep.
-           *
-           * Answered before anything looks for a running session, because
-           * these are the two actions that are *about* a session nobody has
-           * opened: marking a row read, or filing it away, is what somebody
-           * does from the catalogue - and starting an agent to record a bit
-           * would start one per row scrolled past.
-           */
-          /*
-           * Ticking a file off a diff, which belongs to no session's agent.
-           *
-           * Answered here for the same reason the flags below are: it is a
-           * reader's bookkeeping about a changeset, it writes nothing to disk,
-           * and it arrives on the changeset's own channel rather than a
-           * session's. Review is deliberately not an *operation* - the
-           * protocol has clients dispatch this and the server keep the flag.
-           */
-          /*
-           * What a client wants of this host, kept and said back.
-           *
-           * On the root channel, so it belongs to no session and there is
-           * nothing to look up. VS Code pushes this at connect and used to be
-           * answered with `dispatchAction root/configChanged on unknown
-           * ahp-root://` - the shell it asked for went nowhere, and every
-           * terminal opened whatever `$SHELL` happened to be.
-           */
-          if (channel === ROOT && type === 'root/configChanged') {
-            const config = (typeof action.config === 'object' && action.config !== null
-              ? action.config
-              : {}) as Record<string, unknown>;
-            if (action.replace === true) for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-            for (const [key, value] of Object.entries(config)) {
-              // `undefined` is how a key is taken back, and JSON has no such
-              // value - so a client saying so sends the key with a null.
-              if (value === null || value === undefined) delete rootConfig[key];
-              else rootConfig[key] = value;
-            }
-            log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
-            // Said back, like every other action a client originates: nothing
-            // in a client applies its own dispatch, and a second client
-            // watching the root learns of it only from here.
-            dispatch(ROOT, action);
-            return;
-          }
-          if (type === 'changeset/filesReviewChanged') {
-            const cut = channel.indexOf('/changeset/');
-            const owner = cut > 0 ? channel.slice(0, cut) : '';
-            const scope = cut > 0 ? channel.slice(cut + '/changeset/'.length) : '';
-            const dir = owner === '' ? undefined : dirOf(owner);
-            const files = Array.isArray(action.files)
-              ? action.files.filter((one): one is string => typeof one === 'string')
-              : [];
-            const on = action.reviewed === true;
-            if (dir === undefined || files.length === 0) return;
-            // Only when it moved. A client ticking a file already ticked would
-            // otherwise have every other client redraw for nothing.
-            if (options.changes?.review?.(dir, owner, scope, files, on) !== true) return;
-            dispatch(channel, { type, files, reviewed: on });
-            return;
-          }
-
-          /*
-           * Somebody is here, and what they brought.
-           *
-           * Client-dispatchable and host-kept, which is the whole point: one
-           * client says it once and every other client watching the session
-           * learns of it, which is not something they could tell each other.
-           * The id is this connection's own rather than whatever the action
-           * carried - a client naming somebody else would be a client
-           * announcing a presence that is not theirs.
-           */
-          /*
-           * A client writing an automation, or patching one.
-           *
-           * Both are *requests* in the protocol's own spelling - the client
-           * says what it wants and the host decides, then says what it
-           * actually holds with `automation/set`. So neither of these echoes:
-           * what goes out is the store's answer, which is not necessarily what
-           * was asked for.
-           */
-          if (type === 'automation/createRequested' || type === 'automation/updateRequested') {
-            const store = options.automations;
-            if (!store) { log(`${type} needs an automations store, and this host has none`); return; }
-            const resource = String(action.resource ?? '');
-            if (!resource.startsWith('ahp-automation:/')) return;
-            const made = type === 'automation/createRequested'
-              ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
-                ? action.definition
-                : {}) as Bag)
-              : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
-                ? action.changes
-                : {}) as Bag);
-            // `onChanged` is what dispatches. A store that told the host
-            // nothing would be one whose own timers were invisible, so
-            // everything goes out the same way.
-            if (!made) log(`no automation at ${resource}`);
-            return;
-          }
-
-          /*
-           * Forgetting one, which the client dispatches and the host checks.
-           *
-           * The protocol is precise about the order: a client may send this
-           * "only while the target advertises `Remove`", and the host
-           * "revalidates that operation before permanently deleting". So the
-           * advertised list is checked here rather than trusted - a client
-           * holding a stale catalogue would otherwise delete something this
-           * host had since decided may not be deleted.
-           */
-          if (type === 'automation/removed') {
-            const store = options.automations;
-            const resource = String(action.resource ?? '');
-            const found = store?.get(resource);
-            // "Removing an unknown resource is a no-op."
-            if (!store || !found) return;
-            if (!found.operations.includes('remove')) {
-              log(`${resource} does not offer remove`);
-              return;
-            }
-            store.remove(resource);
-            return;
-          }
-
-          if (type === 'automationRun/cancelRequested') {
-            log('automationRun/cancelRequested is not served: a run here is a session, and disposing it is how it stops');
-            return;
-          }
-
-          if (type === 'session/activeClientSet') {
-            if (!sessions.has(channel) && !titles.has(channel)) return;
-            const clientId = connection.clientId || 'anonymous';
-            const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
-              ? action.activeClient
-              : {}) as Bag;
-            const activeClient: Bag = {
-              ...carried,
-              clientId,
-              tools: Array.isArray(carried.tools) ? carried.tools : [],
-            };
-            const held = presence.get(channel) ?? new Map<string, Bag>();
-            presence.set(channel, held);
-            // Re-announcing is how a client refreshes what it contributes, so
-            // this replaces rather than merges - a tool taken away has to be
-            // able to go.
-            held.set(clientId, activeClient);
-            dispatch(channel, { type, activeClient });
-            return;
-          }
-
-          if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
-            const uri = `ahp-session:/${idOf(channel)}`;
-            const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
-            const on = type === 'session/isReadChanged'
-              ? action.isRead === true
-              : action.isArchived === true;
-            const before = flags.get(uri) ?? 0;
-            const after = on ? before | bit : before & ~bit;
-            if (after === before)
-              return;
-            flags.set(uri, after);
-            // Every client watching, and the catalogue: a flag one client sets
-            // is a flag the others have to see, which is what having a host
-            // for this buys over each client keeping its own.
-            dispatch(uri, action);
-            catalogueMoved(uri, 'root/sessionSummaryChanged');
-            return;
-          }
-          const terminal = terminals.get(channel);
-          if (terminal) {
-            switch (type) {
-              /*
-               * Input is side-effect only.
-               *
-               * The reducer changes nothing on it - what comes back is
-               * `terminal/data`, once the shell has actually said something.
-               * Echoing it here would print every keystroke twice on the
-               * client that typed it and once on the ones that did not.
-               */
-              case 'terminal/input':
-                terminal.write(String(action.data ?? ''));
-                break;
-              case 'terminal/resized':
-                terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
-                break;
-              case 'terminal/titleChanged':
-                terminal.setTitle(String(action.title ?? ''));
-                break;
-              case 'terminal/claimed': {
-                // A notification, so a malformed one is dropped rather than
-                // refused - and dropped is right: the alternative was setting
-                // the claim to `{}`, which told every other client that
-                // nobody owned it.
-                const claimed = claimOf(action.claim);
-                if (claimed) terminal.setClaim(claimed);
-                break;
-              }
-              default:
-                log(`dispatchAction ${type} is not served on a terminal`);
-            }
-            return;
-          }
-          /*
-           * Which chat a client action is about.
-           *
-           * A chat channel names one; a session channel names the default,
-           * because that is what a client talking to a session without having
-           * asked for a chat means.
-           */
-          const holding = sessions.get(channel);
-          const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
-          /*
-           * Config for a session with no agent yet: remembered, not refused.
-           *
-           * It is applied when the session is resumed, which is what makes the
-           * controls on a browsed row mean something. Starting an agent here
-           * instead would start one per setting somebody tried.
-           */
-          if (!held && type === 'session/configChanged') {
-            const uri = `ahp-session:/${idOf(channel)}`;
-            const config = (typeof action.config === 'object' && action.config !== null
-              ? action.config
-              : {}) as Record<string, unknown>;
-            const kept = { ...chosen.get(uri) };
-            for (const [key, value] of Object.entries(config)) kept[key] = String(value);
-            chosen.set(uri, kept);
-            dispatch(uri, action);
-            return;
-          }
-          /*
-           * A turn on a session this host is not running yet.
-           *
-           * This is where browsing becomes continuing: the row was readable
-           * from its transcript, and saying something is what makes it worth
-           * a subprocess. Resumed rather than replayed - the agent gets the
-           * context it built before, not a transcript it has been shown.
-           */
-          if (!held && type === 'chat/turnStarted') {
-            const id = idOf(channel);
-            void (async () => {
-              const seed = await past(id);
-              if (!seed) {
-                log(`turn on unknown ${channel}`);
-                return;
-              }
-              const uri = `ahp-session:/${id}`;
-              // `past` is what learned whose session this is.
-              const owner = owners.get(uri);
-              if (!owner) {
-                log(`no backend owns ${channel}`);
-                return;
-              }
-              // Back where it ran. A session continued in another directory is
-              // a conversation whose second half cannot see the files its
-              // first half was about.
-              const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
-              const session = spawn(owner, uri, `ahp-chat:/${id}`, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
-              log(`resumed ${uri}`);
-              dispatch(uri, { type: 'session/ready' });
-              catalogueMoved(uri, 'root/sessionSummaryChanged');
-              const message = (typeof action.message === 'object' && action.message !== null
-                ? action.message
-                : {}) as Record<string, unknown>;
-              session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
-            })();
-            return;
-          }
-          const session = held;
-          if (!session) {
-            // With its keys, because the useful half of this line is what was
-            // in the action nobody read - a type alone says only that a client
-            // wanted something.
-            const carried = Object.keys(action).filter((key) => key !== 'type');
-            log(`dispatchAction ${type} on unknown ${channel}${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
-            return;
-          }
-          switch (type) {
-            case 'chat/turnStarted': {
-              const message = (typeof action.message === 'object' && action.message !== null
-                ? action.message
-                : {}) as Record<string, unknown>;
-              session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
-              break;
-            }
-            /**
-             * One key, merged.
-             *
-             * The action carries only what changed, so writing the whole
-             * object back would revert whatever another client set while this
-             * one had the form open.
-             */
-            case 'session/configChanged': {
-              const config = (typeof action.config === 'object' && action.config !== null
-                ? action.config
-                : {}) as Record<string, unknown>;
-              // Config belongs to the session, so it is remembered there: a
-              // chat opened after this one is answered starts on it too.
-              const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
-              if (owning) {
-                for (const [key, value] of Object.entries(config)) owning.config[key] = String(value);
-              }
-              for (const [key, value] of Object.entries(config)) {
-                const everywhere: Session[] = owning ? [...owning.chats.values()] : [session];
-                if (key === 'permissionMode') {
-                  for (const chat of everywhere) {
-                    if (chat !== session) chat.setPermissionMode(String(value));
-                  }
-                  // Confirmed, like every other key here. Applying it in
-                  // silence leaves each client showing whatever it last chose
-                  // for itself, and the two disagree the moment there are two.
-                  if (session.setPermissionMode(String(value))) {
-                    dispatch(session.uri, { type: 'session/configChanged', config: { permissionMode: String(value) } });
-                  }
-                  else {
-                    log(`the CLI has no permission mode called ${String(value)}`);
-                  }
-                  continue;
-                }
-                if (key === 'model') {
-                  void session.setModel(String(value)).then((took) => {
-                    if (took)
-                      dispatch(session.uri, { type: 'session/configChanged', config: { model: String(value) } });
-                    else
-                      log(`the CLI would not take model ${String(value)}`);
-                  });
-                  continue;
-                }
-                if (key === 'effortLevel') {
-                  if (session.setEffort(String(value))) {
-                    dispatch(session.uri, { type: 'session/configChanged', config: { effortLevel: String(value) } });
-                  }
-                  continue;
-                }
-                if (key === 'outputStyle') {
-                  // Every chat in the session, like the permission mode: they
-                  // are peers on one config, and a voice set on one of them is
-                  // a session where two conversations answer differently.
-                  for (const chat of everywhere) {
-                    if (chat !== session) chat.setOutputStyle(String(value));
-                  }
-                  if (session.setOutputStyle(String(value))) {
-                    dispatch(session.uri, { type: 'session/configChanged', config: { outputStyle: String(value) } });
-                  }
-                  else {
-                    log(`the CLI has no output style called ${String(value)}`);
-                  }
-                  continue;
-                }
-                if (key === 'thinking') {
-                  // Immutable, and said so rather than accepted and dropped: a
-                  // control that reports success and changes nothing is worse
-                  // than one that refuses.
-                  log('thinking is fixed when the session is created');
-                  continue;
-                }
-                /*
-                 * Anything else is the backend's own, and is delivered.
-                 *
-                 * The four keys above are routed by name because they mean
-                 * something *here* - a permission mode and an output style are
-                 * set on every chat in the session, not only the one that was
-                 * asked. Every other key is a property of whatever schema this
-                 * backend published, and a client draws its controls from that
-                 * schema: a key that reached nothing was a control that moved
-                 * and changed the session not at all.
-                 */
-                if (session.setConfig === undefined) {
-                  log(`${key} is not a config key this backend takes`);
-                  continue;
-                }
-                void Promise.resolve(session.setConfig(key, String(value))).then((took) => {
-                  if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: String(value) } });
-                  else log(`${key} is not a config key this backend takes`);
-                });
-              }
-              break;
-            }
-            case 'chat/turnCancelled':
-              session.cancel(String(action.turnId ?? ''));
-              break;
-            /**
-             * Say it after the turn that is running.
-             *
-             * The queue is the host's, which is the whole difference between a
-             * queue and a list: it starts the next turn from the head the
-             * moment it goes idle, and every client watching the chat sees the
-             * same one. Held in a client it would never be sent - nothing
-             * there is watching for a turn to end.
-             */
-            case 'chat/pendingMessageSet': {
-              const kind = String(action.kind ?? 'queued');
-              if (kind !== 'queued') {
-                // Steering is injected *into* the running turn. The SDK has
-                // nowhere to put one, and queueing it behind the turn it was
-                // meant for would deliver it to the wrong conversation.
-                log(`${kind} messages are not served yet`);
-                break;
-              }
-              const message = (typeof action.message === 'object' && action.message !== null
-                ? action.message
-                : {}) as Record<string, unknown>;
-              const model = (typeof message.model === 'object' && message.model !== null
-                ? message.model
-                : {}) as Record<string, unknown>;
-              session.queue(
-                String(action.id ?? ''),
-                String(message.text ?? ''),
-                typeof model.id === 'string' ? model.id : undefined,
-              );
-              break;
-            }
-            /**
-             * Turn a skill or an MCP server on or off.
-             *
-             * `enablement` carries a decision per scope - global, workspace,
-             * session - and this host has one scope, so the session's is the
-             * one that matters and anything else is a decision about machines
-             * it does not own.
-             */
-            case 'session/customizationToggled': {
-              const id = String(action.id ?? '');
-              const enablement = Array.isArray(action.enablement) ? action.enablement.map((entry) => (
-                typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
-              )) : [];
-              const wanted = enablement.find((entry) => entry.kind === 'session') ?? enablement[0];
-              const enabled = wanted?.enabled !== false;
-              void session.setCustomizationEnabled(id, enabled).then((took) => {
-                if (took)
-                  return;
-                // Said, not swallowed. The customization list is what a client
-                // draws the switch from, so re-reporting it puts the switch
-                // back where it was rather than leaving it showing a change
-                // that did not happen.
-                log(`${id} has no runtime switch`);
-                dispatch(session.uri, { type: 'session/customizationsChanged', customizations: session.customizations() });
-              });
-              break;
-            }
-            case 'session/mcpServerStartRequested':
-              void session.startMcpServer(String(action.id ?? '')).then((took) => {
-                if (!took) log(`${String(action.id ?? '')} would not start`);
-              });
-              break;
-            case 'session/mcpServerStopRequested':
-              void session.stopMcpServer(String(action.id ?? '')).then((took) => {
-                if (!took) log(`${String(action.id ?? '')} would not stop`);
-              });
-              break;
-            case 'chat/draftChanged':
-              session.setDraft(String(action.draft ?? ''));
-              break;
-            case 'chat/pendingMessageRemoved':
-              session.unqueue(String(action.id ?? ''));
-              break;
-            case 'chat/queuedMessagesReordered':
-              session.reorder(Array.isArray(action.order)
-                ? action.order.filter((id): id is string => typeof id === 'string')
-                : []);
-              break;
-            case 'chat/toolCallConfirmed':
-              session.confirm(String(action.toolCallId ?? ''), action.approved === true);
-              break;
-            case 'chat/inputCompleted': {
-              /*
-               * `response`, which is the field the action has.
-               *
-               * `ChatInputResponseKind` is `accept`, `decline` or `cancel`, and
-               * this read `accepted` - a key no client sends - so every answer
-               * arrived as an accept and a person declining a question was
-               * indistinguishable from one answering it. `accepted` is still
-               * honoured for anything that sent it before this, but `response`
-               * decides when both are there.
-               */
-              const response = typeof action.response === 'string' ? action.response : undefined;
-              const accepted = response !== undefined ? response === 'accept' : action.accepted !== false;
-              session.answer(String(action.requestId ?? action.id ?? ''), accepted, (typeof action.answers === 'object' && action.answers !== null
-                ? action.answers
-                : {}) as Record<string, unknown>);
-              break;
-            }
-            default:
-              log(`dispatchAction ${type} is not served yet`);
-          }
+          const origin: Origin = {
+            clientId: connection.clientId || 'anonymous',
+            clientSeq: typeof params.clientSeq === 'number' ? params.clientSeq : 0,
+          };
+          applying = origin;
+          try { applyDispatch(params, origin); }
+          finally { applying = undefined; }
         },
       };
       return {

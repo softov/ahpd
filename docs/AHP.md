@@ -32,10 +32,10 @@ specification: nothing here is listed because AHP defines it.
 
 | AHP | ahpd | Status | Notes |
 | --- | --- | :---: | --- |
-| `initialize`, `ping` | handshake and version negotiation | ✅ | Answers with a version the client actually offered, in the client's order of preference. `initialSubscriptions` come back as snapshots in the same response |
+| `initialize`, `ping` | handshake and version negotiation | ✅ | Answers with a version the client actually offered, in the client's order of preference. `initialSubscriptions` come back as snapshots in the same response. A refusal carries `supportedVersions`, which is what a client reads to pick one to retry with. `automations` is advertised when this host was given a store, because presence is what *permits* a client to use the channel and the three commands |
 | `subscribe`, `unsubscribe` | channel subscriptions | ✅ | Per connection, not per channel: one client unsubscribing does not stop another's stream. The snapshot is taken *at* a `serverSeq`, and anything dispatched while it was being taken is replayed on top of it |
 | `reconnect` | replay from a `serverSeq` | ✅ | Replays what a dropped client missed, or hands back snapshots when the gap is longer than the buffer |
-| `dispatchAction` | client-origin state actions | 🚧 | See [state actions](#state-actions) for which |
+| `dispatchAction` | client-origin state actions | 🚧 | See [state actions](#state-actions) for which. The echo carries `origin` - the `clientId` and `clientSeq` the dispatch came with - and one this host will not act on comes back carrying `rejectionReason` instead |
 | `listSessions`, `createSession`, `disposeSession` | the catalogue and its lifecycle | ✅ | Most-recently-modified first, live sessions included. Every row opens from its transcript - a file read, no CLI - and is **resumed** only when somebody starts a turn on it |
 | `createChat`, `disposeChat` | several chats per session | ✅ | Each is its own agent process on one directory and one config. The last one cannot be disposed, and the refusal says so |
 | `resolveSessionConfig` | the schema before a session exists | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. A backend advertises its own properties and a client draws what it is given; the Claude backend offers the same five approval modes VS Code's own Claude host does. `autoApprove` and `mode` are conventional keys a client dispatches whatever a host advertises, and are mapped onto that one axis on the way in |
@@ -57,7 +57,7 @@ specification: nothing here is listed because AHP defines it.
 
 | AHP | ahpd | Status | Notes |
 | --- | --- | :---: | --- |
-| `root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged` | catalogue lifecycle | ✅ | To the connections watching the root channel and no others |
+| `root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged` | catalogue lifecycle | ✅ | To the connections watching the root channel and no others. `sessionAdded` carries the whole `summary`; `sessionRemoved` carries `session`; `sessionSummaryChanged` carries `session` and a `changes` partial with the three identity fields left out |
 | `otlp/exportLogs` | the host's own log | ✅ | `ahp-otlp://logs/{level}`, advertised at the handshake, carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines the daemon writes to stdout. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
 | `otlp/exportTraces`, `otlp/exportMetrics` | — | 🚫 | VS Code's own client says `// Not recorded, yet` against both, so there is nothing on the other end |
 | `root/progress` | — | ➖ | Host-level work correlated by a `progressToken`. Nothing here is slow enough at the *host* level to report; the slow things are turns, and those have their own channel |
@@ -91,7 +91,16 @@ specification: nothing here is listed because AHP defines it.
 `terminal/resized`, `automation/createRequested` / `updateRequested`,
 `automationRun/cancelRequested`, `root/configChanged`.
 
-Anything else dispatched is logged and dropped rather than half-applied.
+Anything else dispatched is **refused**, not dropped: an envelope carrying
+`rejectionReason` goes back to the connection that sent it, naming the action
+and saying what would not have it. A client applies an action before sending
+it, so a host that stayed silent left that client holding a change this host
+never made.
+
+A refusal moves no `serverSeq` and is not buffered for replay, because it moves
+no state; and it goes to the one connection that dispatched it rather than to
+everyone watching, because nobody else applied it optimistically and a client
+that reduced one would apply the very change this host declined to make.
 
 ### Server-origin actions this host emits
 
@@ -160,6 +169,7 @@ before either is answered.
 | who else is here | `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is |
 | read and archived | kept per session and told to every client, including for rows no agent is running for |
 | project and branch | `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` |
+| when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
 
 ### Changesets
 

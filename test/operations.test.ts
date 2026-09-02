@@ -222,6 +222,52 @@ it('disables the verbs while a turn is running, and refuses one sent anyway', as
   const busy = await refused(client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
   }));
-  expect(busy.code).toBe(-32002);
+  // `-32004 TurnInProgress`, not `-32002 ProviderNotFound`: what the client
+  // should do is wait, and the code is the only part of a refusal it branches
+  // on.
+  expect(busy.code).toBe(-32004);
   expect(busy.message).toContain(uri);
+});
+
+it('lists the changesets on the session channel, and not on a catalogue row', async () => {
+  const { client, peer: p, uri } = await watching(scripted().source);
+
+  // `SessionState.changesets` is declared, and is where a client reads the
+  // scopes it may subscribe to. Both of ahpc's readers take it from here.
+  const session = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { changesets?: unknown[] } };
+  }).snapshot.state;
+  expect(session.changesets)
+    .toEqual([expect.objectContaining({ uriTemplate: `${uri}/changeset/uncommitted` })]);
+
+  /*
+   * And nowhere else.
+   *
+   * `SessionSummary` does not declare `changesets`, and a row carrying one was
+   * the same answer from a second place: every catalogue row repeated the
+   * scopes, and so did every `root/sessionSummaryChanged` - which fires on
+   * every turn start, every turn end, every git refresh and every flag toggle.
+   * A receiver ignores a key it does not understand, so nothing broke; what it
+   * cost was weight on the busiest notification this host sends.
+   */
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: Record<string, unknown>[];
+  };
+  const row = listed.items.find((one) => one.resource === uri);
+  expect(row).toBeDefined();
+  expect(row).not.toHaveProperty('changesets');
+  // The diff stat is a different field, is declared on a summary, and stays.
+  expect(row).toHaveProperty('changes');
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } },
+  });
+  await settle();
+  const moved = p.notes
+    .filter((n) => n.method === 'root/sessionSummaryChanged')
+    .map((n) => n.params as { changes: Record<string, unknown> })
+    .at(-1);
+  expect(moved?.changes).toBeDefined();
+  expect(moved?.changes).not.toHaveProperty('changesets');
 });

@@ -168,7 +168,10 @@ describe('the handshake', () => {
     const client = open();
     await expect(client.handle(hello(['99.0.0']))).rejects.toMatchObject({
       code: -32005,
-      data: { supportedProtocolVersions: expect.arrayContaining(['0.8.0']) },
+      // `supportedVersions`, which is the name the protocol gives it. Under
+      // any other one the client has read `undefined` and has no version to
+      // retry with, which is the whole point of the field.
+      data: { supportedVersions: expect.arrayContaining(['0.8.0']) },
     });
   });
 
@@ -322,7 +325,13 @@ async function running() {
 
 const actions = (p: ReturnType<typeof peer>, channel?: string) => p.notes
   .filter((n) => n.method === 'action')
-  .map((n) => n.params as { channel: string; action: Record<string, unknown>; serverSeq: number })
+  .map((n) => n.params as {
+    channel: string;
+    action: Record<string, unknown>;
+    serverSeq: number;
+    origin?: { clientId: string; clientSeq: number };
+    rejectionReason?: string;
+  })
   .filter((e) => channel === undefined || e.channel === channel);
 
 const settle = async (times = 4): Promise<void> => {
@@ -2775,4 +2784,219 @@ describe('interrupting a terminal', () => {
     }
     expect(actions(p, uri).some((e) => e.action.type === 'terminal/exited')).toBe(true);
   });
+});
+
+/*
+ * What the wire actually says, as against what this host meant.
+ *
+ * Every case below is a *shape* a client reads by name, and every one of them
+ * was wrong in a way nothing here could see: a notification never reaches a
+ * reducer, so the conformance replay does not touch it, and the client this
+ * repository ships ignores the three catalogue notifications altogether. Two
+ * implementations agreeing is not the same as either being right.
+ */
+describe('the fields a client reads by name', () => {
+  /** The protocol notifications on the root channel, in order. */
+  const catalogue = (p: ReturnType<typeof peer>) => p.notes
+    .filter((n) => n.method.startsWith('root/session'))
+    .map((n) => ({ method: n.method, params: n.params as Record<string, unknown> }));
+
+  it('names the session in root/sessionRemoved', async () => {
+    const { client, peer: p, uri } = await running();
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+
+    const gone = catalogue(p).find((n) => n.method === 'root/sessionRemoved');
+    // `session`, which is the field the protocol declares. Under any other
+    // name the client reads `undefined` and takes nothing out of its list.
+    expect(gone?.params.session).toBe(uri);
+  });
+
+  it('sends root/sessionSummaryChanged as a partial, without the identity fields', async () => {
+    const { client, peer: p, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+
+    const moved = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
+    expect(moved?.params.session).toBe(uri);
+    const changes = moved?.params.changes as Record<string, unknown>;
+    expect(changes).toBeDefined();
+    // What moved is in there under its own name.
+    expect(changes.status).toBe(Status.InProgress);
+    expect(changes.title).toEqual(expect.any(String));
+    // And the three the protocol says never change are left out, because a
+    // *change* carrying them is a change claiming they did.
+    expect(changes).not.toHaveProperty('resource');
+    expect(changes).not.toHaveProperty('provider');
+    expect(changes).not.toHaveProperty('createdAt');
+  });
+
+  it('still says what moved on a session no agent is running for', async () => {
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov');
+    const seen = peer();
+    const watching = host.accept(seen);
+    await watching.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    // Reading the catalogue is what teaches this host the row exists.
+    await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+
+    watching.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/browsed', action: { type: 'session/isReadChanged', isRead: true } },
+    });
+    await settle();
+
+    const moved = catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
+    expect(moved?.params.session).toBe('ahp-session:/browsed');
+    // A row nobody is running still has a status - `IsRead` is this host's bit
+    // and belongs to the row, not to a process - so the notification carries
+    // it rather than carrying nothing, which is what it used to do in exactly
+    // the case that needed saying.
+    expect((moved?.params.changes as Record<string, unknown>).status)
+      .toBe(Status.Idle | Status.IsRead);
+  });
+
+  it('advertises automations only where there are any', async () => {
+    const { memoryAutomations } = await import('../src/automations.js');
+    const without = await open().handle(hello(['0.9.0'])) as Record<string, unknown>;
+    // Absence is what tells a client the host has no catalogue and no
+    // automation commands, and a correct one will not go looking.
+    expect(without).not.toHaveProperty('automations');
+
+    const host = createHost({
+      path: '/home/softov',
+      agents: [claude({ paths: ['/home/softov'] })],
+      automations: memoryAutomations(),
+    });
+    const with_ = await host.accept(peer()).handle(hello(['0.9.0'])) as {
+      automations?: { create?: unknown; schedules?: unknown; runCancellation?: unknown };
+    };
+    expect(with_.automations?.create).toEqual({});
+    expect(with_.automations?.schedules).toEqual({});
+    // Not advertised, because it is not served: a run here is a session, and
+    // disposing it is how it stops.
+    expect(with_.automations).not.toHaveProperty('runCancellation');
+  });
+
+  it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        clientSeq: 41,
+        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } },
+      },
+    });
+    await settle();
+
+    // The turn is said back, and the echo is what a client matches against the
+    // dispatch it applied optimistically. This is emitted from inside the
+    // session, several layers below the notification handler, which is the
+    // case the scoped origin exists for.
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
+    expect(started?.origin).toEqual({ clientId: 'probe', clientSeq: 41 });
+
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
+    );
+    // And what the agent said is the host's own, so it carries no origin: a
+    // client that saw one there would think it had written the agent's words.
+    const part = actions(p, chatUri).find((e) => e.action.type === 'chat/responsePart');
+    expect(part?.origin).toBeUndefined();
+  });
+
+  it('refuses a dispatch out loud, to the client that sent it and nobody else', async () => {
+    const host = serving('/home/softov');
+    const mine = peer();
+    const theirs = peer();
+    const client = host.accept(mine);
+    const other = host.accept(theirs);
+    await client.handle(hello(['0.9.0']));
+    await other.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/live';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await other.handle({ method: 'subscribe', params: { channel: uri } });
+    // Where the state stands before the refusal. A snapshot is taken *at* a
+    // sequence number, so this is the one every later action must be above.
+    const at = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { fromSeq: number };
+    }).snapshot.fromSeq;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+
+    const refused = actions(mine, uri)
+      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
+    expect(refused).toHaveLength(1);
+    // Which dispatch it answers, so the client knows what to put back.
+    expect(refused[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
+    expect(refused[0]?.action.type).toBe('chat/truncated');
+    expect((refused[0] as { rejectionReason?: string }).rejectionReason).toContain('chat/truncated');
+    // No state moved, so the sequence did not either: the refusal carries the
+    // number this host is still at rather than claiming a place in the stream.
+    expect(refused[0]?.serverSeq).toBe(at);
+    // And the client watching alongside hears nothing: it never applied this,
+    // so it has nothing to put back - and reducing a refused envelope would
+    // apply the very change this host declined to make.
+    expect(actions(theirs, uri)
+      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined)).toHaveLength(0);
+  });
+
+  it('leaves createdAt where it was while the session goes on', async () => {
+    const { client, peer: p, uri } = await running();
+    const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
+    const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
+    expect(born).toEqual(expect.any(String));
+
+    // Far enough for a fresh `new Date()` to differ.
+    await new Promise((r) => { setTimeout(r, 5); });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; createdAt: string; modifiedAt: string }[];
+    };
+    const row = listed.items.find((one) => one.resource === uri);
+    // `createdAt` is identity and `modifiedAt` is not. Answering both with the
+    // modification time gave every live row an age that moved every time
+    // somebody said something to it.
+    expect(row?.createdAt).toBe(born);
+    expect(row?.modifiedAt).not.toBe(born);
+  });
+});
+
+it('takes a client into a session it is serving from a transcript', async () => {
+  sdk.sessions.push({ sessionId: 'older', summary: 'A real title', lastModified: 1, cwd: '/home/softov' });
+  sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'hi' } });
+  const host = serving('/home/softov');
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle(hello(['0.9.0']));
+  const uri = 'ahp-session:/older';
+  // Opening the row is what teaches this host the session exists.
+  await client.handle({ method: 'subscribe', params: { channel: uri } });
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, clientSeq: 3, action: { type: 'session/activeClientSet', activeClient: {} } },
+  });
+  await settle();
+
+  const said = actions(p, uri).filter((e) => e.action.type === 'session/activeClientSet');
+  // `titles` is keyed by the bare id, and this asked it for the whole URI - so
+  // every client announcing itself in a browsed session was turned away from a
+  // session that was right there.
+  expect(said.filter((e) => e.rejectionReason === undefined)).toHaveLength(1);
+  expect(said.some((e) => e.rejectionReason !== undefined)).toBe(false);
 });
