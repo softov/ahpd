@@ -220,6 +220,17 @@ export function createSession(options: SessionOptions): Session {
   const pending = new Map<string, PendingInput>();
   let title = str(bag(bag((options.seed ?? [])[0]).message).text)?.slice(0, 60) || 'New session';
   let modified = new Date().toISOString();
+  /**
+   * Why the *last* turn failed, or nothing.
+   *
+   * About one turn, not about the session for the rest of its life. It reads
+   * into `Status.Error` and into the summary's `error`, and it used to be set
+   * and never unset - so one failed tool call left every client showing a
+   * session in error through every turn that followed, and through a restart
+   * of the client, because the flag lives here rather than there. Starting a
+   * turn supersedes it: what went wrong last time is not what is happening
+   * now.
+   */
   let failed: string | undefined;
   let startedAt = 0;
   let handshake: Bag | undefined;
@@ -381,6 +392,7 @@ export function createSession(options: SessionOptions): Session {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     startedAt = Date.now();
+    failed = undefined;
     emit('chat', {
       type: 'chat/turnStarted',
       turnId: active.id,
@@ -745,6 +757,7 @@ export function createSession(options: SessionOptions): Session {
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
     startedAt = Date.now();
+    failed = undefined;
     // Said back, including to the client that started it. A host that only
     // reduced this privately would go on to emit `chat/responsePart` for a
     // turn no client has - so the parts land nowhere and the conversation
