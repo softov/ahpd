@@ -1,323 +1,299 @@
 # ahpd
 
-An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) host
-that runs Claude Code sessions.
+An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) host that runs Claude Code sessions - and the library parts to build a host yourself.
+
+`ahpd` can be used in two ways:
+
+- **daemon**: `ahpd`, a process that serves AHP over a WebSocket and runs Claude Code sessions behind it.
+- **library**: `createHost` and the ports around it used to build `ahpd`.
 
 ## Why
 
-AHP's model is a **sessions server**: several clients watch and drive the same
-agent sessions, and none of them owns the process running the agent. That is
-what makes a session watchable from somewhere other than where it runs.
+AHP's model is a **sessions server**: several clients watch and drive the same agent sessions, and none of them owns the process running the agent. That is what makes a session watchable from somewhere other than where it runs.
 
-Today the only host that speaks it is an editor - so a session is only
-watchable while somebody's VS Code is open. This is the missing piece: the same
-protocol, the same clients, no editor.
+Today the only host that speaks it is an editor - so a session is only watchable while somebody's VS Code is open. This is the missing piece: the same protocol, the same clients, no editor.
 
-The Claude Agent SDK is the opposite shape - it spawns a CLI that your process
-alone owns. Bridging the two is all this daemon does.
+The Claude Agent SDK is the opposite shape - it spawns a CLI that your process alone owns. `ahpd` bridges the two.
 
-## A host of your own
+```mermaid
+flowchart LR
+    AHPC["ahpc"]
+    VSC["VS Code"]
+    OTHER["Other AHP client"]
 
-`ahpd` is also the parts to serve something that is not Claude. `createHost`
-imports no backend at all: it takes agents, and Claude is one of them.
+    HOST["ahpd<br/>AHP host"]
+    CLAUDE["Claude Code"]
 
-```ts
-import { createHost, listen, claude, fileResources, shellTerminals, gitBranches, gitChanges } from 'ahpd';
+    AHPC -->|AHP / WebSocket| HOST
+    VSC -->|AHP / WebSocket| HOST
+    OTHER -->|AHP / WebSocket| HOST
 
-const host = createHost({
-  path: process.cwd(),
-  agents: [claude({ paths: [process.cwd()] }), myAgent()],
-  // The parts that touch the machine. Each is optional, and a host given none
-  // of them still serves the whole conversation.
-  resources: fileResources(),   // files a client may read, and `@` completion
-  changes: gitChanges(),        // what the working tree has that HEAD does not
-  terminals: shellTerminals(),  // a shell, as a terminal channel
-  directories: gitBranches(),   // which branch each served directory is on
-});
+    HOST --> CLAUDE
 
-await listen({ port: 9187 }, (peer) => host.accept(peer));
+    HOST --- RES["resources"]
+    HOST --- TERM["terminals"]
+    HOST --- CHG["changes"]
+    HOST --- AUTO["automations"]
 ```
 
-`createHost` imports no filesystem, no subprocess and no `git`. Reading a file
-is `node:fs` on one runtime and something else on another; a terminal is a
-subprocess; a branch is a *binary* that may not be installed at all. So each
-arrives as a port rather than a built-in, and a host without one refuses the
-commands it cannot answer - `-32601`, the same answer it gives for anything
-else it does not serve - rather than failing part-way through one.
+The clients on the left are interchangeable and none of them owns the session. `Claude Code` on the right is one agent, reached through `Agent` - `examples/` has two more. The four below are the **ports**: everything that touches the machine, handed to the host rather than reached for by it.
 
-[`src/git.ts`](src/git.ts) is the smallest port and the one to copy if you are
-writing your own; [REFERENCE.md](REFERENCE.md) is where the specification and
-the other implementation of it are, and what each has already settled.
+## What you can do with it
 
-An agent says what it is called, what a session of its kind can be configured
-with, which sessions it already has, and how to start one. Everything the
-protocol requires - version negotiation, snapshots, subscriptions, sequence
-numbers, transcript paging, completions - stays the host's.
+- Run agent sessions on one machine and drive them from another, from more than one client at a time, with the turn surviving the client that started it.
+- Point **VS Code** at it (`chat.remoteAgentHosts`) or any other AHP client; [`ahpc`](https://github.com/softov/ahpc) is the terminal one used here.
+- Read and write files, open a shell, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
+- Run an agent on a clock, with nobody connected: `scheduledAutomations()` is a cron in a named time zone that starts sessions by itself.
+- Serve a backend that is not Claude, on the same host, with none of the protocol re-implemented.
 
-[`examples/echo`](examples/echo) is a complete one written from nothing: no
-model, no subprocess, about two hundred lines, and it runs. Its README is the
-contract in the order the host asks for it, and the rules a session has to
-keep.
+## Install and run the daemon
+
+**Not published yet.** `ahpd` is not on npm, so the install is from source:
 
 ```bash
-node dist/examples/echo/main.js --port 9200
-ahpc --host ws://127.0.0.1:9200
+git clone https://github.com/softov/ahpd && cd ahpd
+npm install && npm run build
+node dist/src/main.js --path /work/project
 ```
 
-## Run it
+The rest of this README writes `ahpd` for `node dist/src/main.js`.
+
+Once it is published this will be the shorter form, and every flag is the same:
 
 ```bash
 npm i -g ahpd
+ahpd --path /work/project
+```
 
-ahpd --path /where/the/sessions/are    # here, in this terminal
-ahpd start                             # in the background, and let go of it
-ahpd status                            # whether one is, and where
+### Run in the background
+```bash
+ahpd start --path /work
+ahpd status
 ahpd stop
+ahpd config                  # where the configuration is, and what it says
 ```
 
-`start` detaches, so the daemon outlives the shell that began it - which is the
-point of a *sessions server*: close the terminal and the turn keeps running,
-attach again from somewhere else. It records itself in `daemon.json` beside the
-configuration and writes what it says to `daemon.log`, because a background
-process with no output leaves nothing to read when it misbehaves.
+`start` detaches, so the daemon outlives the shell that began it - which is the point of a sessions server: close the terminal and the turn keeps running, attach again from somewhere else.
 
-Configuration is XDG - `$XDG_CONFIG_HOME/ahpd/config.json`, or
-`~/.config/ahpd/config.json` - and every flag can be a key in it instead:
+### Serve more than one directory
 
-```json
-{ "port": 9187, "paths": ["/work/api", "/work/web"] }
-```
-
-A flag beats the file, because a flag is this run and a file is every run until
-somebody edits it. `ahpd config` says where the file is and what it says;
-`--config-file` reads a different one.
-
-From source, or on another runtime:
+`--path` names a directory on the **host machine** and can be repeated:
 
 ```bash
-npm install && npm run build
-
-node dist/src/main.js --port 9187 --path /where/the/sessions/are   # Node
-bun  dist/src/main.js --port 9187 --path /where/the/sessions/are   # Bun
-deno run -A dist/src/main.js --port 9187 --path /where/…           # Deno
+ahpd \
+  --path /work/api \
+  --path /work/web
 ```
 
-The runtime is detected at startup and named in the first line of output. Node
-needs the optional `ws` dependency, having no WebSocket server of its own; Bun
-and Deno use their built-in servers and need nothing. All three are run: Deno
-was proved on **2.9.6** against the built output, driving a whole session -
-handshake, catalogue, changeset, operations, the write half and a resource
-watch. Run `dist/` rather than `src/` there, or pass `--sloppy-imports`: the
-sources import `./x.js` the way the emitted output does, and Deno reads that
-literally.
+The first path is the default when a client does not choose one.
 
-### While you are changing it
+A client cannot point the host at an arbitrary directory. Paths outside the served set are refused.
+
+### To expose it elsewhere:
+
+The daemon binds loopback and takes no token, which needs no secret: anything reaching `127.0.0.1` is already on this machine. Binding anything else without one of `--connection-token`, `--connection-token-file` or `--without-connection-token` refuses to start.
 
 ```bash
-npm run dev          # node
-npm run dev:bun      # bun
-npm run echo         # the same pair, for examples/echo
-npm run echo:bun
+ahpd \
+  --host 0.0.0.0 \
+  --connection-token-file ~/.ahpd/token
 ```
 
-Node is what this ships on and what `dev` means; Bun is the alternative, and
-the `:bun` pair exists because `listen.ts` is one file and three code paths -
-a change to it wants running under more than one before it is believed. Each
-names the runtime it is on in its first line of output, so there is never a
-question which one answered.
+See [docs/DAEMON.md](docs/DAEMON.md) for the complete CLI, the configuration file, tokens, and running on Bun or Deno.
 
-All four run the TypeScript source, restart on save, compile nothing and
-install nothing.
+## Connect a client
 
-The difference between them is in what each needs to find a file. This source
-spells its own imports `./host.js`, because that is what will be there after a
-build. Bun rewrites those to the `.ts` on disk by itself; Node resolves them
-literally and looks for a `host.js` that does not exist yet, so the Node
-scripts register [`scripts/dev-hooks.mjs`](scripts/dev-hooks.mjs) to do the
-same rewrite - about twenty lines, no dependency.
-
-Node also strips types rather than transforming them, so it cannot run the
-TypeScript that *emits* code: enums, namespaces, and constructor parameter
-properties. There are none here, and `test/strippable.test.ts` is what keeps
-it that way.
-
-Then point a client at it:
+With [`ahpc`](https://github.com/softov/ahpc):
 
 ```bash
 ahpc --host ws://127.0.0.1:9187
 ```
 
-`--path` is a directory the host serves, on **this** machine, and it is
-repeatable:
+Or VS Code, in `settings.json`:
 
-```bash
-ahpd --path /work/api --path /work/web
+```json
+"chat.remoteAgentHostsEnabled": true,
+"chat.remoteAgentHosts": [
+  { "name": "ahpd", "address": "ws://127.0.0.1:9187" }
+]
 ```
 
-The first is where a session goes when the client names none, and is what the
-host advertises as its default. The catalogue is the union of all of them, so
-nothing goes missing by adding one.
+A path named by a client always refers to the **host's filesystem**, never the client's.
 
-A client names paths in the host's filesystem, never its own - `ahpc --path`
-asks for a directory *there*. One the host was not told to serve is refused
-with the list of what it does serve, rather than quietly replaced: a host that
-ran the agent wherever it was told is one that anybody who can reach the port
-can point at any directory on the machine, and a directory accepted and then
-ignored is a session running somewhere nobody asked for.
+## Use it as a library
 
-## Who may connect
+`createHost()` implements the AHP side:
 
-The daemon binds loopback and takes no token, which needs no secret: anything
-reaching `127.0.0.1` is already on this machine.
+* negotiation;
+* channels and subscriptions;
+* snapshots;
+* sequence numbers;
+* reconnects;
+* sessions and chats;
+* actions;
+* transcript paging.
 
-```bash
-# Reachable from elsewhere, behind a secret
-ahpd --host 0.0.0.0 --connection-token-file ~/.ahpd/token
+You provide the agents and, optionally, the things that touch the machine.
 
-# Or given directly, or deliberately without one
-ahpd --host 0.0.0.0 --connection-token "$SECRET"
-ahpd --host 0.0.0.0 --without-connection-token
+### Minimal host
+
+The smallest host that works is three things: a backend, a host to serve it, and a socket to serve it on.
+
+```ts
+import { createHost, listen, claude } from 'ahpd';
+
+const host = createHost({
+  path: process.cwd(),
+  agents: [claude({ paths: [process.cwd()] })],
+});
+
+await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-Binding anything but loopback without one of those three refuses to start,
-rather than putting a host on the network that anybody can drive. A token file
-that does not exist is written with a fresh token, owner-readable only; one
-that does is read.
+That is already a working AHP conversation host.
 
-Clients present it as `?tkn=<secret>` on the WebSocket URL or as an
-`Authorization: Bearer <secret>` header - the query string is the one that
-always works, because a browser cannot set headers on a WebSocket handshake.
-A connection with the wrong token is refused with **401 at the handshake**, so
-it never reaches the host at all.
+What it does *not* serve is anything that touches the machine, because `createHost` imports no filesystem, no subprocess and no `git`.
 
-```bash
-ahpc --host ws://192.168.1.10:9187 --token "$SECRET"
+Those arrive as **ports**, and each is optional and independent:
+
+```ts
+import {
+  createHost, listen, claude,
+  fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations,
+} from 'ahpd';
+
+const host = createHost({
+  path: process.cwd(),
+  agents: [claude({ paths: [process.cwd()] })],
+
+  resources: fileResources(),                 // files a client may read and write, and `@` completion
+  terminals: shellTerminals(),                // a shell, as a terminal channel
+  changes: gitChanges(),                      // what the working tree has that HEAD does not
+  directories: gitBranches(),                 // which branch each served directory is on
+  automations: scheduledAutomations(),        // agents on a clock, with nobody connected
+
+  onEvent: (line) => process.stdout.write(`${line}\n`),
+});
 ```
 
-Only stdout says where the token came from, never what it is.
+Only `path` and `agents` are required.
 
-## What it serves
+Leave a port out and the commands behind it answer `-32601` - the same answer this host gives for anything else it does not serve - rather than failing part-way through one.
 
-| Method | |
+Reading a file is `node:fs` on one runtime and something else on another; a terminal is a subprocess; a branch is a *binary* that may not be installed at all. A host without one of them is not a broken host, it is a smaller one.
+
+[docs/LIBRARY.md](docs/LIBRARY.md) has `createHost` option by option and what each port has to implement.
+
+## Write an agent
+
+An agent is the thing that answers. It says what it is called, what a session of its kind can be configured with, which sessions it already has, and how to start one - and everything the protocol requires stays the host's.
+
+```ts
+import { createHost, listen } from 'ahpd';
+import { notes } from './agent.js';
+
+const host = createHost({ path, agents: [notes({ path })] });
+await listen({ port: 9201 }, (peer) => host.accept(peer));
+```
+
+Five members are required - `provider`, `displayName`, `schema`, `defaults`, `create` - and what you leave out is a real answer rather than a gap: no `list` means no sessions to browse, no `probe` means no models until a session of yours reports some. `createHost` cannot tell one agent from another, so a backend of your own and `claude()` are registered the same way and can be served side by side.
+
+[docs/AGENT.md](docs/AGENT.md) is the `Agent` and `Session` contracts, config keys, and the rules that produce a wrong screen rather than an error. The [examples](#examples) below are both complete and both run.
+
+## How compatible is it with AHP
+
+Against **`@microsoft/agent-host-protocol` 0.9.0**, by area rather than by
+method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 partial ·
+➖ nothing decided · 🚫 deliberately not.
+
+| AHP area | ahpd | Status | Notes |
+| --- | --- | :---: | --- |
+| Handshake and channels | `initialize`, `subscribe`, `reconnect` | ✅ | Version negotiated in the client's order of preference; a dropped client replays from its last `serverSeq` |
+| Sessions | create, resume, dispose, catalogue | ✅ | Past sessions are reconstructed from Claude transcripts, and resumed only once somebody starts a turn on one |
+| Chats and turns | turns, streaming, cancellation, tools | ✅ | Several chats can share one session, each on its own agent process |
+| Human in the loop | tool confirmation, agent questions | ✅ | `session/inputNeeded` is a list, so two tools asking at once are answered apart |
+| Session configuration | model, permission mode, effort, output style | ✅ | Capabilities are discovered from the harness at startup, so a composer draws itself before any turn. `sessionConfigCompletions` is 🚫: every key here is an enum, so there is nothing to look up |
+| Resources | `resources` port | 🧩 | Optional; reads and writes confined to the served directories, writes behind `resourceRequest` |
+| Resource watches | `resources` port | 🧩 | Watch lifetime follows channel subscriptions - the protocol has no dispose command |
+| Terminals | `terminals` port | 🧩 | The built-in implementation uses pipes, not a PTY, and says so rather than leaving it to be discovered |
+| Changesets | `changes` port | 🧩 | The git implementation serves all four scopes and the working-tree operations |
+| Automations | `automations` port | 🧩 | `ahpd` adds scheduled execution: cron in a named time zone, running with nobody connected |
+| Authentication | connection token, plus agent credentials | 🔀 | A pushed token is held per connection; Claude otherwise inherits the daemon's own credentials |
+| Logs | `otlp/exportLogs` | 🚧 | Logs only. Tracing and metrics are not emitted |
+| Annotations | — | ➖ | No producer currently |
+
+Method by method that is **31 of the 32 declared commands** and **63 of the 96
+state actions**. The rest is `-32601`, said rather than quietly answered: a host
+that returns an empty success to a method it lacks leaves the client waiting for
+state that is never coming, which reads as a hang rather than as a missing
+feature.
+
+[docs/AHP.md](docs/AHP.md) has it command by command and channel by channel,
+with what each does differently and why - and the rules a host has to keep that
+fail silently rather than loudly.
+
+## Documentation
+
+| | |
 | --- | --- |
-| `initialize` | ✅ version negotiation, `initialSubscriptions` snapshots |
-| `ping` | ✅ |
-| `subscribe` / `unsubscribe` | ✅ root, session and chat channels |
-| `listSessions` | ✅ most-recently-modified first, live sessions included |
-| `resolveSessionConfig` | ✅ permission mode, effort, output style, thinking - the same schema a session reports, so a row is configurable before it is resumed. The output styles are the harness's own, learned by the boot probe, so the control is absent rather than empty on a harness that has none |
-| capabilities | ✅ models, skills, slash commands, subagents, MCP servers - read from the CLI's control protocol, so they are known before any turn |
-| skills | ✅ told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash |
-| what a harness offers, before a session | ✅ `AgentInfo.customizations` on the root channel - the skills, subagents and MCP servers the boot probe found, so a new-session screen can offer one without creating a session to ask |
-| `reconnect` | ✅ replays what a dropped client missed from its last `serverSeq`, or hands back snapshots when the gap is longer than the buffer |
-| `createSession` / `disposeSession` | ✅ |
-| `authenticate` | ✅ the Claude agent advertises `https://api.anthropic.com` in `AgentInfo.protectedResources` as `required: false` - a token is an override, because this daemon inherits the credentials of whoever started it and works with none pushed. A pushed token is held **per connection**, as the specification requires, and spent only on sessions that client asks for; it is passed to the harness as `ANTHROPIC_API_KEY` over the daemon's own environment, never instead of it. An automation firing with nobody connected has no token and runs on the daemon's credentials |
-| past sessions | ✅ every catalogue row opens from its transcript - a file read, no CLI - and is **resumed** when somebody starts a turn on it |
-| model selection | ✅ on the session (`session/configChanged`) and on a turn (`message.model`) |
-| `dispatchAction` | ✅ `chat/turnStarted`, `chat/turnCancelled`, `chat/toolCallConfirmed`, `chat/inputCompleted`, `session/configChanged`, `session/isReadChanged`, `session/isArchivedChanged` |
-| who else is here | ✅ `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is. `activeSessions` on the root channel counts what this host is *running*, not the transcripts beside them |
-| read and archived | ✅ kept per session and told to every client - including for rows no agent is running for |
-| `otlp/exportLogs` | ✅ `ahp-otlp://logs/{level}`, advertised at the handshake and carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines this daemon writes to stdout, so a client can watch the host's log instead of reading the terminal it was started in. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
-| connection token | ✅ `--connection-token`, `--connection-token-file`, refused at the handshake |
-| `fetchTurns` | ✅ newest 50 in the snapshot, a cursor for the rest |
-| `completions` | ✅ `/` against the session's commands, falling back to the harness-wide list |
-| queued messages | ✅ held by the host and started as the next turn, named on the turn that consumed it |
-| what it is doing | ✅ `chat/activityChanged` and the session's mirror of it, so a catalogue row says which session is busy with what |
-| token counts, retitling | ✅ `chat/usage` before the turn completes, `session/titleChanged` when it gets one |
-| file changes | ✅ all four scopes - `session`, `turn/{turnId}`, `compare/{a}/{b}` and `uncommitted` - through the `changes` port - `<sessionUri>/changeset/uncommitted`, a roll-up on the catalogue row, and both sides of every edit: `after` is the file, `before` is `git show HEAD:` behind a URI this host resolves itself |
-| toggling an MCP server | ✅ through the CLI, then read back - switching on one that is not ready reconnects it, which is how signing in happens |
-| toggling a skill or prompt | ✅ refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
-| `resourceList` / `Read` / `Resolve` | ✅ read-only, and only inside the directories the host was told to serve - through the `resources` port, so a host given none answers `-32601` |
-| `createResourceWatch` | ✅ a channel per watch, `resourceWatch/changed` in coalesced batches, globs for `excludes` and `includes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. A store that cannot watch answers `-32601`, which is what a client degrades on rather than fails on |
-| `@` completion | ✅ paths under the session's own directory, offered as a resource reference rather than the bytes |
-| shared drafts | ✅ `chat/draftChanged`, so two people on one chat see each other typing |
-| terminals | ✅ a shell in a served directory, over pipes - `isPty: false`, said rather than left to be discovered - through the `terminals` port |
-| automations | ✅ `ahp-automations://` with the catalogue, `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns`, and a channel per run - through the `automations` port, so a host given none advertises no channel and answers `-32601`. `scheduledAutomations()` is what `ahpd` runs: five-field cron in a named time zone, definitions in `automations.json` beside the configuration, and one catch-up run for what was missed while it was down. `memoryAutomations()` is the same store without the clock, and says so by leaving `nextRunAt` off |
-| several chats per session | ✅ `createChat` / `disposeChat`; each is its own agent process on one directory and one config |
-| project and branch | ✅ `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` - re-read when a turn ends, and cached per *directory*, so a host with ninety-eight sessions in one repository asks git once |
-| acting on a changeset | ✅ `commit` on the working tree, `discard` on a file, `revert` on a file back to the state the agent found it in - server-advertised per scope, `disabled` while a turn is running, destructive ones carrying the `confirmation` a client MUST show |
-| `resourceRequest` | ✅ the gate on all three: an operation that writes is refused `-32009` until the connection has been granted write on what it would write, and the refusal names the request that would unlock it. Grants are per connection and per resource, and only inside the directories this host was told to serve |
-| `resourceWrite` / `Delete` / `Mkdir` / `Move` / `Copy` | ✅ behind the same grant, and behind the same port - a store with no write half answers `-32601`, which is not a refusal about a path. All three write modes: `truncate`, `append` (position counts back from EOF), `insert`. `createOnly` refuses with `-32010`, `ifMatch` against the `etag` on `resourceResolve` refuses a lost update with `-32011`. The *parent* is resolved before writing, so a symlink out of the served set cannot be written through |
-| everything else | `-32601`, said rather than silently accepted |
-
-Server-origin actions it emits: `session/ready`, `session/inputNeededSet` /
-`Removed`, `chat/responsePart`, `chat/delta`, `chat/toolCallStart` / `Ready` /
-`Complete`, `chat/reasoning`, `chat/inputRequested`, `chat/turnComplete` / `Cancelled`,
-`chat/error`, `session/metaChanged`, `session/changesetsChanged`,
-`changeset/operationsChanged` / `operationStatusChanged` / `contentChanged` - plus
-`root/sessionAdded` / `Removed` /
-`sessionSummaryChanged`
-on the root channel.
-
-Rules it is careful about, because each is a silent failure otherwise:
-
-- **A part exists before it streams.** The protocol: *"The server MUST first
-  emit a `chat/responsePart` to create the target part, then use
-  [`chat/delta`] to append text to it."* A delta naming a part nobody opened
-  appends to nothing.
-- **The append action follows the part.** `chat/delta` is defined against a
-  *markdown* part and `chat/reasoning` against a *reasoning* one, and the
-  canonical reducer returns the part unchanged when they do not match. Sending
-  thinking as a `chat/delta` therefore opens the part and never fills it - a
-  thinking header with nothing under it, for as long as the model thinks.
-- **The running turn is `activeTurn`, and is not in `turns`.** A client reading
-  only the history shows an empty conversation for exactly as long as somebody
-  is watching one happen.
-- **A turn the client started is still said back.** The host reduces
-  `chat/turnStarted` and re-emits it. Nothing in a client applies what it sent
-  itself, so a host that reduced it privately goes on to emit
-  `chat/responsePart` for a turn no client has - and the whole answer lands
-  nowhere until somebody reopens the session and gets a fresh snapshot.
-- **`chat/toolCallStart` creates the part; `chat/responsePart` must not.**
-  The reducer appends a response part of its own for a starting tool call, so
-  a host that announces the part as well puts every tool call in the
-  transcript twice.
-- **A tool call in the transcript says `confirmed`.** `chat/toolCallReady`
-  without it means *pending confirmation*, and the whole conversation is then
-  drawn as a queue of questions nobody asked. `canUseTool` is what asks, under
-  the agent's own `toolUseID` - a confirmation with an id of the host's making
-  is a second row for one call, answered under a name no client was given.
-- **`serverSeq` moves with state, never with messages.** A snapshot is taken
-  *at* a sequence number and every action after it carries a greater one, which
-  is how a client knows it missed nothing.
-
-A method this host does not serve answers `-32601`. A host that answers an
-empty success to a method it lacks leaves the client waiting for state that is
-never coming, which reads as a hang rather than as a missing feature.
+| [docs/DAEMON.md](docs/DAEMON.md) | The CLI, the configuration file, connection tokens, Node/Bun/Deno |
+| [docs/LIBRARY.md](docs/LIBRARY.md) | `createHost` and the ports, for building a host |
+| [docs/AGENT.md](docs/AGENT.md) | The `Agent` and `Session` contracts, for writing a backend |
+| [docs/AHP.md](docs/AHP.md) | Compatibility area by area, emitted actions, and the rules that fail silently |
+| [REFERENCE.md](REFERENCE.md) | The specification and the reference host, and what each has settled |
+| [ROADMAP.md](ROADMAP.md) | What is left, and the options for each |
 
 ## Layout
 
+| | |
+| --- | --- |
+| [src/types/](src/types/)                | Every shape, importing no runtime value. The contract. |
+| [src/rpc.ts](src/rpc.ts)                | JSON-RPC framing. Holds no socket. |
+| [src/listen.ts](src/listen.ts)          | Accepts connections on Node, Bun or Deno. |
+| [src/host.ts](src/host.ts)              | Channels, subscriptions, requests and state actions. Imports no backend. |
+| [src/resources.ts](src/resources.ts)    | The `resources` port: files, reads and writes. |
+| [src/terminals.ts](src/terminals.ts)    | The `terminals` port: a shell over pipes.
+| [src/changes.ts](src/changes.ts)        | The `changes` port: a changeset out of git. |
+| [src/git.ts](src/git.ts)                | The `directories` port: which branch a directory is on. |
+| [src/automations.ts](src/automations.ts)| The `automations` port, without a clock. |
+| [src/scheduled.ts](src/scheduled.ts)    | The same, with one. |
+| [src/agents/](src/agents/)              | Backends. `claude.ts` is the one that ships. |
+| [src/session.ts](src/session.ts)        | One live Claude session, reduced into its channels' state. |
+| [src/catalog.ts](src/catalog.ts)        | Claude's sessions, as rows a host can list. |
+| [src/transcript.ts](src/transcript.ts)  | A past Claude session read as turns, and the paging helpers. |
+| [src/probe.ts](src/probe.ts)            | One CLI at startup, to learn what Claude offers. |
+| [src/main.ts](src/main.ts)              | The daemon: argv, the filesystem and stdout. |
+| [src/index.ts](src/index.ts)            | The library entry point. |
+
+Everything below `src/host.ts` is Claude's, reached only through `Agent`. It used to be duplicated: `ahpc` had a `--claude` mode that reached the Agent SDK in-process, with its own translation of it. That is gone, and the client now depends on no agent SDK at all - two implementations of one translation meant two answers to every question, and the one nobody is looking at is the one that drifts. This is the only copy.
+
+## Examples
+
+Two agents and a client, each complete and each running. The two agents have a README that is the part of the contract they demonstrate.
+
+| | |
+| --- | --- |
+| [examples/echo](examples/echo) | The whole of `Agent` and `Session` with nothing behind it - no model, no subprocess, about two hundred lines. Its README is the contract in the order the host asks for it |
+| [examples/notes](examples/notes) | The same with tools: one that runs without asking, one that waits to be allowed, and a question that is not about a tool. Its README is the rules for asking |
+| [softov/ahpc](https://github.com/softov/ahpc) | An Agent Host Protocol chat and CLI client, depending on no agent SDK at all |
+
+```bash
+npm run echo  -- --port 9200
+npm run notes -- --port 9201
+ahpc --host ws://127.0.0.1:9201
 ```
-src/types/         Every shape, importing no runtime value. The contract.
-src/rpc.ts         JSON-RPC framing. Holds no socket.
-src/listen.ts      Accepts connections on Node, Bun or Deno.
-src/host.ts        Channels, subscriptions, requests and state actions.
-                   Imports no backend.
-src/agents/        Backends. `claude.ts` is the one that ships.
-src/catalog.ts     Claude's sessions, as rows a host can list.
-src/transcript.ts  A past Claude session read as turns, and the paging helpers.
-src/probe.ts       One CLI at startup, to learn what Claude offers.
-src/session.ts     One live Claude session, reduced into its channels' state.
-src/main.ts        The daemon: argv, the filesystem and stdout.
-src/index.ts       The library entry point.
-examples/echo/     A backend written from nothing, and a host serving it.
+
+## Development
+
+```bash
+npm test        # ~252 tests, no socket and no network
+npm run typecheck
 ```
 
-Everything below `src/host.ts` in that list is Claude's, reached only through
-`Agent`. `ahpc` makes the same translation in-process for its `--claude` mode,
-so the two are currently duplicated.
+The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
 
-**Where that resolves.** The client's `claudeHost` was the prototype and this
-is the thing it was a prototype of. Once this daemon is complete, `--claude`
-should mean *spawn one of these and connect to it* - which deletes the client's
-copy of the translation rather than extracting it into a package neither repo
-naturally owns. Until then the duplicate is deliberate and small enough to
-carry.
+[`test/conformance.test.ts`](test/conformance.test.ts): it drives the host and then replays every action it emitted through the protocol package's **own reducers** - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote. A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.
 
-## Checking it
+That checks the state a real AHP client would see rather than validating `ahpd` against snapshots produced by `ahpd` itself.
 
-`npm test` drives the host with no socket - `accept` takes a peer and returns a
-handler, so everything the protocol decides is testable without a network.
-
-The other check is the one that matters: the same client, rendering the same
-screen, against `--claude` (in-process) and `--host ws://…` (this daemon). If
-they differ, one of them is wrong.
+The check that cannot be done here is driving it with a client that was not written against it. `ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree. [ROADMAP.md](ROADMAP.md) records what a VS Code drive checked, and the two bugs it found that were invisible from the source.

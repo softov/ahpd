@@ -4,6 +4,9 @@ Two things outside this repository decide whether it is correct, and neither is
 a dependency: nothing here imports them and nothing here builds against them.
 They are read.
 
+For what this host actually does with what they say, see
+[docs/AHP.md](docs/AHP.md).
+
 ## The specification
 
 <https://microsoft.github.io/agent-host-protocol/>
