@@ -1,3 +1,4 @@
+import { within } from '../paths.js';
 import { catalogue } from '../catalog.js';
 import { probe } from '../probe.js';
 import { createSession } from '../session.js';
@@ -58,13 +59,22 @@ export function claude(options: ClaudeOptions): Agent {
   const workingDirectory = (asked?: string): string => {
     if (asked === undefined)
       return dir;
-    const found = dirs.find((served) => served === asked);
-    if (found === undefined) {
+    /*
+     * Under a served directory, not equal to one.
+     *
+     * This compared for equality, so a host told to serve `/home/you` served
+     * that one directory and refused every project inside it - which is the
+     * only kind of directory anybody opens. An editor asks for its workspace
+     * folder, and that is never the path somebody passed to `--path`.
+     */
+    if (!dirs.some((served) => within(served, asked))) {
       throw new Error(
         `This host does not serve ${asked}. It serves ${dirs.join(', ')}.`,
       );
     }
-    return found;
+    // What was asked for, not the root it sits under: the session runs where
+    // the client said.
+    return asked;
   };
 
   /*
@@ -93,17 +103,41 @@ export function claude(options: ClaudeOptions): Agent {
    */
   const schema = (): Bag => ({
     properties: {
+      /*
+       * One axis, and the CLI's own five values.
+       *
+       * The protocol's config schema is generic and a backend advertises what
+       * it has - VS Code's own hosts advertise different properties for
+       * Copilot and for Claude, and a client draws whatever it is given. Its
+       * Claude host says why in as many words: it collapses the platform's
+       * `autoApprove` x `mode` two-axis surface onto one `permissionMode`
+       * matching the SDK's enum, and *omits* `autoApprove`, `mode`,
+       * `isolation` and `branch` deliberately, because the pickers key off
+       * property names and omitting them suppresses a mode and branch UI that
+       * would not mean anything here.
+       *
+       * The wording is that host's too, so one session reads the same however
+       * it is opened. `auto` was missing here and is a real mode the CLI
+       * takes: the agent deciding, per call, whether it needs to ask.
+       */
       permissionMode: {
         type: 'string',
-        title: 'Permissions',
-        description: 'How much the agent may do before it asks.',
-        enum: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
-        enumLabels: ['Ask each time', 'Accept edits', 'Plan only', 'Bypass'],
+        title: 'Approvals',
+        description: 'How the agent handles tool approvals.',
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+        enumLabels: [
+          'Ask Before Edits',
+          'Edit Automatically',
+          'Plan Mode',
+          'Auto Mode',
+          'Bypass Permissions',
+        ],
         enumDescriptions: [
-          'Every tool call is confirmed',
-          'File edits run; commands still ask',
-          'Read and reason, change nothing',
-          'Nothing is confirmed',
+          'Asks before editing files.',
+          'Edits files without asking, and asks before using other tools.',
+          'Creates a plan before making changes.',
+          'Decides whether to ask for each tool operation.',
+          'Runs all tools without asking.',
         ],
         default: 'default',
         sessionMutable: true,

@@ -15,11 +15,12 @@ import type { TerminalStore } from './types/host.js';
  */
 
 /** What runs, when nothing else was asked for. */
-const shellOf = (): string => process.env.SHELL ?? '/bin/sh';
+const shellOf = (asked?: string): string => asked ?? process.env.SHELL ?? '/bin/sh';
 
 export function createTerminal(options: TerminalOptions): Terminal {
   const { uri, cwd, emit } = options;
-  let title = options.name ?? shellOf().slice(shellOf().lastIndexOf('/') + 1);
+  const shell = shellOf(options.shell);
+  let title = options.name ?? shell.slice(shell.lastIndexOf('/') + 1);
   let claim = options.claim;
   let cols = options.cols ?? 80;
   let rows = options.rows ?? 24;
@@ -38,7 +39,7 @@ export function createTerminal(options: TerminalOptions): Terminal {
     emit('terminal', { type: 'terminal/data', data });
   };
 
-  const child = spawn(shellOf(), [], {
+  const child = spawn(shell, [], {
     cwd,
     /*
      * Its own process group, so a signal reaches what it started.

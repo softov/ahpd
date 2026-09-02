@@ -21,6 +21,7 @@ import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
+import { within } from './paths.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Claim, Terminal } from './types/terminals.js';
@@ -82,6 +83,22 @@ function claimOf(value: unknown): Claim | undefined {
   return undefined;
 }
 
+
+/**
+ * A channel URI a client named, checked for being one at all.
+ *
+ * Not for its *scheme*: the client chooses that. VS Code names a session after
+ * its provider (`claude:/<uuid>`) and a terminal `agenthost-terminal:/<uuid>`,
+ * and this host demanded `ahp-session:/` and `ahp-terminal:` - so every session
+ * and every terminal an editor opened came back `is not a session URI`. The
+ * protocol's own `ahp-session:/<uuid>` is an example in a doc comment, and the
+ * host's job is to echo what it was given, not to rename it.
+ */
+const named = (uri: string, what: string): string => {
+  const colon = uri.indexOf(':');
+  if (colon <= 0 || idOf(uri) === '') throw new RpcError(-32602, `${uri} is not a ${what} URI`);
+  return uri;
+};
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
@@ -1052,11 +1069,50 @@ export function createHost(options: HostOptions): Host {
         ...(code !== undefined ? { exitCode: code } : {}),
       };
     });
+  /**
+   * Host-wide configuration, which a connected client pushes.
+   *
+   * Not this host's own settings - those are argv and `config.json`, and a
+   * client has no business in them. These are the preferences a *client* holds
+   * about how the host should behave for it: VS Code sends `defaultShell` out
+   * of `terminal.integrated.agentHostProfile.<os>` the moment it connects,
+   * because which shell a host-managed terminal opens is a preference of the
+   * person's rather than a fact about the machine.
+   *
+   * Everything pushed is kept, and only what is in the schema below is acted
+   * on. Keeping the rest is not indulgence: `values` is state a client reads
+   * back, and a host that dropped what it did not understand would report
+   * settings that silently reverted.
+   */
+  const rootConfig: Record<string, unknown> = {};
+  /**
+   * The keys this host honours, which is what a client draws a control from.
+   *
+   * One, so far. A key here is a promise that pushing it changes something.
+   */
+  const ROOT_CONFIG_SCHEMA = {
+    properties: {
+      defaultShell: {
+        type: 'string',
+        title: 'Default Shell',
+        description: 'Absolute path to the shell host-managed terminals open. The system shell when unset.',
+      },
+    },
+  };
   const rootState = async () => ({
     agents: descriptors(),
     // What this host is running, not what is on disk beside it.
     activeSessions: sessions.size,
     ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
+    /*
+     * Always present, and present even when empty.
+     *
+     * A client's root reducer returns the state *unchanged* when there is no
+     * `config` on it, so a host that left this out made every
+     * `root/configChanged` a no-op on every client - including the one that
+     * had just pushed it.
+     */
+    config: { schema: ROOT_CONFIG_SCHEMA, values: { ...rootConfig } },
   });
   /**
    * A session that already happened, read from its transcript.
@@ -1304,9 +1360,7 @@ export function createHost(options: HostOptions): Host {
     origin?: { kind: 'automation'; automation: string; run: string },
     credentials?: Record<string, string>,
   ): void => {
-    if (!uri.startsWith('ahp-session:/')) {
-      throw new RpcError(-32602, `${uri} is not a session URI`);
-    }
+    named(uri, 'session');
     if (sessions.has(uri))
       throw new RpcError(-32003, `${uri} already exists`);
     const agent = agents.get(provider);
@@ -1788,14 +1842,12 @@ export function createHost(options: HostOptions): Host {
           // should say that, not complain about the argument to a request it
           // was never going to answer.
           const shells = need(options.terminals, 'createTerminal');
-          const uri = String(params.channel ?? '');
-          if (!uri.startsWith('ahp-terminal:'))
-            throw new RpcError(-32602, `${uri} is not a terminal URI`);
+          const uri = named(String(params.channel ?? ''), 'terminal');
           if (terminals.has(uri))
             throw new RpcError(-32003, `${uri} already exists`);
           const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
           const roots = browsable();
-          if (!roots.some((root) => asked === root || asked.startsWith(`${root}/`))) {
+          if (!roots.some((root) => within(root, asked))) {
             throw new RpcError(-32009, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
           }
           /*
@@ -1816,6 +1868,8 @@ export function createHost(options: HostOptions): Host {
             uri,
             cwd: asked,
             claim,
+            // What a client asked this host to open, if one did.
+            ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
             ...(typeof params.name === 'string' ? { name: params.name } : {}),
             ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
             ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
@@ -2188,10 +2242,7 @@ export function createHost(options: HostOptions): Host {
          * the client can subscribe to it without a round trip in between.
          */
         createSession: async (params) => {
-          const uri = String(params.channel ?? '');
-          if (!uri.startsWith('ahp-session:/')) {
-            throw new RpcError(-32602, `${uri} is not a session URI`);
-          }
+          const uri = named(String(params.channel ?? ''), 'session');
           const provider = String(params.provider ?? first.provider);
           const config = (typeof params.config === 'object' && params.config !== null
             ? params.config
@@ -2230,7 +2281,7 @@ export function createHost(options: HostOptions): Host {
           const held = sessions.get(uri);
           if (!held)
             throw new RpcError(-32001, `No agent for session ${uri}`);
-          if (!chatUri.startsWith('ahp-chat:'))
+          if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
             throw new RpcError(-32602, `${chatUri} is not a chat URI`);
           if (byChat.has(chatUri))
             throw new RpcError(-32003, `${chatUri} already exists`);
@@ -2365,6 +2416,33 @@ export function createHost(options: HostOptions): Host {
            * session's. Review is deliberately not an *operation* - the
            * protocol has clients dispatch this and the server keep the flag.
            */
+          /*
+           * What a client wants of this host, kept and said back.
+           *
+           * On the root channel, so it belongs to no session and there is
+           * nothing to look up. VS Code pushes this at connect and used to be
+           * answered with `dispatchAction root/configChanged on unknown
+           * ahp-root://` - the shell it asked for went nowhere, and every
+           * terminal opened whatever `$SHELL` happened to be.
+           */
+          if (channel === ROOT && type === 'root/configChanged') {
+            const config = (typeof action.config === 'object' && action.config !== null
+              ? action.config
+              : {}) as Record<string, unknown>;
+            if (action.replace === true) for (const key of Object.keys(rootConfig)) delete rootConfig[key];
+            for (const [key, value] of Object.entries(config)) {
+              // `undefined` is how a key is taken back, and JSON has no such
+              // value - so a client saying so sends the key with a null.
+              if (value === null || value === undefined) delete rootConfig[key];
+              else rootConfig[key] = value;
+            }
+            log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
+            // Said back, like every other action a client originates: nothing
+            // in a client applies its own dispatch, and a second client
+            // watching the root learns of it only from here.
+            dispatch(ROOT, action);
+            return;
+          }
           if (type === 'changeset/filesReviewChanged') {
             const cut = channel.indexOf('/changeset/');
             const owner = cut > 0 ? channel.slice(0, cut) : '';
@@ -2589,7 +2667,11 @@ export function createHost(options: HostOptions): Host {
           }
           const session = held;
           if (!session) {
-            log(`dispatchAction ${type} on unknown ${channel}`);
+            // With its keys, because the useful half of this line is what was
+            // in the action nobody read - a type alone says only that a client
+            // wanted something.
+            const carried = Object.keys(action).filter((key) => key !== 'type');
+            log(`dispatchAction ${type} on unknown ${channel}${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
             return;
           }
           switch (type) {

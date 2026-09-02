@@ -86,6 +86,60 @@ All the SDK reports is `{ name, status, serverInfo?, error? }` — `status: 'nee
 
 **Suggestions.** (1) Ask the SDK to report what the CLI already knows — it performs the OAuth flow, so it has the server URI and the authorization server, and this is a gap in what it exposes rather than in the protocol. That is the only fix that gets the real state back. (2) Read the MCP server's own configuration from `.mcp.json` and friends and synthesise the metadata: honest for an HTTP server, impossible for a stdio one, and a second reader of files the CLI already owns. (3) Leave it as an error and stop tracking this, on the grounds that a client cannot act on the difference.
 
+## A-01-10 — A session cannot be given a worktree of its own
+
+VS Code dispatches `isolation` at session creation and this host answers `isolation is not a config key this backend takes`, so every session runs in the folder it was pointed at and two sessions in one repository edit the same files under each other.
+
+**Why it was not here before.** It looked like a client's business rather than a host's, which is exactly backwards — and the mistake is worth naming, because it is the same one A-01-03 makes elsewhere. `isolation` does not appear in `@microsoft/agent-host-protocol` at all: the protocol's config schema is deliberately generic, a backend advertises whatever property names it likes, and the *conventional* names live in the reference client. So an audit counted against the package's declared types — which is what A-01-03 is — could not see this, and the whole family with it: `isolation`, `branch`, `worktreeBranchPrefix`, `worktreeIncludeFiles`, `worktreeBranchTrack`, `worktreeCreateNewBranch`. They are in `vscode/src/vs/platform/agentHost/common/sessionConfigKeys.ts`, and that file says which side owns each one. These six are marked **host-owned** and "not passed to agents", which is as clear a statement as there is that this daemon is the thing that is missing.
+
+`autoApprove` and `mode` were in that same blind spot and are now served — the two axes a client draws a permission picker from, translated onto the CLI's single `permissionMode` by `permissionFor` in `src/session.ts`. That is the shape the rest of this entry would take.
+
+**What it means.** `isolation: 'folder'` is today's behaviour. `isolation: 'worktree'` means the host makes a `git worktree` for the session, off `branch`, named with `worktreeBranchPrefix`, with `worktreeIncludeFiles` copied in — untracked files a checkout would not carry, which is how a `.env` reaches the session that needs it. The session then runs there, and its changeset is against that branch rather than the shared tree.
+
+**What it costs today.** Two agents on one repository is the ordinary case for a *sessions server* — it is most of the reason to run one — and right now they share a working tree. The second turn's changeset contains the first turn's edits, `discard` on a file discards somebody else's work, and neither client shows that the two are related.
+
+**Suggestions.** (1) Take it in the `changes` port, which already spawns `git` and already knows the scopes: a worktree is a directory the port makes and reports, and `createSession` is handed it as `workingDirectory` — no new dependency, and a host given no `changes` port advertises no `isolation`, which is honest. (2) Take only `isolation` and `branch` first and leave the three worktree-shaping keys unadvertised: a client draws what a host advertises, so a half-served family is a half-drawn form rather than a broken one. (3) Leave it, and say in the schema that this host serves one directory per session — which is a refusal a person can read, and better than the silence it gives now.
+
+## A-01-11 — A model is two fields out of ten, and the effort control is in the wrong place
+
+`SessionModelInfo` declares ten fields and this host fills `id`, `name` and `provider`. Missing: `maxContextWindow`, `maxOutputTokens`, `maxPromptTokens`, `supportsVision`, `policyState` and — the one that changes a screen — `configSchema`.
+
+**Where effort actually belongs.** This host advertises `effortLevel` and `thinking` as *session* config keys, flat, the same for every model. VS Code's own Claude host does neither: reasoning effort is a **per-model** `configSchema` carrying a `thinkingLevel` property, and its `enum` comes from that model's own `reasoning_effort` list — different Claude models support different subsets (`['low','medium','high']`, `['high']`, `[]`), and a model supporting none renders no control at all. `createClaudeThinkingLevelSchema` in `common/claudeModelConfig.ts` is the whole of it, and the protocol's own comment says the same: "Configuration schema describing model-specific options (e.g. thinking level). Clients present this as a form and pass the resolved values in `ModelSelection.config`."
+
+So this host offers one effort control for models that do not all take the same levels, and offers it in a place where a client draws it as a generic row rather than beside the model it belongs to. `thinking` is a second control for the same axis, immutable for a reason (A-01-03), and would fold into this one.
+
+**What it costs today.** An effort level the chosen model does not support is accepted and then does nothing. A client cannot show a context window, cannot grey out a model whose policy blocks it, and cannot tell a vision model from one that will refuse an image.
+
+**Suggestions.** (1) Take `configSchema` first and leave the rest: it is the only one of the six that draws a control, and the CLI's `supportedModels()` is already called at startup. (2) Take the numeric limits alongside it if the control protocol reports them, and leave `policyState` — this host enforces no model policy and inventing one would be worse than an absent field. (3) Leave `effortLevel` advertised as well during a transition, since removing a key a client has drawn is a control that vanishes.
+
+## A-01-12 — Tools cannot be allowed or denied for a session
+
+`Permissions` is a platform config key — per-tool allow and deny lists — and VS Code's own Claude host advertises it *unchanged*, with a comment saying why: "the Claude SDK accepts `allowedTools` / `disallowedTools` natively". This host advertises nothing of the sort, so the only permission control it offers is the all-or-nothing mode in A-01-10's neighbour.
+
+**What it costs today.** "Always allow this tool in this session" is the ordinary way a person stops being asked about the one command they trust, and it is the control that makes `default` mode usable on a long session. Without it the only way to stop being asked is `bypassPermissions`, which stops being asked about *everything* — the safety control is a cliff rather than a slope.
+
+The SDK takes both lists when the query is built, and `canUseTool` is where this host already sits between the agent and the person, so a list could be enforced here as well as passed down.
+
+**Suggestions.** (1) Advertise the platform key and pass the lists to the SDK at creation, which is the smallest thing that works and matches what the reference host does. (2) Enforce in `canUseTool` too, so a list changed on a *running* session takes effect without a restart — the SDK takes these when the query is built and this host is the only thing that can act on a later change. (3) Leave it, and accept that this host's permission control is one axis with no exceptions.
+
+## A-02-03 — Steering is refused for a reason that may no longer be true
+
+`chat/pendingMessageSet` with `kind: 'steering'` is answered `steering messages are not served yet`, on the grounds — written in `src/host.ts` — that "the SDK has nowhere to put one".
+
+That looks wrong. The prompt this host hands the SDK is an async generator that stays open for the life of the session (`input()` in `src/session.ts`): it yields whatever is pushed into `waiting` and parks when there is nothing. Pushing a message into it while a turn is running is exactly what steering is, and nothing in the loop stops it — `queue` already pushes through the same door, it just waits for the turn to end first.
+
+**What it costs today.** Typing while the agent works queues the message behind the turn it was about. A person correcting an agent mid-way — the most ordinary thing there is — is answered after it has finished doing the thing they were trying to stop.
+
+**Suggestions.** (1) Try it: push the message immediately instead of queueing, and see whether the CLI takes it mid-turn. The change is one branch, and the reason for refusing is a claim nobody has tested. (2) If it does not work, keep the refusal and say the *tested* reason rather than the assumed one. (3) Either way, `ChatState.steeringMessage` and `ChatSummary.interactivity` are the two state fields this host never sets, and the first is only unset because of this.
+
+## A-01-13 — `!` in the composer does not run a command
+
+`InitializeResult.terminalCommandPrefix` is the prefix a host recognises at the start of a message as "run the rest of this as a terminal command". The standardised convention is `"!"`, and **absence means the host does not support it** — so this host's silence is already a correct answer, just not the useful one. VS Code implements the client half (`node/localCommands/bangLocalCommand.ts`) and this host has terminals, so both ends of it exist and nothing joins them.
+
+**What it costs today.** Running one command in the session's directory means opening a terminal channel, which is several actions and a panel, for something that is one line of typing in every other tool.
+
+**Suggestions.** (1) Advertise `"!"` and run the remainder through the `terminals` port, as one non-interactive command whose output becomes a response part — a host given no `terminals` port advertises no prefix, which is honest. (2) Advertise it and route through the agent instead, as though somebody had asked it to run the command, so the transcript records a tool call and the confirmation rules apply. (3) Leave it: the absence is already the specified way to say no.
+
 ## A-01-03 — What is left of the protocol
 
 Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**. [docs/AHP.md](docs/AHP.md) is the maintained table and counts commands and server notifications apart, which is the more useful split; the numbers here are the two groups added together.
@@ -116,5 +170,16 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 `chat/truncated` stays refused for a reason worth keeping: it means "drop the turns before this one", and when the harness compacts, every one of them is still in the transcript and still readable. What was compacted is the model's context, not the conversation.
 
 `ahpc dispatch <uri> <type> --field k=v` sends any client-dispatchable action verbatim, so this list is a thing that can be run rather than read off the types.
+
+**Four other surfaces, swept the same way and mostly clean.** Counting methods and actions was never the whole audit; these are the rest of what a client can see.
+
+| surface | this host |
+| --- | --- |
+| state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because of A-02-03. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
+| command params and results | three fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13), `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up), and `DispatchActionParams.clientSeq` — a client sends it and this host neither orders nor deduplicates by it, which is worth knowing rather than fixing |
+| error codes | 14 of the 15 declared are raised. Only `TurnInProgress` (-32004) is not, and deliberately: a turn dispatched while one is running is *queued* here rather than refused, which is the better answer and the one a client can act on |
+| `_meta` | the types name no well-known keys at all, so there is nothing to diff. What is known came from a conformance case, which is why `git.branch` is the only one written |
+
+**The blind spot this method still has.** All of it counts against `@microsoft/agent-host-protocol`, and the keys that cost the most this year were not in it — `autoApprove`, `mode`, `isolation`, `branch`, `Permissions` and the `worktree*` family live in the reference client, because the config schema is deliberately generic and conventions live where the pickers do. A-01-10, A-01-11 and A-01-12 all came out of reading `vscode/src/vs/platform/agentHost` rather than the package. Any future audit has to read both.
 
 **Suggestions.** (1) Leave the rest as named decisions and stop treating the table as a backlog — annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up: serving it against five enums is a method that answers nothing. (3) Take `session/serverToolsChanged` by giving this host tools of its own to contribute — it is empty for a true reason today, and the reason would stop being true the moment there was one.
