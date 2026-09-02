@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../src/types/rpc.js';
+import { Status } from '../src/catalog.js';
 
 /*
  * The host, without a socket.
@@ -548,6 +549,59 @@ describe('driving a turn', () => {
     // re-read the channel to find out.
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/responsePart'
       && (e.action.part as { kind?: string } | undefined)?.kind === 'error')).toBe(true);
+  });
+
+  /**
+   * A failure is about the turn that failed, not about the session for ever.
+   *
+   * `Status.Error` was read off a flag that was set when a turn failed and
+   * never unset, so one bad tool call left every client showing the session
+   * in error through every turn after it - and through a restart of the
+   * client, because the flag lives in the host rather than in the client that
+   * draws it. The only way back was a new session.
+   */
+  it('stops calling a session failed once it is working again', async () => {
+    const { client, uri } = await running();
+    const statusOf = async (): Promise<number> => {
+      const seen = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { status: number; error?: string } };
+      };
+      return seen.snapshot.state.status;
+    };
+    const errorOf = async (): Promise<string | undefined> => {
+      const seen = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { error?: string } };
+      };
+      return seen.snapshot.state.error;
+    };
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      errors: ['the tool exploded'], duration_ms: 7,
+    });
+
+    expect(await statusOf()).toBe(Status.Error);
+    expect(await errorOf()).toBe('the tool exploded');
+
+    // The next thing asked of it. Running, not still in error, from the
+    // moment the turn starts - the row does not wait for it to succeed to
+    // stop saying the last one failed.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    });
+    await settle();
+    expect(await statusOf()).toBe(Status.InProgress);
+    expect(await errorOf()).toBeUndefined();
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
+    expect(await statusOf()).toBe(Status.Idle);
+    expect(await errorOf()).toBeUndefined();
   });
 
   it('says a turn ended badly even when the harness gave no words', async () => {
