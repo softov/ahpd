@@ -1,3 +1,6 @@
 node_modules
 dist
 *.tsbuildinfo
+
+# The example backend writes here when you run `npm run notes`.
+/notes
