@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { Status } from './catalog.js';
 import { tail } from './transcript.js';
 import type { ActiveTurn, McpServerState } from '@microsoft/agent-host-protocol';
@@ -197,6 +198,48 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   }
 
   return out;
+}
+
+/**
+ * A permission mode a client asked for in somebody else's vocabulary.
+ *
+ * This backend advertises `permissionMode` and its own four values, which is
+ * what the protocol asks a backend to do - the config schema is deliberately
+ * generic, and VS Code's own hosts advertise different properties for Copilot
+ * and for Claude. So the schema stays this harness's.
+ *
+ * What arrives is another matter. A client draws controls from the schema and
+ * *also* dispatches two conventional keys of its own: `autoApprove` (how much
+ * may run unasked) and `mode` (how the agent works). VS Code sends both at
+ * session creation whatever a host advertises, and this host used to answer
+ * `autoApprove is not a config key this backend takes` and leave the session
+ * where it was.
+ *
+ * So they are accepted and mapped here, on the way in, and nothing about what
+ * is advertised changes. Planning wins over any approval level - a plan that
+ * ran a command would not be a plan - and `autopilot` is the mode axis saying
+ * what `autoApprove` says at its top, which is why VS Code's own migration
+ * moved `autoApprove: 'autopilot'` onto that axis.
+ *
+ * `assisted` is the inexact one: VS Code means "assess the risk first" and
+ * this harness has no risk model, so it gets `acceptEdits`, which is the rung
+ * it does have in that place.
+ *
+ * Undefined for a key or a value neither axis knows, so a caller refuses it
+ * rather than collapsing it into `default`.
+ */
+export function permissionFor(key: string, value: string): PermissionMode | undefined {
+  if (key === 'mode') {
+    if (value === 'plan') return 'plan';
+    if (value === 'autopilot') return 'bypassPermissions';
+    if (value === 'interactive') return 'default';
+    return undefined;
+  }
+  if (key !== 'autoApprove') return undefined;
+  if (value === 'autoApprove' || value === 'autopilot') return 'bypassPermissions';
+  if (value === 'assisted') return 'acceptEdits';
+  if (value === 'default') return 'default';
+  return undefined;
 }
 
 export function createSession(options: SessionOptions): Session {
@@ -1152,6 +1195,26 @@ export function createSession(options: SessionOptions): Session {
     setPermissionMode: (mode) => {
       const known = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
       const found = known.find((value) => value === mode);
+      if (!found) return false;
+      settings.permissionMode = found;
+      void handle.setPermissionMode(found).catch(() => {});
+      return true;
+    },
+
+    /**
+     * A key this backend does not advertise, taken anyway when it means one.
+     *
+     * `autoApprove` and `mode` are conventional names a client sends whatever
+     * a host advertises, and both mean something this harness can do. Mapped
+     * onto the mode the CLI takes and recorded there, so the control this
+     * backend *does* advertise shows what actually happened.
+     *
+     * False for anything else, and false is a real answer: a setter that
+     * reported success and changed nothing would leave a client showing a
+     * session in a state it is not in.
+     */
+    setConfig: (key, value) => {
+      const found = permissionFor(key, value);
       if (!found) return false;
       settings.permissionMode = found;
       void handle.setPermissionMode(found).catch(() => {});
