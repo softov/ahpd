@@ -409,11 +409,67 @@ export function createHost(options: HostOptions): Host {
     return leadOf(held)?.activity();
   };
   /** Everything watching a channel, which is not everything connected. */
+  /**
+   * The chat a URI names, whichever shape it was written in.
+   *
+   * This host mints `ahp-chat:/<id>`, which is the form the specification
+   * documents and the one it says to use: "the owning session URI is **not**
+   * encoded in the chat URI - the relationship is expressed via the session's
+   * `chats` catalogue". So that is what `defaultChat` and `chats` carry, and
+   * what every client is told.
+   *
+   * VS Code addresses a chat the other way. Its own host mints
+   * `ahp-chat://<chatId>/<base64url(sessionUri)>` and its client *derives* that
+   * string rather than reading `chats`, so against a host that publishes the
+   * documented form it subscribes twice: once to what it was told, which works,
+   * and once to what it computed, which does not exist. The pane it draws reads
+   * the second, so a conversation this host had already sent arrived nowhere.
+   *
+   * Answering both costs one function. Changing what this host *publishes*
+   * would cost conformance, and would be the wrong half to give up: a client
+   * reading the catalogue is doing the right thing and must keep working.
+   *
+   * `default` is the only chat id resolved, because it is the only one a client
+   * can compute without being told. Any other id is a chat it learned about
+   * from `chats`, where it also learned the URI.
+   */
+  const chatFor = (uri: string): string | undefined => {
+    if (!uri.startsWith('ahp-chat://')) return undefined;
+    const [chatId, ...rest] = uri.slice('ahp-chat://'.length).split('/');
+    const encoded = rest.join('/');
+    if (chatId !== 'default' || encoded === '') return undefined;
+    let session: string;
+    try {
+      // base64url, unpadded, as the reference host writes it.
+      session = Buffer.from(encoded, 'base64url').toString('utf8');
+    }
+    catch { return undefined; }
+    if (!session.includes(':')) return undefined;
+    const held = sessions.get(session);
+    if (held) return held.defaultChat;
+    // Not running. The default chat of a session read from its transcript is
+    // named after it, which is what `snapshotOf` will go on to serve.
+    return `ahp-chat:/${idOf(session)}`;
+  };
+
+  /**
+   * One message, to everyone watching that channel.
+   *
+   * Addressed to each connection the way that connection asked: a client
+   * watching an alias of this channel is sent the same payload under the name
+   * it used, because its subscription is keyed by that name and it would drop
+   * anything else.
+   */
   const broadcast = (channel: string, method: string, params: unknown): void => {
     for (const connection of connections) {
-      if (!connection.watching.has(channel))
-        continue;
-      connection.peer.notify(method, params);
+      if (connection.watching.has(channel)) connection.peer.notify(method, params);
+      // And again under the other name, when the client asked by both. Not an
+      // either/or: a client that subscribed twice holds two subscriptions, each
+      // keyed by the string it sent, and one of them would never hear anything.
+      const alias = connection.aliases.get(channel);
+      if (alias !== undefined && connection.watching.has(alias)) {
+        connection.peer.notify(method, { ...(params as Record<string, unknown>), channel: alias });
+      }
     }
   };
   /** Which client's dispatch an action is the echo of. */
@@ -1585,7 +1641,7 @@ export function createHost(options: HostOptions): Host {
     accept(peer: Peer) {
       const connection = {
         peer, clientId: '', watching: new Set<string>(), grants: new Set<string>(),
-        tokens: new Map<string, string>(),
+        tokens: new Map<string, string>(), aliases: new Map<string, string>(),
       };
 
       /**
@@ -1811,7 +1867,16 @@ export function createHost(options: HostOptions): Host {
          */
         subscribe: async (params) => {
           const channel = String(params.channel ?? '');
-          const snapshot = await snapshotOf(channel);
+          // What it means here, and what it was called there. The snapshot is
+          // taken of the channel and returned under the name the client used -
+          // a client that asked about one URI and was answered about another
+          // has been answered about something it is not watching.
+          const meant = chatFor(channel) ?? channel;
+          const snapshot = await snapshotOf(meant);
+          if (meant !== channel) {
+            connection.aliases.set(meant, channel);
+            snapshot.resource = channel;
+          }
           connection.watching.add(channel);
           // From here on, an unsubscribe means something: a watch nobody has
           // subscribed to yet is not one everybody has finished with.
@@ -1823,8 +1888,10 @@ export function createHost(options: HostOptions): Host {
           // the snapshot or still to come by the ordinary route.
           const at = typeof snapshot.fromSeq === 'number' ? snapshot.fromSeq : 0;
           for (const envelope of replayable) {
-            if (envelope.channel === channel && envelope.serverSeq > at) {
-              connection.peer.notify('action', envelope);
+            if (envelope.channel === meant && envelope.serverSeq > at) {
+              connection.peer.notify('action', meant === channel
+                ? envelope
+                : { ...envelope, channel });
             }
           }
           return { snapshot };
@@ -2566,7 +2633,11 @@ export function createHost(options: HostOptions): Host {
        * because by the time it answers that is nobody's.
        */
       const applyDispatch = (params: Record<string, unknown>, origin: Origin): void => {
-        const channel = String(params.channel ?? '');
+        const asked = String(params.channel ?? '');
+        // Resolved before anything looks it up, so a client that talks to a
+        // chat under its own spelling drives the same conversation it is
+        // watching rather than one nothing here has heard of.
+        const channel = chatFor(asked) ?? asked;
         const action = (typeof params.action === 'object' && params.action !== null
           ? params.action
           : {}) as Record<string, unknown>;
@@ -3079,6 +3150,9 @@ export function createHost(options: HostOptions): Host {
           // shed one consumer kills the stream the others are reading.
           const channel = String(params.channel ?? '');
           connection.watching.delete(channel);
+          for (const [meant, alias] of connection.aliases) {
+            if (alias === channel) connection.aliases.delete(meant);
+          }
           // Except for a resource watch, where the protocol says the opposite
           // in as many words: it has no dispose command, so the last
           // unsubscribe is what releases the watcher.

@@ -221,6 +221,17 @@ export interface Connection {
    * the credentials the daemon was started with.
    */
   tokens: Map<string, string>;
+  /**
+   * Channels this client named in a shape of its own, by the channel they mean.
+   *
+   * A client may address a chat by a URI this host did not mint - see
+   * `chatFor` - and it then expects to be answered about *that* URI: its
+   * subscription is keyed by the string it sent, and an action arriving under
+   * any other name belongs to a channel it is not watching. So the spelling is
+   * remembered per connection and every notification is addressed back the way
+   * it was asked for.
+   */
+  aliases: Map<string, string>;
 }
 
 /** A protocol server. One host serves many connections. */

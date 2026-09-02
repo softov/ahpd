@@ -21,12 +21,13 @@ const arg = (name, fallback) => {
   return at === -1 ? fallback : process.argv[at + 1];
 };
 const port = Number(arg('listen', 9204));
+const host = arg('host', '127.0.0.1');
 const upstream = arg('upstream', 'ws://127.0.0.1:9187');
 const out = arg('out', 'ahp-wire.jsonl');
 const quiet = process.argv.includes('--quiet');
 
 writeFileSync(out, '');
-console.log(`tee ws://127.0.0.1:${port} -> ${upstream}, writing ${out}`);
+console.log(`tee ws://${host}:${port} -> ${upstream}, writing ${out}`);
 
 /** One frame, as it went past. Parsed only to summarise it on stdout. */
 const note = (from, raw) => {
@@ -79,4 +80,4 @@ wss.on('connection', (down, request) => {
   up.on('error', (e) => bothGo(`host error: ${e.message}`));
 });
 
-server.listen(port, '127.0.0.1');
+server.listen(port, host);

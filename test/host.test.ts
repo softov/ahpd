@@ -3000,3 +3000,63 @@ it('takes a client into a session it is serving from a transcript', async () => 
   expect(said.filter((e) => e.rejectionReason === undefined)).toHaveLength(1);
   expect(said.some((e) => e.rejectionReason !== undefined)).toBe(false);
 });
+
+/*
+ * The other spelling of a chat URI.
+ *
+ * This host mints `ahp-chat:/<id>` because that is the form the specification
+ * documents, and it says in as many words that the owning session is *not*
+ * encoded in a chat URI. VS Code derives `ahp-chat://default/<base64url>` from
+ * the session instead of reading `chats`, so against a conformant host it
+ * subscribes to a channel that does not exist and draws the pane from that one.
+ * Both are answered; only one is published.
+ */
+describe('a chat asked for by the name a client computed', () => {
+  const derived = (session: string) =>
+    `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  it('answers about a live session\'s chat, under the name that was used', async () => {
+    const { client, uri, chatUri } = await running();
+    const alias = derived(uri);
+
+    const own = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: unknown[] } };
+    };
+    const same = await client.handle({ method: 'subscribe', params: { channel: alias } }) as {
+      snapshot: { resource: string; state: { turns: unknown[] } };
+    };
+    // The same conversation...
+    expect(same.snapshot.state.turns).toEqual(own.snapshot.state.turns);
+    // ...answered about the URI the client asked about, because that is the
+    // one its subscription is keyed by.
+    expect(same.snapshot.resource).toBe(alias);
+  });
+
+  it('sends the conversation on under the name it was asked for', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const alias = derived(uri);
+    await client.handle({ method: 'subscribe', params: { channel: alias } });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: alias, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+
+    // Driven through the alias, and heard back through it: a client watching
+    // one name and told about another has been told nothing.
+    expect(sdk.said).toEqual(['hi']);
+    const said = actions(p, alias).find((e) => e.action.type === 'chat/turnStarted');
+    expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
+    // And the canonical channel is what this host publishes, so a client that
+    // read `chats` is watching that one and is unaffected.
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
+  });
+
+  it('leaves a chat URI it did not mint alone', async () => {
+    const { client } = await running();
+    // Not base64, and not a chat id anybody can compute.
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat://peer/not-base64!' } }))
+      .rejects.toMatchObject({ code: -32001 });
+  });
+});
