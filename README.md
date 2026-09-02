@@ -212,7 +212,7 @@ method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 par
 | Sessions | create, resume, dispose, catalogue | ✅ | Past sessions are reconstructed from Claude transcripts, and resumed only once somebody starts a turn on one |
 | Chats and turns | turns, streaming, cancellation, tools | ✅ | Several chats can share one session, each on its own agent process |
 | Human in the loop | tool confirmation, agent questions | ✅ | `session/inputNeeded` is a list, so two tools asking at once are answered apart |
-| Session configuration | model, permission mode, effort, output style | ✅ | Capabilities are discovered from the harness at startup, so a composer draws itself before any turn. `sessionConfigCompletions` is 🚫: every key here is an enum, so there is nothing to look up |
+| Session configuration | model, permission mode, effort, output style | ✅ | A backend advertises its own properties and a client draws what it is given - the same five approval modes VS Code's own Claude host offers. Keys a client sends anyway (`autoApprove`, `mode`) are mapped onto that. Capabilities are discovered at startup, so a composer draws itself before any turn. `sessionConfigCompletions` is 🚫: every key here is an enum |
 | Resources | `resources` port | 🧩 | Optional; reads and writes confined to the served directories, writes behind `resourceRequest` |
 | Resource watches | `resources` port | 🧩 | Watch lifetime follows channel subscriptions - the protocol has no dispose command |
 | Terminals | `terminals` port | 🧩 | The built-in implementation uses pipes, not a PTY, and says so rather than leaving it to be discovered |
@@ -222,7 +222,7 @@ method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 par
 | Logs | `otlp/exportLogs` | 🚧 | Logs only. Tracing and metrics are not emitted |
 | Annotations | — | ➖ | No producer currently |
 
-Method by method that is **31 of the 32 declared commands** and **63 of the 96
+Method by method that is **31 of the 32 declared commands** and **64 of the 96
 state actions**. The rest is `-32601`, said rather than quietly answered: a host
 that returns an empty success to a method it lacks leaves the client waiting for
 state that is never coming, which reads as a hang rather than as a missing

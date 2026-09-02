@@ -38,7 +38,7 @@ specification: nothing here is listed because AHP defines it.
 | `dispatchAction` | client-origin state actions | 🚧 | See [state actions](#state-actions) for which |
 | `listSessions`, `createSession`, `disposeSession` | the catalogue and its lifecycle | ✅ | Most-recently-modified first, live sessions included. Every row opens from its transcript - a file read, no CLI - and is **resumed** only when somebody starts a turn on it |
 | `createChat`, `disposeChat` | several chats per session | ✅ | Each is its own agent process on one directory and one config. The last one cannot be disposed, and the refusal says so |
-| `resolveSessionConfig` | the schema before a session exists | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed |
+| `resolveSessionConfig` | the schema before a session exists | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. A backend advertises its own properties and a client draws what it is given; the Claude backend offers the same five approval modes VS Code's own Claude host does. `autoApprove` and `mode` are conventional keys a client dispatches whatever a host advertises, and are mapped onto that one axis on the way in |
 | `sessionConfigCompletions` | — | 🚫 | Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does |
 | `fetchTurns` | transcript paging | ✅ | Newest 50 in the snapshot, a cursor for the rest |
 | `completions` | `/` against the session's commands | ✅ | Falling back to the harness-wide list |
@@ -65,12 +65,12 @@ specification: nothing here is listed because AHP defines it.
 
 ## State actions
 
-**63 of the 96 declared, across nine channels.** Grouped by channel; a group is
+**64 of the 96 declared, across nine channels.** Grouped by channel; a group is
 🚧 when some of it is served.
 
 | channel | ahpd | Status | Notes |
 | --- | --- | :---: | --- |
-| `root/*` | 3 of 4 | 🚧 | `agentsChanged`, `activeSessionsChanged`, `terminalsChanged`. `configChanged` is host-wide configuration, of which this daemon has none a client may change |
+| `root/*` | 4 of 4 | ✅ | `agentsChanged`, `activeSessionsChanged`, `terminalsChanged`, and `configChanged` - the last one client-dispatched: VS Code pushes `defaultShell` at connect, and everything else it pushes is kept and read back |
 | `session/*` | 22 of 28 | 🚧 | Everything a catalogue row and a detail pane read. Not emitted: `creationFailed` (`createSession` finishes or throws inside the request, so there is nothing to announce), `customizationRemoved` (the list goes out whole), `serverToolsChanged` (empty for a true reason - `serverTools` are tools the *host* contributes, and this host defines none), and the three `workingDirectory*` (fixed at creation here: a session that moves is a conversation whose second half cannot see the files its first half was about) |
 | `chat/*` | 20 of 30 | 🚧 | The turn, its parts, its tools and its questions. Not emitted: `toolCallDelta` (arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete), `toolCallAuthRequired` / `AuthResolved` (mid-call MCP authentication, a moment the SDK does not surface), `turnResume`, and the four client-dispatchable ones this host would ignore |
 | `terminal/*` | 6 of 11 | 🚧 | `data`, `input`, `resized`, `claimed`, `titleChanged`, `exited`. The five not served are shell integration - `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` need a PTY this daemon does not have, and `isPty: false` is the honest form of all four |
@@ -89,7 +89,7 @@ specification: nothing here is listed because AHP defines it.
 `session/activeClientSet`, `session/customizationToggled`,
 `session/mcpServerStartRequested` / `StopRequested`, `terminal/input`,
 `terminal/resized`, `automation/createRequested` / `updateRequested`,
-`automationRun/cancelRequested`.
+`automationRun/cancelRequested`, `root/configChanged`.
 
 Anything else dispatched is logged and dropped rather than half-applied.
 
@@ -108,7 +108,7 @@ Anything else dispatched is logged and dropped rather than half-applied.
 `chat/turnCancelled`, `chat/error`, `chat/turnsLoaded` -
 `changeset/contentChanged` / `operationsChanged` / `operationStatusChanged` -
 `terminal/data` / `titleChanged` / `resized` / `claimed` / `exited` -
-`root/agentsChanged` / `activeSessionsChanged` / `terminalsChanged`.
+`root/agentsChanged` / `activeSessionsChanged` / `terminalsChanged` / `configChanged`.
 
 ## Behaviour worth knowing
 
