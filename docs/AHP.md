@@ -185,9 +185,18 @@ anything.
 ### Session URIs
 
 A session URI is the **client's** to name and this host's to echo, and only the
-id inside one is ever read. So `claude:/<uuid>` - which is what VS Code computes
-from a session's provider - and `ahp-session:/<uuid>` - which is what this host
-lists that same session as - are one session, and both are answered.
+id inside one is ever read. This host lists a session as `<provider>:/<uuid>`,
+which is what the only other implementation computes - it builds a session URI
+that way both when it creates a session and when it reopens one it listed.
+
+It used to publish `ahp-session:/<uuid>` instead, and that gave that client two
+strings for one session. Which one it reached for came out of its own stored
+state, so the same session, with the same bytes behind it, drew its
+conversation when addressed as `claude:/<uuid>` and drew nothing when addressed
+as `ahp-session:/<uuid>`. Two captures a minute apart, identical on the wire
+apart from the scheme, is what settled it.
+
+The older spelling is still answered, because only the id is read.
 
 Both are also *keyed* as one now. They were not: who owns a session, where it
 ran, the bits a client set on it and the settings chosen for it before it starts

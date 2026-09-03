@@ -147,6 +147,11 @@ export function createHost(options: HostOptions): Host {
    * host takes it out again when the client unsubscribes or goes. Keyed by
    * `clientId` rather than by connection, because that is what the protocol
    * keys it by - a client that reconnects is the same client.
+      *
+   * By the id inside a session's URI, like `flags` and `chosen`: a client
+   * announces itself on the way in, which can be before this host has listed
+   * anything and so before it knows the name it will publish that session
+   * under.
    */
   const presence = new Map<string, Map<string, Bag>>();
 
@@ -159,7 +164,12 @@ export function createHost(options: HostOptions): Host {
     opened: boolean;
   }>();
   /**
-   * `IsRead` and `IsArchived`, per session.
+   * `IsRead` and `IsArchived`, per session - by the **id** inside its URI.
+   *
+   * Keyed by the id and not the URI because a client may set a flag on a row
+   * before this host has listed anything, and until it has, the name it will
+   * publish that session under is not yet known. The id is the identity; the
+   * scheme is only whose it is.
    *
    * The client flags, and unlike the in-process host these genuinely belong
    * here: a flag one client sets is a flag every other client has to see, and
@@ -272,9 +282,26 @@ export function createHost(options: HostOptions): Host {
    */
   const heldAs = (uri: string): string => {
     if (sessions.has(uri) || owners.has(uri)) return uri;
-    const named = uriFor(idOf(uri));
+    const named = nameOf(idOf(uri));
     return sessions.has(named) || owners.has(named) ? named : uri;
   };
+  /**
+   * The name this host publishes a session under, by the id inside it.
+   *
+   * A session URI is the client's to name, and the only implementation there
+   * is builds one as `<provider>:/<id>` - the provider as the *scheme* - both
+   * when it creates a session and when it reopens one it listed. Publishing
+   * `ahp-session:/<id>` instead gave it two strings for one session, and which
+   * one it reached for came out of its own stored state: addressed as
+   * `claude:/<id>` the conversation drew, addressed as `ahp-session:/<id>` the
+   * same session with the same bytes behind it drew nothing.
+   *
+   * So this host names them the way that client will: the id is the identity,
+   * and the scheme is whose it is. The old spelling still resolves - see
+   * `heldAs` - because it is only ever read through the id.
+   */
+  const names = new Map<string, string>();
+  const nameOf = (id: string): string => names.get(id) ?? uriFor(id);
   /**
    * Terminals, by their own channel URI.
    *
@@ -324,6 +351,9 @@ export function createHost(options: HostOptions): Host {
    * when the query is built, so a session resumed without them is one that can
    * never be given them - which made "plan only" unofferable on exactly the
    * sessions somebody is deciding whether to continue.
+   *
+   * By the id, for the reason `flags` is: settings arrive before a listing has
+   * said what this host will call the session.
    */
   const chosen = new Map<string, Record<string, string>>();
   /**
@@ -436,7 +466,7 @@ export function createHost(options: HostOptions): Host {
   const statusOf = (uri: string): number => {
     const held = sessions.get(uri);
     if (!held)
-      return Status.Idle | (flags.get(uri) ?? 0);
+      return Status.Idle | (flags.get(idOf(uri)) ?? 0);
     /*
      * The default chat's activity, promoted by any other chat that needs
      * something.
@@ -452,7 +482,7 @@ export function createHost(options: HostOptions): Host {
       if (its === Status.InputNeeded) activity = Status.InputNeeded;
       else if (its === Status.Error && activity !== Status.InputNeeded) activity = Status.Error;
     }
-    return activity | (flags.get(uri) ?? 0);
+    return activity | (flags.get(idOf(uri)) ?? 0);
   };
   /** The most recent change across a session's chats. */
   const modifiedOf = (held: Held): string => [...held.chats.values()]
@@ -513,7 +543,7 @@ export function createHost(options: HostOptions): Host {
       }
       catch { return undefined; }
     }
-    if (uri.startsWith('ahp-chat:/')) return uriFor(idOf(uri));
+    if (uri.startsWith('ahp-chat:/')) return nameOf(idOf(uri));
     return undefined;
   };
 
@@ -739,7 +769,7 @@ export function createHost(options: HostOptions): Host {
   };
 
   /** Who this session currently has in it. Always a list, because the field is required. */
-  const activeClientsOf = (uri: string): Bag[] => [...(presence.get(uri)?.values() ?? [])];
+  const activeClientsOf = (uri: string): Bag[] => [...(presence.get(idOf(uri))?.values() ?? [])];
 
   /**
    * Take a client out of a session, if nothing else is holding it there.
@@ -752,13 +782,13 @@ export function createHost(options: HostOptions): Host {
    * must not remove them from it.
    */
   const leaves = (uri: string, clientId: string): void => {
-    const held = presence.get(uri);
+    const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
     for (const connection of connections) {
       if (connection.clientId === clientId && connection.watching.has(uri)) return;
     }
     held.delete(clientId);
-    if (held.size === 0) presence.delete(uri);
+    if (held.size === 0) presence.delete(idOf(uri));
     dispatch(uri, { type: 'session/activeClientRemoved', clientId });
   };
 
@@ -1269,6 +1299,9 @@ export function createHost(options: HostOptions): Host {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
+    // Named by whoever created it, which is the client. Recorded so every
+    // other answer about it uses that same string.
+    names.set(idOf(uri), uri);
     byChat.set(chatUri, { uri, chat: session });
     owners.set(uri, agent);
     return session;
@@ -1357,9 +1390,10 @@ export function createHost(options: HostOptions): Host {
       for (const row of rows) {
         if (claimed.has(row.id))
           continue;
-        const resource = uriFor(row.id);
+        const resource = `${agent.provider}:/${row.id}`;
         // Remembered as it is listed: opening a row asks its backend for the
         // transcript, and the URI says neither whose it is nor where it ran.
+        names.set(row.id, resource);
         owners.set(resource, agent);
         wheres.set(resource, row.workingDirectories);
         births.set(resource, row.createdAt);
@@ -1370,7 +1404,7 @@ export function createHost(options: HostOptions): Host {
           title: row.title,
           // Nothing this host started is running yet, so activity is idle and
           // the only bits set are the client's own.
-          status: Status.Idle | (flags.get(resource) ?? 0),
+          status: Status.Idle | (flags.get(row.id) ?? 0),
           createdAt: row.createdAt,
           modifiedAt: row.modifiedAt,
           workingDirectories: row.workingDirectories,
@@ -1492,7 +1526,7 @@ export function createHost(options: HostOptions): Host {
     // The listing is what says whose session this is, so it is asked first.
     const found = await listing();
     const row = found.find((item) => idFor(item.resource) === id);
-    const owner = owners.get(uriFor(id));
+    const owner = owners.get(nameOf(id));
     if (!row || !owner?.transcript)
       return undefined;
     titles.set(id, row.title);
@@ -1663,7 +1697,7 @@ export function createHost(options: HostOptions): Host {
     const owning = sessionOfChat(channel) ?? channel;
     const id = idOf(owning);
     const turns = await past(id);
-    const owner = owners.get(uriFor(id)) ?? first;
+    const owner = owners.get(nameOf(id)) ?? first;
     if (turns) {
       const title = titles.get(id) ?? 'Session';
       if (sessionOfChat(channel) !== undefined) {
@@ -1674,7 +1708,7 @@ export function createHost(options: HostOptions): Host {
             title,
             status: Status.Idle,
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
-            ...startedBy(uriFor(id)),
+            ...startedBy(nameOf(id)),
             ...tail(turns),
             queuedMessages: [],
           },
@@ -1687,25 +1721,25 @@ export function createHost(options: HostOptions): Host {
           resource: channel,
           provider: owner.provider,
           title,
-          status: Status.Idle | (flags.get(`ahp-session:/${id}`) ?? 0),
+          status: Status.Idle | (flags.get(id) ?? 0),
           lifecycle: 'ready',
-          defaultChat: chatUriFor(uriFor(id)),
+          defaultChat: chatUriFor(nameOf(id)),
           // A whole `ChatSummary`, and not a name and a URI: a client reads a
           // chat row's `status` and `modifiedAt` by name, and a live session
           // answers with both.
           chats: [
             {
-              resource: chatUriFor(uriFor(id)),
+              resource: chatUriFor(nameOf(id)),
               title,
               status: Status.Idle,
-              modifiedAt: moves.get(uriFor(id)) ?? new Date().toISOString(),
-              ...startedBy(uriFor(id)),
+              modifiedAt: moves.get(nameOf(id)) ?? new Date().toISOString(),
+              ...startedBy(nameOf(id)),
             },
           ],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
-          activeClients: activeClientsOf(`ahp-session:/${id}`),
-          ...describes(`ahp-session:/${id}`),
-          ...changesetsOf(`ahp-session:/${id}`),
+          activeClients: activeClientsOf(nameOf(id)),
+          ...describes(nameOf(id)),
+          ...changesetsOf(nameOf(id)),
           // What its backend offers, since nothing is running to say what this
           // session in particular was given.
           customizations: about(owner.provider).seeds,
@@ -1714,7 +1748,7 @@ export function createHost(options: HostOptions): Host {
           // which are the settings somebody wants *before* continuing one.
           config: {
             schema: owner.schema(),
-            values: { ...owner.defaults(), ...(chosen.get(`ahp-session:/${id}`) ?? {}) },
+            values: { ...owner.defaults(), ...(chosen.get(id) ?? {}) },
           },
         },
         fromSeq: serverSeq,
@@ -2094,8 +2128,18 @@ export function createHost(options: HostOptions): Host {
           // taken of the channel and returned under the name the client used -
           // a client that asked about one URI and was answered about another
           // has been answered about something it is not watching.
+          const snapshot = await snapshotOf(meantBy(channel));
+          /*
+           * Resolved again, after the snapshot rather than before it.
+           *
+           * Opening a browsed row is what makes this host ask its backend for
+           * a catalogue, and until it has asked there is no name for the row
+           * to be an alias *of* - so a name resolved beforehand came back
+           * unchanged, no alias was recorded, and every action about that
+           * session afterwards went out under a name this client was not
+           * watching.
+           */
           const meant = meantBy(channel);
-          const snapshot = await snapshotOf(meant);
           if (meant !== channel) {
             connection.aliases.set(meant, channel);
             if (sessionOfChat(channel) === undefined) spelledFor(channel, snapshot);
@@ -2803,7 +2847,7 @@ export function createHost(options: HostOptions): Host {
           }
           sessions.delete(uri);
           origins.delete(uri);
-          presence.delete(uri);
+          presence.delete(idOf(uri));
           activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
           // `session`, which is the name the protocol gives it. Under
@@ -3033,8 +3077,8 @@ export function createHost(options: HostOptions): Host {
             clientId,
             tools: Array.isArray(carried.tools) ? carried.tools : [],
           };
-          const held = presence.get(channel) ?? new Map<string, Bag>();
-          presence.set(channel, held);
+          const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
+          presence.set(idOf(channel), held);
           // Re-announcing is how a client refreshes what it contributes, so
           // this replaces rather than merges - a tool taken away has to be
           // able to go.
@@ -3049,11 +3093,11 @@ export function createHost(options: HostOptions): Host {
           const on = type === 'session/isReadChanged'
             ? action.isRead === true
             : action.isArchived === true;
-          const before = flags.get(uri) ?? 0;
+          const before = flags.get(idOf(uri)) ?? 0;
           const after = on ? before | bit : before & ~bit;
           if (after === before)
             return;
-          flags.set(uri, after);
+          flags.set(idOf(uri), after);
           // Every client watching, and the catalogue: a flag one client sets
           // is a flag the others have to see, which is what having a host
           // for this buys over each client keeping its own.
@@ -3116,9 +3160,9 @@ export function createHost(options: HostOptions): Host {
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
-          const kept = { ...chosen.get(uri) };
+          const kept = { ...chosen.get(idOf(uri)) };
           for (const [key, value] of Object.entries(config)) kept[key] = String(value);
-          chosen.set(uri, kept);
+          chosen.set(idOf(uri), kept);
           dispatch(uri, action);
           return;
         }
@@ -3141,8 +3185,17 @@ export function createHost(options: HostOptions): Host {
               refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
               return;
             }
-            // `past` is what learned whose session this is.
-            const owner = owners.get(uri);
+            /*
+             * Named again, because `past` is what learned whose session this
+             * is - and what this host will call it.
+             *
+             * A client may say the first thing about a row before anything has
+             * listed a catalogue, and until something has, there is no name to
+             * look an owner up under. Asking with the name computed beforehand
+             * found nothing and refused a session that was right there.
+             */
+            const named = nameOf(id);
+            const owner = owners.get(named);
             if (!owner) {
               refuse(connection.peer, channel, action, origin, `No backend owns ${channel}`);
               return;
@@ -3150,11 +3203,11 @@ export function createHost(options: HostOptions): Host {
             // Back where it ran. A session continued in another directory is
             // a conversation whose second half cannot see the files its
             // first half was about.
-            const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
-            const session = spawn(owner, uri, chatUriFor(uri), chosen.get(uri) ?? {}, { resume: id, seed }, ran);
-            log(`resumed ${uri}`);
-            dispatch(uri, { type: 'session/ready' });
-            summaryMoved(uri);
+            const ran = wheres.get(named)?.[0]?.replace(/^file:\/\//, '');
+            const session = spawn(owner, named, chatUriFor(named), chosen.get(id) ?? {}, { resume: id, seed }, ran);
+            log(`resumed ${named}`);
+            dispatch(named, { type: 'session/ready' });
+            summaryMoved(named);
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;

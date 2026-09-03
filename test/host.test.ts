@@ -211,7 +211,14 @@ describe('the catalogue', () => {
     // Idle, because nothing this host started is running. A status assigned
     // rather than derived is a session that claims to be busy with nothing in it.
     expect(listed.items[0]?.status).toBe(1);
-    expect(listed.items[0]?.resource).toBe('ahp-session:/new');
+    /*
+     * The provider as the scheme, which is how the only other implementation
+     * names a session both when it creates one and when it reopens one it
+     * listed. Publishing another spelling gave that client two strings for one
+     * session, and the one it reached for came out of its own stored state -
+     * so the same conversation drew or did not depending on which it picked.
+     */
+    expect(listed.items[0]?.resource).toBe('claude:/new');
   });
 
   it('counts the sessions it is running, not the transcripts beside them', async () => {
@@ -3026,7 +3033,10 @@ describe('the fields a client reads by name', () => {
     await settle();
 
     const moved = catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    expect(moved?.params.session).toBe('ahp-session:/browsed');
+    // Named the way the catalogue named it, which is by its provider. The
+    // client dispatched under the older spelling and is answered about the
+    // session it meant.
+    expect(moved?.params.session).toBe('claude:/browsed');
     // A row nobody is running still has a status - `IsRead` is this host's bit
     // and belongs to the row, not to a process - so the notification carries
     // it rather than carrying nothing, which is what it used to do in exactly
@@ -3307,6 +3317,34 @@ describe('a session asked for by the name a client computed', () => {
     expect(opened.snapshot.state.resource).toBe('claude:/row');
     expect(opened.snapshot.state.defaultChat).toBe(derived('claude:/row'));
     expect(opened.snapshot.state.chats[0]?.resource).toBe(derived('claude:/row'));
+  });
+
+  it('names a listed session after its provider', async () => {
+    const client = await browsing();
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    /*
+     * One name, and the one the only other implementation computes. It builds
+     * a session URI as `<provider>:/<id>` both when it creates a session and
+     * when it reopens one it listed; publishing `ahp-session:/<id>` gave it
+     * two strings for the same session and it picked between them out of its
+     * own stored state - the same conversation, the same bytes behind it,
+     * drawing or not depending on which it happened to reach for.
+     */
+    expect(listed.items[0]?.resource).toBe('claude:/row');
+  });
+
+  it('still answers to the name it used to publish', async () => {
+    const client = await browsing();
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    // Only the id inside a session URI is ever read, so the older spelling is
+    // still the same session - and anything holding one is not broken by this.
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/row' } }) as {
+      snapshot: { resource: string; state: { title: string } };
+    };
+    expect(opened.snapshot.resource).toBe('ahp-session:/row');
+    expect(opened.snapshot.state.title).toBe('A real title');
   });
 
   it('says a person started the chat', async () => {

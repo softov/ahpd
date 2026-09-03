@@ -148,7 +148,9 @@ it('leaves a finished session in the catalogue, and opens it again from its tran
   // catalogue row a row somebody can read.
   const again = await client.handle({
     method: 'subscribe',
-    params: { channel: `ahp-chat:/${listed.items[0]?.resource.replace('ahp-session:/', '') ?? ''}` },
+    // The id inside the resource, whatever scheme the row was named under -
+    // this host names a session after its provider.
+    params: { channel: `ahp-chat:/${listed.items[0]?.resource.split(':/').pop() ?? ''}` },
   }) as { snapshot: { state: { turns: unknown[] } } };
   expect(again.snapshot.state.turns).toHaveLength(1);
 });
