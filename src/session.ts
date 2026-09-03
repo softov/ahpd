@@ -276,6 +276,16 @@ export function createSession(options: SessionOptions): Session {
    */
   let failed: string | undefined;
   let startedAt = 0;
+  /**
+   * The model the turn now running actually answered on, as its own frames
+   * reported it.
+   *
+   * Not the one configured: a session may be set to `sonnet` and a turn may
+   * run on whatever that resolved to on the day, and the protocol asks for
+   * the model a turn *was* answered by. A client reads it to name the model
+   * on a historic turn and to size the context window that turn used.
+   */
+  let ran: string | undefined;
   let handshake: Bag | undefined;
   /**
    * The id the agent gave this session, which is not the URI it is served at.
@@ -383,13 +393,14 @@ export function createSession(options: SessionOptions): Session {
    * rather than reported as zero - a nought is a measurement and an absence
    * is not.
    */
-  const usageOf = (raw: unknown): Bag | undefined => {
+  const usageOf = (raw: unknown, model?: string): Bag | undefined => {
     const found = bag(raw);
     const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
     const info: Bag = {
       ...(num(found.input_tokens) !== undefined ? { inputTokens: num(found.input_tokens) } : {}),
       ...(num(found.output_tokens) !== undefined ? { outputTokens: num(found.output_tokens) } : {}),
       ...(num(found.cache_read_input_tokens) !== undefined ? { cacheReadTokens: num(found.cache_read_input_tokens) } : {}),
+      ...(model !== undefined ? { model } : {}),
     };
     return Object.keys(info).length > 0 ? info : undefined;
   };
@@ -548,6 +559,7 @@ export function createSession(options: SessionOptions): Session {
   const assistant = (message: Bag): void => {
     const turn = openTurn();
     const of = str(message.id) ?? 'm';
+    ran = str(message.model) ?? ran;
     const blocks = list(message.content);
 
     for (let index = 0; index < blocks.length; index++) {
@@ -1062,7 +1074,7 @@ export function createSession(options: SessionOptions): Session {
             // Before the turn completes, not after: the reducer hangs usage on
             // `activeTurn`, and `chat/turnComplete` is what moves that into
             // `turns` - so the other order reports it about nothing.
-            const used = usageOf(message.usage);
+            const used = usageOf(message.usage, ran);
             if (used) {
               turn.usage = used;
               emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
@@ -1070,6 +1082,7 @@ export function createSession(options: SessionOptions): Session {
             const part = wrong === undefined ? undefined : addFailure(turn, wrong);
             turns.push(turn);
             active = undefined;
+            ran = undefined;
             parts.clear();
             streaming = undefined;
             /*

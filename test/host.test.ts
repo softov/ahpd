@@ -1883,6 +1883,31 @@ describe('what it says it is doing', () => {
     const usage = actions(p, chatUri).find((e) => e.action.type === 'chat/usage')?.action.usage;
     expect(usage).toEqual({ inputTokens: 120, outputTokens: 34, cacheReadTokens: 900 });
   });
+
+  it('names the model the turn was answered on', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      message: { id: 'm1', model: 'claude-sonnet-4-5-20250929', content: [{ type: 'text', text: '2' }] },
+    });
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5, usage: { input_tokens: 2 } });
+
+    // The model that answered, not the one configured: a session set to
+    // `sonnet` runs on whatever that resolved to, and a client names the model
+    // on a historic turn - and sizes that turn's context window - from here.
+    const usage = actions(p, chatUri).find((e) => e.action.type === 'chat/usage')?.action.usage;
+    expect(usage).toEqual({ inputTokens: 2, model: 'claude-sonnet-4-5-20250929' });
+
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { usage?: { model?: string } }[] } };
+    };
+    expect(opened.snapshot.state.turns[0]?.usage?.model).toBe('claude-sonnet-4-5-20250929');
+  });
 });
 
 describe('turning a customization on and off', () => {
