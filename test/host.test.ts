@@ -3309,6 +3309,23 @@ describe('a session asked for by the name a client computed', () => {
     expect(opened.snapshot.state.chats[0]?.resource).toBe(derived('claude:/row'));
   });
 
+  it('says a person started the chat', async () => {
+    const client = await browsing();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: derived('claude:/row') } }) as {
+      snapshot: { state: { origin?: { kind: string } } };
+    };
+    // `ChatOrigin`'s four kinds are `user`, `fork`, `sideChat` and `tool`.
+    // A transcript is a conversation somebody typed, so it is the first.
+    expect(opened.snapshot.state.origin).toEqual({ kind: 'user' });
+
+    const session = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+      snapshot: { state: { chats: { origin?: { kind: string } }[] } };
+    };
+    // And the row in the session's catalogue says the same, because a client
+    // reads a chat's origin off whichever of the two it has.
+    expect(session.snapshot.state.chats[0]?.origin).toEqual({ kind: 'user' });
+  });
+
   it('serves that chat the transcript', async () => {
     const client = await browsing();
     const chat = await client.handle({ method: 'subscribe', params: { channel: derived('claude:/row') } }) as {

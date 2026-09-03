@@ -208,14 +208,26 @@ export function createHost(options: HostOptions): Host {
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
+   * How a chat came to exist.
+   *
+   * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool` - and
+   * this host only ever makes the first: a chat here is one somebody opened,
+   * or one read back from a transcript somebody typed. There is no kind for a
+   * session an automation started, so that one gets none rather than a wrong
+   * one, and absent is what the protocol says when a host has nothing to say.
+   */
+  const startedBy = (session: string): Bag =>
+    (origins.has(session) ? {} : { origin: { kind: 'user' } });
+  /**
    * One chat, as its session's catalogue lists it.
    *
    * A `ChatSummary` and not a name and a URI: `status` and `modifiedAt` are
    * required of one, and a client reducing its list against a partial row
    * gets one it cannot sort or draw a state for.
    */
-  const chatSummary = (uri: string, chat: Session) => ({
+  const chatSummary = (session: string, uri: string, chat: Session) => ({
     resource: uri,
+    ...startedBy(session),
     title: chat.title(),
     status: chat.status(),
     modifiedAt: chat.modifiedAt(),
@@ -1209,7 +1221,7 @@ export function createHost(options: HostOptions): Host {
           const now = `${moved.title()}\u0000${String(moved.status())}\u0000${String(moved.activity() ?? '')}`;
           if (now !== described.get(chatUri)) {
             described.set(chatUri, now);
-            dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: chatSummary(chatUri, moved) });
+            dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: chatSummary(uri, chatUri, moved) });
           }
         }
         // A turn starting or finishing moves the catalogue too, and a client
@@ -1628,14 +1640,18 @@ export function createHost(options: HostOptions): Host {
         status: statusOf(channel),
         modifiedAt: modifiedOf(held),
         defaultChat: held.defaultChat,
-        chats: [...held.chats].map(([uri_, chat_]) => chatSummary(uri_, chat_)),
+        chats: [...held.chats].map(([uri_, chat_]) => chatSummary(channel, uri_, chat_)),
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
       };
       return value({ resource: channel, state, fromSeq: serverSeq });
     }
     const talking = byChat.get(channel);
     if (talking)
-      return value({ resource: channel, state: talking.chat.chatState(), fromSeq: serverSeq });
+      return value({
+        resource: channel,
+        state: { ...talking.chat.chatState(), ...startedBy(talking.uri) },
+        fromSeq: serverSeq,
+      });
     /*
      * A session in the catalogue that this host is not running.
      *
@@ -1658,6 +1674,7 @@ export function createHost(options: HostOptions): Host {
             title,
             status: Status.Idle,
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
+            ...startedBy(uriFor(id)),
             ...tail(turns),
             queuedMessages: [],
           },
@@ -1682,6 +1699,7 @@ export function createHost(options: HostOptions): Host {
               title,
               status: Status.Idle,
               modifiedAt: moves.get(uriFor(id)) ?? new Date().toISOString(),
+              ...startedBy(uriFor(id)),
             },
           ],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
@@ -2742,7 +2760,7 @@ export function createHost(options: HostOptions): Host {
           log(`opened ${chatUri} in ${uri}`);
           // `summary`, not `chat`: the reducer reads `action.summary.resource`,
           // and a chat named any other way arrives as a TypeError inside it.
-          dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(chatUri, chat) });
+          dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(uri, chatUri, chat) });
           const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
             ? params.initialMessage
             : undefined) as Record<string, unknown> | undefined;
