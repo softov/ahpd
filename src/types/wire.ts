@@ -40,16 +40,20 @@ type WireValue<V> =
 export type OnWire<T> = { [K in keyof T]: WireValue<T[K]> };
 
 /**
- * A turn, with its parts left unchecked.
+ * A turn, whose parts are checked where they are built rather than here.
  *
- * `responseParts` is seven kinds and an eight-state tool call, built up piece
- * by piece as an agent talks, and typing it is a job of its own rather than a
- * line of this one. Everything around it *is* checked, which is where the
- * shape defects were: `state`, `usage`, `origin` and `error` were all missing
- * from the turn rather than from a part inside it.
+ * `responseParts` is seven kinds and an eight-state tool call, assembled piece
+ * by piece as an agent talks - so the array cannot carry a union the way a
+ * finished value can: a call is `running` when it is pushed and `completed`
+ * three frames later, and a variable declared as either fights the other.
  *
- * Named rather than inlined so the gap is visible and can be closed - see the
- * roadmap. A `Bag` that nobody wrote down is how this started.
+ * The gap this used to leave is where the worst of it hid. A rebuilt
+ * transcript wrote a tool-call `status` that is not one of the seven, left off
+ * three fields the completed state requires, and gave its content blocks no
+ * `type` - four defects in one object, none of them a compile error, and every
+ * one of them a conversation that would not draw. So each part is now checked
+ * against the state it claims, at the moment it is built, with `satisfies` on
+ * the literal; what stays loose here is only the mutation that follows.
  */
 export type WireTurn<T> = Omit<OnWire<T>, 'responseParts'> & { responseParts: Bag[] };
 

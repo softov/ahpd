@@ -6,6 +6,14 @@
  */
 
 export type { Bag } from './common.js';
+/*
+ * The protocol's own shapes, as this host builds them.
+ *
+ * On the public surface because the port names them: `Agent.transcript`
+ * answers with `WireTurn<Turn>[]`, and a backend written against this library
+ * cannot implement that without being able to say it.
+ */
+export type { OnWire, WireTurn } from './wire.js';
 export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
 export type { Emit, SessionOptions, Session } from './session.js';

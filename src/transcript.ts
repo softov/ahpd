@@ -1,6 +1,6 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import type { Turn } from '@microsoft/agent-host-protocol';
-import type { WireTurn } from './types/wire.js';
+import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
+import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Page } from './types/transcript.js';
 
@@ -40,7 +40,7 @@ function resultText(content: unknown): string | undefined {
  * catalogue said the session exists and the catalogue is right. Refusing to
  * open a row because its file is odd would be the host arguing with itself.
  */
-export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
+export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
     messages = await getSessionMessages(sessionId, { dir });
@@ -86,8 +86,10 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
         call.pastTenseMessage = str(call.invocationMessage) ?? str(call.displayName) ?? 'the tool';
         const text = resultText(block.content);
         // `type` on every block: these are MCP's content blocks and it is what
-        // tells them apart.
-        if (text !== undefined) call.content = [{ type: 'text', text }];
+        // tells them apart. Checked, because this is an assignment onto a
+        // `Bag` and so outside the literal the call was built as.
+        if (text !== undefined)
+          call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
         if (!ok) call.error = { message: text ?? 'The tool failed' };
       }
       if (!said) continue;
@@ -140,12 +142,22 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
       const id = str(block.id) ?? `${str(frame.uuid) ?? 'a'}:${index}`;
 
       if (kind === 'text') {
-        parts.push({ id, kind: 'markdown', content: str(block.text) ?? '' });
+        parts.push({ id, kind: 'markdown', content: str(block.text) ?? '' } satisfies OnWire<ResponsePart>);
       } else if (kind === 'thinking') {
-        parts.push({ id, kind: 'reasoning', content: str(block.thinking) ?? '' });
+        parts.push({ id, kind: 'reasoning', content: str(block.thinking) ?? '' } satisfies OnWire<ResponsePart>);
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
+        /*
+         * Checked against the state it claims to be in, at the moment it is
+         * built.
+         *
+         * This is the gap `WireTurn` was named for. Everything inside
+         * `responseParts` was a `Bag`, and it is where this builder wrote a
+         * `status` that is not one of the seven, left off three fields the
+         * completed state requires, and gave its content blocks no `type` -
+         * four defects in one object, none of them a compile error.
+         */
         const call: Bag = {
           toolCallId: id,
           toolName: name,
@@ -170,8 +182,11 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
           confirmed: 'not-needed',
           success: true,
           pastTenseMessage: command ?? name,
-        };
+        } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
+        // The part is not re-checked: `call` is a `Bag` from here on, because
+        // a tool result arriving later mutates it. The literal above is what
+        // the protocol changes under, and the literal is what is checked.
         parts.push({ id, kind: 'toolCall', toolCall: call });
       }
     }

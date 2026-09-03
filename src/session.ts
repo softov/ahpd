@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, Status } from './catalog.js';
 import { tail } from './transcript.js';
-import type { ActiveTurn, McpServerState } from '@microsoft/agent-host-protocol';
+import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Session, SessionOptions } from './types/session.js';
@@ -657,7 +657,7 @@ export function createSession(options: SessionOptions): Session {
           invocationMessage: name,
           confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
-        };
+        } satisfies OnWire<ToolCallRunningState>;
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
         holdPart(turn, part);
@@ -733,16 +733,23 @@ export function createSession(options: SessionOptions): Session {
        * of a tool name, and the CLI knows what it asked for.
        */
       const said = str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
-      const result: Bag = {
+      const result = {
         success: ok,
         pastTenseMessage: said,
         ...(text !== undefined ? { content: [{ type: 'text', text }] } : {}),
         ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
-      };
-      if (text !== undefined) call.content = [{ type: 'text', text }];
-      call.success = ok;
-      call.pastTenseMessage = said;
-      if (!ok) call.error = { message: text ?? 'The tool failed' };
+      } satisfies Partial<OnWire<ToolCallCompletedState>>;
+      /*
+       * Onto the call *and* into the action, from one object.
+       *
+       * `ToolCallCompletedState` extends `ToolCallResult`, and the reducer
+       * builds the state by spreading the action's `result` over the call - so
+       * the two have to say the same thing. Written out twice they drifted,
+       * which is how a transcript's tool calls came to be missing fields the
+       * action had been carrying all along. One literal cannot drift from
+       * itself, and it is checked against the state it completes.
+       */
+      Object.assign(call, result);
       // And as it is now the tool has run. Paired with the `before` above by
       // the call's own id, which is the only thing that survives the gap.
       const changed = id === undefined ? undefined : editing.get(id);

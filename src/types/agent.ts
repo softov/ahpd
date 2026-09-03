@@ -1,6 +1,8 @@
 /** An agent backend, and everything the host asks one for. */
 
+import type { Turn } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
+import type { WireTurn } from './wire.js';
 import type { Emit, Session } from './session.js';
 import type { Offered } from './probe.js';
 
@@ -12,7 +14,7 @@ import type { Offered } from './probe.js';
  * kept per client and a backend has never heard of them.
  */
 export interface Listed {
-  /** The backend's own id for it. The host serves it as `ahp-session:/<id>`. */
+  /** The backend's own id for it. The host serves it as `<provider>:/<id>`. */
   id: string;
   /** Display title. */
   title: string;
@@ -157,8 +159,16 @@ export interface Agent {
    * What makes a catalogue row openable: the host serves it from here, and
    * starts nothing until somebody sends a turn to it. Undefined means this
    * backend has no such session.
+   *
+   * A `WireTurn` rather than a `Bag[]`: everything around the parts is checked
+   * here, and each part is checked where it is built - a part is assembled by
+   * mutation as an agent talks, so the literal is what can be held to a shape
+   * and the variable after it cannot. This was a `Bag[]`, and inside it a
+   * rebuilt transcript wrote a tool-call `status` that is not one of the
+   * seven, left off three fields the completed state requires, and gave its
+   * content blocks no `type`.
    */
-  transcript?(id: string): Promise<Bag[] | undefined>;
+  transcript?(id: string): Promise<WireTurn<Turn>[] | undefined>;
 
   /** Start one. */
   create(start: Start): Session;

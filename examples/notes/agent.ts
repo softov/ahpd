@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Agent, Bag, Listed, Session, Start } from '../../src/index.js';
+import type { Turn } from '@microsoft/agent-host-protocol';
+import type { Agent, Bag, Listed, Session, Start, WireTurn } from '../../src/index.js';
 
 /**
  * A backend with tools, and the two ways one stops to ask.
@@ -737,7 +738,11 @@ export function notes(options: NotesOptions): Agent {
       workingDirectories: [`file://${dir}`],
     })),
 
-    transcript: async (id) => kept.get(id)?.turns,
+    // Asserted, not checked. This example assembles a turn by mutation - a
+    // part is filled in as it streams - so its turns are `Bag`s here, while
+    // the port now takes `WireTurn<Turn>`. The built-in provider checks each
+    // literal where it is built; doing the same here is worth a pass of its own.
+    transcript: async (id) => kept.get(id)?.turns as WireTurn<Turn>[] | undefined,
 
     create: converse,
   };
