@@ -78,7 +78,7 @@ specification: nothing here is listed because AHP defines it.
 | `automation/*` | 4 of 4 | ✅ | |
 | `automationRun/*` | 3 of 5 | 🚧 | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`. `sessionSet` / `sessionRemoved` are for a run with more than one session, and a run here has one |
 | `resourceWatch/*` | 1 of 1 | ✅ | |
-| `annotations/*` | 0 of 5 | ➖ | An editor's furniture: a client marks a range and the marks are shared. Nothing here produces one |
+| `annotations/*` | 0 of 5 | ➖ | An editor's furniture: a client marks a range and the marks are shared. Nothing here produces one - but `<sessionUri>/annotations` is *subscribable* and answers `{ annotations: [] }`, because a client opens a session by subscribing to the session, its chat and its annotations together, and a refusal on the third fails the open silently |
 
 ### Client-dispatchable actions this host acts on
 

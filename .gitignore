@@ -4,3 +4,6 @@ dist
 
 # The example backend writes here when you run `npm run notes`.
 /notes
+
+# Wire captures from scripts/tee.mjs.
+/ahp-*.jsonl

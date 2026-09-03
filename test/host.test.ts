@@ -1455,6 +1455,24 @@ describe('a session read from its transcript', () => {
     expect(Object.keys(opened.snapshot.state.config.schema.properties)).toContain('permissionMode');
   });
 
+  it('lists its chat the way a live session does', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1000, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }) as {
+      snapshot: { state: { chats: { resource: string; status: number; modifiedAt: string }[] } };
+    };
+
+    // A whole `ChatSummary`, because a client reads these fields by name off a
+    // chat row and gets `undefined` from a row that carries only a URI.
+    const chat = opened.snapshot.state.chats[0];
+    expect(chat?.status).toBe(1);
+    // The catalogue's time, not the moment somebody opened the row: a cold
+    // session answering `now` looks edited every time it is read.
+    expect(chat?.modifiedAt).toBe(new Date(1000).toISOString());
+  });
+
   it('starts on what was chosen for it while it was only a row', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
@@ -3073,6 +3091,48 @@ describe('a chat asked for by the name a client computed', () => {
     const { client } = await running();
     // Not base64, and not a chat id anybody can compute.
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat://peer/not-base64!' } }))
+      .rejects.toMatchObject({ code: -32001 });
+  });
+});
+
+/*
+ * The annotations channel, which is empty and is served anyway.
+ *
+ * A client opens a session by subscribing to three channels at once - the
+ * session, its chat, and `<sessionUri>/annotations` - and treats the three as
+ * one hydration. Refusing the third fails the open, and the failure is silent:
+ * nothing is drawn and nothing is said. So it is answered, with the empty
+ * state that is the true one, rather than refused.
+ */
+describe('a session\'s annotations', () => {
+  it('answers an empty channel for a live session', async () => {
+    const { client, uri } = await running();
+
+    const opened = await client.handle({ method: 'subscribe', params: { channel: `${uri}/annotations` } }) as {
+      snapshot: { resource: string; state: { annotations: unknown[] } };
+    };
+    expect(opened.snapshot.resource).toBe(`${uri}/annotations`);
+    expect(opened.snapshot.state.annotations).toEqual([]);
+  });
+
+  it('answers one for a session read from its transcript', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    // Listed first, because that is when this host learns whose the row is -
+    // and a client lists before it opens.
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+
+    const opened = await client.handle({
+      method: 'subscribe',
+      params: { channel: 'ahp-session:/old/annotations' },
+    }) as { snapshot: { state: { annotations: unknown[] } } };
+    expect(opened.snapshot.state.annotations).toEqual([]);
+  });
+
+  it('refuses one for a session that is not here', async () => {
+    const { client } = await running();
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/nobody/annotations' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
 });

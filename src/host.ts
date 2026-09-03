@@ -259,6 +259,16 @@ export function createHost(options: HostOptions): Host {
    */
   const births = new Map<string, string>();
   /**
+   * When a browsed session was last written to, as its own catalogue reported
+   * it.
+   *
+   * The companion to `births`, and wanted for the same reason: a session this
+   * host is not running was last touched whenever its transcript was, and
+   * answering with the current time makes every read of a cold session look
+   * like an edit.
+   */
+  const moves = new Map<string, string>();
+  /**
    * Every client this host has handshaken with, by the id it gave.
    *
    * What `reconnect` is answerable *against*. A client comes back saying "I am
@@ -1247,6 +1257,7 @@ export function createHost(options: HostOptions): Host {
         owners.set(resource, agent);
         wheres.set(resource, row.workingDirectories);
         births.set(resource, row.createdAt);
+        moves.set(resource, row.modifiedAt);
         found.push({
           resource,
           provider: agent.provider,
@@ -1439,6 +1450,22 @@ export function createHost(options: HostOptions): Host {
       if (!found) throw new RpcError(-32001, `No automation run at ${channel}`);
       return value({ resource: channel, state: found, fromSeq: serverSeq });
     }
+    /*
+     * A session's annotations, nested under the session the way a changeset
+     * is: `<sessionUri>/annotations`, one per session.
+     *
+     * Always empty. This host holds no annotations of its own - annotations
+     * arrive through the `addComment` server tool, which no backend here
+     * advertises - but the channel is *served* rather than refused because a
+     * client subscribes to it as part of opening a session, alongside the
+     * session and its chat. A refusal there is a failed open, and a client
+     * that treats the three as one hydration renders nothing at all.
+     */
+    if (channel.endsWith('/annotations')) {
+      const owning = channel.slice(0, -'/annotations'.length);
+      if (sessions.has(owning) || owners.has(owning))
+        return value({ resource: channel, state: { annotations: [] }, fromSeq: serverSeq });
+    }
     const watching = watches.get(channel);
     if (watching) {
       // The state is what the watch *is*, not what it has seen. The protocol's
@@ -1532,7 +1559,7 @@ export function createHost(options: HostOptions): Host {
             resource: channel,
             title,
             status: Status.Idle,
-            modifiedAt: new Date().toISOString(),
+            modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             ...tail(turns),
             queuedMessages: [],
           },
@@ -1548,7 +1575,17 @@ export function createHost(options: HostOptions): Host {
           status: Status.Idle | (flags.get(`ahp-session:/${id}`) ?? 0),
           lifecycle: 'ready',
           defaultChat: chatUriFor(uriFor(id)),
-          chats: [{ resource: chatUriFor(uriFor(id)), title }],
+          // A whole `ChatSummary`, and not a name and a URI: a client reads a
+          // chat row's `status` and `modifiedAt` by name, and a live session
+          // answers with both.
+          chats: [
+            {
+              resource: chatUriFor(uriFor(id)),
+              title,
+              status: Status.Idle,
+              modifiedAt: moves.get(uriFor(id)) ?? new Date().toISOString(),
+            },
+          ],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           activeClients: activeClientsOf(`ahp-session:/${id}`),
           ...describes(`ahp-session:/${id}`),
