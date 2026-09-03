@@ -3096,6 +3096,100 @@ describe('a chat asked for by the name a client computed', () => {
 });
 
 /*
+ * A session asked for by the name its client computed.
+ *
+ * A session URI is the client's to name, and VS Code names one after the
+ * session's *provider* - `claude:/<uuid>` - for a row this host listed as
+ * `ahp-session:/<uuid>`. The id is the same and only the id is read, so both
+ * arrive at the same session; what differed was everything this host then said
+ * back, because a chat URI is built from a session URI and every key here is a
+ * session URI.
+ */
+describe('a session asked for by the name a client computed', () => {
+  const listed = { sessionId: 'row', summary: 'A real title', lastModified: 1_700_000_000_000, cwd: '/home/softov' };
+  const derived = (session: string) =>
+    `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  const browsing = async () => {
+    sdk.sessions.push(listed);
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    // Listed first: that is when this host learns whose the row is, and it is
+    // what a client does before it opens one.
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    return client;
+  };
+
+  it('names its chat after the name it was asked under', async () => {
+    const client = await browsing();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+      snapshot: { resource: string; state: { resource: string; defaultChat: string; chats: { resource: string }[] } };
+    };
+
+    // Everything that names this session, spelled the one way the client can
+    // pair up: the chat it computes from `claude:/row` is the chat the session
+    // says it has. Told otherwise, it subscribes to one string, is handed
+    // another, and renders nothing at all.
+    expect(opened.snapshot.resource).toBe('claude:/row');
+    expect(opened.snapshot.state.resource).toBe('claude:/row');
+    expect(opened.snapshot.state.defaultChat).toBe(derived('claude:/row'));
+    expect(opened.snapshot.state.chats[0]?.resource).toBe(derived('claude:/row'));
+  });
+
+  it('serves that chat the transcript', async () => {
+    const client = await browsing();
+    const chat = await client.handle({ method: 'subscribe', params: { channel: derived('claude:/row') } }) as {
+      snapshot: { state: { turns: unknown[] } };
+    };
+    expect(chat.snapshot.state.turns.length).toBeGreaterThan(0);
+  });
+
+  it('records a flag against the row the catalogue lists', async () => {
+    const client = await browsing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'claude:/row', action: { type: 'session/isReadChanged', isRead: true } },
+    });
+    await settle();
+
+    // Idle, and read. Kept under the client's spelling it would have been
+    // written to a key nothing ever reads, and the row would come back unread.
+    const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { status: number }[];
+    };
+    expect(rows.items[0]?.status).toBe(33);
+  });
+
+  it('resumes the session that name belongs to', async () => {
+    const client = await browsing();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: derived('claude:/row'),
+        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
+      },
+    });
+    await settle(6);
+
+    // Resumed, rather than refused for want of a backend owning a name this
+    // host never stored.
+    expect(sessionQueries()).toHaveLength(1);
+    expect(sessionQueries()[0]?.options.resume).toBe('row');
+    expect(sdk.said).toEqual(['and now?']);
+  });
+
+  it('serves its annotations under that name too', async () => {
+    const client = await browsing();
+    const opened = await client.handle({
+      method: 'subscribe',
+      params: { channel: 'claude:/row/annotations' },
+    }) as { snapshot: { state: { annotations: unknown[] } } };
+    expect(opened.snapshot.state.annotations).toEqual([]);
+  });
+});
+
+/*
  * The annotations channel, which is empty and is served anyway.
  *
  * A client opens a session by subscribing to three channels at once - the

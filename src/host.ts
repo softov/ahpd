@@ -241,6 +241,29 @@ export function createHost(options: HostOptions): Host {
    */
   const owners = new Map<string, Agent>();
   /**
+   * The name this host holds a session under, given any name a client used.
+   *
+   * A session URI is the client's to name and this host's to echo, and only
+   * the id inside one is ever read - so `claude:/<uuid>`, which is what VS
+   * Code computes from a session's *provider*, and `ahp-session:/<uuid>`,
+   * which is what this host listed that same session as, are one session.
+   *
+   * They were not one key. Everything this host keys by a session - who owns
+   * it, where it ran, the bits a client set on it, the settings chosen for it
+   * before it starts - is stored under the name in the catalogue, and a lookup
+   * under the client's name found nothing: a row marked read that came back
+   * unread, and a browsed session that could not be continued because no
+   * backend owned a name nobody had stored.
+   *
+   * The held name, then, and the name as given when no session here has that
+   * id at all - which is how a client still names a session it is creating.
+   */
+  const heldAs = (uri: string): string => {
+    if (sessions.has(uri) || owners.has(uri)) return uri;
+    const named = uriFor(idOf(uri));
+    return sessions.has(named) || owners.has(named) ? named : uri;
+  };
+  /**
    * Terminals, by their own channel URI.
    *
    * The host's rather than a session's: a terminal outlives the turn that
@@ -489,13 +512,60 @@ export function createHost(options: HostOptions): Host {
    * itself - a second chat's URI is the client's own and is not derived from
    * anything. Everything else is a first chat, named either way.
    */
-  const sessionFor = (channel: string): string => sessionOfChat(channel) ?? channel;
+  const sessionFor = (channel: string): string => heldAs(sessionOfChat(channel) ?? channel);
 
   const chatOf = (uri: string): string => {
     if (byChat.has(uri)) return uri;
     const session = sessionOfChat(uri);
     if (session === undefined) return uri;
-    return sessions.get(session)?.defaultChat ?? chatUriFor(session);
+    return sessions.get(heldAs(session))?.defaultChat ?? chatUriFor(session);
+  };
+
+  /**
+   * The channel a client's URI means here, in either family.
+   *
+   * A chat is resolved as a chat and a session as a session; anything else -
+   * the root, a terminal, a watch - is already its own name. What comes back
+   * is the name this host dispatches under, which is what a subscription has
+   * to be keyed by; the name the client used is remembered as an alias so it
+   * is also what the client is told.
+   */
+  const meantBy = (channel: string): string =>
+    sessionOfChat(channel) !== undefined ? chatOf(channel) : heldAs(channel);
+
+  /**
+   * A *session's* snapshot, answered under the name the client asked about.
+   *
+   * The resource is the easy half. The hard half is that a chat URI contains
+   * its session's URI, so a session answered under a name other than the one
+   * this host holds it by offers chat names built from the held name - while
+   * the client subscribed to the ones it computed from its own. It then holds
+   * a subscription nothing refers to and a `defaultChat` nothing is subscribed
+   * to, and draws an empty conversation with no error at all, which is the
+   * worst way for this to fail.
+   *
+   * For sessions only. A chat asked for under an alias may resolve to a
+   * *different* chat - `default` is a role, and the default moves - and there
+   * the client is told the name of the chat it actually landed on.
+   */
+  const spelledFor = (asked: string, snapshot: Record<string, unknown>): void => {
+    snapshot.resource = asked;
+    const state = snapshot.state;
+    if (typeof state !== 'object' || state === null) return;
+    const bag = state as Record<string, unknown>;
+    if (typeof bag.resource === 'string') bag.resource = asked;
+    // Only the chats derived from this session are renamed. A chat a client
+    // named itself is that client's name and stays as it was written.
+    const mine = (uri: unknown): boolean => {
+      if (typeof uri !== 'string') return false;
+      const owning = sessionOfChat(uri);
+      return owning !== undefined && owning !== uri && idOf(owning) === idOf(asked);
+    };
+    if (mine(bag.defaultChat)) bag.defaultChat = chatUriFor(asked);
+    if (Array.isArray(bag.chats))
+      bag.chats = bag.chats.map((chat) => (typeof chat === 'object' && chat !== null && mine((chat as Record<string, unknown>).resource)
+        ? { ...(chat as Record<string, unknown>), resource: chatUriFor(asked) }
+        : chat));
   };
 
   /**
@@ -839,9 +909,10 @@ export function createHost(options: HostOptions): Host {
    * URI, which git and `basename` do not take.
    */
   const dirOf = (uri: string): string | undefined => {
-    const held = sessions.get(uri);
+    const named = heldAs(uri);
+    const held = sessions.get(named);
     const lead = held && leadOf(held);
-    const where = lead?.workingDirectories()[0] ?? wheres.get(uri)?.[0];
+    const where = lead?.workingDirectories()[0] ?? wheres.get(named)?.[0];
     return where?.replace(/^file:\/\//, '');
   };
 
@@ -1462,7 +1533,7 @@ export function createHost(options: HostOptions): Host {
      * that treats the three as one hydration renders nothing at all.
      */
     if (channel.endsWith('/annotations')) {
-      const owning = channel.slice(0, -'/annotations'.length);
+      const owning = heldAs(channel.slice(0, -'/annotations'.length));
       if (sessions.has(owning) || owners.has(owning))
         return value({ resource: channel, state: { annotations: [] }, fromSeq: serverSeq });
     }
@@ -1978,11 +2049,12 @@ export function createHost(options: HostOptions): Host {
           // taken of the channel and returned under the name the client used -
           // a client that asked about one URI and was answered about another
           // has been answered about something it is not watching.
-          const meant = chatOf(channel);
+          const meant = meantBy(channel);
           const snapshot = await snapshotOf(meant);
           if (meant !== channel) {
             connection.aliases.set(meant, channel);
-            snapshot.resource = channel;
+            if (sessionOfChat(channel) === undefined) spelledFor(channel, snapshot);
+            else snapshot.resource = channel;
           }
           connection.watching.add(channel);
           // From here on, an unsubscribe means something: a watch nobody has
@@ -2743,9 +2815,9 @@ export function createHost(options: HostOptions): Host {
       const applyDispatch = (params: Record<string, unknown>, origin: Origin): void => {
         const asked = String(params.channel ?? '');
         // Resolved before anything looks it up, so a client that talks to a
-        // chat under its own spelling drives the same conversation it is
-        // watching rather than one nothing here has heard of.
-        const channel = chatOf(asked);
+        // chat - or a session - under its own spelling drives the same one it
+        // is watching rather than one nothing here has heard of.
+        const channel = meantBy(asked);
         const action = (typeof params.action === 'object' && params.action !== null
           ? params.action
           : {}) as Record<string, unknown>;

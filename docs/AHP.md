@@ -182,6 +182,25 @@ when it names none. Dispose that chat and the name follows the default to its
 successor. A second chat is named by whoever created it and is not derived from
 anything.
 
+### Session URIs
+
+A session URI is the **client's** to name and this host's to echo, and only the
+id inside one is ever read. So `claude:/<uuid>` - which is what VS Code computes
+from a session's provider - and `ahp-session:/<uuid>` - which is what this host
+lists that same session as - are one session, and both are answered.
+
+Both are also *keyed* as one now. They were not: who owns a session, where it
+ran, the bits a client set on it and the settings chosen for it before it starts
+were all stored under the catalogue's name, and a lookup under the client's name
+found nothing - a row marked read that came back unread, and a browsed session
+that could not be continued because no backend owned a name nobody had stored.
+
+And a session answered under an alias has its chat names spelled from that
+alias, because a chat URI contains a session URI. Told otherwise, a client
+subscribes to the chat it computed, reads a `defaultChat` naming another, and
+cannot pair the two: it holds a subscription nothing refers to and a reference
+nothing is subscribed to, and draws an empty conversation with no error.
+
 ### Sessions and the catalogue
 
 | | |
