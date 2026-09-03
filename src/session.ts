@@ -1,11 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import { Status } from './catalog.js';
+import { idOf, Status } from './catalog.js';
 import { tail } from './transcript.js';
 import type { ActiveTurn, McpServerState } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Session, SessionOptions } from './types/session.js';
+
+/** What the SDK will accept as a session id of our choosing. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * One agent session, reduced into the state its channels hold.
@@ -824,6 +827,21 @@ export function createSession(options: SessionOptions): Session {
       // files it read, the decisions it made - rather than being handed a
       // transcript of them and asked to infer the rest.
       ...(options.resume ? { resume: options.resume } : {}),
+      /*
+       * On disk under the name the client gave it.
+       *
+       * The SDK invents an id and writes the transcript under that, so a
+       * session a client created lived on disk under a name the client had
+       * never heard of. While the daemon ran it answered to both, because it
+       * held the pair in memory; once it restarted, the catalogue listed the
+       * SDK's name and the URI the client created the session under answered
+       * `No agent for session` for ever - the session was still there and its
+       * only name for it was dead.
+       *
+       * Only where the client named a UUID, because that is what the SDK will
+       * take. A client that names a session something else keeps what it had.
+       */
+      ...(options.resume === undefined && UUID.test(idOf(uri)) ? { sessionId: idOf(uri) } : {}),
       // Set once, at creation, and that is why the schema marks it immutable:
       // the CLI takes `thinking` when the query is built and has nowhere to
       // put a later change, so offering it as a live control would be a

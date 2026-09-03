@@ -3121,6 +3121,35 @@ describe('a chat asked for by the name a client computed', () => {
 });
 
 /*
+ * A session created by a client, and the name it goes on disk under.
+ */
+describe('a session a client names', () => {
+  it('is stored under the id the client chose, so it survives a restart', async () => {
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const uri = 'claude:/d65884b6-d15e-4bec-b4b8-ae44d17765dd';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+
+    /*
+     * The backend invents an id of its own unless it is given one, and writes
+     * the transcript under that. A session created here then lived on disk
+     * under a name its client had never heard of: while this daemon ran it
+     * answered to both, and the moment it restarted the client's own URI was
+     * dead - `No agent for session`, for ever, about a session that was there.
+     */
+    expect(sessionQueries()[0]?.options.sessionId).toBe('d65884b6-d15e-4bec-b4b8-ae44d17765dd');
+  });
+
+  it('leaves a name the backend would not take alone', async () => {
+    const { client } = await running();
+    // `ahp-session:/live` - a name, and not a UUID. Asking the backend to use
+    // it would be refused, so the backend names this one and nothing is lost
+    // that was not already lost.
+    expect(sessionQueries()[0]?.options.sessionId).toBeUndefined();
+  });
+});
+
+/*
  * A session asked for by the name its client computed.
  *
  * A session URI is the client's to name, and VS Code names one after the
@@ -3234,14 +3263,15 @@ describe('a session\'s annotations', () => {
     expect(opened.snapshot.state.annotations).toEqual([]);
   });
 
-  it('answers one for a session read from its transcript', async () => {
+  it('answers one for a session read from its transcript, before it has been listed', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
     await client.handle(hello(['0.8.0']));
-    // Listed first, because that is when this host learns whose the row is -
-    // and a client lists before it opens.
-    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
 
+    // Deliberately without listing first. A client sends the three
+    // subscriptions that open a session in one breath, and its `listSessions`
+    // is still in flight when they arrive.
     const opened = await client.handle({
       method: 'subscribe',
       params: { channel: 'ahp-session:/old/annotations' },

@@ -1533,8 +1533,12 @@ export function createHost(options: HostOptions): Host {
      * that treats the three as one hydration renders nothing at all.
      */
     if (channel.endsWith('/annotations')) {
-      const owning = heldAs(channel.slice(0, -'/annotations'.length));
-      if (sessions.has(owning) || owners.has(owning))
+      const owning = channel.slice(0, -'/annotations'.length);
+      // Asked of `past`, which consults the catalogue itself, rather than of
+      // the maps a listing fills: a client sends the three subscriptions that
+      // open a session in one breath, before its own `listSessions` has come
+      // back, and a test against those maps refuses on the race.
+      if (sessions.has(heldAs(owning)) || (await past(idOf(owning))) !== undefined)
         return value({ resource: channel, state: { annotations: [] }, fromSeq: serverSeq });
     }
     const watching = watches.get(channel);

@@ -201,6 +201,13 @@ subscribes to the chat it computed, reads a `defaultChat` naming another, and
 cannot pair the two: it holds a subscription nothing refers to and a reference
 nothing is subscribed to, and draws an empty conversation with no error.
 
+A session a client creates is stored under the id the client chose, by naming
+it to the backend. Left to itself the backend invents an id and writes the
+transcript under that, so while this daemon ran it answered to both names and
+the moment it restarted the client's own URI was dead - `No agent for session`,
+about a session that was still there. Only where the client named a UUID, which
+is what the backend will take.
+
 ### Sessions and the catalogue
 
 | | |
