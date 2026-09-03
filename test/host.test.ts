@@ -316,9 +316,14 @@ async function running() {
   // it hears nothing - correctly.
   await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
   const uri = 'ahp-session:/live';
-  const chatUri = 'ahp-chat:/live';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // Read, not assumed. What a session calls its chat is the host's to say and
+  // the client's to look up - a test that hard-codes it is testing a spelling
+  // rather than the lookup every client actually does.
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri };
 }
@@ -2652,7 +2657,7 @@ describe('more than one chat in a session', () => {
   });
 
   it('opens one, and lists both on the session', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
 
     // `summary`, which is what the reducer reads: a chat announced under any
@@ -2663,13 +2668,13 @@ describe('more than one chat in a session', () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { chats: { resource: string }[]; defaultChat: string } };
     };
-    expect(opened.snapshot.state.chats.map((c) => c.resource)).toEqual(['ahp-chat:/live', second]);
+    expect(opened.snapshot.state.chats.map((c) => c.resource)).toEqual([chatUri, second]);
     // The first stays the one a client gets when it names none.
-    expect(opened.snapshot.state.defaultChat).toBe('ahp-chat:/live');
+    expect(opened.snapshot.state.defaultChat).toBe(chatUri);
   });
 
   it('runs them on their own agents, so a turn in one is not a turn in the other', async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     client.handle({
       method: 'dispatchAction',
@@ -2680,7 +2685,7 @@ describe('more than one chat in a session', () => {
     expect(sessionQueries()).toHaveLength(2);
     expect(sdk.said).toEqual(['over here']);
 
-    const first_ = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
+    const first_ = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: unknown[]; activeTurn?: unknown } };
     };
     expect(first_.snapshot.state.turns).toEqual([]);
@@ -2721,21 +2726,32 @@ describe('more than one chat in a session', () => {
   });
 
   it('will not dispose the only one, and says what to do instead', async () => {
-    const { client } = await running();
-    await expect(client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/live' } }))
+    const { client, chatUri } = await running();
+    await expect(client.handle({ method: 'disposeChat', params: { channel: chatUri } }))
       .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('dispose the session') });
   });
 
   it('closes one, and moves the default when it was the default', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/live' } });
+    await client.handle({ method: 'disposeChat', params: { channel: chatUri } });
 
     expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.defaultChat)
       .toBe(second);
-    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe('ahp-chat:/live');
-    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }))
-      .rejects.toMatchObject({ code: -32001 });
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(chatUri);
+    /*
+     * And the name follows the role rather than the chat.
+     *
+     * `default` is which chat a client gets when it names none, not an identity
+     * - so once the default has moved, the URI that means "this session's
+     * default" resolves to the one that is now default. A client holding it
+     * lands on the conversation the session would hand it anyway, which is
+     * what it asked for.
+     */
+    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { resource: string } };
+    };
+    expect(after.snapshot.state.resource).toBe(second);
   });
 
   it('refuses to fork one from a turn, which it cannot do', async () => {

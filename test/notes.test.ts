@@ -61,12 +61,16 @@ async function talking(ask = 'writes') {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'notes', config: { ask } },
   });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // Read off the session rather than spelled out: what a session calls its chat
+  // is the host's to say and every client's to look up.
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { dir, client, peer: p, uri, chatUri };
 }

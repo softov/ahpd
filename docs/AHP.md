@@ -37,7 +37,7 @@ specification: nothing here is listed because AHP defines it.
 | `reconnect` | replay from a `serverSeq` | ✅ | Replays what a dropped client missed, or hands back snapshots when the gap is longer than the buffer |
 | `dispatchAction` | client-origin state actions | 🚧 | See [state actions](#state-actions) for which. The echo carries `origin` - the `clientId` and `clientSeq` the dispatch came with - and one this host will not act on comes back carrying `rejectionReason` instead |
 | `listSessions`, `createSession`, `disposeSession` | the catalogue and its lifecycle | ✅ | Most-recently-modified first, live sessions included. Every row opens from its transcript - a file read, no CLI - and is **resumed** only when somebody starts a turn on it |
-| `createChat`, `disposeChat` | several chats per session | ✅ | Each is its own agent process on one directory and one config. The last one cannot be disposed, and the refusal says so |
+| `createChat`, `disposeChat` | several chats per session | ✅ | Each is its own agent process on one directory and one config. The last one cannot be disposed, and the refusal says so. A session's first chat is named `ahp-chat://default/<base64url(sessionUri)>` - see [chat URIs](#chat-uris) |
 | `resolveSessionConfig` | the schema before a session exists | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. A backend advertises its own properties and a client draws what it is given; the Claude backend offers the same five approval modes VS Code's own Claude host does. `autoApprove` and `mode` are conventional keys a client dispatches whatever a host advertises, and are mapped onto that one axis on the way in |
 | `sessionConfigCompletions` | — | 🚫 | Every key this host offers is an enum, so there is nothing to look up. VS Code calls it only for a key whose schema asks for it, which none of ours does |
 | `fetchTurns` | transcript paging | ✅ | Newest 50 in the snapshot, a cursor for the rest |
@@ -156,6 +156,31 @@ carries the `id`. Two kinds are served:
 Both are held in a map keyed by id, never in one slot: the CLI calls
 `canUseTool` per tool call, and an agent that fires two in parallel asks twice
 before either is answered.
+
+### Chat URIs
+
+A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, and the
+older `ahp-chat:/<sessionId>` still resolves to the same chat.
+
+That is the reference implementation's shape rather than the one the
+specification illustrates, and it is a deliberate retreat. The specification
+documents `ahp-chat:/<uuid>` and says the owning session is "**not** encoded in
+the chat URI - the relationship is expressed via the session's `chats`
+catalogue". This host published exactly that. VS Code's client computes the
+other shape from the session rather than reading the catalogue, so it subscribed
+to a channel that did not exist while the conversation sat on the one it had
+been told about, and its pane stayed empty against a host that was working.
+
+Answering *both* was tried first and is not enough. The disagreement is not only
+about which channel to open: `defaultChat`, every entry in `chats`, and
+`ChatState.resource` name a chat too, and a client that subscribed to one string
+and is then told the chat is at another cannot pair them up. One name has to win
+everywhere, and it has to be the one the only other implementation computes.
+
+`default` is a **role**, not an identity: it means whichever chat a client gets
+when it names none. Dispose that chat and the name follows the default to its
+successor. A second chat is named by whoever created it and is not derived from
+anything.
 
 ### Sessions and the catalogue
 

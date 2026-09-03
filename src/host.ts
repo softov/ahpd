@@ -423,46 +423,69 @@ export function createHost(options: HostOptions): Host {
   };
   /** Everything watching a channel, which is not everything connected. */
   /**
-   * The chat a URI names, whichever shape it was written in.
+   * How this host names a session's first chat.
    *
-   * This host mints `ahp-chat:/<id>`, which is the form the specification
-   * documents and the one it says to use: "the owning session URI is **not**
-   * encoded in the chat URI - the relationship is expressed via the session's
-   * `chats` catalogue". So that is what `defaultChat` and `chats` carry, and
-   * what every client is told.
+   * `ahp-chat://default/<base64url(sessionUri)>`, which is the reference
+   * implementation's shape and not the one the specification illustrates. That
+   * is a deliberate retreat, and it was forced.
    *
-   * VS Code addresses a chat the other way. Its own host mints
-   * `ahp-chat://<chatId>/<base64url(sessionUri)>` and its client *derives* that
-   * string rather than reading `chats`, so against a host that publishes the
-   * documented form it subscribes twice: once to what it was told, which works,
-   * and once to what it computed, which does not exist. The pane it draws reads
-   * the second, so a conversation this host had already sent arrived nowhere.
+   * The specification documents `ahp-chat:/<uuid>` and says the owning session
+   * is "**not** encoded in the chat URI - the relationship is expressed via the
+   * session's `chats` catalogue". This host published exactly that. VS Code's
+   * client computes the other shape from the session instead of reading the
+   * catalogue, and subscribes to what it computed - so it asked about a channel
+   * that did not exist while the conversation sat on the one it had been told
+   * about.
    *
-   * Answering both costs one function. Changing what this host *publishes*
-   * would cost conformance, and would be the wrong half to give up: a client
-   * reading the catalogue is doing the right thing and must keep working.
+   * Answering *both* was tried first and is not enough, because the disagreement
+   * is not only about which channel to open. `defaultChat`, every entry in
+   * `chats`, and `ChatState.resource` all name a chat too, and a client that
+   * subscribed to one string and is then told the chat is at another cannot pair
+   * them up: it holds a subscription nothing refers to and a reference nothing
+   * is subscribed to. One name has to win everywhere, and it has to be the one
+   * the only other implementation computes.
    *
-   * `default` is the only chat id resolved, because it is the only one a client
-   * can compute without being told. Any other id is a chat it learned about
-   * from `chats`, where it also learned the URI.
+   * The other spelling is still answered - see `chatOf` - so nothing holding an
+   * older URI is broken by this.
    */
-  const chatFor = (uri: string): string | undefined => {
-    if (!uri.startsWith('ahp-chat://')) return undefined;
-    const [chatId, ...rest] = uri.slice('ahp-chat://'.length).split('/');
-    const encoded = rest.join('/');
-    if (chatId !== 'default' || encoded === '') return undefined;
-    let session: string;
-    try {
-      // base64url, unpadded, as the reference host writes it.
-      session = Buffer.from(encoded, 'base64url').toString('utf8');
+  const chatUriFor = (session: string): string =>
+    `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  /**
+   * The session a chat URI belongs to, in either spelling.
+   *
+   * The new shape carries it; the old one is named after it. Undefined for
+   * anything that is not a chat URI at all.
+   */
+  const sessionOfChat = (uri: string): string | undefined => {
+    if (uri.startsWith('ahp-chat://')) {
+      const [chatId, ...rest] = uri.slice('ahp-chat://'.length).split('/');
+      const encoded = rest.join('/');
+      if (chatId !== 'default' || encoded === '') return undefined;
+      try {
+        const session = Buffer.from(encoded, 'base64url').toString('utf8');
+        return session.includes(':') ? session : undefined;
+      }
+      catch { return undefined; }
     }
-    catch { return undefined; }
-    if (!session.includes(':')) return undefined;
-    const held = sessions.get(session);
-    if (held) return held.defaultChat;
-    // Not running. The default chat of a session read from its transcript is
-    // named after it, which is what `snapshotOf` will go on to serve.
-    return `ahp-chat:/${idOf(session)}`;
+    if (uri.startsWith('ahp-chat:/')) return uriFor(idOf(uri));
+    return undefined;
+  };
+
+  /**
+   * The chat a URI means, whichever spelling it was written in.
+   *
+   * A chat this host is actually holding under that exact name answers for
+   * itself - a second chat's URI is the client's own and is not derived from
+   * anything. Everything else is a first chat, named either way.
+   */
+  const sessionFor = (channel: string): string => sessionOfChat(channel) ?? channel;
+
+  const chatOf = (uri: string): string => {
+    if (byChat.has(uri)) return uri;
+    const session = sessionOfChat(uri);
+    if (session === undefined) return uri;
+    return sessions.get(session)?.defaultChat ?? chatUriFor(session);
   };
 
   /**
@@ -476,9 +499,7 @@ export function createHost(options: HostOptions): Host {
   const broadcast = (channel: string, method: string, params: unknown): void => {
     for (const connection of connections) {
       if (connection.watching.has(channel)) connection.peer.notify(method, params);
-      // And again under the other name, when the client asked by both. Not an
-      // either/or: a client that subscribed twice holds two subscriptions, each
-      // keyed by the string it sent, and one of them would never hear anything.
+      // And under the older spelling, for a client still watching by that one.
       const alias = connection.aliases.get(channel);
       if (alias !== undefined && connection.watching.has(alias)) {
         connection.peer.notify(method, { ...(params as Record<string, unknown>), channel: alias });
@@ -1496,12 +1517,15 @@ export function createHost(options: HostOptions): Host {
      * Served read-only from its transcript. No agent process is started until
      * somebody sends a turn to it.
      */
-    const id = idOf(channel);
+    // A chat URI carries its session; a session URI is one. Either way the
+    // transcript is the session's, and the id is what reads it.
+    const owning = sessionOfChat(channel) ?? channel;
+    const id = idOf(owning);
     const turns = await past(id);
     const owner = owners.get(uriFor(id)) ?? first;
     if (turns) {
       const title = titles.get(id) ?? 'Session';
-      if (channel.startsWith('ahp-chat:/')) {
+      if (sessionOfChat(channel) !== undefined) {
         return value({
           resource: channel,
           state: {
@@ -1523,8 +1547,8 @@ export function createHost(options: HostOptions): Host {
           title,
           status: Status.Idle | (flags.get(`ahp-session:/${id}`) ?? 0),
           lifecycle: 'ready',
-          defaultChat: `ahp-chat:/${id}`,
-          chats: [{ resource: `ahp-chat:/${id}`, title }],
+          defaultChat: chatUriFor(uriFor(id)),
+          chats: [{ resource: chatUriFor(uriFor(id)), title }],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           activeClients: activeClientsOf(`ahp-session:/${id}`),
           ...describes(`ahp-session:/${id}`),
@@ -1584,7 +1608,7 @@ export function createHost(options: HostOptions): Host {
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
     try {
-      spawn(agent, uri, `ahp-chat:/${idFor(uri)}`, config, undefined, where, credentials);
+      spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials);
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -1618,7 +1642,7 @@ export function createHost(options: HostOptions): Host {
       wanted.workingDirectory,
       wanted.origin,
     );
-    const chatUri = `ahp-chat:/${idOf(uri)}`;
+    const chatUri = chatUriFor(uri);
     byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
     return uri;
   };
@@ -1847,9 +1871,14 @@ export function createHost(options: HostOptions): Host {
           const resumed: string[] = [];
           for (const channel of wanted) {
             try {
-              await snapshotOf(channel);
+              // Resolved the way `subscribe` resolves it, so a client coming
+              // back under the older spelling of a chat is resumed rather than
+              // told the channel has gone.
+              const meant = chatOf(channel);
+              await snapshotOf(meant);
+              if (meant !== channel) connection.aliases.set(meant, channel);
               connection.watching.add(channel);
-              resumed.push(channel);
+              resumed.push(meant);
             }
             catch {
               // A session whose agent has gone, or one this client may no
@@ -1912,7 +1941,7 @@ export function createHost(options: HostOptions): Host {
           // taken of the channel and returned under the name the client used -
           // a client that asked about one URI and was answered about another
           // has been answered about something it is not watching.
-          const meant = chatFor(channel) ?? channel;
+          const meant = chatOf(channel);
           const snapshot = await snapshotOf(meant);
           if (meant !== channel) {
             connection.aliases.set(meant, channel);
@@ -1949,7 +1978,7 @@ export function createHost(options: HostOptions): Host {
         fetchTurns: async (params) => {
           const channel = String(params.channel ?? '');
           const live = byChat.get(channel);
-          const all = live ? live.chat.allTurns() : await past(idOf(channel));
+          const all = live ? live.chat.allTurns() : await past(idOf(sessionFor(channel)));
           if (!all)
             throw new RpcError(-32001, `No agent for session ${channel}`);
           const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
@@ -2587,7 +2616,8 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         disposeChat: async (params) => {
-          const chatUri = String(params.channel ?? '');
+          // Either spelling, like `subscribe` and a dispatch.
+          const chatUri = chatOf(String(params.channel ?? ''));
           const found = byChat.get(chatUri);
           if (!found)
             throw new RpcError(-32001, `No chat at ${chatUri}`);
@@ -2678,7 +2708,7 @@ export function createHost(options: HostOptions): Host {
         // Resolved before anything looks it up, so a client that talks to a
         // chat under its own spelling drives the same conversation it is
         // watching rather than one nothing here has heard of.
-        const channel = chatFor(asked) ?? asked;
+        const channel = chatOf(asked);
         const action = (typeof params.action === 'object' && params.action !== null
           ? params.action
           : {}) as Record<string, unknown>;
@@ -2860,7 +2890,7 @@ export function createHost(options: HostOptions): Host {
         }
 
         if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
-          const uri = `ahp-session:/${idOf(channel)}`;
+          const uri = sessionFor(channel);
           const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
           const on = type === 'session/isReadChanged'
             ? action.isRead === true
@@ -2928,7 +2958,7 @@ export function createHost(options: HostOptions): Host {
          * instead would start one per setting somebody tried.
          */
         if (!held && type === 'session/configChanged') {
-          const uri = `ahp-session:/${idOf(channel)}`;
+          const uri = sessionFor(channel);
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
@@ -2947,14 +2977,16 @@ export function createHost(options: HostOptions): Host {
          * context it built before, not a transcript it has been shown.
          */
         if (!held && type === 'chat/turnStarted') {
-          const id = idOf(channel);
+          // The session the chat belongs to, which is not the chat's own name:
+          // a chat URI carries its session rather than being derived from it.
+          const uri = sessionFor(channel);
+          const id = idOf(uri);
           void (async () => {
             const seed = await past(id);
             if (!seed) {
               refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
               return;
             }
-            const uri = `ahp-session:/${id}`;
             // `past` is what learned whose session this is.
             const owner = owners.get(uri);
             if (!owner) {
@@ -2965,7 +2997,7 @@ export function createHost(options: HostOptions): Host {
             // a conversation whose second half cannot see the files its
             // first half was about.
             const ran = wheres.get(uri)?.[0]?.replace(/^file:\/\//, '');
-            const session = spawn(owner, uri, `ahp-chat:/${id}`, chosen.get(uri) ?? {}, { resume: id, seed }, ran);
+            const session = spawn(owner, uri, chatUriFor(uri), chosen.get(uri) ?? {}, { resume: id, seed }, ran);
             log(`resumed ${uri}`);
             dispatch(uri, { type: 'session/ready' });
             summaryMoved(uri);
