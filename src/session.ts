@@ -84,6 +84,43 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   const out: Bag[] = [];
 
   /*
+   * Where a customization of each kind lives, and the container it goes in.
+   *
+   * A top-level `Customization` is a *container* - a plugin or a directory -
+   * whose leaves are its `children`, or a bare MCP server. Skills, prompts and
+   * agents are `ChildCustomization`s and belong inside one. Published flat
+   * they are read as plugins, and the reference client then walks
+   * `<uri>/agents`, `<uri>/skills`, `<uri>/commands` and `<uri>/rules` looking
+   * for their contents - four failed reads per customization, against a `uri`
+   * that was a bare name rather than anything a filesystem could answer.
+   *
+   * One container per kind, because `contents` names a single
+   * `ChildCustomizationType`. The directory is the conventional one for that
+   * kind - the CLI reports *what* it loaded and never where it came from, so
+   * this is where a person would go to add one rather than a path this host
+   * read off disk. A built-in the CLI ships has no file of its own and the
+   * path under it will not exist; nothing dereferences it, because a client
+   * reads a directory's `children` rather than walking it.
+   */
+  const home = process.env.HOME ?? '';
+  const folder = (kind: string): string => `file://${home}/.claude/${kind}`;
+  const container = (kind: string, contents: string, children: Bag[]): Bag | undefined =>
+    (children.length === 0 ? undefined : {
+      type: 'directory',
+      id: `directory:${kind}`,
+      uri: folder(kind),
+      name: kind,
+      contents,
+      enabled: true,
+      // The person's own directory, so a client may offer to write one.
+      writable: true,
+      children,
+    });
+  const asSkills: Bag[] = [];
+  const asPrompts: Bag[] = [];
+  const asAgents: Bag[] = [];
+
+  /*
    * Which of the commands are skills, and which skills a person can invoke.
    *
    * The CLI hands out two lists that overlap and neither says which is which:
@@ -105,11 +142,11 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const command = offered.get(name);
     const described = str(skill.description) ?? str(bag(command).description);
     const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
-    out.push({
+    asSkills.push({
       type: 'skill',
       id: `skill:${name}`,
       name,
-      uri: name,
+      uri: `${folder('skills')}/${name}`,
       enabled: true,
       ...(command ? {} : { disableUserInvocation: true }),
       ...(described ? { description: described } : {}),
@@ -119,11 +156,11 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
 
   for (const [name, command] of offered) {
     if (loaded.has(name)) continue;
-    out.push({
+    asPrompts.push({
       type: 'prompt',
       id: `command:${name}`,
       name,
-      uri: name,
+      uri: `${folder('commands')}/${name}.md`,
       enabled: true,
       ...(str(command.description) ? { description: str(command.description) as string } : {}),
       ...(str(command.argumentHint) ? { argumentHint: str(command.argumentHint) as string } : {}),
@@ -134,16 +171,26 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const found = bag(raw);
     const name = str(found.name);
     if (!name) continue;
-    out.push({
+    asAgents.push({
       type: 'agent',
       id: `agent:${name}`,
       name,
-      uri: name,
+      uri: `${folder('agents')}/${name}.md`,
       enabled: true,
       ...(str(found.description) ? { description: str(found.description) as string } : {}),
     });
   }
 
+  for (const found of [
+    container('skills', 'skill', asSkills),
+    container('commands', 'prompt', asPrompts),
+    container('agents', 'agent', asAgents),
+  ]) {
+    if (found) out.push(found);
+  }
+
+  // Bare, and correctly so: an MCP server is the one leaf the protocol lets a
+  // session surface at the top level without a container around it.
   for (const raw of mcp) {
     const server = bag(raw);
     const name = str(server.name);

@@ -813,12 +813,16 @@ describe('what the harness offers', () => {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state;
 
-    const kinds = state.customizations.map((c) => c.type);
+    // A leaf lives in a container; an MCP server is the one kind that does
+    // not, and is published bare.
+    const leaves = state.customizations
+      .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
+    const kinds = leaves.map((c) => c.type);
     expect(kinds).toContain('prompt');
     expect(kinds).toContain('agent');
-    expect(kinds).toContain('mcpServer');
+    expect(state.customizations.map((c) => c.type)).toContain('mcpServer');
 
-    const command = state.customizations.find((c) => c.id === 'command:advisor');
+    const command = leaves.find((c) => c.id === 'command:advisor');
     expect(command).toMatchObject({ name: 'advisor', description: 'Read support tickets', enabled: true });
   });
 
@@ -851,15 +855,18 @@ describe('what the harness offers', () => {
     const { client } = await running();
 
     const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { agents: { customizations?: { id: string; type: string }[] }[] } };
+      snapshot: { state: { agents: { customizations?: { id: string; type: string; children?: { id: string }[] }[] }[] } };
     }).snapshot.state;
     // The protocol's own place for them: `AgentInfo.customizations`, which it
     // says are propagated into a session's list when one is created with this
     // agent. Without it the only way to ask what a harness offers is to create
     // a session, which is the thing somebody is deciding about.
     const offered = root.agents[0]?.customizations ?? [];
-    expect(offered.map((one) => one.id).sort()).toEqual(['mcp:gmail', 'skill:review']);
+    expect(offered.map((one) => one.id).sort()).toEqual(['directory:skills', 'mcp:gmail']);
     expect(offered.find((one) => one.id === 'mcp:gmail')?.type).toBe('mcpServer');
+    // And the skill is inside the directory, which is where a leaf goes.
+    const held = offered.find((one) => one.id === 'directory:skills') as { children?: { id: string }[] } | undefined;
+    expect(held?.children?.map((one) => one.id)).toEqual(['skill:review']);
   });
 
   it('says an MCP server\'s state in the protocol\'s words, not the SDK\'s', async () => {
@@ -2061,8 +2068,31 @@ describe('a skill is not a prompt', () => {
     const opened = await started.client.handle({ method: 'subscribe', params: { channel: started.uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     };
-    return { ...started, items: opened.snapshot.state.customizations };
+    /*
+     * Flattened for the assertions below, because the shape they are about is
+     * each leaf's own. A top-level customization is a *container* and the
+     * leaves are its `children` - see the containers' own test below.
+     */
+    const leaves = opened.snapshot.state.customizations
+      .flatMap((entry) => (entry.children as Record<string, unknown>[] | undefined) ?? [entry]);
+    return { ...started, items: leaves, top: opened.snapshot.state.customizations };
   };
+
+  it('puts each kind in a directory of its own, and nothing bare', async () => {
+    const { top } = await offering();
+    /*
+     * A leaf published at the top level is read as a *plugin*, and the
+     * reference client then walks `<uri>/agents`, `<uri>/skills`,
+     * `<uri>/commands` and `<uri>/rules` looking for what is inside it - four
+     * failed reads apiece against a `uri` that was a bare name.
+     */
+    expect(top.every((entry) => entry.type === 'directory' || entry.type === 'mcpServer')).toBe(true);
+    const skills = top.find((entry) => entry.contents === 'skill');
+    expect(skills?.type).toBe('directory');
+    // A directory says what one kind of thing it holds, and holds them.
+    expect((skills?.children as unknown[])?.length).toBeGreaterThan(0);
+    expect(String(skills?.uri)).toMatch(/^file:\/\/.*\/\.claude\/skills$/);
+  });
 
   it('calls a command that was loaded as a skill a skill', async () => {
     const { items } = await offering();

@@ -208,6 +208,21 @@ the moment it restarted the client's own URI was dead - `No agent for session`,
 about a session that was still there. Only where the client named a UUID, which
 is what the backend will take.
 
+### Customizations are containers
+
+A top-level `Customization` is a **container** - a plugin or a directory -
+whose leaves are its `children`, or a bare MCP server. Skills, prompts and
+agents are `ChildCustomization`s and belong inside one. This host published
+them flat, so a client read each as a *plugin* and walked `<uri>/agents`,
+`<uri>/skills`, `<uri>/commands` and `<uri>/rules` looking for its contents -
+four failed reads apiece, against a `uri` that was a bare name rather than
+anything a filesystem could answer.
+
+One container per kind, because `contents` names a single
+`ChildCustomizationType`. The directory is the conventional one for that kind:
+the CLI reports *what* it loaded and never where it came from, so this is where
+a person would go to add one rather than a path this host read off disk.
+
 ### The snapshot and the actions have to agree
 
 A client driven by actions builds its own state; a client that subscribes reads
