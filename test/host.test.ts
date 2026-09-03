@@ -1565,6 +1565,43 @@ describe('one tool call, one row', () => {
     expect(ready?.action.toolInput).toBe('ls');
   });
 
+  it('says the same on the call as it says in the action', async () => {
+    const { client, chatUri } = await calling();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: Record<string, unknown> };
+    };
+    const call = (toolParts(opened.snapshot.state)[0] as { toolCall: Record<string, unknown> }).toolCall;
+
+    /*
+     * A client driven by actions builds its own state from
+     * `chat/toolCallReady`. A client that subscribes reads this instead, and
+     * `ToolCallState` requires both fields - so a transcript full of tool
+     * calls was a transcript full of rows with no sentence to draw and no
+     * answer to whether anybody had approved them.
+     */
+    expect(call.invocationMessage).toBe('Bash');
+    expect(call.confirmed).toBe('not-needed');
+  });
+
+  it('says on the call that a person approved it', async () => {
+    const { client, uri, chatUri } = await calling();
+    void sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_1' });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+    });
+    await settle();
+
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: Record<string, unknown> };
+    };
+    const call = (toolParts(opened.snapshot.state)[0] as { toolCall: Record<string, unknown> }).toolCall;
+    expect(call.status).toBe('running');
+    // How it was approved, which the action said and the call did not.
+    expect(call.confirmed).toBe('user-action');
+  });
+
   it('asks about the call the agent announced, not one of its own', async () => {
     const { client, peer: p, chatUri } = await calling();
     void sdk.canUseTool?.('Bash', { command: 'ls' }, {

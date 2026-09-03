@@ -597,6 +597,18 @@ export function createSession(options: SessionOptions): Session {
           toolName: name,
           displayName: name,
           status: 'running',
+          /*
+           * On the call, and not only on the action that announces it.
+           *
+           * A client driven by actions builds its own state and gets these
+           * from `chat/toolCallReady` below. A client that *subscribes* reads
+           * the snapshot instead, and `ToolCallState` requires both - so every
+           * tool call in a transcript was a row with no sentence to draw and
+           * no answer to whether anybody had approved it. The two have to say
+           * the same thing, and this is the half that was not being said.
+           */
+          invocationMessage: name,
+          confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
         };
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
@@ -771,6 +783,10 @@ export function createSession(options: SessionOptions): Session {
       } as Bag;
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
+      // The same sentence the action carries, so a client reading the snapshot
+      // has one too. See the call built in `assistant`.
+      call.invocationMessage = invocationMessage;
+      delete call.confirmed;
       if (!held) {
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
@@ -1491,7 +1507,12 @@ export function createSession(options: SessionOptions): Session {
       pending.delete(held.id);
       inputNeededRemoved(held.id);
       const part = parts.get(toolCallId);
-      if (part) bag(part.toolCall).status = approved ? 'running' : 'cancelled';
+      if (part) {
+        bag(part.toolCall).status = approved ? 'running' : 'cancelled';
+        // And how it was approved, which is required on the call and was only
+        // ever said in the action.
+        if (approved) bag(part.toolCall).confirmed = 'user-action';
+      }
       doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       // Said back, like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here stayed

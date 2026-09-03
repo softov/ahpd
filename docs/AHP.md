@@ -208,6 +208,16 @@ the moment it restarted the client's own URI was dead - `No agent for session`,
 about a session that was still there. Only where the client named a UUID, which
 is what the backend will take.
 
+### The snapshot and the actions have to agree
+
+A client driven by actions builds its own state; a client that subscribes reads
+the snapshot. Both are this host's answer to the same question, and a field
+carried by one and not the other is a client that renders differently depending
+on when it arrived. `invocationMessage` and `confirmed` were sent on
+`chat/toolCallReady` and never written onto the call itself, so every tool call
+in a *transcript* was a row with no sentence to draw and no answer to whether
+anybody had approved it - `ToolCallState` requires both.
+
 ### Sessions and the catalogue
 
 | | |
