@@ -549,11 +549,34 @@ export function createHost(options: HostOptions): Host {
    * the client is told the name of the chat it actually landed on.
    */
   const spelledFor = (asked: string, snapshot: Record<string, unknown>): void => {
+    // Read before it is overwritten: it is the name this host holds the
+    // session under, and the prefix every URI built from it carries.
+    const meant = typeof snapshot.resource === 'string' ? snapshot.resource : asked;
     snapshot.resource = asked;
     const state = snapshot.state;
     if (typeof state !== 'object' || state === null) return;
     const bag = state as Record<string, unknown>;
     if (typeof bag.resource === 'string') bag.resource = asked;
+    /*
+     * A changeset's URI is built from the session's, so a template is the
+     * other name in disguise.
+     *
+     * This is how the held spelling escaped. A client resolves a changeset
+     * channel back to the session that owns it, so a template naming
+     * `ahp-session:/x` teaches a client that asked about `claude:/x` a second
+     * name for the same session - and it then addresses the session, its chat
+     * and its annotations under *that* one. Which of the two the renderer
+     * ends up on is whichever subscription landed first, which is why the
+     * conversation drew sometimes and not others.
+     */
+    if (Array.isArray(bag.changesets))
+      bag.changesets = bag.changesets.map((one) => {
+        if (typeof one !== 'object' || one === null) return one;
+        const template = (one as Record<string, unknown>).uriTemplate;
+        return typeof template === 'string' && template.startsWith(`${meant}/`)
+          ? { ...(one as Record<string, unknown>), uriTemplate: `${asked}${template.slice(meant.length)}` }
+          : one;
+      });
     // Only the chats derived from this session are renamed. A chat a client
     // named itself is that client's name and stays as it was written.
     const mine = (uri: unknown): boolean => {

@@ -195,11 +195,20 @@ were all stored under the catalogue's name, and a lookup under the client's name
 found nothing - a row marked read that came back unread, and a browsed session
 that could not be continued because no backend owned a name nobody had stored.
 
-And a session answered under an alias has its chat names spelled from that
-alias, because a chat URI contains a session URI. Told otherwise, a client
-subscribes to the chat it computed, reads a `defaultChat` naming another, and
-cannot pair the two: it holds a subscription nothing refers to and a reference
-nothing is subscribed to, and draws an empty conversation with no error.
+And a session answered under an alias has **every** URI in it spelled from that
+alias, because a chat URI and a changeset URI both contain a session URI. Told
+otherwise, a client subscribes to the chat it computed, reads a `defaultChat`
+naming another, and cannot pair the two: it holds a subscription nothing refers
+to and a reference nothing is subscribed to, and draws an empty conversation
+with no error.
+
+A `changesets` template is the subtler half of that, and it is how the held
+spelling escaped. A client resolves a changeset channel back to the session
+that owns it, so a template naming `ahp-session:/x` teaches a client that asked
+about `claude:/x` a second name for the same session - and it then addresses
+the session, its chat and its annotations under that one. Which name the
+conversation ends up keyed by is whichever subscription happened to land
+first, so it drew sometimes and not others.
 
 A session a client creates is stored under the id the client chose, by naming
 it to the backend. Left to itself the backend invents an id and writes the

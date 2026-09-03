@@ -56,6 +56,38 @@ function scripted(fail?: string) {
   return { source, invoked };
 }
 
+/*
+ * A changeset URI is built from the session's, so a template is the session's
+ * name in disguise - and a client resolves a changeset channel back to the
+ * session that owns it. A template naming the held spelling teaches a client
+ * that asked about another one a *second* name for the same session; it then
+ * addresses the session, its chat and its annotations under that one, and
+ * which name the conversation ends up keyed by is whichever subscription
+ * happened to land first.
+ */
+it('spells a changeset template with the name the client asked under', async () => {
+  const { source } = scripted();
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR })], changes: source });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+
+  // The same session, asked about under the name a client computes from the
+  // provider rather than the one this host holds it by.
+  const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/one' } }) as {
+    snapshot: { state: { changesets: { uriTemplate: string }[] } };
+  };
+  const templates = opened.snapshot.state.changesets.map((one) => one.uriTemplate);
+  expect(templates).toEqual(['claude:/one/changeset/uncommitted']);
+
+  // And under its own name it is still its own name.
+  const own = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
+    snapshot: { state: { changesets: { uriTemplate: string }[] } };
+  };
+  expect(own.snapshot.state.changesets.map((one) => one.uriTemplate))
+    .toEqual(['ahp-session:/one/changeset/uncommitted']);
+});
+
 /** A connected client with one session, watching the session and its changeset. */
 async function watching(source: ChangesetSource, pace = 0) {
   const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace })], changes: source });
