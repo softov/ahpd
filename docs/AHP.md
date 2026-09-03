@@ -223,6 +223,21 @@ One container per kind, because `contents` names a single
 the CLI reports *what* it loaded and never where it came from, so this is where
 a person would go to add one rather than a path this host read off disk.
 
+### A rebuilt turn is a turn
+
+There are two builders - a live session's, driven by the CLI's message stream,
+and a browsed one's, rebuilt from the transcript on disk - and they answer the
+same question. The rebuilt one drifted: it wrote `status: 'failed'`, which is
+not one of the seven `ToolCallStatus` values and matched no variant at all;
+left `confirmed` off, so a client read every past call as a question waiting on
+somebody; left `invocationMessage` off unless the input summarised to
+something, so the row had no sentence to draw; and wrote content blocks with no
+`type`. It also reported no `usage`, though the transcript records the token
+counts and the model on every assistant frame.
+
+This matters more than it looks: every session a client opens after this daemon
+restarts is a rebuilt one.
+
 ### The snapshot and the actions have to agree
 
 A client driven by actions builds its own state; a client that subscribes reads

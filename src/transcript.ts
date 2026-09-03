@@ -70,9 +70,25 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
         if (str(block.type) !== 'tool_result') continue;
         const call = calls.get(str(block.tool_use_id) ?? '');
         if (!call) continue;
-        call.status = block.is_error === true ? 'failed' : 'completed';
+        /*
+         * A tool that failed is `completed`, and says so in its result.
+         *
+         * `ToolCallStatus` has no `failed`: the seven are `streaming`,
+         * `pending-confirmation`, `running`, `auth-required`,
+         * `pending-result-confirmation`, `completed` and `cancelled`. What
+         * went wrong is `success` and `error`, which is the only place a
+         * client looks for it. This builder said `failed` and matched no
+         * variant at all.
+         */
+        const ok = block.is_error !== true;
+        call.status = 'completed';
+        call.success = ok;
+        call.pastTenseMessage = str(call.invocationMessage) ?? str(call.displayName) ?? 'the tool';
         const text = resultText(block.content);
-        if (text !== undefined) call.content = [{ text }];
+        // `type` on every block: these are MCP's content blocks and it is what
+        // tells them apart.
+        if (text !== undefined) call.content = [{ type: 'text', text }];
+        if (!ok) call.error = { message: text ?? 'The tool failed' };
       }
       if (!said) continue;
 
@@ -94,6 +110,27 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
     }
 
     if (role !== 'assistant') continue;
+
+    /*
+     * What the turn cost and which model answered it, off the transcript
+     * rather than left out.
+     *
+     * `Turn.usage` is required, and a rebuilt turn used to carry none at all -
+     * so a client could not name the model on a past turn or size the context
+     * window that turn used. The transcript records both on every assistant
+     * frame; this is the same mapping a live turn does, from the same fields.
+     */
+    const counted = bag(message.usage);
+    const count = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+    const spent: Bag = {
+      ...(count(counted.input_tokens) !== undefined ? { inputTokens: count(counted.input_tokens) } : {}),
+      ...(count(counted.output_tokens) !== undefined ? { outputTokens: count(counted.output_tokens) } : {}),
+      ...(count(counted.cache_read_input_tokens) !== undefined
+        ? { cacheReadTokens: count(counted.cache_read_input_tokens) }
+        : {}),
+      ...(str(message.model) !== undefined ? { model: str(message.model) as string } : {}),
+    };
+    const used = Object.keys(spent).length > 0 ? spent : undefined;
 
     const parts: Bag[] = [];
     const blocks = list(message.content);
@@ -117,7 +154,22 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
           // a call still reading `running` would be a spinner that never stops.
           status: 'completed',
           ...(command ? { toolInput: command } : {}),
-          ...(command ? { invocationMessage: command } : {}),
+          /*
+           * Required on a completed call, all four of them, and this builder
+           * sent one of them sometimes.
+           *
+           * `invocationMessage` is the sentence the row draws; without it
+           * there is nothing to draw. `confirmed` says nothing is being asked,
+           * and without it a client reads every call in the transcript as a
+           * question waiting on somebody. `success` and `pastTenseMessage`
+           * stand until a result says otherwise - a call with no result
+           * recorded is one that finished with nothing to report, not one
+           * that failed.
+           */
+          invocationMessage: command ?? name,
+          confirmed: 'not-needed',
+          success: true,
+          pastTenseMessage: command ?? name,
         };
         calls.set(id, call);
         parts.push({ id, kind: 'toolCall', toolCall: call });
@@ -131,6 +183,7 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
     const previous = built[built.length - 1];
     if (previous && (previous.responseParts as Bag[]).length === 0) {
       previous.responseParts = parts;
+      previous.usage = used as WireTurn<Turn>['usage'];
       continue;
     }
     built.push({
@@ -140,7 +193,7 @@ export async function turnsOf(sessionId: string, dir: string): Promise<Bag[]> {
       message: { text: '', origin: { kind: 'agent' } },
       responseParts: parts,
       state: 'complete',
-      usage: undefined,
+      usage: used as WireTurn<Turn>['usage'],
     });
   }
 

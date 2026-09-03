@@ -1452,6 +1452,54 @@ describe('the flags a client sets', () => {
 });
 
 describe('a session read from its transcript', () => {
+  it('rebuilds a tool call in a shape a client can draw', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'list them' } },
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        message: {
+          role: 'assistant',
+          model: 'claude-opus-5',
+          usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 900 },
+          content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'u2',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', is_error: true, content: 'boom' }] },
+      },
+    );
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/old' } }) as {
+      snapshot: { state: { turns: { usage?: Record<string, unknown>; responseParts: { toolCall?: Record<string, unknown> }[] }[] } };
+    };
+    const turn = opened.snapshot.state.turns[0];
+    const call = turn?.responseParts.find((part) => part.toolCall)?.toolCall;
+
+    /*
+     * `ToolCallStatus` has no `failed` - the seven are `streaming`,
+     * `pending-confirmation`, `running`, `auth-required`,
+     * `pending-result-confirmation`, `completed` and `cancelled`. A tool that
+     * ran and went wrong ran; what went wrong is `success` and `error`.
+     */
+    expect(call?.status).toBe('completed');
+    expect(call?.success).toBe(false);
+    expect(call?.error).toMatchObject({ message: 'boom' });
+    // The sentence the row draws, and the answer to whether anybody is being
+    // asked. Both required, and a transcript full of calls without them is a
+    // transcript of rows with nothing on them.
+    expect(call?.invocationMessage).toBe('ls');
+    expect(call?.confirmed).toBe('not-needed');
+    // MCP's content blocks, which carry a `type`.
+    expect(call?.content).toEqual([{ type: 'text', text: 'boom' }]);
+    // And what it cost, off the transcript rather than left out.
+    expect(turn?.usage).toEqual({ inputTokens: 12, outputTokens: 3, cacheReadTokens: 900, model: 'claude-opus-5' });
+  });
+
   it('is configurable before it is resumed', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
