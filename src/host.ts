@@ -3079,6 +3079,19 @@ export function createHost(options: HostOptions): Host {
           };
           const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
           presence.set(idOf(channel), held);
+          /*
+           * Saying again what this host already held is not a change.
+           *
+           * `serverSeq` advances with *state* and never with messages, and a
+           * client reconciles what it contributes whenever the session state
+           * moves. So an echo of an announcement that changed nothing was
+           * itself the change that prompted the next announcement, and the two
+           * of us ran that loop three hundred times in a few seconds, burning
+           * a sequence number apiece. The guard `isReadChanged` has below is
+           * the same guard, and this is the same reason for it.
+           */
+          if (JSON.stringify(held.get(clientId)) === JSON.stringify(activeClient))
+            return;
           // Re-announcing is how a client refreshes what it contributes, so
           // this replaces rather than merges - a tool taken away has to be
           // able to go.

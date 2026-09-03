@@ -256,6 +256,16 @@ counts and the model on every assistant frame.
 This matters more than it looks: every session a client opens after this daemon
 restarts is a rebuilt one.
 
+### An action that changes nothing is not a change
+
+`serverSeq` advances with **state** and never with messages, so a dispatch
+saying what this host already held is answered with silence rather than an
+echo. `session/isReadChanged` always did this; `session/activeClientSet` did
+not, and the omission was a loop: a client reconciles what it contributes
+whenever the session state moves, this host's echo *is* the state moving, and
+so the echo was the change that prompted the next announcement. Three hundred
+round trips in a few seconds, a sequence number apiece.
+
 ### The snapshot and the actions have to agree
 
 A client driven by actions builds its own state; a client that subscribes reads

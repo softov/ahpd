@@ -43,7 +43,63 @@ const clientsIn = async (client: { handle(r: { method: string; params: Record<st
   return opened.snapshot.state.activeClients.map((one) => one.clientId).sort();
 };
 
+const settle = async (times = 6): Promise<void> => {
+  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
 const URI = 'ahp-session:/shared';
+
+/*
+ * A client reconciles what it contributes whenever the session state moves,
+ * and this host's echo *is* the state moving. So an echo of an announcement
+ * that changed nothing was itself the change that prompted the next
+ * announcement - a loop the two ran three hundred times in a few seconds,
+ * burning a `serverSeq` apiece.
+ */
+it('says nothing when a client announces what it already announced', async () => {
+  const held = host();
+  const { client, peer: p } = await joins(held, 'one');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  const announce = () => client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } },
+  });
+  announce();
+  await settle();
+  announce();
+  announce();
+  await settle();
+
+  // Once, for the one thing that changed. `serverSeq` advances with state and
+  // never with messages.
+  expect(actions(p, URI).filter((a) => a.type === 'session/activeClientSet')).toHaveLength(1);
+});
+
+it('says so again when what a client contributes has changed', async () => {
+  const held = host();
+  const { client, peer: p } = await joins(held, 'one');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } },
+  });
+  await settle();
+  // A tool arriving is a change, and has to go out.
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: URI,
+      action: { type: 'session/activeClientSet', activeClient: { tools: [{ name: 'openBrowserPage' }] } },
+    },
+  });
+  await settle();
+
+  expect(actions(p, URI).filter((a) => a.type === 'session/activeClientSet')).toHaveLength(2);
+});
 
 it('is an empty list before anybody says otherwise, because the field is required', async () => {
   const held = host();
