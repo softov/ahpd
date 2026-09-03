@@ -1199,7 +1199,7 @@ export function createSession(options: SessionOptions): Session {
        * effort control, which is what it had.
        */
       config: {
-        schema: options.schema?.() ?? { properties: {} },
+        schema: options.schema?.() ?? { type: 'object', properties: {} },
         values: { ...settings, ...(chosen ? { model: chosen } : {}) },
       },
       ...(chosen ?? str(bag(handshake).model)

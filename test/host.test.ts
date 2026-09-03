@@ -1045,9 +1045,12 @@ describe('choosing a model', () => {
     await client.handle(hello(['0.8.0']));
     await settle(6);
     const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
-      schema: { properties: Record<string, { enum?: string[]; sessionMutable?: boolean }> };
+      schema: { type?: string; properties: Record<string, { enum?: string[]; sessionMutable?: boolean }> };
       values: Record<string, string>;
     };
+    // It is a JSON Schema and has to say so: `type` is required, and one
+    // without it matches nothing a client validates against.
+    expect(cfg.schema.type).toBe('object');
     // `schema.properties`, not `properties`. One level up draws no controls
     // at all - no permission mode, no model, no effort - which is what it did.
     const keys = Object.keys(cfg.schema.properties);

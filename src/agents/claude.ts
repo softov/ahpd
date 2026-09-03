@@ -102,6 +102,9 @@ export function claude(options: ClaudeOptions): Agent {
    * a switch that flips back.
    */
   const schema = (): Bag => ({
+    // A JSON Schema object, and it has to say so: `type` is required, and a
+    // schema without it matches nothing a client validates.
+    type: 'object',
     properties: {
       /*
        * One axis, and the CLI's own five values.
