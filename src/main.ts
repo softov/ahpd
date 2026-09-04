@@ -283,7 +283,21 @@ const host = createHost({
   automations: scheduledAutomations({
     onProblem: (message) => process.stdout.write(`${message}\n`),
   }),
-  onEvent: (message) => process.stdout.write(`${message}\n`),
+  /*
+   * When, as well as what.
+   *
+   * The daemon's own lines had no times on them, so a log read after
+   * something went wrong said what happened in order and nothing about how
+   * far apart - which is most of what is worth knowing when a process died
+   * a minute after starting. It is also what makes this log line up against
+   * a client's, since the two are separate programs and the only thing they
+   * share is a clock.
+   *
+   * The timestamp is added here rather than in `createHost`, because a host
+   * embedded in something else has its own log with its own format and
+   * `onEvent` hands it the message to do that with.
+   */
+  onEvent: (message) => process.stdout.write(`${new Date().toISOString()} ${message}\n`),
 });
 
 // Whichever runtime this is. `listen` is the only file that knows, and it
