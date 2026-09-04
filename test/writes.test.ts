@@ -18,7 +18,7 @@ import type { Peer } from '../src/types/rpc.js';
 let root: string;
 let outside: string;
 
-const peer = (): Peer => ({ send: () => {}, notify: () => {}, close: () => {} });
+const peer = (): Peer => ({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} });
 
 /** A connected client, granted write on the served root unless told otherwise. */
 async function client(grant = true) {

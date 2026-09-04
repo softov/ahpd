@@ -20,7 +20,7 @@ let root: string;
 
 function peer(): Peer & { notes: { method: string; params: unknown }[] } {
   const notes: { method: string; params: unknown }[] = [];
-  return { notes, send: () => {}, notify: (method, params) => notes.push({ method, params }), close: () => {} };
+  return { notes, send: () => {}, notify: (method, params) => notes.push({ method, params }), request: async () => ({}), answered: () => {}, close: () => {} };
 }
 
 async function connected(store = fileResources()) {

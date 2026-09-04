@@ -22,6 +22,8 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
     notes,
     send: () => {},
     notify: (method, params) => notes.push({ method, params }),
+    request: async () => ({}),
+    answered: () => {},
     close: () => {},
   };
 }

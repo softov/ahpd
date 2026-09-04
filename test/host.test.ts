@@ -121,6 +121,8 @@ function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: stri
     notes,
     send: (message) => sent.push(message),
     notify: (method, params) => notes.push({ method, params }),
+    request: async () => ({}),
+    answered: () => {},
     close: () => {},
   };
 }

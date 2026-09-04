@@ -311,7 +311,7 @@ describe('a schedule that reaches the host', () => {
     clock.advance('2026-09-01T09:00:00Z');
     await settle();
 
-    const peer: Peer = { send: () => {}, notify: () => {}, close: () => {} };
+    const peer: Peer = { send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} };
     const client = host.accept(peer);
     await client.handle({
       method: 'initialize',

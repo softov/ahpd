@@ -95,7 +95,11 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
           receive(text, held.peer, (request) => held.connected.handle(request));
         },
         close(ws: BunSocket) {
-          bound.get(ws)?.connected.close();
+          const held = bound.get(ws);
+          // The peer first: a question this host asked is still pending, and
+          // the socket that would have answered it is gone.
+          held?.peer.close();
+          held?.connected.close();
           bound.delete(ws);
         },
       },
@@ -133,7 +137,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         if (!open) return;
         receive(String(event.data), open.peer, (request_) => open.connected.handle(request_));
       };
-      socket.onclose = () => { held?.connected.close(); held = undefined; };
+      socket.onclose = () => { held?.peer.close(); held?.connected.close(); held = undefined; };
       return response;
     });
     return {
@@ -179,7 +183,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     socket.on('message', (raw) => {
       receive(typeof raw === 'string' ? raw : raw.toString('utf8'), peer, (request) => connected.handle(request));
     });
-    socket.on('close', () => connected.close());
+    socket.on('close', () => { peer.close(); connected.close(); });
   });
 
   await new Promise<void>((resolve, reject) => {

@@ -24,7 +24,7 @@
 export { createHost, ROOT } from './host.js';
 export { listen } from './listen.js';
 export {
-  createPeer, receive, RpcError,
+  createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
 } from './rpc.js';
 export { gitBranches } from './git.js';
