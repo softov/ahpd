@@ -2668,6 +2668,39 @@ describe('a shell on this machine', () => {
     expect(await spoken(p, uri, 'hello-from-a-terminal')).toContain('hello-from-a-terminal');
   });
 
+  it('throws away the scrollback and keeps everything else', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/cleared';
+    await client.handle({
+      method: 'createTerminal',
+      params: {
+        channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp',
+        cols: 132, rows: 43, name: 'the one being cleared',
+      },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'terminal/input', data: 'echo scrolled-past\n' } },
+    });
+    await spoken(p, uri, 'scrolled-past');
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'terminal/cleared' } } });
+    const after = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { content: unknown[]; cols: number; rows: number; title: string; claim: { clientId: string } } };
+    }).snapshot.state;
+    expect(after.content).toEqual([]);
+    // The size, the title and the claim survive: a client clears a terminal to
+    // stop reading what is there, not to give it up.
+    expect(after.cols).toBe(132);
+    expect(after.rows).toBe(43);
+    expect(after.title).toBe('the one being cleared');
+    expect(after.claim.clientId).toBe('probe');
+    // And said, so a second client watching redraws rather than keeping what
+    // the first one just discarded.
+    expect(actions(p, uri).some((e) => e.action.type === 'terminal/cleared')).toBe(true);
+  });
+
   it('says it is not a pseudoterminal, rather than leaving it to be discovered', async () => {
     const { client } = await opened();
     const uri = 'ahp-terminal:/two';

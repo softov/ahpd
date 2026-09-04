@@ -3293,6 +3293,9 @@ export function createHost(options: HostOptions): Host {
             case 'terminal/resized':
               terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
               break;
+            case 'terminal/cleared':
+              terminal.clear();
+              break;
             case 'terminal/titleChanged':
               terminal.setTitle(String(action.title ?? ''));
               break;

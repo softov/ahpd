@@ -137,6 +137,13 @@ export function createTerminal(options: TerminalOptions): Terminal {
       emit('terminal', { type: 'terminal/resized', cols, rows });
     },
 
+    // The scrollback and nothing else. `cols`, `rows`, `title` and `claim` are
+    // untouched, which is what the reference suite checks for.
+    clear: () => {
+      buffered = '';
+      emit('terminal', { type: 'terminal/cleared' });
+    },
+
     setTitle: (next) => {
       if (next === title) return;
       title = next;

@@ -65,7 +65,7 @@ specification: nothing here is listed because AHP defines it.
 
 ## State actions
 
-**69 of the 96 declared, across nine channels.** Grouped by channel; a group is
+**70 of the 96 declared, across nine channels.** Grouped by channel; a group is
 🚧 when some of it is served.
 
 | channel | ahpd | Status | Notes |
@@ -73,7 +73,7 @@ specification: nothing here is listed because AHP defines it.
 | `root/*` | 4 of 4 | ✅ | `agentsChanged`, `activeSessionsChanged`, `terminalsChanged`, and `configChanged` - the last one client-dispatched: VS Code pushes `defaultShell` at connect, and everything else it pushes is kept and read back |
 | `session/*` | 22 of 28 | 🚧 | Everything a catalogue row and a detail pane read. Not emitted: `creationFailed` (`createSession` finishes or throws inside the request, so there is nothing to announce), `customizationRemoved` (the list goes out whole), `serverToolsChanged` (empty for a true reason - `serverTools` are tools the *host* contributes, and this host defines none), and the three `workingDirectory*` (fixed at creation here: a session that moves is a conversation whose second half cannot see the files its first half was about) |
 | `chat/*` | 20 of 30 | 🚧 | The turn, its parts, its tools and its questions. Not emitted: `toolCallDelta` (arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete), `toolCallAuthRequired` / `AuthResolved` (mid-call MCP authentication, a moment the SDK does not surface), `turnResume`, and the four client-dispatchable ones this host would ignore |
-| `terminal/*` | 6 of 11 | 🚧 | `data`, `input`, `resized`, `claimed`, `titleChanged`, `exited`. The five not served are shell integration - `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` need a PTY this daemon does not have, and `isPty: false` is the honest form of all four |
+| `terminal/*` | 7 of 11 | 🚧 | `data`, `input`, `resized`, `claimed`, `titleChanged`, `cleared`, `exited`. `cleared` drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up - and nothing reaches the process, which has no notion of its own output being discarded. The four not served are shell integration: `cwdChanged`, `commandExecuted`, `commandFinished` and `commandDetectionAvailable` need a PTY this daemon does not have, and `isPty: false` is the honest form of all four |
 | `changeset/*` | 4 of 8 | 🚧 | `contentChanged`, `operationsChanged`, `operationStatusChanged`, `filesReviewChanged`. The four not served - `fileSet`, `fileRemoved`, `cleared`, `statusChanged` - are the *incremental* form of a changeset; this host emits the coarse form, worth replacing with the fine one only once a changeset is big enough that re-sending it is felt |
 | `automation/*` | 4 of 4 | ✅ | |
 | `automationRun/*` | 3 of 5 | 🚧 | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`. `sessionSet` / `sessionRemoved` are for a run with more than one session, and a run here has one |
@@ -88,7 +88,7 @@ specification: nothing here is listed because AHP defines it.
 `session/isReadChanged`, `session/isArchivedChanged`,
 `session/activeClientSet`, `session/customizationToggled`,
 `session/mcpServerStartRequested` / `StopRequested`, `terminal/input`,
-`terminal/resized`, `automation/createRequested` / `updateRequested`,
+`terminal/resized`, `terminal/cleared`, `automation/createRequested` / `updateRequested`,
 `automationRun/cancelRequested`, `root/configChanged`,
 `annotations/set` / `updated` / `removed` / `entrySet` / `entryRemoved`.
 

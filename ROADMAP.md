@@ -143,7 +143,7 @@ AHP is symmetrical: `ServerCommandMap` declares ten methods a host may call *on*
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **69 actions**. The per-channel breakdown is [docs/AHP.md](docs/AHP.md) and is not repeated here — it drifted from this file once already, and one maintained table is worth more than two that disagree.
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **70 actions**. The per-channel breakdown is [docs/AHP.md](docs/AHP.md) and is not repeated here — it drifted from this file once already, and one maintained table is worth more than two that disagree.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
@@ -156,7 +156,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 - **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
 - **A-01-03h — `auth/required`**: `authenticate` shipped and this did not. It is what a host sends when a token it accepted has expired or when a resource newly needs one, and nothing here can tell: this host does not verify a token, so it never learns that one has gone stale — a session started with a dead key fails inside the harness, and the harness's words are what a client sees. Emitting it would mean recognising an authentication failure in the agent's own error output, which is a guess about another program's strings. A refusal, and a thinner one than it looks: the moment this host verifies a token, it can say when one stopped working.
 
-**The 27 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. Two of those reasons are worth arguing about rather than reading:
+**The 26 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. Two of those reasons are worth arguing about rather than reading:
 
 - `changeset/fileSet` / `fileRemoved` / `cleared` / `statusChanged` are the incremental form of a changeset. This host emits the coarse `contentChanged` instead, which is correct and costs the whole set on every change — worth replacing once a changeset is big enough that re-sending it is felt.
 - The `workingDirectory*` set is not a gap. Directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about.

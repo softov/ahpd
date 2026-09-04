@@ -80,6 +80,15 @@ export interface Terminal {
   write(data: string): void;
   /** Record a new size. Nothing is signalled: there is no pseudoterminal. */
   resize(cols: number, rows: number): void;
+  /**
+   * Throw away the scrollback, keeping everything else.
+   *
+   * The size, the title and the claim survive: a client clears a terminal to
+   * stop reading what is already there, not to give it up. Nothing reaches
+   * the process - there is no pseudoterminal to send anything to, and a shell
+   * has no notion of its own output having been discarded.
+   */
+  clear(): void;
   /** Rename it. */
   setTitle(title: string): void;
   /** Hand it to somebody else. */
