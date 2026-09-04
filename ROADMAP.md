@@ -103,14 +103,6 @@ So this host offers one effort control for models that do not all take the same 
 
 **Suggestions.** (1) Take `configSchema` first and leave the rest: it is the only one of the six that draws a control, and the CLI's `supportedModels()` is already called at startup. (2) Take the numeric limits alongside it if the control protocol reports them, and leave `policyState` — this host enforces no model policy and inventing one would be worse than an absent field. (3) Leave `effortLevel` advertised as well during a transition, since removing a key a client has drawn is a control that vanishes.
 
-## A-01-14 — The catalogue arrives in one frame, however large it is
-
-`listSessions` is `async () => ({ items: await listing() })`. `PaginatedParams` declares `limit` and `cursor`, this host reads neither, and every session it knows about goes out in a single response. The pattern for doing it properly already exists here — `fetchTurns` mints a cursor and hands back the newest 50 — so this is the one command that skipped it.
-
-**What it costs today.** A working catalogue of 123 sessions is one frame of every summary a client may never look at, on every connect and on every reconnect that fell out of the replay buffer. It is not slow yet; it gets worse in a straight line and nothing warns anybody, because the failure is a frame that keeps growing rather than an error.
-
-**Suggestions.** (1) Sort as now, slice by `limit`, mint an opaque cursor over the sort key, and refuse one this host did not issue with `-32602` — which is what the protocol says an unrecognised cursor SHOULD get. A client that ignores pagination still sees everything up to the server's own cap. (2) Cap without paginating: answer the newest *n* and say so in the result, which is one line and leaves a client no way to ask for the rest. (3) Leave it until somebody feels it, and accept that the person who feels it first will be the one with the largest catalogue.
-
 ## A-02-04 — The generic layer holds a list of Claude property names
 
 `src/host.ts` routes `permissionMode`, `model`, `effortLevel` and `outputStyle` by name, and refuses `thinking` by name, in a file that imports no backend and is meant not to know one exists. Every other seam in this repository is a port; this one is four string comparisons.
@@ -179,7 +171,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 | surface | this host |
 | --- | --- |
 | state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because of A-02-03. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
-| command params and results | two fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13) and `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `PaginatedParams` is read by `fetchTurns` and ignored by `listSessions` — A-01-14. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
+| command params and results | two fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13) and `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `PaginatedParams` is read by both `fetchTurns` and `listSessions`, the second of them only when a client asks: `limit` omitted means the whole catalogue, because neither client that connects to this host reads `nextCursor`. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
 | error codes | all 15 declared are raised. `TurnInProgress` (-32004) is the newest of them and answers a *changeset operation* dispatched mid-turn; a **turn** dispatched while one is running is still queued rather than refused, which is the better answer and the one a client can act on |
 | `_meta` | the types name no well-known keys at all, so there is nothing to diff. What is known came from a conformance case, which is why `git.branch` is the only one written |
 

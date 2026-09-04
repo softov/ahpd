@@ -290,6 +290,58 @@ describe('the catalogue', () => {
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/nope' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
+
+  it('hands over the whole catalogue to a client that asked for no page size', async () => {
+    for (let i = 0; i < 120; i++)
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    // `limit` omitted is the protocol's "let the server choose", and neither
+    // client that connects to this host reads `nextCursor` - so a default
+    // page would be a catalogue silently cut down to it.
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: unknown[]; nextCursor?: string;
+    };
+    expect(listed.items).toHaveLength(120);
+    expect(listed.nextCursor).toBeUndefined();
+  });
+
+  it('walks it in pages when one is asked for, with no gaps and no repeats', async () => {
+    for (let i = 0; i < 120; i++)
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await client.handle({
+        method: 'listSessions',
+        params: { channel: 'ahp-root://', limit: 50, ...(cursor ? { cursor } : {}) },
+      }) as { items: { resource: string }[]; nextCursor?: string };
+      seen.push(...page.items.map((row) => row.resource));
+      cursor = page.nextCursor;
+      pages++;
+    } while (cursor !== undefined && pages < 10);
+    expect(pages).toBe(3);
+    expect(seen).toHaveLength(120);
+    expect(new Set(seen).size).toBe(120);
+    // Most-recently-modified first, across the pages and not only inside one.
+    expect(seen[0]).toBe('claude:/s119');
+    expect(seen.at(-1)).toBe('claude:/s0');
+  });
+
+  it('refuses a cursor it did not issue rather than starting over', async () => {
+    sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    // Resuming from the top would answer a question about the rest of the
+    // catalogue with the beginning of it, and the client would page for ever.
+    await expect(client.handle({
+      method: 'listSessions',
+      params: { channel: 'ahp-root://', cursor: 'bm90LWEtY3Vyc29y' },
+    })).rejects.toMatchObject({ code: -32602 });
+  });
 });
 
 describe('what it will not pretend', () => {
@@ -3515,6 +3567,7 @@ describe('a session\'s annotations', () => {
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/nobody/annotations' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
+
 });
 
 /*

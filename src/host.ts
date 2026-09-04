@@ -65,6 +65,31 @@ const AUTOMATIONS = 'ahp-automations://';
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
 
 /**
+ * The most rows this host will serve in one page, however many were asked for.
+ *
+ * The protocol says a server MAY impose its own cap, and one exists so that a
+ * client asking for a million does not turn a page into the whole catalogue
+ * plus the work of slicing it.
+ */
+const PAGE_CAP = 500;
+
+/**
+ * A pagination cursor, which is opaque by contract.
+ *
+ * It is the resource of the last row served, encoded - so it says nothing a
+ * client is invited to read, parse or keep. The protocol says cursors are
+ * server-defined and MUST be treated as opaque; encoding is what makes that
+ * true rather than merely asked for.
+ */
+const sealed = (resource: string): string => Buffer.from(resource, 'utf8').toString('base64url');
+
+/** The resource a cursor named, or nothing a row will match. */
+const opened = (cursor: string): string => {
+  try { return Buffer.from(cursor, 'base64url').toString('utf8'); }
+  catch { return ''; }
+};
+
+/**
  * The protocol's own answer to "may a client send this?", by action type.
  *
  * Widened from the generated exhaustive map, which is keyed by the action
@@ -2363,7 +2388,37 @@ export function createHost(options: HostOptions): Host {
             })),
           };
         },
-        listSessions: async () => ({ items: await listing() }),
+        /**
+         * The catalogue, in pages when a client asks for one.
+         *
+         * Only when it asks. `limit` omitted is the protocol's own "let the
+         * server choose the page size", and the size this host chooses is all
+         * of them - because neither client that connects to it reads
+         * `nextCursor`: VS Code's `listSessions` sends `{ channel }` and takes
+         * `items`, and so does ahpc. A default page would silently be the
+         * whole catalogue to both of them.
+         */
+        listSessions: async (params) => {
+          const rows = await listing();
+          const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
+          const after = cursor === undefined
+            ? 0
+            : rows.findIndex((row) => row.resource === opened(cursor)) + 1;
+          // Refused rather than guessed at, the way an unrecognised turn
+          // cursor is: a cursor whose row has been disposed would otherwise
+          // resume from the top, and the client would page for ever.
+          if (cursor !== undefined && after === 0)
+            throw new RpcError(-32602, `Unrecognised cursor ${cursor}`);
+          const limit = typeof params.limit === 'number' && Number.isFinite(params.limit)
+            ? Math.max(1, Math.min(Math.floor(params.limit), PAGE_CAP))
+            : undefined;
+          const items = limit === undefined ? rows.slice(after) : rows.slice(after, after + limit);
+          const last = items[items.length - 1];
+          return {
+            items,
+            ...(last && after + items.length < rows.length ? { nextCursor: sealed(last.resource) } : {}),
+          };
+        },
         /*
          * The host's filesystem, as far as a client is allowed to see it.
          *
@@ -2965,24 +3020,6 @@ export function createHost(options: HostOptions): Host {
           no(`${type} is this host's to say, not a client's`);
           return;
         }
-        /*
-         * The client flags, which are the host's to keep.
-         *
-         * Answered before anything looks for a running session, because
-         * these are the two actions that are *about* a session nobody has
-         * opened: marking a row read, or filing it away, is what somebody
-         * does from the catalogue - and starting an agent to record a bit
-         * would start one per row scrolled past.
-         */
-        /*
-         * Ticking a file off a diff, which belongs to no session's agent.
-         *
-         * Answered here for the same reason the flags below are: it is a
-         * reader's bookkeeping about a changeset, it writes nothing to disk,
-         * and it arrives on the changeset's own channel rather than a
-         * session's. Review is deliberately not an *operation* - the
-         * protocol has clients dispatch this and the server keep the flag.
-         */
         /*
          * What a client wants of this host, kept and said back.
          *
