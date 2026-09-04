@@ -3664,14 +3664,27 @@ export function createHost(options: HostOptions): Host {
           /*
            * Approving a tool call's *result*, which nothing here ever asks for.
            *
-           * Both of these belong to a call that set `requiresResultConfirmation`,
-           * and no call this host builds does - the confirmation it asks for is
-           * before the tool runs, not after. A client sending one is answering
-           * a question nobody put.
+           * It belongs to a call completed with `requiresResultConfirmation`,
+           * and no call this host builds sets it - the confirmation asked for
+           * here is before the tool runs, not after. A client sending one is
+           * answering a question nobody put.
            */
           case 'chat/toolCallResultConfirmed':
+            no('No tool call here asks for its result to be confirmed');
+            break;
+          /*
+           * Streaming into a call while it runs, which is a *contributor's* to
+           * do.
+           *
+           * The protocol has the owning client dispatch this for a tool the
+           * client itself provides - the call carries a `ToolCallContributor`
+           * with that client's id, and a server should refuse anyone else. No
+           * call here carries one: every tool this host reports is the
+           * backend's own, run by the harness, so there is no call a client
+           * has the standing to write into.
+           */
           case 'chat/toolCallContentChanged':
-            no(`${type} answers a result confirmation, and no tool call here asks for one`);
+            no('Every tool call here is the agent\'s, and its content is the agent\'s to change');
             break;
           default:
             no(`${type} is not served yet`);

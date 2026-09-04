@@ -409,9 +409,11 @@ describe('what it will not pretend', () => {
     expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: 'x' }))
       .toContain('no draft answer');
     expect(why({ type: 'chat/toolCallResultConfirmed', toolCallId: 'c1' }))
-      .toContain('result confirmation');
+      .toContain('result to be confirmed');
+    // Not the same complaint: this one is a *contributor's* to send, for a
+    // tool the client itself provides, and no call here carries a contributor.
     expect(why({ type: 'chat/toolCallContentChanged', toolCallId: 'c1' }))
-      .toContain('result confirmation');
+      .toContain('the agent\'s to change');
     expect(chatUri).toBeTruthy();
   });
 
