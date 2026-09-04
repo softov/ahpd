@@ -385,7 +385,7 @@ it('reduces a changeset, through an operation and a turn', async () => {
    */
   const source: ChangesetSource = {
     scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
-    state: async () => ({ status: 'complete', files: [{ id: 'file:///tmp/ops/a.txt', edit: {} }] }),
+    state: async () => ({ status: 'ready', files: [{ id: 'file:///tmp/ops/a.txt', edit: {} }] }),
     summary: () => ({ files: 1 }),
     operations: () => [{ id: 'commit', label: 'Commit', scopes: ['changeset'], writes: true }],
     invoke: async () => ({ message: 'committed' }),

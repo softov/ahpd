@@ -46,7 +46,7 @@ function scripted(fail?: string) {
   const invoked: ChangesetOperationRequest[] = [];
   const source: ChangesetSource = {
     scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
-    state: async () => ({ status: 'complete', files: [{ id: `file://${DIR}/a.txt`, edit: {} }] }),
+    state: async () => ({ status: 'ready', files: [{ id: `file://${DIR}/a.txt`, edit: {} }] }),
     summary: () => ({ files: 1 }),
     operations: () => [COMMIT, DISCARD, LOOK],
     invoke: async (request) => {

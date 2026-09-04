@@ -410,19 +410,19 @@ export function gitChanges(): ChangesetSource {
       if (scope === 'uncommitted') {
         const found = held.get(dir) ?? await look(dir);
         if (!found) return undefined;
-        return { status: 'complete', files: found.files };
+        return { status: 'ready', files: found.files };
       }
       if (scope === 'session') {
         const files = across(session);
-        if (files.size === 0) return { status: 'complete', files: [] };
-        return { status: 'complete', files: rowsOf(session, 'session', files) };
+        if (files.size === 0) return { status: 'ready', files: [] };
+        return { status: 'ready', files: rowsOf(session, 'session', files) };
       }
       if (scope.startsWith('compare/')) {
         const [from, to] = scope.slice('compare/'.length).split('/');
         if (!from || !to) return undefined;
         const files = between(session, from, to);
         if (!files) return undefined;
-        return { status: 'complete', files: rowsOf(session, `compare/${from}/${to}`, files) };
+        return { status: 'ready', files: rowsOf(session, `compare/${from}/${to}`, files) };
       }
       if (scope.startsWith('turn/')) {
         const turn = scope.slice('turn/'.length);
@@ -430,7 +430,7 @@ export function gitChanges(): ChangesetSource {
         // A turn nobody has heard of is not an empty changeset - it is a
         // question about something that did not happen.
         if (!files) return undefined;
-        return { status: 'complete', files: rowsOf(session, turn, files) };
+        return { status: 'ready', files: rowsOf(session, turn, files) };
       }
       return undefined;
     },

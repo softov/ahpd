@@ -28,7 +28,16 @@ export interface ChangesetFile {
 
 /** What a client subscribed to a changeset URI is looking at. */
 export interface ChangesetState {
-  status: 'computing' | 'complete' | 'error';
+  /**
+   * Where the computation is, in the protocol's own three words.
+   *
+   * `ready` and not `complete`: `ChangesetStatus` declares `computing`,
+   * `ready` and `error`, and this port said `complete` for years - so every
+   * changeset this host has ever served carried a status word no client
+   * could recognise, and one reading it saw a changeset that never finished
+   * computing.
+   */
+  status: 'computing' | 'ready' | 'error';
   files: ChangesetFile[];
 }
 
