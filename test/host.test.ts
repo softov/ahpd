@@ -22,6 +22,8 @@ const sdk = vi.hoisted(() => {
   return {
     sessions: [] as Record<string, unknown>[],
     transcript: [] as Record<string, unknown>[],
+    /** How many times a transcript was actually read off disk. */
+    reads: 0,
     init: {} as Record<string, unknown>,
     mcp: [] as Record<string, unknown>[],
     skills: [] as Record<string, unknown>[],
@@ -50,7 +52,14 @@ const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== 
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   listSessions: async () => sdk.sessions,
-  getSessionMessages: async () => sdk.transcript,
+  getSessionMessages: async () => {
+    sdk.reads += 1;
+    // A tick, so concurrent callers actually overlap: an implementation that
+    // reads once per caller and one that shares a read are indistinguishable
+    // when the read resolves synchronously.
+    await new Promise((r) => { setTimeout(r, 1); });
+    return sdk.transcript;
+  },
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     const fake = { frames: [] as Record<string, unknown>[], wake: undefined as undefined | (() => void), closed: false, options };
     sdk.queries.push(fake);
@@ -137,6 +146,7 @@ const hello = (versions: string[], extra: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   sdk.sessions.length = 0;
   sdk.transcript.length = 0;
+  sdk.reads = 0;
   sdk.mcp.length = 0;
   sdk.skills.length = 0;
   sdk.said.length = 0;
@@ -3747,6 +3757,29 @@ describe('a session\'s annotations', () => {
     };
     expect(opened.snapshot.resource).toBe(`${uri}/annotations`);
     expect(opened.snapshot.state.annotations).toEqual([]);
+  });
+
+  it('reads the transcript once, however many channels ask for it at once', async () => {
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    sdk.reads = 0;
+
+    /*
+     * The three a client sends in one breath to open a session.
+     *
+     * Not awaited in turn: they arrive together, and before this each of them
+     * missed the cache none of the others had finished filling - so a 35MB
+     * transcript was read three times *concurrently*, which is where the
+     * memory goes rather than where the turns do.
+     */
+    await Promise.all([
+      client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }),
+      client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/annotations' } }),
+      client.handle({ method: 'fetchTurns', params: { channel: 'ahp-session:/old' } }).catch(() => undefined),
+    ]);
+    expect(sdk.reads).toBe(1);
   });
 
   it('answers one for a session read from its transcript, before it has been listed', async () => {

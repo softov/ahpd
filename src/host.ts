@@ -1877,6 +1877,13 @@ export function createHost(options: HostOptions): Host {
    */
   const history = new Map();
   /**
+   * Transcripts being read right now, so two callers share one read.
+   *
+   * Not a second cache: an entry lives only for the length of the read and is
+   * dropped whether it answered or threw. `history` is what remembers.
+   */
+  const reading = new Map<string, Promise<Bag[] | undefined>>();
+  /**
    * The catalogue's own title, kept when a row is opened.
    *
    * Deriving one from the first message looks right and is not: a first
@@ -1890,18 +1897,37 @@ export function createHost(options: HostOptions): Host {
     const held = history.get(id);
     if (held)
       return held;
-    // The listing is what says whose session this is, so it is asked first.
-    const found = await listing();
-    const row = found.find((item) => idFor(item.resource) === id);
-    const owner = owners.get(nameOf(id));
-    if (!row || !owner?.transcript)
-      return undefined;
-    titles.set(id, row.title);
-    const built = await owner.transcript(id);
-    if (!built)
-      return undefined;
-    history.set(id, built);
-    return built;
+    /*
+     * One read per transcript, however many callers arrive together.
+     *
+     * A client opens a session by subscribing to three channels in one breath
+     * - the session, its chat and its annotations - and all three ask for the
+     * same turns. Without this each of them missed the cache, because none had
+     * finished filling it, and the file was read three times *concurrently*.
+     * The turns that come out are small; the read is not. A 35MB transcript
+     * costs about 120MB of resident memory while it is being parsed, so a
+     * session opened this way cost 360MB of it at once, and several sessions
+     * opened together multiplied that again.
+     */
+    const already = reading.get(id);
+    if (already) return await already;
+    const asked = (async (): Promise<Bag[] | undefined> => {
+      // The listing is what says whose session this is, so it is asked first.
+      const found = await listing();
+      const row = found.find((item) => idFor(item.resource) === id);
+      const owner = owners.get(nameOf(id));
+      if (!row || !owner?.transcript)
+        return undefined;
+      titles.set(id, row.title);
+      const built = await owner.transcript(id);
+      if (!built)
+        return undefined;
+      history.set(id, built);
+      return built;
+    })();
+    reading.set(id, asked);
+    try { return await asked; }
+    finally { reading.delete(id); }
   };
   /**
    * A snapshot is a value, not a view of one.
