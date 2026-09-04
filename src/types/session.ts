@@ -57,6 +57,20 @@ export interface SessionOptions {
   onHandshake?(): void;
 }
 
+/** What a host-run command did, once it has finished doing it. */
+export interface Ran {
+  /** Whether it exited cleanly. */
+  success: boolean;
+  /** One line about how it went, in the past tense, for the finished call. */
+  said: string;
+  /** Everything it printed. Empty when it printed nothing. */
+  output: string;
+  /** The terminal it ran in, so a client can watch it while it runs. */
+  terminal?: string;
+  /** What it exited with, where the runtime reported one. */
+  code?: number;
+}
+
 /** A live session. */
 export interface Session {
   /** The session channel URI. */
@@ -100,6 +114,28 @@ export interface Session {
   sessionState(): Bag;
   /** The chat channel's state, for a subscription snapshot. */
   chatState(): Bag;
+
+  /**
+   * Run one command as a turn of this chat's, without asking the agent.
+   *
+   * What the composer's `!` prefix means: the person typed a command rather
+   * than a question, and the answer is a shell's. The turn is still the
+   * chat's - a host that emitted one this session did not know about would
+   * serve a snapshot without it the moment anybody re-subscribed - so the
+   * session opens it, reports the tool call, and closes it when `run`
+   * settles.
+   *
+   * `run` is the host's half: it is handed the id of the tool call this turn
+   * is about and answers with what happened. The terminal is the host's
+   * because the shell is - a session has no port to spawn one through - and
+   * naming it back is what lets a client watch the output arrive rather than
+   * only read it afterwards.
+   *
+   * Optional. A backend that leaves it out is one this host advertises no
+   * `terminalCommandPrefix` for, which is the protocol's own way of saying the
+   * shorthand is unavailable.
+   */
+  ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>): void;
 
   /** Start a turn with what the person said, optionally naming a model. */
   begin(turnId: string, text: string, model?: string): void;

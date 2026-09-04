@@ -111,14 +111,6 @@ So this host offers one effort control for models that do not all take the same 
 
 **Suggestions.** (1) Two fields on the schema property type — `scope: 'session' | 'chat'` and `mutable: boolean` — and `host.ts` fans out by scope and refuses immutables generically. Not an abstraction layer; two fields, and the property names go back to the backend that owns them. (2) Move the whole fan-out into the `Session` port and let a backend take its own config, which is more honest and more to write. (3) Leave it, and say in `host.ts` that the generic layer knows four Claude keys — a comment is worth more than a silence, and it is what the next backend author would need.
 
-## A-01-13 — `!` in the composer does not run a command
-
-`InitializeResult.terminalCommandPrefix` is the prefix a host recognises at the start of a message as "run the rest of this as a terminal command". The standardised convention is `"!"`, and **absence means the host does not support it** — so this host's silence is already a correct answer, just not the useful one. VS Code implements the client half (`node/localCommands/bangLocalCommand.ts`) and this host has terminals, so both ends of it exist and nothing joins them.
-
-**What it costs today.** Running one command in the session's directory means opening a terminal channel, which is several actions and a panel, for something that is one line of typing in every other tool.
-
-**Suggestions.** (1) Advertise `"!"` and run the remainder through the `terminals` port, as one non-interactive command whose output becomes a response part — a host given no `terminals` port advertises no prefix, which is honest. (2) Advertise it and route through the agent instead, as though somebody had asked it to run the command, so the transcript records a tool call and the confirmation rules apply. (3) Leave it: the absence is already the specified way to say no.
-
 ## A-01-09 — An MCP server that needs signing in cannot be signed into
 
 Reported as an error now, and this entry stays open because that is a retreat rather than a fix.
@@ -170,7 +162,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 | surface | this host |
 | --- | --- |
 | state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because of A-02-03. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
-| command params and results | two fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13) and `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `CreateSessionParams.activeClient` is read, and takes the creator into the session as it is made. `PaginatedParams` is read by both `fetchTurns` and `listSessions`, the second of them only when a client asks: `limit` omitted means the whole catalogue, because neither client that connects to this host reads `nextCursor`. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
+| command params and results | one field unread out of every declared `*Params` / `*Result`: `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `CreateSessionParams.activeClient` is read, and takes the creator into the session as it is made. `PaginatedParams` is read by both `fetchTurns` and `listSessions`, the second of them only when a client asks: `limit` omitted means the whole catalogue, because neither client that connects to this host reads `nextCursor`. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
 | error codes | all 15 declared are raised. `TurnInProgress` (-32004) is the newest of them and answers a *changeset operation* dispatched mid-turn; a **turn** dispatched while one is running is still queued rather than refused, which is the better answer and the one a client can act on |
 | `_meta` | the types name no well-known keys at all, so there is nothing to diff. What is known came from a conformance case, which is why `git.branch` is the only one written |
 

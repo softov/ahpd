@@ -25,6 +25,7 @@ import { within } from './paths.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Claim, Terminal } from './types/terminals.js';
+import type { Ran } from './types/session.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
@@ -62,6 +63,16 @@ const AUTOMATIONS = 'ahp-automations://';
  * `initialize`, because it is how a client tells a live socket from one an
  * idle proxy has quietly dropped.
  */
+/**
+ * The character that turns a message into a command.
+ *
+ * The protocol standardises the convention rather than the behaviour: a host
+ * advertises what it recognises, and `"!"` is what every implementation uses.
+ * A lone `!`, or one followed only by spaces, is not a command - it is
+ * somebody typing an exclamation mark, and it goes to the agent.
+ */
+const BANG = '!';
+
 /** What a session's annotations channel is called, under the session's own URI. */
 const MARKS = '/annotations';
 
@@ -1506,6 +1517,60 @@ export function createHost(options: HostOptions): Host {
     }
     return found;
   };
+  /**
+   * One command, in a terminal of its own, and what it did.
+   *
+   * The composer's `!` shorthand runs here rather than in the session,
+   * because the shell is the host's: a backend has no port to spawn one
+   * through, and the terminal has to be a real channel so the client can
+   * watch the output arrive instead of waiting for the whole of it.
+   *
+   * The terminal is kept after the command exits. It is what the finished
+   * tool call points at, and disposing it would leave a transcript naming a
+   * channel that answers nothing - so it stays, exited, until the session
+   * that ran it goes.
+   */
+  const commanded = async (command: string, cwd: string, claim: Claim): Promise<Ran> => {
+    const shells = options.terminals;
+    if (!shells) return { success: false, said: 'There is no shell here to run it in', output: '' };
+    const uri = `ahp-terminal:/${crypto.randomUUID()}`;
+    return await new Promise<Ran>((resolve) => {
+      const terminal = shells.create({
+        uri,
+        cwd,
+        claim,
+        command,
+        name: 'Terminal',
+        ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
+        emit: (_channel, action) => {
+          dispatch(uri, action);
+          if ((action as Bag).type !== 'terminal/exited') return;
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          const code = terminal.exitCode() ?? 0;
+          /*
+           * Read off the terminal rather than accumulated here.
+           *
+           * The store already keeps the output for a client that subscribes
+           * late, capped, and a second copy in this closure would be the same
+           * bytes held twice and the cap applied to only one of them.
+           */
+          const printed = terminal.state().content
+            .map((part) => ('value' in part && typeof part.value === 'string' ? part.value : ''))
+            .join('');
+          resolve({
+            success: code === 0,
+            said: code === 0 ? 'Ran the command' : `The command exited with code ${String(code)}`,
+            output: printed,
+            terminal: uri,
+            code,
+          });
+        },
+      });
+      terminals.set(uri, terminal);
+      log(`ran ${command} in ${uri}`);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+    });
+  };
   /** Every terminal, as the root channel lists them. */
   const terminalInfo = (): (OnWire<TerminalInfo> & { exitCode?: number })[] =>
     [...terminals.values()].map((held) => {
@@ -2082,6 +2147,16 @@ export function createHost(options: HostOptions): Host {
              * an absent one means.
              */
             ...(options.automations ? { automations: { create: {}, schedules: {} } } : {}),
+            /*
+             * `!` at the start of a message means "run this", not "answer this".
+             *
+             * Advertised only when there is a shell to run it in. Absence is
+             * the protocol's own way of saying the shorthand is unsupported,
+             * so a host with no `terminals` port says nothing here and a
+             * client types `!ls` into the conversation as text - which is the
+             * right outcome for a host that cannot run it.
+             */
+            ...(options.terminals ? { terminalCommandPrefix: BANG } : {}),
           };
         },
         ping: async () => ({}),
@@ -2989,6 +3064,23 @@ export function createHost(options: HostOptions): Host {
             chat.close();
             byChat.delete(chatUri);
           }
+          /*
+           * And the shells the session was holding.
+           *
+           * A terminal claimed by a session outlives nothing: the chat it
+           * belongs to is gone, so the transcript that pointed at it is gone
+           * too, and what is left is a channel in the root catalogue that
+           * nobody can reach. `!` commands are the ordinary way these
+           * accumulate - one terminal each, kept so the finished tool call
+           * points somewhere real.
+           */
+          for (const [terminalUri, terminal] of [...terminals]) {
+            const claim = terminal.claim();
+            if (claim.kind !== 'session' || claim.session !== uri) continue;
+            terminal.close();
+            terminals.delete(terminalUri);
+          }
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
           sessions.delete(uri);
           origins.delete(uri);
           presence.delete(idOf(uri));
@@ -3433,7 +3525,30 @@ export function createHost(options: HostOptions): Host {
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;
-            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
+            const text = String(message.text ?? '');
+            const turnId = String(action.turnId ?? '');
+            /*
+             * `!ls` is a command, and everything else is a question.
+             *
+             * Trimmed, and empty means it was neither: a lone `!` is somebody
+             * typing an exclamation mark, and it goes to the agent like any
+             * other text. The three conditions are the three halves that have
+             * to be there - a shell to run it in, a session that will hold a
+             * turn it did not answer, and something after the mark.
+             */
+            const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
+            if (command !== '' && options.terminals && session.ran) {
+              const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+              session.ran(turnId, command, (toolCallId) => commanded(command, where, {
+                kind: 'session',
+                session: session.uri,
+                chat: session.chatUri,
+                turnId,
+                toolCallId,
+              }));
+              break;
+            }
+            session.begin(turnId, text, typeof message.model === 'string' ? message.model : undefined);
             break;
           }
           /**

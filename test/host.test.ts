@@ -2652,6 +2652,128 @@ describe('a compacted context', () => {
   });
 });
 
+/*
+ * `!ls` in the composer, which is a command rather than a question.
+ *
+ * The protocol standardises the marker and leaves the behaviour to the host:
+ * `InitializeResult.terminalCommandPrefix` says what a host recognises, and
+ * absence says it recognises nothing. The turn is still the chat's, because a
+ * transcript that lost the command would be a conversation with a gap in it.
+ */
+describe('a command typed into the conversation', () => {
+  const shelled = async () => {
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const uri = 'ahp-session:/banged';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: ['file:///tmp'] } });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    return { host, client, peer: p, uri, chatUri };
+  };
+
+  /** Wait for the turn to end, however it ended. */
+  const ended = async (p: ReturnType<typeof peer>, chatUri: string) => {
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => { setTimeout(r, 25); });
+      if (actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete')) break;
+    }
+    return actions(p, chatUri).map((e) => e.action);
+  };
+
+  it('says it recognises the marker, and says nothing when there is no shell', async () => {
+    const withShell = await shelled();
+    const first = await withShell.client.handle(hello(['0.8.0'])).catch(() => undefined);
+    expect(first).toBeUndefined(); // already introduced
+
+    const bare = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] }).accept(peer());
+    const said = await bare.handle(hello(['0.8.0'])) as { terminalCommandPrefix?: string };
+    // Absence is the protocol's own way of saying the shorthand is
+    // unsupported, and a host with no shell cannot support it.
+    expect(said.terminalCommandPrefix).toBeUndefined();
+
+    const able = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() }).accept(peer());
+    const also = await able.handle(hello(['0.8.0'])) as { terminalCommandPrefix?: string };
+    expect(also.terminalCommandPrefix).toBe('!');
+  });
+
+  it('runs it in a terminal and puts the whole thing in the turn', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo ran-from-the-composer' } } },
+    });
+    const said = await ended(p, chatUri);
+    // Not the agent's. A command handed to the CLI would be answered with
+    // prose about the command rather than by running it.
+    expect(sdk.said).toEqual([]);
+
+    const start = said.find((one) => one.type === 'chat/toolCallStart');
+    expect(start).toMatchObject({ toolName: 'terminal', intention: 'echo ran-from-the-composer' });
+    const done = said.find((one) => one.type === 'chat/toolCallComplete');
+    const result = done?.result as { success: boolean; content: { type: string; text?: string; resource?: string }[] };
+    expect(result.success).toBe(true);
+    expect(result.content.find((one) => one.type === 'text')?.text).toContain('ran-from-the-composer');
+    // The terminal it ran in, so a client can watch the output arrive rather
+    // than wait for the whole of it.
+    expect(result.content.find((one) => one.type === 'terminal')?.resource).toMatch(/^ahp-terminal:/);
+
+    // And in the snapshot, not only in the stream: a client that subscribes
+    // afterwards reads the transcript rather than the actions it missed.
+    const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { message: { text: string }; responseParts: { toolName?: string }[] }[] } };
+    }).snapshot.state.turns;
+    expect(kept.at(-1)?.message.text).toBe('!echo ran-from-the-composer');
+    expect(kept.at(-1)?.responseParts[0]?.toolName).toBe('terminal');
+  });
+
+  it('says a command failed when it did', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!exit 3' } } },
+    });
+    const said = await ended(p, chatUri);
+    const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as {
+      success: boolean; pastTenseMessage: string;
+    };
+    expect(result.success).toBe(false);
+    expect(result.pastTenseMessage).toContain('3');
+  });
+
+  it('sends a lone exclamation mark to the agent, because it is not a command', async () => {
+    const { client, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!  ' } } },
+    });
+    await new Promise((r) => { setTimeout(r, 30); });
+    // Somebody typing an exclamation mark, not somebody running nothing.
+    expect(sdk.said).toEqual(['!  ']);
+  });
+
+  it('closes the shells a session was holding when the session goes', async () => {
+    const { client, peer: p, uri, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo kept' } } },
+    });
+    await ended(p, chatUri);
+    const listed = () => (actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
+      ?.action.terminals as unknown[] | undefined) ?? [];
+    expect(listed()).toHaveLength(1);
+
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    // The chat that pointed at it is gone, so what is left would be a channel
+    // in the catalogue that nobody can reach.
+    expect(listed()).toHaveLength(0);
+  });
+});
+
 describe('a shell on this machine', () => {
   const opened = async () => {
     const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });

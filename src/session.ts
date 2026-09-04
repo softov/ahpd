@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, Status } from './catalog.js';
 import { tail } from './transcript.js';
-import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
 import type { Session, SessionOptions } from './types/session.js';
@@ -1464,6 +1464,113 @@ export function createSession(options: SessionOptions): Session {
      * that never ran it.
      */
     begin: (turnId, text, model) => beginTurn(turnId, text, model),
+
+    /**
+     * A turn this host answered itself, with a shell rather than the agent.
+     *
+     * The same shape as any other turn - it opens, carries one tool call, and
+     * completes - because that is what makes it readable afterwards: the
+     * command and its output are in the transcript beside the conversation
+     * they interrupted, rather than in a panel that closed. Nothing is pushed
+     * to the CLI, which is the whole difference from `begin`.
+     */
+    ran: (turnId, command, run) => {
+      // Queued behind whatever is running, like anything else a person types.
+      // A shell command that jumped the queue would run against a tree the
+      // turn in front of it is still editing.
+      if (active) {
+        queued.push({ id: turnId, message: { text: `!${command}`, origin: { kind: 'user' } } });
+        emit('chat', { type: 'chat/pendingMessageSet', message: queued[queued.length - 1] });
+        touch();
+        return;
+      }
+      const turn: Bag = {
+        id: turnId,
+        startedAt: new Date().toISOString(),
+        message: { text: `!${command}`, origin: { kind: 'user' } },
+        responseParts: [],
+        usage: undefined,
+      } satisfies WireTurn<ActiveTurn> as Bag;
+      active = turn;
+      startedAt = Date.now();
+      failed = undefined;
+      emit('chat', {
+        type: 'chat/turnStarted', turnId, startedAt: turn.startedAt, message: turn.message,
+      });
+      if (title === 'New session') retitle(command.slice(0, 60));
+      doing('Running');
+      const toolCallId = `${turnId}:command`;
+      /*
+       * `terminal` as the name, which is what the reference host calls it.
+       *
+       * A client draws a tool call by its name, and one called anything else
+       * would be drawn as an unknown tool rather than as the shell it is.
+       */
+      const call = {
+        toolCallId,
+        toolName: 'terminal',
+        displayName: 'Terminal',
+        intention: command,
+        invocationMessage: command,
+        toolInput: command,
+        // The person typed it themselves, so there is nobody left to ask.
+        confirmed: 'not-needed',
+        status: 'running',
+      } satisfies OnWire<ToolCallRunningState> as Bag;
+      holdPart(turn, call);
+      emit('chat', {
+        type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
+        displayName: 'Terminal', intention: command,
+      });
+      emit('chat', {
+        type: 'chat/toolCallReady', turnId, toolCallId,
+        invocationMessage: command, toolInput: command, confirmed: 'not-needed',
+      });
+      void run(toolCallId).then((done) => {
+        if (active !== turn) return;
+        /*
+         * The terminal first, so a client can watch the output arrive.
+         *
+         * `content` is replaced rather than appended to, so the terminal
+         * reference and the text it produced go out together at the end -
+         * and the reference alone goes out as soon as there is one, which is
+         * what a client needs to start streaming.
+         */
+        const watched = done.terminal === undefined ? [] : [{
+          type: 'terminal',
+          resource: done.terminal,
+          title: 'Terminal',
+          // Pipes, not a pseudoterminal, which is what the field is for: a
+          // client reads it to decide whether the preview needs VT parsing.
+          isPty: false,
+          result: {
+            ...(done.code !== undefined ? { exitCode: done.code } : {}),
+            ...(done.output === '' ? {} : { preview: done.output }),
+          },
+        } satisfies OnWire<ToolResultTerminalContent>];
+        const said = done.output === ''
+          ? []
+          : [{ type: 'text', text: done.output } satisfies OnWire<ToolResultTextContent>];
+        const shown = [...watched, ...said];
+        const result = {
+          success: done.success,
+          pastTenseMessage: done.said,
+          content: shown,
+          ...(done.success ? {} : { error: { message: done.said } }),
+        } satisfies Partial<OnWire<ToolCallCompletedState>>;
+        Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
+        emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+        turn.state = done.success ? 'complete' : 'error';
+        turn.duration = Date.now() - startedAt;
+        turns.push(turn);
+        active = undefined;
+        if (!done.success) failed = done.said;
+        emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
+        doing(undefined);
+        touch();
+        startNext();
+      });
+    },
 
     /**
      * Wait, then be the next turn.

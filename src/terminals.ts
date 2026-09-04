@@ -39,7 +39,15 @@ export function createTerminal(options: TerminalOptions): Terminal {
     emit('terminal', { type: 'terminal/data', data });
   };
 
-  const child = spawn(shell, [], {
+  /*
+   * `-c` when there is a command, and nothing when there is not.
+   *
+   * A shell given `-c` runs the one thing and exits, which is the only
+   * completion signal available here: without a pseudoterminal there is no
+   * shell integration, so nothing can tell where one command's output ends
+   * and the next begins.
+   */
+  const child = spawn(shell, options.command === undefined ? [] : ['-c', options.command], {
     cwd,
     /*
      * Its own process group, so a signal reaches what it started.
@@ -58,16 +66,42 @@ export function createTerminal(options: TerminalOptions): Terminal {
 
   child.stdout.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
   child.stderr.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
+  /**
+   * Said once, whichever of the three got here first.
+   *
+   * `error` and `close` can both fire for one failed spawn, and a terminal
+   * that announced its own exit twice would be one every client draws as
+   * having died, come back, and died again.
+   */
+  let announced = false;
+  const ended = (): void => {
+    if (announced) return;
+    announced = true;
+    emit('terminal', { type: 'terminal/exited', exitCode });
+  };
   child.on('error', (error: Error) => {
     said(`${error.message}\n`);
     exitCode = 127;
-    emit('terminal', { type: 'terminal/exited', exitCode });
+    ended();
   });
   child.on('exit', (code: number | null, signal: string | null) => {
     // A signal is not an exit code, and 128+n is the shell's own convention
     // for one - better than reporting nothing, which reads as still running.
     exitCode = code ?? (signal ? 128 : 0);
-    emit('terminal', { type: 'terminal/exited', exitCode });
+  });
+  /*
+   * Announced on `close` rather than on `exit`, which is a race this lost.
+   *
+   * `exit` fires when the process goes; `close` fires once its pipes are
+   * drained. Between the two there is output already written and not yet
+   * read, so a host that reported the exit on `exit` reported a command's
+   * result before the result had arrived - which is exactly what a `!`
+   * command in the composer reads back.
+   */
+  child.on('close', () => {
+    // A process that closed without an exit event was killed outright.
+    exitCode ??= 0;
+    ended();
   });
 
   return {

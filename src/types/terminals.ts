@@ -33,6 +33,16 @@ export interface TerminalOptions {
    * theirs rather than a fact about the machine.
    */
   shell?: string;
+  /**
+   * One command to run instead of a shell to sit in.
+   *
+   * The terminal runs it and exits, so `terminal/exited` is what says the
+   * command finished and its code is what says how. Without this the shell
+   * reads from a pipe and stays open, which is right for a terminal somebody
+   * is typing into and wrong for one opened to answer a single question -
+   * there is no shell integration here to tell where one command ends.
+   */
+  command?: string;
   /** Width in columns, as the client draws it. */
   cols?: number;
   /** Height in rows. */
