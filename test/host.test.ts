@@ -3527,13 +3527,17 @@ describe('a session asked for by the name a client computed', () => {
 });
 
 /*
- * The annotations channel, which is empty and is served anyway.
+ * The annotations channel: a client's marks, kept for the other clients.
  *
- * A client opens a session by subscribing to three channels at once - the
- * session, its chat, and `<sessionUri>/annotations` - and treats the three as
- * one hydration. Refusing the third fails the open, and the failure is silent:
- * nothing is drawn and nothing is said. So it is answered, with the empty
- * state that is the true one, rather than refused.
+ * Nothing here produces one. What this host contributes is that a mark one
+ * client made is a mark every other client in the session can see - so the
+ * state is stored and echoed rather than computed, and it is reduced with the
+ * package's own `annotationsReducer` so that host and clients cannot disagree.
+ *
+ * The channel is answered even while it is empty, because a client opens a
+ * session by subscribing to three channels at once - the session, its chat,
+ * and `<sessionUri>/annotations` - and treats the three as one hydration.
+ * Refusing the third fails the open, and the failure is silent.
  */
 describe('a session\'s annotations', () => {
   it('answers an empty channel for a live session', async () => {
@@ -3568,6 +3572,91 @@ describe('a session\'s annotations', () => {
       .rejects.toMatchObject({ code: -32001 });
   });
 
+  it('keeps a mark one client made, and shows it to the next', async () => {
+    const { host, client, uri } = await running();
+    const marks = `${uri}/annotations`;
+    await client.handle({ method: 'subscribe', params: { channel: marks } });
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: marks,
+        action: {
+          type: 'annotations/set',
+          annotation: {
+            id: 'a1',
+            origin: { session: uri },
+            resource: 'file:///home/softov/x.ts',
+            resolved: false,
+            entries: [{ id: 'e1', text: 'this is the bit' }],
+          },
+        },
+      },
+    });
+    // A second client, arriving after. The whole point of the channel is that
+    // the mark is the session's rather than the marker's.
+    const other = host.accept(peer());
+    await other.handle(hello(['0.8.0']));
+    const seen = await other.handle({ method: 'subscribe', params: { channel: marks } }) as {
+      snapshot: { state: { annotations: { id: string; entries: { text: string }[] }[] } };
+    };
+    expect(seen.snapshot.state.annotations).toHaveLength(1);
+    expect(seen.snapshot.state.annotations[0]?.entries[0]?.text).toBe('this is the bit');
+  });
+
+  it('echoes each of the five to everyone watching, carrying the origin', async () => {
+    const { client, peer: p, uri } = await running();
+    const marks = `${uri}/annotations`;
+    await client.handle({ method: 'subscribe', params: { channel: marks } });
+    const send = (action: Record<string, unknown>) => client.handle({
+      method: 'dispatchAction',
+      params: { channel: marks, clientSeq: 4, action },
+    });
+    send({
+      type: 'annotations/set',
+      annotation: {
+        id: 'a1', origin: { session: uri }, resource: 'file:///x', resolved: false,
+        entries: [{ id: 'e1', text: 'one' }],
+      },
+    });
+    send({ type: 'annotations/entrySet', annotationId: 'a1', entry: { id: 'e2', text: 'two' } });
+    send({ type: 'annotations/updated', annotationId: 'a1', resolved: true });
+    send({ type: 'annotations/entryRemoved', annotationId: 'a1', entryId: 'e1' });
+
+    const echoed = p.notes.filter((note) => note.method === 'action'
+      && (note.params as { channel: string }).channel === marks);
+    expect(echoed).toHaveLength(4);
+    // The echo is what a client reconciles its optimistic apply against.
+    expect(echoed[0]?.params).toMatchObject({ origin: { clientSeq: 4 } });
+
+    const state = (await client.handle({ method: 'subscribe', params: { channel: marks } }) as {
+      snapshot: { state: { annotations: { resolved: boolean; entries: { id: string }[] }[] } };
+    }).snapshot.state;
+    expect(state.annotations[0]?.resolved).toBe(true);
+    expect(state.annotations[0]?.entries.map((e) => e.id)).toEqual(['e2']);
+
+    send({ type: 'annotations/removed', annotationId: 'a1' });
+    const gone = (await client.handle({ method: 'subscribe', params: { channel: marks } }) as {
+      snapshot: { state: { annotations: unknown[] } };
+    }).snapshot.state;
+    expect(gone.annotations).toEqual([]);
+  });
+
+  it('refuses one that names a mark the session does not have', async () => {
+    const { client, peer: p, uri } = await running();
+    const marks = `${uri}/annotations`;
+    await client.handle({ method: 'subscribe', params: { channel: marks } });
+    // The reducer answers an unknown id by handing back the state it was
+    // given. Echoing that as though it applied leaves the client holding an
+    // optimistic mark this host never kept.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: marks, action: { type: 'annotations/updated', annotationId: 'nope', resolved: true } },
+    });
+    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
+    expect(refused?.params).toMatchObject({
+      rejectionReason: expect.stringContaining('does not have'),
+    });
+  });
 });
 
 /*

@@ -17,8 +17,8 @@
  *   the host reporting what it did.
  */
 
-import { IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import type { TerminalInfo } from '@microsoft/agent-host-protocol';
+import { annotationsReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { within } from './paths.js';
@@ -62,6 +62,9 @@ const AUTOMATIONS = 'ahp-automations://';
  * `initialize`, because it is how a client tells a live socket from one an
  * idle proxy has quietly dropped.
  */
+/** What a session's annotations channel is called, under the session's own URI. */
+const MARKS = '/annotations';
+
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
 
 /**
@@ -617,8 +620,26 @@ export function createHost(options: HostOptions): Host {
    * to be keyed by; the name the client used is remembered as an alias so it
    * is also what the client is told.
    */
-  const meantBy = (channel: string): string =>
-    sessionOfChat(channel) !== undefined ? chatOf(channel) : heldAs(channel);
+  const meantBy = (channel: string): string => {
+    // Nested under a session, so it is resolved the way the session it hangs
+    // off is: a client that opened the row under its own spelling dispatches
+    // annotations under that spelling too.
+    if (channel.endsWith(MARKS)) return `${heldAs(channel.slice(0, -MARKS.length))}${MARKS}`;
+    return sessionOfChat(channel) !== undefined ? chatOf(channel) : heldAs(channel);
+  };
+  /**
+   * What a client has marked on a session, by that session's id.
+   *
+   * Kept, not computed. Annotations are the one channel whose state is
+   * entirely a client's: nothing here produces a mark, and what this host
+   * contributes is that a mark one client made is a mark every other client
+   * in the session can see. Keyed by id rather than by URI for the reason the
+   * flags are - a session is addressable under more than one spelling and
+   * there is only one set of marks.
+   */
+  const marks = new Map<string, AnnotationsState>();
+  /** The marks on a session, empty until somebody makes one. */
+  const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
   /**
    * A *session's* snapshot, answered under the name the client asked about.
@@ -1639,21 +1660,23 @@ export function createHost(options: HostOptions): Host {
      * A session's annotations, nested under the session the way a changeset
      * is: `<sessionUri>/annotations`, one per session.
      *
-     * Always empty. This host holds no annotations of its own - annotations
-     * arrive through the `addComment` server tool, which no backend here
-     * advertises - but the channel is *served* rather than refused because a
-     * client subscribes to it as part of opening a session, alongside the
-     * session and its chat. A refusal there is a failed open, and a client
-     * that treats the three as one hydration renders nothing at all.
+     * Held rather than produced. Nothing here makes a mark - they arrive
+     * through the `addComment` server tool, which no backend here advertises -
+     * and what this host contributes is that a mark one client made is one
+     * every other client in the session can see. The channel is served rather
+     * than refused even when it is empty, because a client subscribes to it as
+     * part of opening a session, alongside the session and its chat: a refusal
+     * there is a failed open, and a client that treats the three as one
+     * hydration renders nothing at all.
      */
-    if (channel.endsWith('/annotations')) {
-      const owning = channel.slice(0, -'/annotations'.length);
+    if (channel.endsWith(MARKS)) {
+      const owning = channel.slice(0, -MARKS.length);
       // Asked of `past`, which consults the catalogue itself, rather than of
       // the maps a listing fills: a client sends the three subscriptions that
       // open a session in one breath, before its own `listSessions` has come
       // back, and a test against those maps refuses on the race.
       if (sessions.has(heldAs(owning)) || (await past(idOf(owning))) !== undefined)
-        return value({ resource: channel, state: { annotations: [] }, fromSeq: serverSeq });
+        return value({ resource: channel, state: marksOf(idOf(owning)), fromSeq: serverSeq });
     }
     const watching = watches.get(channel);
     if (watching) {
@@ -3020,6 +3043,52 @@ export function createHost(options: HostOptions): Host {
           no(`${type} is this host's to say, not a client's`);
           return;
         }
+        /*
+         * A mark on a file, kept for whoever else is in the session.
+         *
+         * Reduced with the protocol's own `annotationsReducer` rather than
+         * with five cases written here: every client applies its own dispatch
+         * with that function, and a host that reduced the same action even
+         * slightly differently would hand out a state its clients disagree
+         * with. It returns the state it was given when the action names
+         * something that is not there, which is what makes a no-op tellable
+         * from a change - and a no-op echoed as though it had applied is a
+         * client left holding an optimistic mark this host never kept.
+         */
+        if (type.startsWith('annotations/')) {
+          if (!channel.endsWith(MARKS)) {
+            no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
+            return;
+          }
+          const id = idOf(channel.slice(0, -MARKS.length));
+          const before = marksOf(id);
+          const after = annotationsReducer(before, action as unknown as AnnotationsAction);
+          if (after === before) {
+            no(`${type} names an annotation this session does not have`);
+            return;
+          }
+          marks.set(id, after);
+          dispatch(channel, action);
+          return;
+        }
+        /*
+         * The client flags, which are the host's to keep.
+         *
+         * Answered before anything looks for a running session, because
+         * these are the two actions that are *about* a session nobody has
+         * opened: marking a row read, or filing it away, is what somebody
+         * does from the catalogue - and starting an agent to record a bit
+         * would start one per row scrolled past.
+         */
+        /*
+         * Ticking a file off a diff, which belongs to no session's agent.
+         *
+         * Answered here for the same reason the flags below are: it is a
+         * reader's bookkeeping about a changeset, it writes nothing to disk,
+         * and it arrives on the changeset's own channel rather than a
+         * session's. Review is deliberately not an *operation* - the
+         * protocol has clients dispatch this and the server keep the flag.
+         */
         /*
          * What a client wants of this host, kept and said back.
          *

@@ -65,7 +65,7 @@ specification: nothing here is listed because AHP defines it.
 
 ## State actions
 
-**64 of the 96 declared, across nine channels.** Grouped by channel; a group is
+**69 of the 96 declared, across nine channels.** Grouped by channel; a group is
 🚧 when some of it is served.
 
 | channel | ahpd | Status | Notes |
@@ -78,7 +78,7 @@ specification: nothing here is listed because AHP defines it.
 | `automation/*` | 4 of 4 | ✅ | |
 | `automationRun/*` | 3 of 5 | 🚧 | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`. `sessionSet` / `sessionRemoved` are for a run with more than one session, and a run here has one |
 | `resourceWatch/*` | 1 of 1 | ✅ | |
-| `annotations/*` | 0 of 5 | ➖ | An editor's furniture: a client marks a range and the marks are shared. Nothing here produces one - but `<sessionUri>/annotations` is *subscribable* and answers `{ annotations: [] }`, because a client opens a session by subscribing to the session, its chat and its annotations together, and a refusal on the third fails the open silently |
+| `annotations/*` | 5 of 5 | ✅ | An editor's furniture, and the one channel whose state is entirely a client's: nothing here produces a mark, and what this host contributes is that a mark one client made is one every other client in the session can see. Kept per session under `<sessionUri>/annotations`, reduced with the package's own `annotationsReducer` so host and client cannot disagree, and echoed with `origin`. An action naming an annotation the session does not have is refused rather than echoed - the reducer answers an unknown id by handing back the state it was given, and echoing that would leave the client holding a mark this host never kept |
 
 ### Client-dispatchable actions this host acts on
 
@@ -89,7 +89,8 @@ specification: nothing here is listed because AHP defines it.
 `session/activeClientSet`, `session/customizationToggled`,
 `session/mcpServerStartRequested` / `StopRequested`, `terminal/input`,
 `terminal/resized`, `automation/createRequested` / `updateRequested`,
-`automationRun/cancelRequested`, `root/configChanged`.
+`automationRun/cancelRequested`, `root/configChanged`,
+`annotations/set` / `updated` / `removed` / `entrySet` / `entryRemoved`.
 
 Anything else dispatched is **refused**, not dropped: an envelope carrying
 `rejectionReason` goes back to the connection that sent it, naming the action
