@@ -2892,6 +2892,36 @@ export function createHost(options: HostOptions): Host {
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
           openSession(uri, provider, config, where, undefined, tokensFor(provider));
+          /*
+           * The creator claiming its place in the session it just made.
+           *
+           * The protocol's own words: "equivalent to dispatching a
+           * `session/activeClientSet` immediately after creation". Answered
+           * here rather than left to that dispatch because it saves the round
+           * trip the field exists to save, and because a client that has to
+           * announce itself afterwards owns a session that is briefly empty
+           * of it.
+           *
+           * The `clientId` is this connection's, not the one in the payload.
+           * The protocol says the two MUST match, and forcing it is what the
+           * dispatch path does for the same reason: a client naming somebody
+           * else is announcing a presence that is not theirs.
+           */
+          const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
+            ? params.activeClient as Bag
+            : undefined;
+          if (claimed !== undefined) {
+            const clientId = connection.clientId || 'anonymous';
+            const activeClient: Bag = {
+              ...claimed,
+              clientId,
+              tools: Array.isArray(claimed.tools) ? claimed.tools : [],
+            };
+            const here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
+            presence.set(idOf(uri), here);
+            here.set(clientId, activeClient);
+            dispatch(uri, { type: 'session/activeClientSet', activeClient });
+          }
           return {};
         },
         /**

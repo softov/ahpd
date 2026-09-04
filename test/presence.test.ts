@@ -248,3 +248,53 @@ it('says how many sessions it is running when that changes', async () => {
     .filter((one) => one.type === 'root/activeSessionsChanged')
     .map((one) => one.activeSessions)).toEqual([1, 0]);
 });
+
+/*
+ * Claiming a place in a session at the moment it is made.
+ *
+ * `CreateSessionParams.activeClient` is the protocol's own shortcut for the
+ * dispatch that would otherwise follow: without it, the client that created a
+ * session owns one it is briefly not in, and every other client watching the
+ * root sees a session with nobody in it until the second round trip lands.
+ */
+it('takes the creator into the session it created, without a second round trip', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  const b = await joins(held, 'watcher');
+  await a.client.handle({
+    method: 'createSession',
+    params: {
+      channel: URI,
+      provider: 'echo',
+      activeClient: { clientId: 'creator', tools: [{ name: 'openBrowserPage' }] },
+    },
+  });
+  expect(await clientsIn(b.client, URI)).toEqual(['creator']);
+  // What it contributes comes with it. The field is a whole `activeClient`,
+  // not a flag, and dropping the tools would make the shortcut lossy.
+  const seen = (await b.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: { tools: { name: string }[] }[] } };
+  }).snapshot.state.activeClients;
+  expect(seen[0]?.tools.map((one) => one.name)).toEqual(['openBrowserPage']);
+});
+
+it('takes the creator in under its own name, not the one it typed', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  await a.client.handle({
+    method: 'createSession',
+    params: { channel: URI, provider: 'echo', activeClient: { clientId: 'somebody-else', tools: [] } },
+  });
+  // The protocol says the two MUST match. Honouring the payload instead would
+  // let a client announce a presence that is not theirs - and the dispatch
+  // path already forces this for the same reason.
+  expect(await clientsIn(a.client, URI)).toEqual(['creator']);
+});
+
+it('leaves a session nobody claimed empty', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  // Subscribing is not being *active* in it: the protocol has a client say so.
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+});
