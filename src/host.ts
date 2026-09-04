@@ -55,6 +55,16 @@ const ROOT = 'ahp-root://';
 const AUTOMATIONS = 'ahp-automations://';
 
 /**
+ * The three methods a connection may send before it has been introduced.
+ *
+ * `initialize` and `reconnect` are the two ways in. `ping` is neither: the
+ * spec says a server MUST answer it whether or not the client has completed
+ * `initialize`, because it is how a client tells a live socket from one an
+ * idle proxy has quietly dropped.
+ */
+const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
+
+/**
  * A claim off the wire, or nothing.
  *
  * Parsed rather than cast, which the types are what forced: a claim used to be
@@ -1867,6 +1877,16 @@ export function createHost(options: HostOptions): Host {
         peer, clientId: '', watching: new Set<string>(), grants: new Set<string>(),
         tokens: new Map<string, string>(), aliases: new Map<string, string>(),
       };
+      /**
+       * Whether this connection has been introduced.
+       *
+       * The protocol opens with `initialize`, or with `reconnect` for a client
+       * coming back to a host it has met. Until one of them has been answered
+       * there is no negotiated version, no `clientId` and nothing to key a
+       * subscription by - so serving anything else means serving a client
+       * this host has agreed on nothing with.
+       */
+      let handshook = false;
 
       /**
        * What this client pushed, narrowed to what that backend asked for.
@@ -1951,6 +1971,9 @@ export function createHost(options: HostOptions): Host {
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
           // Met, so a later `reconnect` under this id is answerable.
           known.add(connection.clientId);
+          // Introduced. Said after the version is agreed, so a client this
+          // host cannot speak to is not one it has shaken hands with.
+          handshook = true;
           const wanted = Array.isArray(params.initialSubscriptions)
             ? params.initialSubscriptions.filter((uri) => typeof uri === 'string')
             : [];
@@ -2043,6 +2066,9 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
           }
           connection.clientId = clientId;
+          // The other way in. A client that dropped resumes with this rather
+          // than a fresh `initialize`, and it is as much an introduction.
+          handshook = true;
           // What this connection was watching before the drop. Whatever it
           // does not ask back for is the third way the protocol says a client
           // stops being active in a session: reconnecting without
@@ -3488,6 +3514,11 @@ export function createHost(options: HostOptions): Host {
         async handle(request) {
           const notify = notifications[request.method];
           if (notify) {
+            // Dropped rather than refused: a notification carries no id, so
+            // there is nowhere to say no, and a client that has not
+            // introduced itself has no subscriptions to unsubscribe and no
+            // `clientSeq` an echo could be matched against.
+            if (!handshook) return undefined;
             notify(request.params);
             return undefined;
           }
@@ -3497,6 +3528,22 @@ export function createHost(options: HostOptions): Host {
             // success to a method it does not have leaves the client waiting
             // for state that is never coming.
             throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${request.method} yet`);
+          }
+          // Everything before the handshake is `-32601`, which reads oddly
+          // for a method this host plainly has and is what the protocol
+          // leaves for it: there is no code for "not yet", and the reference
+          // host answers exactly this. `ping` is the one exception the spec
+          // states outright - the round trip is a liveness check, and a
+          // liveness check that needs a handshake first cannot tell a
+          // half-open socket from a busy one.
+          if (!handshook && !GREETINGS.has(request.method)) {
+            throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${request.method} before initialize`);
+          }
+          // And a second `initialize` is no longer one of them: the version
+          // is agreed, and re-agreeing it would re-key every subscription
+          // this connection is holding.
+          if (handshook && request.method === 'initialize') {
+            throw new RpcError(METHOD_NOT_FOUND, `${connection.clientId || 'This client'} has already initialized`);
           }
           return handler(request.params);
         },

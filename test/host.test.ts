@@ -196,6 +196,42 @@ describe('the handshake', () => {
     ) as { snapshots: unknown[] };
     expect(result.snapshots).toHaveLength(1);
   });
+
+  it('answers a ping before it has been introduced', async () => {
+    const client = open();
+    // The spec says so in as many words: a server MUST answer `ping` whether
+    // or not the client has completed `initialize`. It is how a client tells
+    // a live socket from one an idle proxy quietly dropped, and a liveness
+    // check that needs a handshake first cannot do that.
+    expect(await client.handle({ method: 'ping', params: {} })).toEqual({});
+  });
+
+  it('serves nothing else until it has', async () => {
+    const client = open();
+    await expect(client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }))
+      .rejects.toMatchObject({ code: -32601 });
+  });
+
+  it('hears a notification sent before the handshake and does nothing with it', async () => {
+    const client = open();
+    // No id, so there is nowhere to say no - and nothing to say it about: an
+    // unintroduced client holds no subscriptions and has no `clientSeq` an
+    // echo could be matched against.
+    expect(await client.handle({ method: 'unsubscribe', params: { channel: 'ahp-root://' } }))
+      .toBeUndefined();
+    // And the connection is still usable afterwards.
+    const result = await client.handle(hello(['0.8.0'])) as { protocolVersion: string };
+    expect(result.protocolVersion).toBe('0.8.0');
+  });
+
+  it('refuses a second introduction on the same connection', async () => {
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    // Re-agreeing the version would re-key every subscription this connection
+    // is holding, so the reference host does not serve `initialize` twice
+    // either.
+    await expect(client.handle(hello(['0.8.0']))).rejects.toMatchObject({ code: -32601 });
+  });
 });
 
 describe('the catalogue', () => {
