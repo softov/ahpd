@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "build:watch": "tsc -p tsconfig.json --watch",
     "start": "node dist/src/main.js",
+    "start:heap": "node --heapsnapshot-near-heap-limit=1 --max-old-space-size=4096 dist/src/main.js",
     "dev:bun": "bun --watch src/main.ts",
     "dev": "node --watch --import ./scripts/dev.mjs src/main.ts",
     "echo:bun": "bun --watch examples/echo/main.ts",

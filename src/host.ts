@@ -3383,6 +3383,14 @@ export function createHost(options: HostOptions): Host {
           sessions.delete(uri);
           origins.delete(uri);
           presence.delete(idOf(uri));
+          // And what was kept *about* it. Both of these are keyed by a session
+          // that no longer exists, so anything left here is held for nobody -
+          // a daemon that runs for weeks would accumulate one of each per
+          // session anybody ever opened.
+          marks.delete(idOf(uri));
+          for (const channel of [...shown.keys()]) {
+            if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
+          }
           activeSessionsMoved();
           // Every other client is told, because the session was theirs too.
           // `session`, which is the name the protocol gives it. Under
