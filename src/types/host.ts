@@ -4,6 +4,7 @@ import type { Agent } from './agent.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
+import type { Worktrees } from './worktrees.js';
 import type { AutomationStore } from './automations.js';
 import type { Peer, Request } from './rpc.js';
 
@@ -172,6 +173,20 @@ export interface HostOptions {
    * is the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
+  /**
+   * Whether a session can be given a working tree of its own.
+   *
+   * Left out, every session runs in the folder it was pointed at and this host
+   * advertises no `isolation` - so a client draws no control for it, which is
+   * the honest form of "not offered". `gitWorktrees()` is the one that ships
+   * with this package, and the daemon uses it.
+   *
+   * The reason to wire it in: two agents in one repository is the ordinary
+   * case for a sessions server, and without this they share a working tree.
+   * The second turn's changeset then contains the first turn's edits, and
+   * discarding a file discards somebody else's work.
+   */
+  worktrees?: Worktrees;
   /**
    * The automations this host offers.
    *

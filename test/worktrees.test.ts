@@ -1,0 +1,245 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createHost } from '../src/host.js';
+import { echo } from '../examples/echo/agent.js';
+import { gitWorktrees, worktreesOf } from '../src/worktrees.js';
+import type { Peer } from '../src/types/rpc.js';
+
+/*
+ * A working tree of a session's own.
+ *
+ * Against a real repository rather than a scripted port, because the whole
+ * question is what `git worktree` does: whether the branch is the session's,
+ * whether the files a checkout leaves behind arrive, and whether a tree with
+ * somebody's uncommitted work in it survives the session that made it. None of
+ * that is answerable against a fake that says yes.
+ */
+
+let made: string[] = [];
+
+afterEach(() => {
+  for (const dir of made) rmSync(dir, { recursive: true, force: true });
+  made = [];
+});
+
+/** A repository with one commit, a branch, and a file git was told to ignore. */
+function repository(): string {
+  // Two levels, so the `<repo>.worktrees` sibling is inside the served root
+  // rather than beside it - which is the arrangement a host has to serve.
+  const root = mkdtempSync(join(tmpdir(), 'ahpd-wt-'));
+  made.push(root);
+  const dir = join(root, 'project');
+  mkdirSync(dir);
+  const run = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  writeFileSync(join(dir, 'tracked.txt'), 'tracked\n');
+  writeFileSync(join(dir, '.gitignore'), '.env\n');
+  writeFileSync(join(dir, '.env'), 'SECRET=1\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'first');
+  run('branch', 'release');
+  return root;
+}
+
+function peer(): Peer & { notes: { method: string; params: unknown }[] } {
+  const notes: { method: string; params: unknown }[] = [];
+  return {
+    notes,
+    send: () => {},
+    notify: (method, params) => notes.push({ method, params }),
+    request: async () => ({}),
+    answered: () => {},
+    close: () => {},
+  };
+}
+
+const serving = (root: string) => createHost({
+  path: root,
+  agents: [echo({ path: join(root, 'project'), pace: 0 })],
+  worktrees: gitWorktrees(),
+});
+
+const joined = async (root: string) => {
+  const held = serving(root);
+  const p = peer();
+  const client = held.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  return { host: held, client, peer: p };
+};
+
+const project = (root: string) => join(root, 'project');
+
+describe('a session with a working tree of its own', () => {
+  it('offers the choice only where there is a repository to make one in', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const offered = await client.handle({
+      method: 'resolveSessionConfig',
+      params: { channel: 'ahp-root://', provider: 'echo', workingDirectories: [`file://${project(root)}`] },
+    }) as { schema: { properties: Record<string, { enum?: string[] }> }; values: Record<string, string> };
+    expect(offered.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+    // The branches it actually has, with the one it is on first: a picker that
+    // opens on the oldest branch is one somebody has to search.
+    expect(offered.schema.properties.branch?.enum).toContain('release');
+    // `folder`, because every session this daemon has run has been one, and a
+    // default that moved them all would be changing where an agent works
+    // without being asked.
+    expect(offered.values.isolation).toBe('folder');
+
+    const plain = mkdtempSync(join(tmpdir(), 'ahpd-plain-'));
+    made.push(plain);
+    const bare = await joined(plain);
+    const nothing = await bare.client.handle({
+      method: 'resolveSessionConfig',
+      params: { channel: 'ahp-root://', provider: 'echo', workingDirectories: [`file://${plain}`] },
+    }) as { schema: { properties?: Record<string, unknown> } };
+    // Not a repository, so there is no isolation to offer and the control is
+    // absent rather than present with one value.
+    expect(nothing.schema.properties?.isolation).toBeUndefined();
+  });
+
+  it('makes a worktree on a branch of its own, and runs the session there', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/isolated';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri,
+        provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    });
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    const where = state.workingDirectories[0]?.replace('file://', '') ?? '';
+    expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+
+    // Its own branch, which is what stops two sessions committing over each
+    // other. `--no-track`, so a push inside it does not go at `main`.
+    const said = execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
+    expect(said).toMatch(/^agents\//);
+  });
+
+  it('brings along the files a checkout leaves behind', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/carried',
+        provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: '.env' },
+      },
+    });
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    const where = state.workingDirectories[0]?.replace('file://', '') ?? '';
+    // In the worktree and not in the project it came from, which is the whole
+    // assertion: the original has a `.env` already.
+    expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+    // Without this the isolation works and the session inside it cannot run
+    // anything - a failure the person meets after choosing it.
+    expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
+  });
+
+  it('leaves the folder alone when nobody asked for a worktree', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/plain',
+        provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'folder' },
+      },
+    });
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/plain' } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories[0]).toBe(`file://${project(root)}`);
+    expect(existsSync(worktreesOf(project(root)))).toBe(false);
+  });
+
+  it('takes a clean worktree away with the session', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/tidy';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    expect(existsSync(where)).toBe(true);
+
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    for (let i = 0; i < 40 && existsSync(where); i++) await new Promise((r) => { setTimeout(r, 25); });
+    expect(existsSync(where)).toBe(false);
+  });
+
+  it('keeps one with work in it, rather than deciding what the work was worth', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/busy';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+    // An afternoon's work nobody committed, which is the one thing here a
+    // daemon cannot judge the value of.
+    writeFileSync(join(where, 'unsaved.txt'), 'the whole point\n');
+
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    await new Promise((r) => { setTimeout(r, 300); });
+    expect(existsSync(join(where, 'unsaved.txt'))).toBe(true);
+    // Still a worktree of the repository, so `git worktree list` finds it.
+    const listed = execFileSync('git', ['-C', project(root), 'worktree', 'list']).toString();
+    expect(listed).toContain(where);
+  });
+
+  it('refuses isolation it cannot serve the result of', async () => {
+    const root = repository();
+    // Served at the project itself, so its worktrees would sit outside every
+    // root - a session whose own files no client could read back.
+    const held = createHost({
+      path: project(root),
+      agents: [echo({ path: project(root), pace: 0 })],
+      worktrees: gitWorktrees(),
+    });
+    const client = held.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    await expect(client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/outside', provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    })).rejects.toMatchObject({ code: -32602 });
+  });
+});

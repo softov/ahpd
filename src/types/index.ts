@@ -24,3 +24,4 @@ export type { Offered } from './probe.js';
 export type { Agent, Listed, Start } from './agent.js';
 export type { Entry, Metadata, Read } from './resources.js';
 export type { Claim, Terminal, TerminalOptions } from './terminals.js';
+export type { Worktree, Worktrees } from './worktrees.js';

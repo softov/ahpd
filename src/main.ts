@@ -9,6 +9,7 @@ import { gitChanges } from './changes.js';
 import { scheduledAutomations } from './scheduled.js';
 import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
+import { gitWorktrees } from './worktrees.js';
 import { listen } from './listen.js';
 
 /**
@@ -266,6 +267,7 @@ const host = createHost({
   terminals: shellTerminals(),
   directories: gitBranches(),
   changes: gitChanges(),
+  worktrees: gitWorktrees(),
   /*
    * Automations, with a clock.
    *

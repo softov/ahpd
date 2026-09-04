@@ -21,7 +21,9 @@ import { annotationsReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS
 import type { AnnotationsAction, AnnotationsState, ChangesetFile, TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
+import { join } from 'node:path';
 import { within } from './paths.js';
+import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Claim, Terminal } from './types/terminals.js';
@@ -661,6 +663,15 @@ export function createHost(options: HostOptions): Host {
    * there is only one set of marks.
    */
   const marks = new Map<string, AnnotationsState>();
+
+  /**
+   * The worktree each isolated session runs in, by session URI.
+   *
+   * Only the ones this host made. A directory somebody pointed a session at is
+   * theirs, and removing it because a session ended would be this daemon
+   * deleting a project.
+   */
+  const worktrees = new Map<string, { repository: string; path: string }>();
   /** The marks on a session, empty until somebody makes one. */
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
@@ -1594,6 +1605,155 @@ export function createHost(options: HostOptions): Host {
     return found;
   };
   /**
+   * The config properties this host owns, rather than the backend.
+   *
+   * The protocol's schema is deliberately generic - a backend advertises
+   * whatever names it likes - and these six are the conventional ones the
+   * *host* answers, named in the reference client's `sessionConfigKeys.ts` as
+   * host-owned and "not passed to agents". So they are merged over what the
+   * backend said and stripped back out before it is handed anything.
+   *
+   * Offered at all only when there is a `worktrees` port and the directory is
+   * a repository: `isolation` with one value is a control a client draws and
+   * nobody can move.
+   */
+  const isolating = async (where: string | undefined): Promise<{
+    schema: Bag;
+    defaults: Record<string, string>;
+    repository?: string;
+  }> => {
+    const port = options.worktrees;
+    if (!port || where === undefined) return { schema: {}, defaults: {} };
+    const repository = await port.repository(where).catch(() => undefined);
+    if (repository === undefined) return { schema: {}, defaults: {} };
+    const branches = await port.branches(repository).catch(() => [] as string[]);
+    const facts = options.directories?.meta(repository) as { git?: { branch?: string } } | undefined;
+    const current = facts?.git?.branch;
+    // The branch it is on, first, because that is what "work from here" means
+    // and it is what somebody who does not open the picker gets.
+    const offered = current !== undefined && branches.includes(current)
+      ? [current, ...branches.filter((one) => one !== current)]
+      : branches;
+    const base = offered[0];
+    return {
+      repository,
+      defaults: {
+        // `folder` and not `worktree`, which is where the reference host
+        // starts. Every session this daemon has ever run has been a folder
+        // session, and a default that quietly moved them all into worktrees
+        // would be this host changing where somebody's agent works without
+        // being asked.
+        isolation: 'folder',
+        ...(base !== undefined ? { branch: base } : {}),
+        worktreeIncludeFiles: '',
+      },
+      schema: {
+        properties: {
+          isolation: {
+            type: 'string',
+            title: 'Isolation',
+            description: 'Where the agent should make changes',
+            enum: ['folder', 'worktree'],
+            enumLabels: ['Folder', 'Worktree'],
+            enumDescriptions: [
+              'Work directly in the folder',
+              'Work in a git worktree of its own, so two sessions in one repository do not edit under each other',
+            ],
+            default: 'folder',
+            // Decided once. A session that changed isolation halfway would be
+            // an agent whose files moved out from under a conversation.
+            sessionMutable: false,
+          },
+          ...(offered.length > 0 ? {
+            branch: {
+              type: 'string',
+              title: 'Branch',
+              description: 'Base branch the worktree starts from',
+              enum: offered,
+              enumLabels: offered,
+              ...(base !== undefined ? { default: base } : {}),
+              sessionMutable: false,
+            },
+          } : {}),
+          /*
+           * The files a checkout does not carry, and the session needs.
+           *
+           * Load-bearing rather than a refinement: a worktree has what git
+           * tracks, so an ordinary project arrives without its `.env` and
+           * without `node_modules`, and the agent inside it cannot run
+           * anything. Offering `isolation` without this is offering a feature
+           * that fails after the person chose it.
+           *
+           * A string of comma-separated patterns rather than an array,
+           * because every other value in this bag is a string and a client
+           * draws what the type says.
+           */
+          worktreeIncludeFiles: {
+            type: 'string',
+            title: 'Files to bring along',
+            description: 'Comma-separated patterns for git-ignored files to copy into the worktree, such as .env',
+            default: '',
+            sessionMutable: false,
+          },
+        },
+      },
+    };
+  };
+
+  /** The host's own keys, which a backend has never heard of. */
+  const HOSTS_OWN = ['isolation', 'branch', 'worktreeIncludeFiles'];
+
+  /** What the backend is given: everything except what this host answered. */
+  const backendsOwn = (config: Record<string, string>): Record<string, string> =>
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+
+  /**
+   * Where a session actually runs, once isolation has been answered.
+   *
+   * Answered here rather than in the backend because the tree is the host's:
+   * a backend is handed a directory and told to work in it, and which
+   * directory that is - the folder, or a worktree made for this session - is
+   * exactly the decision the client made with `isolation`.
+   */
+  const isolated = async (uri: string, config: Record<string, string>, where: string | undefined): Promise<string | undefined> => {
+    const port = options.worktrees;
+    if (!port || config.isolation !== 'worktree' || where === undefined) return where;
+    const repository = await port.repository(where);
+    if (repository === undefined) {
+      throw new RpcError(-32602, `${where} is not a git repository, so it has no worktrees`);
+    }
+    const branch = `agents/${idOf(uri).slice(0, 8)}`;
+    const path = join(worktreesOf(repository), worktreeFor(branch));
+    /*
+     * Inside somewhere this host serves, or not at all.
+     *
+     * Worktrees sit beside their repository, so a repository that *is* a
+     * served root puts them outside every one of them - and the session would
+     * then be one whose own files no client could read back, because
+     * `resourceRead` refuses a path outside the roots. Better to refuse the
+     * isolation and say so than to make a session that half works.
+     */
+    const roots = browsable();
+    if (!roots.some((root) => within(root, path))) {
+      throw new RpcError(-32602, `A worktree of ${repository} would live at ${path}, which this host does not serve`);
+    }
+    const include = (config.worktreeIncludeFiles ?? '')
+      .split(',')
+      .map((one) => one.trim())
+      .filter((one) => one !== '');
+    await port.create({
+      repository,
+      base: config.branch ?? 'HEAD',
+      branch,
+      path,
+      ...(include.length > 0 ? { include } : {}),
+    });
+    worktrees.set(uri, { repository, path });
+    log(`made ${path} on ${branch} for ${uri}`);
+    return path;
+  };
+
+  /**
    * One command, in a terminal of its own, and what it did.
    *
    * The composer's `!` shorthand runs here rather than in the session,
@@ -2041,11 +2201,17 @@ export function createHost(options: HostOptions): Host {
    */
   const startForAutomation = async (wanted: StartSession): Promise<string> => {
     const uri = `ahp-session:/${crypto.randomUUID()}`;
+    const config = wanted.config ?? {};
+    // The same two steps a client's `createSession` takes: the tree is made
+    // before anything runs in it, and the host's own keys are not the
+    // backend's to read. An automation asking for isolation is the case this
+    // exists for - nobody is at the keyboard to notice two of them colliding.
+    const where = await isolated(uri, config, wanted.workingDirectory);
     openSession(
       uri,
       wanted.provider ?? first.provider,
-      wanted.config ?? {},
-      wanted.workingDirectory,
+      backendsOwn(config),
+      where,
       wanted.origin,
     );
     const chatUri = chatUriFor(uri);
@@ -3055,10 +3221,20 @@ export function createHost(options: HostOptions): Host {
           const where = typeof asked === 'string'
             ? asked.replace(/^file:\/\//, '')
             : undefined;
+          /*
+           * The worktree, before anything is started in it.
+           *
+           * Made first because the backend is handed a directory and expected
+           * to work in it: a session opened in the folder and then moved would
+           * be an agent whose files changed under it. A failure here is a
+           * session that never existed, which is the right outcome - the
+           * alternative is one running somewhere the person did not choose.
+           */
+          const running = await isolated(uri, config, where);
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
-          openSession(uri, provider, config, where, undefined, tokensFor(provider));
+          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider));
           /*
            * The creator claiming its place in the session it just made.
            *
@@ -3173,6 +3349,37 @@ export function createHost(options: HostOptions): Host {
             terminals.delete(terminalUri);
           }
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          /*
+           * And the worktree, unless somebody's work is still in it.
+           *
+           * The decision this feature turns on. A worktree with uncommitted
+           * changes is the one thing here a daemon cannot judge the value of:
+           * it may be an experiment nobody wanted, or the only copy of an
+           * afternoon. So a clean one goes and a dirty one stays exactly where
+           * it is, on the branch it was made on, findable with `git worktree
+           * list` - and the path is logged, because the session it belonged to
+           * is about to stop being a place to say it.
+           *
+           * Not refusing the dispose instead: a session somebody cannot close
+           * because of a file they forgot about is a session they close by
+           * killing the daemon.
+           */
+          const tree = worktrees.get(uri);
+          if (tree) {
+            worktrees.delete(uri);
+            const port = options.worktrees;
+            void (async () => {
+              if (await port?.dirty(tree.path).catch(() => true) !== false) {
+                log(`kept ${tree.path}: it has changes nobody committed`);
+                return;
+              }
+              await port?.remove(tree.repository, tree.path)
+                .then(() => { log(`removed ${tree.path}`); })
+                .catch((error: unknown) => {
+                  log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+                });
+            })();
+          }
           sessions.delete(uri);
           origins.delete(uri);
           presence.delete(idOf(uri));
@@ -3209,9 +3416,29 @@ export function createHost(options: HostOptions): Host {
           const answered = (typeof params.config === 'object' && params.config !== null
             ? params.config
             : {}) as Record<string, string>;
+          /*
+           * The host's own properties, merged over the backend's.
+           *
+           * Over rather than under: `isolation` and its two companions are
+           * this host's to answer, and a backend that happened to advertise
+           * the same names would be advertising control of a directory it
+           * does not choose.
+           */
+          const asked = Array.isArray(params.workingDirectories)
+            ? params.workingDirectories.find((entry) => typeof entry === 'string')
+            : undefined;
+          const mine = await isolating(typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir);
+          const theirs = agent.schema();
+          const properties = {
+            ...(typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}),
+            ...(typeof mine.schema.properties === 'object' && mine.schema.properties !== null ? mine.schema.properties : {}),
+          };
           // Iterative, as a real host's is: what has been answered comes back
           // answered, so re-asking does not quietly undo a choice.
-          return { schema: agent.schema(), values: { ...agent.defaults(), ...answered } };
+          return {
+            schema: { ...theirs, properties },
+            values: { ...agent.defaults(), ...mine.defaults, ...answered },
+          };
         },
       };
       /**
