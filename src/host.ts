@@ -88,6 +88,17 @@ const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
 const PAGE_CAP = 500;
 
 /**
+ * The most rows a client that asked for no page size is handed at once.
+ *
+ * Deliberately far above any real catalogue rather than at a page's size:
+ * neither client that connects to this host reads `nextCursor`, so anything
+ * smaller would be a catalogue silently cut down to it. This is not a page
+ * size - it is the point past which a single frame stops being servable at
+ * all, and reaching it is written to the log because the client cannot see it.
+ */
+const PAGE_MOST = 1_000;
+
+/**
  * A pagination cursor, which is opaque by contract.
  *
  * It is the resource of the last row served, encoded - so it says nothing a
@@ -2509,8 +2520,14 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32602, `Unrecognised cursor ${cursor}`);
           const limit = typeof params.limit === 'number' && Number.isFinite(params.limit)
             ? Math.max(1, Math.min(Math.floor(params.limit), PAGE_CAP))
-            : undefined;
-          const items = limit === undefined ? rows.slice(after) : rows.slice(after, after + limit);
+            : PAGE_MOST;
+          const items = rows.slice(after, after + limit);
+          // Said out loud, because it is the one case a client cannot see: a
+          // catalogue past the bound is one this host can no longer hand over
+          // whole, and neither client that connects to it reads `nextCursor`.
+          if (limit === PAGE_MOST && rows.length - after > PAGE_MOST) {
+            log(`${String(rows.length)} sessions is past ${String(PAGE_MOST)}: paging, which no client here asks for`);
+          }
           const last = items[items.length - 1];
           return {
             items,

@@ -306,6 +306,27 @@ describe('the catalogue', () => {
     expect(listed.nextCursor).toBeUndefined();
   });
 
+  it('stops at a bound no real catalogue reaches, and offers the rest', async () => {
+    for (let i = 0; i < 1_002; i++)
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: unknown[]; nextCursor?: string;
+    };
+    // Not a page size - the point past which one frame stops being servable.
+    // A client that pages gets the rest; one that does not has been told,
+    // which is more than a frame that never arrives would tell it.
+    expect(listed.items).toHaveLength(1_000);
+    expect(listed.nextCursor).toBeTruthy();
+    const rest = await client.handle({
+      method: 'listSessions',
+      params: { channel: 'ahp-root://', cursor: listed.nextCursor },
+    }) as { items: unknown[]; nextCursor?: string };
+    expect(rest.items).toHaveLength(2);
+    expect(rest.nextCursor).toBeUndefined();
+  });
+
   it('walks it in pages when one is asked for, with no gaps and no repeats', async () => {
     for (let i = 0; i < 120; i++)
       sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
