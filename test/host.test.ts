@@ -384,16 +384,35 @@ describe('what it will not pretend', () => {
 
   it('tells a host-only action apart from one it has not got round to', async () => {
     const { client, peer: p, uri } = await running();
-    // `chat/truncated` *is* a client's to send - this host just does not
+    // `chat/turnResume` *is* a client's to send - this host just does not
     // serve it. Two different complaints, and they used to be the same one.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: uri, action: { type: 'chat/turnResume', turnId: 't1' } },
     });
     const refused = p.notes.filter((note) => note.method === 'action').at(-1);
     expect(refused?.params).toMatchObject({
       rejectionReason: expect.stringContaining('not served yet'),
     });
+  });
+
+  it('says what is actually wrong with a dispatch, not only that it is unserved', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const why = (action: Record<string, unknown>) => {
+      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      const refused = p.notes.filter((note) => note.method === 'action').at(-1);
+      return String((refused?.params as { rejectionReason?: string }).rejectionReason);
+    };
+    // Four refusals that used to read `is not served yet`, which is true and
+    // tells a client nothing it can act on.
+    expect(why({ type: 'chat/truncated', turnId: 't1' })).toContain('compacted');
+    expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: 'x' }))
+      .toContain('no draft answer');
+    expect(why({ type: 'chat/toolCallResultConfirmed', toolCallId: 'c1' }))
+      .toContain('result confirmation');
+    expect(why({ type: 'chat/toolCallContentChanged', toolCallId: 'c1' }))
+      .toContain('result confirmation');
+    expect(chatUri).toBeTruthy();
   });
 
   it('answers nothing at all to a notification', async () => {
@@ -3269,7 +3288,9 @@ describe('the fields a client reads by name', () => {
     // Which dispatch it answers, so the client knows what to put back.
     expect(refused[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
     expect(refused[0]?.action.type).toBe('chat/truncated');
-    expect((refused[0] as { rejectionReason?: string }).rejectionReason).toContain('chat/truncated');
+    // The reason names what actually happened rather than the type again: the
+    // harness compacted its context, which is not the turns being dropped.
+    expect((refused[0] as { rejectionReason?: string }).rejectionReason).toContain('compacted');
     // No state moved, so the sequence did not either: the refusal carries the
     // number this host is still at rather than claiming a place in the stream.
     expect(refused[0]?.serverSeq).toBe(at);

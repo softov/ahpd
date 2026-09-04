@@ -3633,6 +3633,46 @@ export function createHost(options: HostOptions): Host {
               : {}) as Record<string, unknown>);
             break;
           }
+          /*
+           * "Drop the turns before this one", which is not what happened.
+           *
+           * A client sends this after the harness compacts, reading the
+           * compaction as a truncation. It is not: every one of those turns
+           * is still in the transcript and still readable, and what was
+           * compacted is the model's context rather than the conversation. A
+           * host that honoured it would delete from every client's screen a
+           * history it can still serve - so it is refused, and the running
+           * turn carries a `systemNotification` saying what really happened.
+           */
+          case 'chat/truncated':
+            no('The harness compacted its context; the turns are still here');
+            break;
+          /*
+           * Somebody else's half-typed answer.
+           *
+           * The protocol has clients sync drafts with this, and the draft
+           * belongs to the `inputRequest` response part it names. This host
+           * holds no such part: a question goes out as `chat/inputRequested`
+           * and lives on `session.inputNeeded`, which is what a client that
+           * arrives late reads. There is nowhere here to keep a draft, so
+           * relaying one would be this host asserting a state it does not
+           * have.
+           */
+          case 'chat/inputAnswerChanged':
+            no('This host keeps no draft answer: the question is on the session, not in a part');
+            break;
+          /*
+           * Approving a tool call's *result*, which nothing here ever asks for.
+           *
+           * Both of these belong to a call that set `requiresResultConfirmation`,
+           * and no call this host builds does - the confirmation it asks for is
+           * before the tool runs, not after. A client sending one is answering
+           * a question nobody put.
+           */
+          case 'chat/toolCallResultConfirmed':
+          case 'chat/toolCallContentChanged':
+            no(`${type} answers a result confirmation, and no tool call here asks for one`);
+            break;
           default:
             no(`${type} is not served yet`);
         }
