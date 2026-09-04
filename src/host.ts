@@ -17,7 +17,7 @@
  *   the host reporting what it did.
  */
 
-import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import { IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
@@ -63,6 +63,16 @@ const AUTOMATIONS = 'ahp-automations://';
  * idle proxy has quietly dropped.
  */
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
+
+/**
+ * The protocol's own answer to "may a client send this?", by action type.
+ *
+ * Widened from the generated exhaustive map, which is keyed by the action
+ * types the package knows: a type read off the wire is a string and may be
+ * none of them, and `undefined` there means "no such action" rather than
+ * "host-only".
+ */
+const dispatchable = IS_CLIENT_DISPATCHABLE as Record<string, boolean | undefined>;
 
 /**
  * A claim off the wire, or nothing.
@@ -2939,6 +2949,22 @@ export function createHost(options: HostOptions): Host {
         const type = String(action.type ?? '');
         /** Refuse this dispatch, in the words of whatever would not have it. */
         const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
+        /*
+         * Whether a client is allowed to originate this at all, asked of the
+         * protocol rather than answered here.
+         *
+         * `IS_CLIENT_DISPATCHABLE` is exhaustive over `StateAction` and its
+         * own docstring says servers should check it, so it grows with the
+         * protocol and the switch below does not have to. Refused with its own
+         * reason: a host-only action arriving from a client is a client
+         * claiming something happened, which is not the same complaint as an
+         * action this host has not got round to serving - and told apart only
+         * here, because both used to fall into the one default.
+         */
+        if (dispatchable[type] === false) {
+          no(`${type} is this host's to say, not a client's`);
+          return;
+        }
         /*
          * The client flags, which are the host's to keep.
          *

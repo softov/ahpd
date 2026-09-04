@@ -313,15 +313,35 @@ describe('what it will not pretend', () => {
     })).rejects.toMatchObject({ code: -32002 });
   });
 
-  it('ignores an action a client is not allowed to originate', async () => {
-    const { client, uri } = await running();
+  it('refuses an action a client is not allowed to originate, and says which', async () => {
+    const { client, peer: p, uri } = await running();
     // `chat/delta` is this host telling clients what it did. One arriving
-    // *from* a client is a client lying about what happened.
+    // *from* a client is a client lying about what happened - and it is told
+    // so, because a dispatch dropped in silence leaves the client's
+    // optimistic state diverged with nothing to reconcile against.
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'chat/delta', turnId: 't1', partId: 'p', content: 'x' } },
     });
     expect(sdk.said).toEqual([]);
+    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
+    expect(refused?.params).toMatchObject({
+      rejectionReason: expect.stringContaining('not a client\'s'),
+    });
+  });
+
+  it('tells a host-only action apart from one it has not got round to', async () => {
+    const { client, peer: p, uri } = await running();
+    // `chat/truncated` *is* a client's to send - this host just does not
+    // serve it. Two different complaints, and they used to be the same one.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
+    expect(refused?.params).toMatchObject({
+      rejectionReason: expect.stringContaining('not served yet'),
+    });
   });
 
   it('answers nothing at all to a notification', async () => {
