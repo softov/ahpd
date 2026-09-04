@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
 import { echo } from '../examples/echo/agent.js';
 import type { ChangesetOperation, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
@@ -207,9 +208,90 @@ it('runs it once granted, and says running then idle on the changeset', async ()
   const said = actions(p, changeset);
   const statuses = said.filter((one) => one.type === 'changeset/operationStatusChanged');
   expect(statuses.map((one) => one.status)).toEqual(['running', 'idle']);
-  // And the files, because something wrote to the tree and a client watching
-  // this changeset is holding a list that has moved.
-  expect(said.some((one) => one.type === 'changeset/contentChanged')).toBe(true);
+  // And nothing about the files, because this source answers the same list
+  // either side of the operation. A host that re-sent it regardless was
+  // sending a client the set it already held to tell it nothing.
+  expect(said.some((one) => one.type === 'changeset/contentChanged')).toBe(false);
+  expect(said.some((one) => one.type === 'changeset/fileSet')).toBe(false);
+});
+
+/**
+ * A source whose file list can be moved between reads.
+ *
+ * Everything else here answers the same changeset twice, which is exactly the
+ * case the incremental actions do not apply to.
+ */
+function shifting(files: { id: string; edit: Record<string, unknown> }[]) {
+  const held = { files, status: 'ready' as 'ready' | 'computing' | 'error' };
+  const source: ChangesetSource = {
+    scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
+    state: async () => ({ status: held.status, files: held.files }),
+    summary: () => ({ files: held.files.length }),
+    operations: () => [LOOK],
+    invoke: async () => ({}),
+  };
+  return { source, held };
+}
+
+const one = (id: string, edit: Record<string, unknown> = {}) => ({ id: `file://${DIR}/${id}`, edit });
+
+it('says the files that moved, not the whole set, when few of them did', async () => {
+  const { source, held } = shifting([one('a.txt'), one('b.txt'), one('c.txt'), one('d.txt')]);
+  const { client, peer: p, changeset } = await watching(source);
+  held.files = [one('a.txt'), one('b.txt', { added: 1 }), one('e.txt')];
+  await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
+
+  const said = actions(p, changeset);
+  // Two gone, one changed, one added: four actions against a set of three, so
+  // the whole set would have been the smaller thing to send. One fewer file
+  // and it goes the other way - which is the point of choosing per change.
+  expect(said.some((a) => a.type === 'changeset/contentChanged')).toBe(true);
+
+  // Now a single file moving inside a set of three.
+  const before = said.length;
+  held.files = [one('a.txt'), one('b.txt', { added: 1 }), one('e.txt', { added: 2 })];
+  await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
+  const after = actions(p, changeset).slice(before);
+  expect(after.filter((a) => a.type === 'changeset/fileSet')).toHaveLength(1);
+  expect(after.some((a) => a.type === 'changeset/contentChanged')).toBe(false);
+});
+
+it('reduces to the same state either way, which is what makes the choice safe', async () => {
+  const { source, held } = shifting([one('a.txt'), one('b.txt'), one('c.txt')]);
+  const { client, peer: p, changeset } = await watching(source);
+  const start = actions(p, changeset).length;
+  held.files = [one('a.txt'), one('b.txt', { added: 3 }), one('c.txt')];
+  await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
+
+  // Replayed through the package's own reducer, from the state a subscriber
+  // held before the change, to the state it holds after.
+  let state = { status: 'ready', files: [one('a.txt'), one('b.txt'), one('c.txt')] } as Parameters<typeof changesetReducer>[0];
+  for (const action of actions(p, changeset).slice(start)) {
+    state = changesetReducer(state, action as unknown as Parameters<typeof changesetReducer>[1]);
+  }
+  expect(state.files).toEqual(held.files);
+});
+
+it('says a changeset emptied with one action rather than one per file', async () => {
+  const { source, held } = shifting([one('a.txt'), one('b.txt'), one('c.txt')]);
+  const { client, peer: p, changeset } = await watching(source);
+  const start = actions(p, changeset).length;
+  held.files = [];
+  await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
+  const said = actions(p, changeset).slice(start);
+  expect(said.some((a) => a.type === 'changeset/cleared')).toBe(true);
+  expect(said.some((a) => a.type === 'changeset/fileRemoved')).toBe(false);
+});
+
+it('says the status moved without re-sending a list that did not', async () => {
+  const { source, held } = shifting([one('a.txt'), one('b.txt')]);
+  const { client, peer: p, changeset } = await watching(source);
+  const start = actions(p, changeset).length;
+  held.status = 'computing';
+  await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
+  const said = actions(p, changeset).slice(start);
+  expect(said.filter((a) => a.type === 'changeset/statusChanged').map((a) => a.status)).toEqual(['computing']);
+  expect(said.some((a) => a.type === 'changeset/contentChanged')).toBe(false);
 });
 
 it('keeps the failure on the operation, and hands it to the next reader', async () => {

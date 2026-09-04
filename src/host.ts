@@ -18,7 +18,7 @@
  */
 
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import type { AnnotationsAction, AnnotationsState, TerminalInfo } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ChangesetFile, TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { within } from './paths.js';
@@ -26,6 +26,7 @@ import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
+import type { ChangesetState } from './types/changes.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent } from './types/agent.js';
@@ -1184,6 +1185,74 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * What every client watching a changeset was last told it holds.
+   *
+   * Kept per channel and not per connection, because it is the same for all
+   * of them: a snapshot is taken at a `serverSeq` and every action after it
+   * goes to everyone, so what one subscriber has is what all of them have.
+   */
+  const shown = new Map<string, { files: ChangesetFile[]; status: string }>();
+
+  /** Two file lists, same order-independent contents. */
+  const sameFiles = (a: ChangesetFile[], b: ChangesetFile[]): boolean => {
+    if (a.length !== b.length) return false;
+    const was = new Map(a.map((file) => [file.id, JSON.stringify(file)]));
+    return b.every((file) => was.get(file.id) === JSON.stringify(file));
+  };
+
+  /**
+   * A changeset's new contents, said in whichever form is smaller.
+   *
+   * The incremental actions when a handful of files moved, and the whole set
+   * when more moved than there are files to send: a changeset of four hundred
+   * files re-sent because one of them changed is the case these exist for, and
+   * one of four files sent as five actions is the case they are worse at.
+   *
+   * The two reduce to the same state, which is what makes choosing between
+   * them safe - `changesetReducer` applies `fileSet` and `fileRemoved` to the
+   * same list `contentChanged` replaces wholesale.
+   */
+  const told = (channel: string, state: ChangesetState, operations: Bag[]): void => {
+    const files = state.files;
+    const status = typeof state.status === 'string' ? state.status : 'idle';
+    const was = shown.get(channel);
+    const whole = (): void => {
+      dispatch(channel, {
+        type: 'changeset/contentChanged',
+        files,
+        ...(operations.length > 0 ? { operations } : {}),
+      });
+    };
+    shown.set(channel, { files, status });
+    // Nothing to diff against: this client's first word about the channel is
+    // the whole of it, which is what a snapshot would have been.
+    if (!was) { whole(); return; }
+    if (was.status !== status) dispatch(channel, { type: 'changeset/statusChanged', status });
+    if (sameFiles(was.files, files)) {
+      // The status moved and the files did not, which is the ordinary shape of
+      // a changeset being recomputed. Re-sending the list would be the whole
+      // set to say nothing.
+      if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
+      return;
+    }
+    // Everything gone is one action rather than one per file, which is what
+    // the protocol has `cleared` for.
+    if (files.length === 0) {
+      dispatch(channel, { type: 'changeset/cleared' });
+      if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
+      return;
+    }
+    const before = new Map(was.files.map((file) => [file.id, JSON.stringify(file)]));
+    const now = new Set(files.map((file) => file.id));
+    const gone = was.files.filter((file) => !now.has(file.id));
+    const moved = files.filter((file) => before.get(file.id) !== JSON.stringify(file));
+    if (gone.length + moved.length >= files.length) { whole(); return; }
+    for (const file of gone) dispatch(channel, { type: 'changeset/fileRemoved', fileId: file.id });
+    for (const file of moved) dispatch(channel, { type: 'changeset/fileSet', file });
+    if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
+  };
+
+  /**
    * The changesets themselves, after something wrote to the tree.
    *
    * `changeset/contentChanged` rather than a fresh snapshot: a client watching
@@ -1203,11 +1272,7 @@ export function createHost(options: HostOptions): Host {
         const state = await options.changes?.state(at.dir, at.owner, at.scope);
         if (!state) continue;
         const operations = operationsOf(channel);
-        dispatch(channel, {
-          type: 'changeset/contentChanged',
-          files: state.files,
-          ...(operations.length > 0 ? { operations } : {}),
-        });
+        told(channel, state, operations);
       }
     }
   };
@@ -1789,6 +1854,16 @@ export function createHost(options: HostOptions): Host {
       // the protocol asks for and which is what a changeset with nothing to
       // do to it says.
       const operations = operationsOf(channel);
+      /*
+       * What this subscriber now holds, which is what the next change is
+       * against.
+       *
+       * Without this the first change after anybody subscribed had nothing to
+       * diff from and went out as the whole set - so the incremental actions
+       * only ever applied from the second change onwards, which is not what
+       * "the diff is smaller" means.
+       */
+      shown.set(channel, { files: state.files, status: state.status });
       return value({
         resource: channel,
         state: { ...state, ...(operations.length > 0 ? { operations } : {}) },
