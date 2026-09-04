@@ -47,44 +47,15 @@ So the answer to "will my editor work against this" is yes, for the conversation
 
 ---
 
-## A-02-02 — What else moved under 0.9.0, and what it cost
+## How a gap gets found
 
-A-02-01 is closed, and the audit it asked for is done: every `state.ts` in the protocol package diffed 0.8.0 against 0.9.0, field by field, and each removal checked against what this host actually emits.
+Two sweeps, because neither finds what the other does.
 
-**Four things moved. Two of them were live here.**
+**Diff the protocol's own sources on every bump.** Every wire payload this host builds used to be a `Bag`, which is what made the shape of a release invisible: the 0.9.0 bump moved zero types here and needed no code change, while two of the four things it moved were live and wrong. The payloads are now typed against the package at the places they are constructed — `src/types/wire.ts` says how — so a field the protocol *removes* is a compile error. That still does not catch a field the protocol *adds* which this host should start sending, and catching those is what the diff is for: the automation channel and the error response part were both found that way, and neither typing nor a test would have.
 
-| moved | this host |
-| --- | --- |
-| terminal `exitCode` → `lifecycle`, and *required* in both `TerminalInfo` and `TerminalState` | emitted neither — a 0.9.0 client read `lifecycle.status` as `undefined` |
-| `Turn.error` removed; a failure is now an `ErrorResponsePart` in `responseParts` | emitted neither — the state said `error` and nothing said why |
-| session `creationFailed` → `failed` | never emitted the old name |
-| `chat` added to `TerminalSessionClaim` | only ever emits a client claim |
+**Read the reference client too, not only the package.** The keys that cost the most this year are not in `@microsoft/agent-host-protocol` at all — `autoApprove`, `mode`, `isolation`, `branch`, `Permissions` and the `worktree*` family live in `vscode/src/vs/platform/agentHost`, because the protocol's config schema is deliberately generic and the conventional names live where the pickers do. A-01-10, A-01-11 and A-01-12 all came out of reading that tree. An audit counted against the package's declared types cannot see any of them.
 
-Both live ones are fixed. `lifecycle` goes out beside the flat `exitCode`, because this host really does negotiate down to 0.5.1 and every version before 0.9.0 reads the flat one. A failed turn now carries its reason as a part, which is the better home for it anyway: what the agent said before it failed still stands, so the failure belongs after those things rather than beside them.
-
-**And one the audit found that has nothing to do with 0.9.0.** `root/terminalsChanged` fired when a terminal was created and when it was disposed, and not when the shell inside it exited — so the catalogue described a dead terminal as running until somebody closed it. That was true before the bump and invisible: the old shape had no exit code to be wrong about. The new one says `{ status: 'running' }` out loud, which is what made it findable. A stale silence leaves a client with less to go on; a stale assertion tells it something untrue.
-
-**What the audit says about the method, which is the part worth keeping.** The 0.9.0 bump moved zero types here and needed no code change, because every wire payload in this host is a `Bag`. That is what makes the shape of a release invisible, and it is why this had to be done by diffing the protocol's own sources rather than by waiting for a compiler. The same is true of the next release.
-
-**Suggestion (2) is now done, and it found more than the audit did.** The payloads are typed against the package at the places they are constructed — `src/types/wire.ts` says how and why. Turning it on surfaced two shape defects nothing had noticed and no test had failed on: every *successful* turn went into the history with no `state`, because that field was only ever set when something went wrong, and every `Message` this host built went out with no `origin`, which the protocol requires on all of them. Both are the same class as the terminal and MCP ones, and neither showed up in an audit that was looking for exactly this — because they were not *changed* by 0.9.0, they had simply always been wrong.
-
-What is checked now: the terminal channel end to end, a terminal claim off the wire (which is parsed rather than cast, and refuses a malformed one), the root channel's terminal list, an MCP server's state, a turn as it is built, and every message inside one.
-
-**What is left.** `responseParts` is still a `Bag[]` — seven part kinds and an eight-state tool call, built up piece by piece as an agent talks. It is named as `WireTurn` rather than left implicit so the gap is visible. Worth closing before the next bump for the same reason the rest was: a `Bag` nobody wrote down is how this started.
-
-**Suggestions.** (1) Type `responseParts` too, which is the last of it. (2) Do the 0.8.0-against-0.9.0 diff on every protocol bump anyway — typing catches a removal, and it will not catch a field the protocol *adds* that this host should now be sending. That is what an audit is for, and it is how the automation channel and the error part were found. (3) Leave the rest as a habit.
-
-## A-01-09 — An MCP server that needs signing in cannot be signed into
-
-Reported as an error now, and this entry stays open because that is a retreat rather than a fix.
-
-The correction first, because the old entry had it backwards. It claimed `McpServerAuthRequiredState` was `{ kind }` and carried no `resource`, so the MCP half was unreachable in 0.9.0. That was **wrong**: it extends `McpAuthRequirement`, which requires a `reason` *and* a `resource: ProtectedResourceMetadata` whose identifier is the canonical MCP server URI per RFC 8707, with `authorization_servers` the MCP authorization spec calls REQUIRED. The protocol is fine and complete. This host is the one that cannot fill it in.
-
-All the SDK reports is `{ name, status, serverInfo?, error? }` — `status: 'needs-auth'` and not one word about where to sign in. There is nothing here to put in `resource` that would not be invented, and an invented one is worse than an absent one: a client's `authenticate` `resource` MUST match one the server advertised, so a made-up identifier is a token this host would then have to refuse. So `needs-auth` is now an `error` carrying the harness's own words, which is a state this host can satisfy completely and a sentence a person can still read. What is lost is the distinction a client could have acted on — and it could not have acted on it anyway.
-
-**What this found on the way.** The `error` state was malformed too, and had been all along: `McpServerErrorState` requires `error: ErrorInfo`, and this host sent a bare `message`. Every other kind in the union — `ready`, `starting`, `stopped` — is `{ kind }` and nothing else, and used to get a `message` bolted on regardless. The same class of defect as the terminal one in A-02-02, found the same way, and for the same reason: these payloads are `Bag`, so nothing checks them.
-
-**Suggestions.** (1) Ask the SDK to report what the CLI already knows — it performs the OAuth flow, so it has the server URI and the authorization server, and this is a gap in what it exposes rather than in the protocol. That is the only fix that gets the real state back. (2) Read the MCP server's own configuration from `.mcp.json` and friends and synthesise the metadata: honest for an HTTP server, impossible for a stdio one, and a second reader of files the CLI already owns. (3) Leave it as an error and stop tracking this, on the grounds that a client cannot act on the difference.
+[docs/AHP.md](docs/AHP.md) is the maintained table of what is served, feature by feature. This file does not repeat it: what is here are the judgements, which a table cannot hold.
 
 ## A-01-10 — A session cannot be given a worktree of its own
 
@@ -100,6 +71,26 @@ VS Code dispatches `isolation` at session creation and this host answers `isolat
 
 **Suggestions.** (1) Take it in the `changes` port, which already spawns `git` and already knows the scopes: a worktree is a directory the port makes and reports, and `createSession` is handed it as `workingDirectory` — no new dependency, and a host given no `changes` port advertises no `isolation`, which is honest. (2) Take only `isolation` and `branch` first and leave the three worktree-shaping keys unadvertised: a client draws what a host advertises, so a half-served family is a half-drawn form rather than a broken one. (3) Leave it, and say in the schema that this host serves one directory per session — which is a refusal a person can read, and better than the silence it gives now.
 
+## A-02-03 — Steering is refused for a reason that may no longer be true
+
+`chat/pendingMessageSet` with `kind: 'steering'` is answered `steering messages are not served yet`, on the grounds — written in `src/host.ts` — that "the SDK has nowhere to put one".
+
+That looks wrong. The prompt this host hands the SDK is an async generator that stays open for the life of the session (`input()` in `src/session.ts`): it yields whatever is pushed into `waiting` and parks when there is nothing. Pushing a message into it while a turn is running is exactly what steering is, and nothing in the loop stops it — `queue` already pushes through the same door, it just waits for the turn to end first.
+
+**What it costs today.** Typing while the agent works queues the message behind the turn it was about. A person correcting an agent mid-way — the most ordinary thing there is — is answered after it has finished doing the thing they were trying to stop.
+
+**Suggestions.** (1) Try it: push the message immediately instead of queueing, and see whether the CLI takes it mid-turn. The change is one branch, and the reason for refusing is a claim nobody has tested. (2) If it does not work, keep the refusal and say the *tested* reason rather than the assumed one. (3) Either way, `ChatState.steeringMessage` and `ChatSummary.interactivity` are the two state fields this host never sets, and the first is only unset because of this.
+
+## A-01-12 — Tools cannot be allowed or denied for a session
+
+`Permissions` is a platform config key — per-tool allow and deny lists — and VS Code's own Claude host advertises it *unchanged*, with a comment saying why: "the Claude SDK accepts `allowedTools` / `disallowedTools` natively". This host advertises nothing of the sort, so the only permission control it offers is the all-or-nothing mode in A-01-10's neighbour.
+
+**What it costs today.** "Always allow this tool in this session" is the ordinary way a person stops being asked about the one command they trust, and it is the control that makes `default` mode usable on a long session. Without it the only way to stop being asked is `bypassPermissions`, which stops being asked about *everything* — the safety control is a cliff rather than a slope.
+
+The SDK takes both lists when the query is built, and `canUseTool` is where this host already sits between the agent and the person, so a list could be enforced here as well as passed down.
+
+**Suggestions.** (1) Advertise the platform key and pass the lists to the SDK at creation, which is the smallest thing that works and matches what the reference host does. (2) Enforce in `canUseTool` too, so a list changed on a *running* session takes effect without a restart — the SDK takes these when the query is built and this host is the only thing that can act on a later change. (3) Leave it, and accept that this host's permission control is one axis with no exceptions.
+
 ## A-01-11 — A model is two fields out of ten, and the effort control is in the wrong place
 
 `SessionModelInfo` declares ten fields and this host fills `id`, `name` and `provider`. Missing: `maxContextWindow`, `maxOutputTokens`, `maxPromptTokens`, `supportsVision`, `policyState` and — the one that changes a screen — `configSchema`.
@@ -112,25 +103,21 @@ So this host offers one effort control for models that do not all take the same 
 
 **Suggestions.** (1) Take `configSchema` first and leave the rest: it is the only one of the six that draws a control, and the CLI's `supportedModels()` is already called at startup. (2) Take the numeric limits alongside it if the control protocol reports them, and leave `policyState` — this host enforces no model policy and inventing one would be worse than an absent field. (3) Leave `effortLevel` advertised as well during a transition, since removing a key a client has drawn is a control that vanishes.
 
-## A-01-12 — Tools cannot be allowed or denied for a session
+## A-01-14 — The catalogue arrives in one frame, however large it is
 
-`Permissions` is a platform config key — per-tool allow and deny lists — and VS Code's own Claude host advertises it *unchanged*, with a comment saying why: "the Claude SDK accepts `allowedTools` / `disallowedTools` natively". This host advertises nothing of the sort, so the only permission control it offers is the all-or-nothing mode in A-01-10's neighbour.
+`listSessions` is `async () => ({ items: await listing() })`. `PaginatedParams` declares `limit` and `cursor`, this host reads neither, and every session it knows about goes out in a single response. The pattern for doing it properly already exists here — `fetchTurns` mints a cursor and hands back the newest 50 — so this is the one command that skipped it.
 
-**What it costs today.** "Always allow this tool in this session" is the ordinary way a person stops being asked about the one command they trust, and it is the control that makes `default` mode usable on a long session. Without it the only way to stop being asked is `bypassPermissions`, which stops being asked about *everything* — the safety control is a cliff rather than a slope.
+**What it costs today.** A working catalogue of 123 sessions is one frame of every summary a client may never look at, on every connect and on every reconnect that fell out of the replay buffer. It is not slow yet; it gets worse in a straight line and nothing warns anybody, because the failure is a frame that keeps growing rather than an error.
 
-The SDK takes both lists when the query is built, and `canUseTool` is where this host already sits between the agent and the person, so a list could be enforced here as well as passed down.
+**Suggestions.** (1) Sort as now, slice by `limit`, mint an opaque cursor over the sort key, and refuse one this host did not issue with `-32602` — which is what the protocol says an unrecognised cursor SHOULD get. A client that ignores pagination still sees everything up to the server's own cap. (2) Cap without paginating: answer the newest *n* and say so in the result, which is one line and leaves a client no way to ask for the rest. (3) Leave it until somebody feels it, and accept that the person who feels it first will be the one with the largest catalogue.
 
-**Suggestions.** (1) Advertise the platform key and pass the lists to the SDK at creation, which is the smallest thing that works and matches what the reference host does. (2) Enforce in `canUseTool` too, so a list changed on a *running* session takes effect without a restart — the SDK takes these when the query is built and this host is the only thing that can act on a later change. (3) Leave it, and accept that this host's permission control is one axis with no exceptions.
+## A-02-04 — The generic layer holds a list of Claude property names
 
-## A-02-03 — Steering is refused for a reason that may no longer be true
+`src/host.ts` routes `permissionMode`, `model`, `effortLevel` and `outputStyle` by name, and refuses `thinking` by name, in a file that imports no backend and is meant not to know one exists. Every other seam in this repository is a port; this one is four string comparisons.
 
-`chat/pendingMessageSet` with `kind: 'steering'` is answered `steering messages are not served yet`, on the grounds — written in `src/host.ts` — that "the SDK has nowhere to put one".
+**What it costs today.** Nothing a person can see, and everything a second backend would hit: `examples/` already ships two, and a config key either of them advertises is a key `host.ts` fans out to the wrong place or drops. The bug is latent rather than absent — the schema says what a property *is* and not who applies it, so the knowledge has to live somewhere, and it ended up in the one file that should not have it.
 
-That looks wrong. The prompt this host hands the SDK is an async generator that stays open for the life of the session (`input()` in `src/session.ts`): it yields whatever is pushed into `waiting` and parks when there is nothing. Pushing a message into it while a turn is running is exactly what steering is, and nothing in the loop stops it — `queue` already pushes through the same door, it just waits for the turn to end first.
-
-**What it costs today.** Typing while the agent works queues the message behind the turn it was about. A person correcting an agent mid-way — the most ordinary thing there is — is answered after it has finished doing the thing they were trying to stop.
-
-**Suggestions.** (1) Try it: push the message immediately instead of queueing, and see whether the CLI takes it mid-turn. The change is one branch, and the reason for refusing is a claim nobody has tested. (2) If it does not work, keep the refusal and say the *tested* reason rather than the assumed one. (3) Either way, `ChatState.steeringMessage` and `ChatSummary.interactivity` are the two state fields this host never sets, and the first is only unset because of this.
+**Suggestions.** (1) Two fields on the schema property type — `scope: 'session' | 'chat'` and `mutable: boolean` — and `host.ts` fans out by scope and refuses immutables generically. Not an abstraction layer; two fields, and the property names go back to the backend that owns them. (2) Move the whole fan-out into the `Session` port and let a backend take its own config, which is more honest and more to write. (3) Leave it, and say in `host.ts` that the generic layer knows four Claude keys — a comment is worth more than a silence, and it is what the next backend author would need.
 
 ## A-01-13 — `!` in the composer does not run a command
 
@@ -140,9 +127,31 @@ That looks wrong. The prompt this host hands the SDK is an async generator that 
 
 **Suggestions.** (1) Advertise `"!"` and run the remainder through the `terminals` port, as one non-interactive command whose output becomes a response part — a host given no `terminals` port advertises no prefix, which is honest. (2) Advertise it and route through the agent instead, as though somebody had asked it to run the command, so the transcript records a tool call and the confirmation rules apply. (3) Leave it: the absence is already the specified way to say no.
 
+## A-01-09 — An MCP server that needs signing in cannot be signed into
+
+Reported as an error now, and this entry stays open because that is a retreat rather than a fix.
+
+The correction first, because the old entry had it backwards. It claimed `McpServerAuthRequiredState` was `{ kind }` and carried no `resource`, so the MCP half was unreachable in 0.9.0. That was **wrong**: it extends `McpAuthRequirement`, which requires a `reason` *and* a `resource: ProtectedResourceMetadata` whose identifier is the canonical MCP server URI per RFC 8707, with `authorization_servers` the MCP authorization spec calls REQUIRED. The protocol is fine and complete. This host is the one that cannot fill it in.
+
+All the SDK reports is `{ name, status, serverInfo?, error? }` — `status: 'needs-auth'` and not one word about where to sign in. There is nothing here to put in `resource` that would not be invented, and an invented one is worse than an absent one: a client's `authenticate` `resource` MUST match one the server advertised, so a made-up identifier is a token this host would then have to refuse. So `needs-auth` is now an `error` carrying the harness's own words, which is a state this host can satisfy completely and a sentence a person can still read. What is lost is the distinction a client could have acted on — and it could not have acted on it anyway.
+
+**What this found on the way.** The `error` state was malformed too, and had been all along: `McpServerErrorState` requires `error: ErrorInfo`, and this host sent a bare `message`. Every other kind in the union — `ready`, `starting`, `stopped` — is `{ kind }` and nothing else, and used to get a `message` bolted on regardless. The same class of defect as the terminal one in A-02-02, found the same way, and for the same reason: these payloads are `Bag`, so nothing checks them.
+
+**Suggestions.** (1) Ask the SDK to report what the CLI already knows — it performs the OAuth flow, so it has the server URI and the authorization server, and this is a gap in what it exposes rather than in the protocol. That is the only fix that gets the real state back. (2) Read the MCP server's own configuration from `.mcp.json` and friends and synthesise the metadata: honest for an HTTP server, impossible for a stdio one, and a second reader of files the CLI already owns. (3) Leave it as an error and stop tracking this, on the grounds that a client cannot act on the difference.
+
+## A-01-15 — A resource a client publishes cannot be read
+
+AHP is symmetrical: `ServerCommandMap` declares ten methods a host may call *on* a client, and the reference host uses them to read `vscode-agent-client:` URIs its own client serves. This host now has the machinery — `Peer.request` correlates a question with its answer, and a response frame is no longer answered with an error — and does not route anything through it.
+
+**What is actually missing is smaller than it looks, and harder.** Not the transport, which exists. The rule: *which connection owns which URI scheme*. There is no scheme registration anywhere in the protocol — not in `ClientCapabilities`, not in `initialize`, not in any action. VS Code gets away with a scheme its own client always owns, which is a single-client assumption a daemon several unrelated clients connect to cannot make.
+
+**What it costs today.** Nothing yet, and that is the honest reason it is not built: no client connected to this host publishes a resource. It becomes a cost the first time one does — a virtual filesystem, a plugin served from the editor — and then it is not a feature to add but a conversation to have about ownership.
+
+**Suggestions.** (1) Wait for a client that publishes something, and let what it publishes decide the routing rule. (2) Route by last-announcer — the connection that most recently named a scheme owns it — which is guessable, cheap, and wrong the moment two clients announce the same one. (3) Ask the protocol for a scheme registration, since the gap is theirs rather than ours: every implementation that has more than one client will need the same rule.
+
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**. [docs/AHP.md](docs/AHP.md) is the maintained table and counts commands and server notifications apart, which is the more useful split; the numbers here are the two groups added together.
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **64 actions**. The per-channel breakdown is [docs/AHP.md](docs/AHP.md) and is not repeated here — it drifted from this file once already, and one maintained table is worth more than two that disagree.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
@@ -155,17 +164,11 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 - **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
 - **A-01-03h — `auth/required`**: `authenticate` shipped and this did not. It is what a host sends when a token it accepted has expired or when a resource newly needs one, and nothing here can tell: this host does not verify a token, so it never learns that one has gone stale — a session started with a dead key fails inside the harness, and the harness's words are what a client sees. Emitting it would mean recognising an authentication failure in the agent's own error output, which is a guess about another program's strings. A refusal, and a thinner one than it looks: the moment this host verifies a token, it can say when one stopped working.
 
-**The 33 state actions never emitted**, by channel:
+**The 32 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. Three of those reasons are worth arguing about rather than reading:
 
-| channel | n | why |
-| --- | ---: | --- |
-| `annotations/*` | 5 | an editor's furniture — a client marks a range and the marks are shared. VS Code has a whole service for it. Nothing here produces one, and it is the one group where "no caller" is still true from both ends |
-| `chat/*` | 7 | `toolCallDelta` is deliberate and said in the code: arguments stream as JSON, and a row redrawn per keystroke of a JSON blob says nothing until it is complete. `toolCallAuthRequired` / `AuthResolved` are mid-call MCP authentication, a moment the SDK does not surface. `truncated`, `inputAnswerChanged`, `toolCallResultConfirmed`, `toolCallContentChanged` are client-dispatchable and would be ignored |
-| `changeset/*` | 4 | `fileSet`, `fileRemoved`, `cleared`, `statusChanged` are the incremental form of a changeset. This host now emits `contentChanged` after an operation, which is the coarse form of the same thing — worth replacing with the fine one only once a changeset is big enough that re-sending it is felt |
-| `session/*` | 5 | `customizationRemoved` — the list goes out whole and nothing removes one alone. `creationFailed` is not needed rather than missing: `createSession` finishes or throws inside the request. `serverToolsChanged` is empty for a true reason — `serverTools` are tools the *host* contributes, and this host defines none. The `workingDirectory*` set is below |
-| `terminal/*` | 5 | `cwdChanged`, `commandExecuted`, `commandFinished`, `commandDetectionAvailable` are shell integration, which needs a PTY this daemon does not have; `isPty: false` is the honest form of all four. `cleared` is client-dispatchable |
-| `chat/workingDirectory*`, `session/workingDirectory*` | 5 | directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about |
-| `root/configChanged` | 1 | host-wide configuration, which this daemon has none of that a client may change |
+- `annotations/*` looks like the one group where "nothing here produces one" is true from both ends. It is not: the marks are a *client's*, and this host is only asked to keep them. The package ships `AnnotationsState` and `annotationsReducer`, all five actions are client-dispatchable, and none of it needs computing — a map, a snapshot branch and five echoes. `<sessionUri>/annotations` is already subscribable and answers `{ annotations: [] }`, so what is left is storing what a client puts there. Worth doing the moment two clients are in one session.
+- `changeset/fileSet` / `fileRemoved` / `cleared` / `statusChanged` are the incremental form of a changeset. This host emits the coarse `contentChanged` instead, which is correct and costs the whole set on every change — worth replacing once a changeset is big enough that re-sending it is felt.
+- The `workingDirectory*` set is not a gap. Directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about.
 
 `chat/truncated` stays refused for a reason worth keeping: it means "drop the turns before this one", and when the harness compacts, every one of them is still in the transcript and still readable. What was compacted is the model's context, not the conversation.
 
@@ -176,10 +179,8 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 | surface | this host |
 | --- | --- |
 | state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because of A-02-03. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
-| command params and results | three fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13), `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up), and `DispatchActionParams.clientSeq` — a client sends it and this host neither orders nor deduplicates by it, which is worth knowing rather than fixing |
-| error codes | 14 of the 15 declared are raised. Only `TurnInProgress` (-32004) is not, and deliberately: a turn dispatched while one is running is *queued* here rather than refused, which is the better answer and the one a client can act on |
+| command params and results | two fields unread out of every declared `*Params` / `*Result`: `terminalCommandPrefix` (A-01-13) and `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `PaginatedParams` is read by `fetchTurns` and ignored by `listSessions` — A-01-14. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
+| error codes | all 15 declared are raised. `TurnInProgress` (-32004) is the newest of them and answers a *changeset operation* dispatched mid-turn; a **turn** dispatched while one is running is still queued rather than refused, which is the better answer and the one a client can act on |
 | `_meta` | the types name no well-known keys at all, so there is nothing to diff. What is known came from a conformance case, which is why `git.branch` is the only one written |
 
-**The blind spot this method still has.** All of it counts against `@microsoft/agent-host-protocol`, and the keys that cost the most this year were not in it — `autoApprove`, `mode`, `isolation`, `branch`, `Permissions` and the `worktree*` family live in the reference client, because the config schema is deliberately generic and conventions live where the pickers do. A-01-10, A-01-11 and A-01-12 all came out of reading `vscode/src/vs/platform/agentHost` rather than the package. Any future audit has to read both.
-
-**Suggestions.** (1) Leave the rest as named decisions and stop treating the table as a backlog — annotations, OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up: serving it against five enums is a method that answers nothing. (3) Take `session/serverToolsChanged` by giving this host tools of its own to contribute — it is empty for a true reason today, and the reason would stop being true the moment there was one.
+**Suggestions.** (1) Leave the rest as named decisions and stop treating the table as a backlog — OTLP and shell integration are refusals with reasons, and an entry that never shrinks is not a roadmap. Annotations are the one that stopped being a refusal on inspection, and are worth an entry of their own the moment anything asks for them. (2) Take `sessionConfigCompletions`, but only alongside a config key that actually needs looking up: serving it against five enums is a method that answers nothing. (3) Take `session/serverToolsChanged` by giving this host tools of its own to contribute — it is empty for a true reason today, and the reason would stop being true the moment there was one.
