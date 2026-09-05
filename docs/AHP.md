@@ -17,50 +17,73 @@ specification: nothing here is listed because AHP defines it.
 
 ## Markers
 
+Every table below is one row per declared thing, so a marker is about that one
+thing rather than about a group it was counted in.
+
 | | |
 | --- | --- |
 | ✅ | implemented as specified |
-| 🔀 | implemented, differently from the obvious reading - the Notes say how |
 | 🧩 | arrives through a host port, so it depends on what the host was given |
-| 🚧 | partial: some of the group is served and some is not |
-| ➖ | not implemented, and nothing decided |
+| 🚧 | partial - the Notes say which half |
 | 🚫 | deliberately unsupported, with a reason |
+
+Two markers this document used to carry are gone because nothing is in either
+state any more: `➖`, for something unimplemented with nothing decided, and
+`🔀`, for something implemented differently from the obvious reading without
+saying so. Where this host diverges now it says where, in the row.
 
 ## Commands
 
-**31 of the 32 declared.** Everything not listed here answers `-32601`.
+**31 of the 32 declared**, one row each. `dispatchAction` is the partial one -
+what it will and will not act on is [state actions](#state-actions). Anything
+not listed here answers `-32601`, said rather than quietly answered: a host that
+returns an empty success to a method it does not have leaves the client waiting
+for state that is never coming.
 
-| AHP | ahpd | Status | Notes |
-| --- | --- | :---: | --- |
-| `initialize`, `ping` | handshake and version negotiation | ✅ | Answers with a version the client actually offered, in the client's order of preference. `initialSubscriptions` come back as snapshots in the same response. A refusal carries `supportedVersions`, which is what a client reads to pick one to retry with. `automations` is advertised when this host was given a store, because presence is what *permits* a client to use the channel and the three commands. `terminalCommandPrefix` is `"!"` when this host was given a `terminals` port and absent when it was not, which is the protocol's own way of saying the shorthand is unsupported |
-| `subscribe`, `unsubscribe` | channel subscriptions | ✅ | Per connection, not per channel: one client unsubscribing does not stop another's stream. The snapshot is taken *at* a `serverSeq`, and anything dispatched while it was being taken is replayed on top of it. Subscribing twice to one channel is answered twice, including while the first snapshot is still being taken - the reference host instead cancels the earlier subscribe and answers it `-32001` naming a channel it is serving, so a client written against that one may never send the second |
-| `reconnect` | replay from a `serverSeq` | ✅ | Replays what a dropped client missed, or hands back snapshots when the gap is longer than the buffer |
-| `dispatchAction` | client-origin state actions | 🚧 | See [state actions](#state-actions) for which. The echo carries `origin` - the `clientId` and `clientSeq` the dispatch came with - and one this host will not act on comes back carrying `rejectionReason` instead |
-| `listSessions`, `createSession`, `disposeSession` | the catalogue and its lifecycle | ✅ | Most-recently-modified first, live sessions included. Every row opens from its transcript - a file read, no CLI - and is **resumed** only when somebody starts a turn on it. `listSessions` pages when a client sends `limit`, and answers the whole catalogue when it does not: neither client that connects to this host reads `nextCursor`, so a default page size would be a catalogue silently cut down to it. There is a bound of 1000 above that, which is not a page size but the point past which one frame stops being servable - it carries `nextCursor` and is written to the log, because it is the one case a client cannot see. A cursor this host did not issue is `-32602`. `createSession.activeClient` takes the creating client into the session as it is made, under the `clientId` it introduced itself with rather than the one in the payload |
-| `createChat`, `disposeChat` | several chats per session, `fork`, `sideChat` | ✅ | Each is its own agent process on one directory and one config. A `fork` source continues the conversation from a named turn under a new backend id, carrying the turns through it as visible history; a `sideChat` source copies nothing and hands the model what that turn said, on its first prompt and nowhere else. The last chat cannot be disposed, and the refusal says so. A session's first chat is named `ahp-chat://default/<base64url(sessionUri)>` - see [chat URIs](#chat-uris) |
-| `resolveSessionConfig` | the schema before a session exists | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. A backend advertises its own properties and a client draws what it is given; the Claude backend offers the same five approval modes VS Code's own Claude host does. `autoApprove` and `mode` are conventional keys a client dispatches whatever a host advertises, and are mapped onto that one axis on the way in. `permissions` - per-tool allow and deny - is advertised too, and is the first config value here that is not a string: the protocol declares the bag `Record<string, unknown>`, and this one is an object the SDK takes natively as `allowedTools` / `disallowedTools`. This host contributes six properties of its own on top of the backend's - `isolation`, `branch`, `worktreeIncludeFiles`, `worktreeBranchPrefix`, `worktreeCreateNewBranch` and `worktreeBranchTrack` - when it was given a `worktrees` port and the directory is a git repository. They are host-owned: never passed to a backend, and absent entirely when there is no repository to make a worktree in, because a control with one value is one a client draws and nobody can move |
-| `sessionConfigCompletions` | `branch` | ✅ | The one key with more values than a picker holds. The schema seeds twenty, most recently committed first, and marks the row `enumDynamic` while a worktree is being made; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing |
-| `fetchTurns` | transcript paging | ✅ | Newest 50 in the snapshot, a cursor for the rest |
-| `completions` | `/` against the session's commands | ✅ | Falling back to the harness-wide list |
-| `authenticate` | a token for a protected resource | ✅ | See [Authentication](#authentication) |
-| `resourceList`, `resourceRead`, `resourceResolve` | reading files | 🧩 | The `resources` port. Only inside the directories the host was told to serve |
-| `resourceWrite`, `resourceDelete`, `resourceMkdir`, `resourceMove`, `resourceCopy` | writing files | 🧩 | The same port's optional write half, behind `resourceRequest`. A store without it answers `-32601`, which is not a refusal about a path |
-| `resourceRequest` | the write gate | ✅ | Per connection and per resource. An operation that writes is refused `-32009` until granted, and the refusal carries the request that would unlock it |
-| `createResourceWatch` | a channel per watch | 🧩 | `resourceWatch/changed` in coalesced batches, globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher |
-| `createTerminal`, `disposeTerminal` | a shell in a served directory | 🧩 | The `terminals` port |
-| `invokeChangesetOperation` | acting on a changeset | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate |
-| `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns` | automations | 🧩 | The `automations` port. A host given none advertises no `ahp-automations://` channel and answers `-32601`. `listAutomationTriggerDefinitions` is answered on `ahp-root://` and the other two on `ahp-automations://`, which is what each declares - the triggers a host understands are the host's, and a run is of an automation the store holds |
-
-Twenty of the commands declare `channel` as a literal rather than as a URI a
-client chooses - `ahp-root://` for all but `runAutomation` and
-`fetchAutomationRuns`. Eighteen of those are enforced: a client that names a
-different one is refused `-32602`
+Twenty of them declare `channel` as a literal rather than as a URI a client
+chooses - `ahp-root://` for all but `runAutomation` and `fetchAutomationRuns`.
+Eighteen are enforced: a client that names a different one is refused `-32602`
 saying which is right, because a host that answered anyway would make that
 client look correct until the first conformant host refused it with nothing on
-screen saying why. A client that names *no* channel is taken: it has named
-nothing wrong. `initialize` and `ping` are the other two and are exempt - they are
-how a client finds out it can talk at all, and refusing either turns a wrong
-constant into a connection that never opens.
+screen saying why. A client that names *no* channel is taken - it has named
+nothing wrong. `initialize` and `ping` are the other two and are exempt: they
+are how a client finds out it can talk at all, and refusing either turns a
+wrong constant into a connection that never opens.
+
+| command | ahpd | Notes |
+| --- | :---: | --- |
+| `initialize` | ✅ | Answers with a version the client actually offered, in the client's order of preference; a refusal carries `supportedVersions` to retry with. `initialSubscriptions` come back as snapshots in the same response. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port. |
+| `ping` | ✅ | A round trip, and the one method the specification says works before the handshake - a liveness check that needed one first could not tell a half-open socket from a busy one. |
+| `subscribe` | ✅ | The snapshot is taken *at* a `serverSeq`, and anything dispatched while it was being taken is replayed on top of it. Subscribing twice to one channel is answered twice, including while the first snapshot is still in flight; the reference host cancels the earlier subscribe and answers it `-32001`, so a client written against that one may never send the second. |
+| `unsubscribe` | ✅ | A notification, so it carries no id and gets no reply. Per connection: one client unsubscribing does not stop another's stream. |
+| `reconnect` | ✅ | Replays what a dropped client missed from its `lastSeenServerSeq`, or hands back whole snapshots when the gap is longer than the buffer. Stateless notifications - the OTLP channels - are never replayed, because they carry no `serverSeq` to have been missed from. |
+| `dispatchAction` | 🚧 | A notification. The echo carries `origin` - the `clientId` and `clientSeq` the dispatch came with - and one this host will not act on comes back carrying `rejectionReason` instead. See [state actions](#state-actions) for which. |
+| `listSessions` | ✅ | Most-recently-modified first, live sessions included. Pages when a client sends `limit` and answers the whole catalogue when it does not, because neither client that connects here reads `nextCursor` and a default page size would be a catalogue silently cut down to it. A cursor this host did not issue is `-32602`. |
+| `createSession` | ✅ | Takes the URI the client chose, under whatever scheme it chose it. `activeClient` puts the creating client into the session as it is made, under the `clientId` it introduced itself with rather than the one in the payload. |
+| `disposeSession` | ✅ | Closes every chat, the terminals the session claimed, and its worktree - unless somebody's work is still in it, which is the one thing a daemon cannot judge the value of. A dirty tree is kept where it is and the path is logged. |
+| `createChat` | ✅ | Each chat is its own agent process on one directory set and one config. A `fork` source continues the conversation from a named turn under a new backend id, carrying the turns through as visible history; a `sideChat` copies nothing and hands the model what that turn said, on its first prompt and nowhere else. |
+| `disposeChat` | ✅ | The last chat cannot be disposed, and the refusal says to dispose the session instead - a session with nothing to talk to is not a state a client should be able to reach. |
+| `createTerminal` | 🧩 | The `terminals` port. Opens in a directory this host serves, under the URI the client chose. |
+| `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
+| `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
+| `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
+| `completions` | ✅ | `/` against the session's own commands, falling back to the harness-wide list, and `@` against the files this host serves. |
+| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. See [Authentication](#authentication). |
+| `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
+| `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
+| `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate. A result may carry a `followUp`. |
+| `resourceRead` | 🧩 | The `resources` port, inside the directories this host was told to serve. The changeset source is asked first, because the `before` side of an edit is not a file on disk. |
+| `resourceList` | 🧩 | The same port and the same fence. |
+| `resourceResolve` | 🧩 | What a URI actually is - type, size, times, and an `etag` for a file, which is what makes `resourceWrite`'s `ifMatch` usable. |
+| `resourceWrite` | 🧩 | Behind `resourceRequest`, and behind the store's own path check - which resolves the *parent*, so a symlink pointing out of the served set cannot be written through. `-32011` when `ifMatch` no longer matches. |
+| `resourceDelete` | 🧩 | The same two gates in the same order. |
+| `resourceMkdir` | 🧩 | `mkdir -p` semantics, as the protocol declares. |
+| `resourceMove` | 🧩 | Both ends checked. Refused `-32602` across two different clients, because neither peer could carry that out. |
+| `resourceCopy` | 🧩 | The same. |
+| `resourceRequest` | ✅ | The write gate, per connection and per resource. An operation that writes is refused `-32009` until granted, and the refusal carries the request that would unlock it. |
+| `listAutomationTriggerDefinitions` | 🧩 | *Event* triggers only. A schedule is protocol-defined and never listed; manual is not a trigger at all, and an empty trigger list on a definition is what manual-only means. Answered on `ahp-root://`, which is what it declares. |
+| `runAutomation` | 🧩 | The session is created here rather than in the store, because only this file knows what a session is - the store is handed a function and gets a URI back. |
+| `fetchAutomationRuns` | 🧩 | A page of one automation's runs, newest first. |
 
 ## Server-to-client commands
 
@@ -94,77 +117,188 @@ client directly, and `ahp_resource` (see [state actions](#state-actions),
 
 ## Server notifications
 
-**8 of the 8 declared.**
+**9 of the 9 declared**, one row each. These carry no `serverSeq` and are never
+replayed: a client that dropped and came back has missed them, and must not be
+handed them again as if it had not.
 
-| AHP | ahpd | Status | Notes |
-| --- | --- | :---: | --- |
-| `root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged` | catalogue lifecycle | ✅ | To the connections watching the root channel and no others. `sessionAdded` carries the whole `summary`; `sessionRemoved` carries `session`; `sessionSummaryChanged` carries `session` and a `changes` partial with the three identity fields left out |
-| `otlp/exportLogs` | the host's own log | ✅ | `ahp-otlp://logs/{level}`, advertised at the handshake, carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines the daemon writes to stdout. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
-| `otlp/exportTraces`, `otlp/exportMetrics` | turns and tool calls | ✅ | `ahp-otlp://traces` and `ahp-otlp://metrics`, both literal channels - the protocol defines template variables for `logs` alone. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, sent as each one ends and joined by `traceId`. The metrics are cumulative sums against the process start, so a collector arriving late reads totals rather than a difference. Both are built from the actions this host already dispatches, so a second backend gets them without knowing they exist |
-| `root/progress` | making a session | ✅ | Only when `createSession` carried a `progressToken`, and only to the client that sent it: the token is that request's. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree is `git worktree add` plus whatever the client asked to bring along, which on a large repository is seconds somebody otherwise waits through with nothing on screen |
-| `auth/required` | an MCP server that needs signing in | ✅ | Sent off the same state change that carries the requirement - a server saying `authRequired` - to the connections watching that session, once per resource. A client reads it and pushes a token back with `authenticate`. Expiry of a token this host *accepted* is still not reported: nothing here verifies one, so it never learns that one has gone stale |
+| notification | ahpd | Notes |
+| --- | :---: | --- |
+| `action` | ✅ | The envelope every state action rides in: `channel`, `action`, `serverSeq`, and the `origin` of whatever caused it. Counted with the [state actions](#state-actions) rather than here. |
+| `root/sessionAdded` | ✅ | Carries the whole `summary`, to the connections watching the root channel and no others. |
+| `root/sessionRemoved` | ✅ | Carries `session`. |
+| `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. |
+| `root/progress` | ✅ | Only when the request carried a `progressToken`, and only to the client that sent it: the token is that request's and means nothing to anybody else. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree on a large repository is seconds somebody otherwise waits through with nothing on screen. |
+| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, once per resource. Expiry of a token this host *accepted* is still not reported: nothing here verifies one, so it never learns that one has gone stale. |
+| `otlp/exportLogs` | ✅ | `ahp-otlp://logs/{level}`, a template a client expands before subscribing - a literal URI would mean every subscriber got every line. Carries an OTLP/JSON `ExportLogsServiceRequest` verbatim, the same lines the daemon writes to stdout. |
+| `otlp/exportTraces` | ✅ | `ahp-otlp://traces`, a literal channel: the protocol defines template variables for `logs` alone, and one of this host's invention would be a channel nobody can expand. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, joined by `traceId` and sent as each ends. |
+| `otlp/exportMetrics` | ✅ | `ahp-otlp://metrics`. Cumulative sums against the process start, so a collector arriving late reads totals rather than a difference it missed the beginning of. |
 
 ## State actions
 
-**92 of the 96 declared, across nine channels.** Grouped by channel; a group is
-🚧 when some of it is served.
+**92 of the 96 declared, across nine channels**, one row each. The four that
+are not served are all `chat/*`, all client-dispatchable, and each is refused in
+its own words rather than as unserved - a client that sent one learns why
+nothing happened.
 
-| channel | ahpd | Status | Notes |
-| --- | --- | :---: | --- |
-| `root/*` | 4 of 4 | ✅ | `agentsChanged`, `activeSessionsChanged`, `terminalsChanged`, and `configChanged` - the last one client-dispatched: VS Code pushes `defaultShell` at connect, and everything else it pushes is kept and read back |
-| `session/*` | 28 of 28 | ✅ | Everything a catalogue row and a detail pane read. Two are served and rarely fire: `creationFailed`, for a session an automation could not start - one a client asked for fails inside `createSession`, where there is a request to fail - and `customizationRemoved`, for a customization that went while the rest stayed. `serverToolsChanged` carries the whole set, which is what full replacement means, and goes to every running session when `host.setTools()` is called. `session/workingDirectorySet`, `Removed` and `Replaced` are served: the SDK takes its directories when the CLI starts and offers no way to add one after, so a change starts the backend again *resumed* - the same conversation in a wider place - and is refused `-32004` while a turn is running. Index 0 is the process root: `Removed` on it is refused, and a root that moves is `Replaced` rather than a removal followed by an addition |
-| `chat/*` | 26 of 30 | ✅ | The turn, its parts, its tools and its questions. `pendingMessageSet` / `Removed` serve both kinds: a queued message waits for the running turn and a **steering** one goes into it, because the prompt handed to the CLI is a generator that stays open for the life of the session. `toolCallStart` opens a call `streaming` as soon as the model names the tool, `toolCallDelta` appends the arguments' JSON to `partialInput` as it arrives, and `toolCallReady` closes it with the parsed input - so a row is drawn before its arguments exist rather than after. `toolCallAuthRequired` / `AuthResolved` are the mid-call sign-in: the SDK surfaces no per-call auth moment, so the join is made here - every tool named `mcp__<server>__<tool>` carries a `ToolCallMcpContributor`, which the reducer requires before it will take either action, and a server that starts asking blocks whatever was running against it. Paired with `session/inputNeededSet` (kind `toolAuthentication`), and only when the resource was actually discovered: the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. Not emitted: four client-dispatchable ones, each refused in its own words rather than as unserved: `truncated` (the harness compacted its context, and every one of those turns is still in the transcript), `inputAnswerChanged` (this host holds no `inputRequest` part to keep a draft on - the question lives on `session.inputNeeded`), `toolCallResultConfirmed` (no call this host builds sets `requiresResultConfirmation`) and `toolCallContentChanged` (a contributor's to send, for a tool the client itself provides - every call here is the backend's own and carries no `ToolCallContributor`). `workingDirectorySet` / `Removed` are served: a chat may hold any subset of its session's directories - never more - and a change starts that one chat again, resumed, leaving the session's other chats where they are |
-| `terminal/*` | 11 of 11 | ✅ | `data`, `input`, `resized`, `claimed`, `titleChanged`, `cleared`, `exited`. `cleared` drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up - and nothing reaches the process, which has no notion of its own output being discarded. `exited` is announced when the pipes drain rather than when the process goes, because between the two there is output written and not yet read. The other four are shell integration and arrive with a pseudoterminal: `shellTerminals({ pty })` takes a binding rather than importing one - `node-pty` is the daemon's optional dependency and never the library's - and under it the shell prints its own OSC 133 marks, which become `commandExecuted`, `commandFinished` and `cwdChanged`, with `commandDetectionAvailable` said once at the start. Without a binding the shells run on pipes and the state says `isPty: false` and `supportsCommandDetection: false`, which is what the protocol has those flags for |
-| `changeset/*` | 8 of 8 | ✅ | Both forms, chosen per change: `fileSet` / `fileRemoved` when fewer actions than files moved, `cleared` when everything went, `statusChanged` when only the status did, and `contentChanged` when the whole set is the smaller thing to send. They reduce to the same state, which is what makes choosing between them safe. A changeset whose files did not move says nothing about them at all - re-sending the set a client already holds tells it nothing |
-| `automation/*` | 4 of 4 | ✅ | |
-| `automationRun/*` | 5 of 5 | ✅ | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`, and `sessionSet` / `sessionRemoved` - sent as the difference, because neither carries a whole set: one action per session that joined and one per session that went. `memoryAutomations` starts one session per run and a store may start several; either way a session disposed is unlinked from the run it belonged to, which clears `primarySession` when it was that one |
-| `resourceWatch/*` | 1 of 1 | ✅ | |
-| `annotations/*` | 5 of 5 | ✅ | An editor's furniture, and the one channel whose state is entirely a client's: nothing here produces a mark, and what this host contributes is that a mark one client made is one every other client in the session can see. Kept per session under `<sessionUri>/annotations`, reduced with the package's own `annotationsReducer` so host and client cannot disagree, and echoed with `origin`. An action naming an annotation the session does not have is refused rather than echoed - the reducer answers an unknown id by handing back the state it was given, and echoing that would leave the client holding a mark this host never kept |
+**Origin** is the protocol's own `IS_CLIENT_DISPATCHABLE`: `client` is one a
+client may originate, `host` is one only this host may say, and `both` is a
+client action this host also emits on its own account. A host-only action
+arriving from a client is refused as a client claiming something happened,
+which is a different complaint from an action nobody has served.
 
-### Client-dispatchable actions this host acts on
+### `root/*` — 4 of 4
 
-`chat/turnStarted`, `chat/turnCancelled`, `chat/turnResume`,
-`chat/toolCallConfirmed`, `chat/toolCallComplete`, `chat/inputCompleted`,
-`chat/pendingMessageSet` / `Removed`, `chat/queuedMessagesReordered`,
-`chat/draftChanged`, `chat/workingDirectorySet` / `Removed`,
-`session/configChanged`, `session/titleChanged`, `session/isReadChanged`,
-`session/isArchivedChanged`, `session/activeClientSet` / `Removed`,
-`session/customizationToggled`,
-`session/mcpServerStartRequested` / `StopRequested`,
-`session/workingDirectorySet` / `Removed` / `Replaced`,
-`changeset/filesReviewChanged`, `terminal/input`, `terminal/resized`,
-`terminal/claimed`, `terminal/titleChanged`, `terminal/cleared`,
-`automation/createRequested` / `updateRequested` / `removed`,
-`automationRun/cancelRequested`, `root/configChanged`,
-`annotations/set` / `updated` / `removed` / `entrySet` / `entryRemoved`.
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
+| `root/activeSessionsChanged` | host | ✅ | A count, not a list. Moves when a session is created or disposed. |
+| `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. |
 
-Anything else dispatched is **refused**, not dropped: an envelope carrying
-`rejectionReason` goes back to the connection that sent it, naming the action
-and saying what would not have it. A client applies an action before sending
-it, so a host that stayed silent left that client holding a change this host
-never made.
+### `session/*` — 28 of 28
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `session/ready` | host | ✅ | After the backend is running and before the session is announced. A client told about a session it cannot yet subscribe to has been told about something that is not there. |
+| `session/creationFailed` | host | ✅ | For a session an automation could not start, where there is no request to fail. One a client asked for fails inside `createSession` instead. |
+| `session/chatAdded` | host | ✅ | Carries the whole `ChatSummary`. The reducer reads `action.summary.resource`, and a chat named any other way arrives as a `TypeError` inside it. |
+| `session/chatRemoved` | host | ✅ | On `disposeChat`. The last chat cannot be removed - that is `disposeSession`, and the refusal says so. |
+| `session/chatUpdated` | host | ✅ | Only when the row actually moved - title, status or activity. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
+| `session/defaultChatChanged` | host | ✅ | When the chat that was the default is disposed and another takes over. |
+| `session/titleChanged` | both | ✅ | A client may rename a session; this host also names one after its first message, because an untitled row is one nobody can find again. |
+| `session/serverToolsChanged` | host | ✅ | Full replacement, which is what the action means: it carries the new set rather than a difference. Sent to every running session when `host.setTools()` is called. |
+| `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made - under the `clientId` it introduced itself with rather than the one in the payload. |
+| `session/activeClientRemoved` | both | ✅ | Host-managed on the way out: a client that unsubscribes, drops without reconnecting in time, or reconnects without resubscribing is removed by this host rather than left in the list. |
+| `session/workingDirectorySet` | client | ✅ | The SDK takes its directories when the CLI starts and offers no way to add one after, so a change starts the backend again *resumed* - the same conversation in a wider place. Refused `-32004` while a turn is running. |
+| `session/workingDirectoryRemoved` | client | ✅ | Index 0 is the process root and the protocol says a client MUST NOT remove it; this host says so out loud rather than ignoring the attempt. |
+| `session/workingDirectoryReplaced` | both | ✅ | The only way index 0 may move, which is why this host advertises `primaryReplacement` beside `immutablePrimary`. Saying it as a removal and an addition would be a client briefly holding a session with no directory at all. |
+| `session/inputNeededSet` | host | ✅ | Carries `request`, not a bare entry. Four kinds reach it: a chat elicitation, a tool confirmation, a client-executed tool, and a tool blocked on an MCP sign-in. |
+| `session/inputNeededRemoved` | host | ✅ | Carries the `id` alone, which is the upsert key the set half used. |
+| `session/customizationsChanged` | host | ✅ | The whole list, seeded from the boot probe so a session is not empty for its first several seconds, then replaced when its own CLI answers. |
+| `session/customizationToggled` | client | ✅ | Carries `enablement` per scope rather than a flat flag. For an MCP server this host turns it into `toggleMcpServer`, or into `reconnectMcpServer` when the server was off because nobody had signed in. |
+| `session/customizationUpdated` | host | ✅ | One row, when a server's enablement moved as well as its state - `mcpServerStateChanged` carries the state alone, so a server that came back on would arrive `ready` with the switch still drawn off. |
+| `session/customizationRemoved` | host | ✅ | Sent one at a time for a server taken out of the configuration, rather than re-sending the whole list. The removal is the change. |
+| `session/mcpServerStateChanged` | host | ✅ | The protocol's words, not the SDK's: `ready`, `stopped`, `error`, `authRequired`, `starting`. Each kind carries different required fields, and only the last two carry any. |
+| `session/mcpServerStartRequested` | both | ✅ | Also how a server nobody has signed into is signed into, because lifting the disabled flag alone brings it straight back needing one. |
+| `session/mcpServerStopRequested` | both | ✅ | Straight through to the CLI's own toggle. |
+| `session/isReadChanged` | client | ✅ | This host's own bit, kept per session and never seen by a backend. |
+| `session/isArchivedChanged` | client | ✅ | The same, and the reason a row with no agent running still has a status to report. |
+| `session/activityChanged` | host | ✅ | What the session is doing in one line, taken from whichever chat is driving it. Absent means idle, which is a field left off rather than an empty string. |
+| `session/changesetsChanged` | host | ✅ | The catalogue of changesets a client may subscribe to. A template with no variables is the whole scope; the `{turnId}` ones are not served. |
+| `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
+| `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
+
+### `chat/*` — 26 of 30
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `chat/turnStarted` | both | ✅ | A client starts a turn; this host also starts one when a queued message is taken up, and then carries `queuedMessageId` so the client can retire its own row. |
+| `chat/delta` | host | ✅ | Appends to a `markdown` part. The part is opened first, always - a delta naming a part nobody opened is text the client has nowhere to put. |
+| `chat/responsePart` | host | ✅ | Opens a part. Also how a complete block arrives when it did not stream. |
+| `chat/toolCallStart` | host | ✅ | As soon as the model names the tool, before its arguments exist. Carries a `ToolCallMcpContributor` for anything named `mcp__<server>__<tool>`. |
+| `chat/toolCallDelta` | host | ✅ | Appends the arguments' JSON to `partialInput` as it arrives, so a row is drawn while the call is still being written rather than after. |
+| `chat/toolCallReady` | host | ✅ | Closes a streaming call with the parsed input. `confirmed: not-needed` unless `canUseTool` actually asked - without it the reducer draws every call in the transcript as a question nobody put. |
+| `chat/toolCallConfirmed` | both | ✅ | A client answering; and this host saying what was answered, for the other clients watching. |
+| `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. |
+| `chat/toolCallResultConfirmed` | client | 🚫 | Refused: it belongs to a call completed with `requiresResultConfirmation`, and no call this host builds sets one. The confirmation here happens before the tool runs, not after. |
+| `chat/toolCallContentChanged` | client | 🚫 | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor, so no client has the standing to write into one. |
+| `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
+| `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
+| `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
+| `chat/turnCancelled` | both | ✅ | Also carries a required `duration` - a missing number here is `NaN`, which throws inside the reducer rather than drawing anything. |
+| `chat/error` | host | ✅ | The ending, not a message beside one: it carries the `turnId` and the duration the completion would have. |
+| `chat/turnResume` | client | ✅ | The protocol's conditions - latest, errored, message and parts intact - are the backend's to check, because only it knows what its last turn was. A backend that cannot re-run one says so rather than being asked to. |
+| `chat/activityChanged` | host | ✅ | What this chat is doing, in the tool's own words while one runs. Sent with no `activity` to clear it. |
+| `chat/workingDirectorySet` | client | ✅ | A chat may hold any subset of its session's directories and never more; anything outside is refused rather than quietly widening the session. The change starts that one chat again, resumed. |
+| `chat/workingDirectoryRemoved` | client | ✅ | The primary cannot be removed, for the reason the session's cannot: it is where the process is rooted. |
+| `chat/usage` | host | ✅ | Tokens and the model that spent them, at the end of the turn. |
+| `chat/reasoning` | host | ✅ | Appends to a `reasoning` part. Defined against that kind specifically - the canonical reducer returns the state unchanged for a `chat/delta` naming one, which draws a thinking header with nothing under it. |
+| `chat/pendingMessageSet` | both | ✅ | Both kinds: a `queued` message waits for the running turn, a `steering` one goes into it - the prompt handed to the CLI is a generator that stays open for the life of the session. |
+| `chat/pendingMessageRemoved` | both | ✅ | When the client withdraws one, and when this host takes one up into a turn. |
+| `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
+| `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. |
+| `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
+| `chat/inputAnswerChanged` | client | 🚫 | Refused: this host keeps no `inputRequest` part to hold a draft answer on - the question lives on `session.inputNeeded` and is answered whole. |
+| `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
+| `chat/truncated` | client | 🚫 | Refused: the harness compacts its own context and says nothing about it, and every one of those turns is still in the transcript. Dropping them here would be this host claiming a thing it did not do. |
+| `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. |
+
+### `terminal/*` — 11 of 11 🧩
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `terminal/data` | host | ✅ | Every byte the shell wrote, and the same bytes are kept as scrollback so a client subscribing late sees what happened. Capped, because a terminal left running `tail -f` is a host holding a day of output for a client that may never come back. |
+| `terminal/input` | client | ✅ | Under pipes a `^C` is turned into a signal to the process group, because there is no line discipline to do it; under a pseudoterminal the byte is written through and the discipline does it. |
+| `terminal/resized` | both | ✅ | A pseudoterminal is told and sends `SIGWINCH` itself. Without one the size is kept because the state reports it and a client draws to it. |
+| `terminal/claimed` | both | ✅ | Who the terminal belongs to - a client, or a session that opened it for a `!` command. |
+| `terminal/titleChanged` | both | ✅ | Set by a client, or defaulted to the shell's own name. |
+| `terminal/cwdChanged` | host | ✅ | Read out of the shell's own OSC 7, so it is a fact rather than a guess. Under a pseudoterminal only. |
+| `terminal/exited` | host | ✅ | Announced when the pipes drain rather than when the process goes: between the two there is output written and not yet read, which is exactly what a `!` command reads back. |
+| `terminal/cleared` | both | ✅ | Drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up. Nothing reaches the process, which has no notion of its own output being discarded. |
+| `terminal/commandDetectionAvailable` | host | ✅ | Said once at the start, under a pseudoterminal. A client MUST check this before relying on command boundaries. |
+| `terminal/commandExecuted` | host | ✅ | From the shell's OSC 133 `C` mark, with the command line read back off what was typed since the prompt. |
+| `terminal/commandFinished` | host | ✅ | From the `D` mark, with the shell's own exit code and the duration since `C`. |
+
+### `changeset/*` — 8 of 8 🧩
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. |
+| `changeset/fileSet` | host | ✅ | Chosen when fewer actions than files moved. |
+| `changeset/fileRemoved` | host | ✅ | The same choice, for a file that left the set. |
+| `changeset/filesReviewChanged` | client | ✅ | A client marking files reviewed. The one changeset action a client originates. |
+| `changeset/contentChanged` | host | ✅ | Chosen when the whole set is the smaller thing to send. It reduces to the same state as the per-file pair, which is what makes choosing between them safe. |
+| `changeset/operationsChanged` | host | ✅ | The verbs the source advertises, with this host's own answer to whether each may be pressed now. |
+| `changeset/operationStatusChanged` | host | ✅ | While one runs, and when it finishes or fails. |
+| `changeset/cleared` | host | ✅ | When everything went. A changeset whose files did not move says nothing about them at all - re-sending a set a client already holds tells it nothing. |
+
+### `annotations/*` — 5 of 5
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `annotations/set` | client | ✅ | Reduced with the package's own `annotationsReducer`, so this host and its clients cannot disagree about what a mark became. |
+| `annotations/updated` | client | ✅ | An action naming an annotation the session does not have is refused rather than echoed: the reducer answers an unknown id by handing back the state it was given, and echoing that would leave the client holding a mark this host never kept. |
+| `annotations/removed` | client | ✅ | The same rule, and the same refusal for an id nothing here has. |
+| `annotations/entrySet` | client | ✅ | A comment inside a mark. |
+| `annotations/entryRemoved` | client | ✅ | And taking one out. |
+
+### `resourceWatch/*` — 1 of 1 🧩
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `resourceWatch/changed` | host | ✅ | In coalesced batches, with globs for `includes` and `excludes`. On a watch over a *client's* resources it is that client that dispatches this, and this host relays it - see [server-to-client commands](#server-to-client-commands). |
+
+### `automation/*` — 4 of 4 🧩
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `automation/createRequested` | client | ✅ | A request, not a fact: what goes back is `automation/set` saying what this host actually holds, which is not an echo of what was asked for. |
+| `automation/updateRequested` | client | ✅ | A patch. Absent keys are left alone, so one client does not revert another. |
+| `automation/set` | host | ✅ | The answer to both requests, and how a store with a clock announces one that fired on its own. |
+| `automation/removed` | both | ✅ | Refused when the catalogue says `remove` is not among the operations, rather than done anyway. |
+
+### `automationRun/*` — 5 of 5 🧩
+
+| action | origin | ahpd | Notes |
+| --- | :---: | :---: | --- |
+| `automationRun/lifecycleChanged` | host | ✅ | `pending`, `running`, `completed`, `failed`, `cancelled`, and when each happened. A run that failed says so rather than vanishing. |
+| `automationRun/sessionSet` | host | ✅ | One action per session that joined. Neither this nor its pair carries a whole set, so what goes out is the difference since the last time this looked. |
+| `automationRun/sessionRemoved` | host | ✅ | And one per session that went - a disposed session is unlinked from the run it belonged to, so a client is not left pointing at a channel nobody can open. |
+| `automationRun/primarySessionChanged` | host | ✅ | The one a client opens when it opens the run. Cleared when that session is the one removed. |
+| `automationRun/cancelRequested` | client | ✅ | A request the store answers, because only it knows whether the run has got far enough to be stopped. |
+
+### What a refusal is
+
+Anything dispatched that this host will not act on is **refused**, not dropped:
+an envelope carrying `rejectionReason` goes back to the connection that sent it,
+naming the action and saying what would not have it. A client applies an action
+before sending it, so a host that stayed silent left that client holding a
+change this host never made.
 
 A refusal moves no `serverSeq` and is not buffered for replay, because it moves
 no state; and it goes to the one connection that dispatched it rather than to
 everyone watching, because nobody else applied it optimistically and a client
 that reduced one would apply the very change this host declined to make.
-
-### Server-origin actions this host emits
-
-`session/ready`, `session/titleChanged`, `session/activityChanged`,
-`session/metaChanged`, `session/configChanged`, `session/changesetsChanged`,
-`session/customizationsChanged` / `customizationUpdated`,
-`session/chatAdded` / `chatRemoved` / `chatUpdated` / `defaultChatChanged`,
-`session/inputNeededSet` / `inputNeededRemoved`,
-`session/mcpServerStateChanged`, `session/activeClientRemoved` -
-`chat/turnStarted`, `chat/responsePart`, `chat/delta`, `chat/reasoning`,
-`chat/toolCallStart` / `toolCallReady` / `toolCallConfirmed` /
-`toolCallComplete`, `chat/inputRequested`, `chat/inputCompleted`,
-`chat/usage`, `chat/activityChanged`, `chat/turnComplete`,
-`chat/turnCancelled`, `chat/error`, `chat/turnsLoaded` -
-`changeset/contentChanged` / `operationsChanged` / `operationStatusChanged` -
-`terminal/data` / `titleChanged` / `resized` / `claimed` / `exited` -
-`root/agentsChanged` / `activeSessionsChanged` / `terminalsChanged` / `configChanged`.
 
 ## Behaviour worth knowing
 
