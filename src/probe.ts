@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { customizationsOf } from './session.js';
+import { customizationsOf, EFFORT_LABELS, EFFORTS } from './session.js';
 import type { Bag } from './types/common.js';
 import type { Offered } from './types/probe.js';
 
@@ -31,9 +31,6 @@ const str = (value: unknown): string | undefined => (typeof value === 'string' ?
  */
 const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
   if (efforts.length === 0) return {};
-  const said: Record<string, string> = {
-    low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Maximum',
-  };
   return {
     configSchema: {
       type: 'object',
@@ -43,7 +40,7 @@ const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown
           title: 'Thinking Level',
           description: 'Controls how much reasoning effort Claude uses.',
           enum: [...efforts],
-          enumLabels: efforts.map((one) => said[one] ?? one),
+          enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
           ...(efforts.includes('high') ? { default: 'high' } : {}),
         },
       },

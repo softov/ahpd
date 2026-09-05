@@ -1,7 +1,7 @@
 import { within } from '../paths.js';
 import { catalogue } from '../catalog.js';
 import { probe } from '../probe.js';
-import { createSession } from '../session.js';
+import { createSession, EFFORT_LABELS, EFFORTS } from '../session.js';
 import { turnsOf } from '../transcript.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, Start } from '../types/agent.js';
@@ -159,8 +159,8 @@ export function claude(options: ClaudeOptions): Agent {
         type: 'string',
         title: 'Effort',
         description: 'How hard it thinks before answering.',
-        enum: ['low', 'medium', 'high', 'xhigh', 'max'],
-        enumLabels: ['Low', 'Medium', 'High', 'Very high', 'Max'],
+        enum: [...EFFORTS],
+        enumLabels: EFFORTS.map((one) => EFFORT_LABELS[one]),
         default: 'high',
         sessionMutable: true,
       },
