@@ -415,17 +415,20 @@ describe('what it will not pretend', () => {
 
   it('tells a host-only action apart from one it has not got round to', async () => {
     const { client, peer: p, uri } = await running();
-    // `chat/workingDirectorySet` *is* a client's to send - this host just does
-    // not serve it yet, because a chat here has no directory of its own. Two
-    // different complaints, and they used to be the same one.
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/workingDirectorySet', directory: 'file:///tmp' } },
-    });
-    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
-    expect(refused?.params).toMatchObject({
-      rejectionReason: expect.stringContaining('not served yet'),
-    });
+    const why = (action: Record<string, unknown>) => {
+      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      const refused = p.notes.filter((note) => note.method === 'action').at(-1);
+      return String((refused?.params as { rejectionReason?: string }).rejectionReason);
+    };
+    // `session/ready` is the host's own to say, and a client sending one is
+    // claiming something happened.
+    expect(why({ type: 'session/ready' })).toContain('not a client\'s');
+    // Every action a client *may* originate is served, so the other complaint
+    // is now reachable only from a protocol newer than this host: an action
+    // `IS_CLIENT_DISPATCHABLE` has never heard of is not a client lying, it is
+    // one this host has not caught up with. Two different complaints, and they
+    // used to be the same one.
+    expect(why({ type: 'chat/somethingLater' })).toContain('not served yet');
   });
 
   it('says what is actually wrong with a dispatch, not only that it is unserved', async () => {
@@ -3529,6 +3532,92 @@ describe('more than one directory', () => {
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
     expect(refused.some((one) => one.includes('cannot be removed'))).toBe(true);
+  });
+
+  /*
+   * The chat half of the same feature.
+   *
+   * A chat may hold fewer directories than its session, never more: the
+   * session's set is what the person opened, and a chat that could widen it
+   * would be a chat granting itself access to a folder nobody chose.
+   */
+  const wide = async () => {
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0']));
+    const uri = 'ahp-session:/split';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'claude',
+        workingDirectories: ['file:///home/softov/one', 'file:///home/softov/two', 'file:///home/softov/three'],
+      },
+    });
+    return { client, peer: p, uri };
+  };
+
+  it('opens a chat in the subset it was asked for, and says so on the chat', async () => {
+    const { client, uri } = await wide();
+    const chat = 'ahp-chat:/narrow';
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat, workingDirectories: ['file:///home/softov/one', 'file:///home/softov/three'] },
+    });
+    // The first entry is the session's process root and is not a choice; what
+    // a chat picks among is the peers, and the CLI takes those at startup.
+    expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov/one');
+    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual(['/home/softov/three']);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories).toEqual(['file:///home/softov/one', 'file:///home/softov/three']);
+  });
+
+  it('refuses to open a chat somewhere the session is not', async () => {
+    const { client, uri } = await wide();
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/stray', workingDirectories: ['file:///home/softov/elsewhere'] },
+    })).rejects.toThrow(/is not a working directory of/);
+  });
+
+  it('starts one chat again when its own set changes, and leaves the others alone', async () => {
+    const { client, peer: p, uri } = await wide();
+    const chat = 'ahp-chat:/narrow';
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat, workingDirectories: ['file:///home/softov/one', 'file:///home/softov/three'] },
+    });
+    const before = sessionQueries().length;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: 'file:///home/softov/two' } },
+    });
+    await settle();
+    // One CLI, not the session's every chat: the session's own set has not
+    // moved, so the default chat is still running where it was.
+    expect(sessionQueries().length).toBe(before + 1);
+    expect(sessionQueries().at(-1)?.options.additionalDirectories)
+      .toEqual(['/home/softov/three', '/home/softov/two']);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/workingDirectoryRemoved', directory: 'file:///home/softov/three' } },
+    });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual(['/home/softov/two']);
+
+    // And the same rule as `createChat`, said rather than silently widening.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: 'file:///home/softov/elsewhere' } },
+    });
+    await settle();
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused.some((one) => one.includes('is not a working directory of'))).toBe(true);
   });
 });
 

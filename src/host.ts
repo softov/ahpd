@@ -308,6 +308,15 @@ export function createHost(options: HostOptions): Host {
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
+   * The peer directories each chat was given, when they are not its session's.
+   *
+   * A chat may hold a subset: the protocol says every entry of a chat's set
+   * MUST be in its session's, and which of them a particular conversation is
+   * about is that conversation's business. Kept here because restarting one
+   * chat has to hand it back what it had.
+   */
+  const beside = new Map<string, string[]>();
+  /**
    * How a chat came to exist.
    *
    * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool` - and
@@ -2241,6 +2250,38 @@ export function createHost(options: HostOptions): Host {
     if (to !== undefined) dispatch(uri, { type: 'session/workingDirectoryReplaced', directory: `file://${to}` });
   };
 
+  /**
+   * Start one chat again, in the directories it now has.
+   *
+   * The session's own `restart` rebuilds every chat; this rebuilds one, and
+   * for the same reason: the SDK takes its directories when the CLI starts
+   * and offers no way to add one after. Resumed, so it is the same
+   * conversation - a chat that lost its history because a directory was added
+   * to it would be a worse answer than refusing.
+   */
+  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>): void => {
+    const held = sessions.get(uri);
+    const chat = held?.chats.get(chatUri);
+    if (held === undefined || chat === undefined) return;
+    const talking = chat.agentId() !== undefined
+      ? { resume: chat.agentId() as string, seed: chat.allTurns() }
+      : undefined;
+    chat.close();
+    held.chats.delete(chatUri);
+    byChat.delete(chatUri);
+    spawn(
+      held.agent,
+      uri,
+      chatUri,
+      held.config,
+      talking,
+      held.workingDirectory,
+      credentials,
+      beside.get(chatUri) ?? held.additional,
+    );
+    log(`restarted ${chatUri}`);
+  };
+
   /** The host's own keys, which a backend has never heard of. */
   const HOSTS_OWN = [
     'isolation', 'branch', 'worktreeIncludeFiles',
@@ -3893,7 +3934,7 @@ export function createHost(options: HostOptions): Host {
           // The peers of the first, which the protocol says are equal to each
           // other and to it in everything but which one the process is rooted
           // at. A backend that cannot take them is told none.
-          const beside = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
+          const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
           /*
            * The worktree, before anything is started in it.
            *
@@ -3931,7 +3972,7 @@ export function createHost(options: HostOptions): Host {
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
-          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), beside);
+          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), peers);
           // Complete, which the protocol spells as `progress === total`.
           along(2, 'Ready');
           /*
@@ -4035,7 +4076,27 @@ export function createHost(options: HostOptions): Host {
             }
 
           }
-          const chat = spawn(held.agent, uri, chatUri, held.config, made, held.workingDirectory);
+          /*
+           * The directories this chat is about, when it is about fewer.
+           *
+           * The protocol requires every entry to be in the owning session's
+           * set: a chat cannot reach anywhere its session cannot, and one that
+           * named somewhere else would be asking the host to widen a session
+           * through a chat. The first entry is the process root and is the
+           * session's, so what a chat chooses among is the peers.
+           */
+          const asked = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
+            .filter((one): one is string => typeof one === 'string')
+            .map((one) => one.replace(/^file:\/\//, ''));
+          const own = [held.workingDirectory, ...(held.additional ?? [])].filter((one) => one !== undefined);
+          const stray = asked.find((one) => !own.includes(one));
+          if (stray !== undefined)
+            throw new RpcError(-32602, `${stray} is not a working directory of ${uri}`);
+          const peers = asked.length > 0
+            ? asked.filter((one) => one !== held.workingDirectory)
+            : held.additional;
+          if (asked.length > 0) beside.set(chatUri, peers ?? []);
+          const chat = spawn(held.agent, uri, chatUri, held.config, made, held.workingDirectory, undefined, peers);
           log(`opened ${chatUri} in ${uri}`);
           // `summary`, not `chat`: the reducer reads `action.summary.resource`,
           // and a chat named any other way arrives as a TypeError inside it.
@@ -4710,11 +4771,11 @@ export function createHost(options: HostOptions): Host {
             }
             const path = (value: unknown): string => String(value ?? '').replace(/^file:\/\//, '');
             const held = owner.additional ?? [];
-            let beside = held;
+            let after = held;
             if (type === 'session/workingDirectorySet') {
               const one = path(action.directory);
               if (one === '' || one === owner.workingDirectory || held.includes(one)) break;
-              beside = [...held, one];
+              after = [...held, one];
             }
             else if (type === 'session/workingDirectoryRemoved') {
               const one = path(action.directory);
@@ -4725,7 +4786,7 @@ export function createHost(options: HostOptions): Host {
                 break;
               }
               if (!held.includes(one)) break;
-              beside = held.filter((other) => other !== one);
+              after = held.filter((other) => other !== one);
             }
             else {
               // The primary slot, replaced atomically - which is the only way
@@ -4735,8 +4796,8 @@ export function createHost(options: HostOptions): Host {
               if (one === '' || one === owner.workingDirectory) break;
               owner.workingDirectory = one;
             }
-            owner.additional = beside;
-            void restart(uri, tokensFor(owner.agent.provider), { additional: beside })
+            owner.additional = after;
+            void restart(uri, tokensFor(owner.agent.provider), { additional: after })
               .then(() => { dispatch(uri, action, origin); })
               .catch((error: unknown) => { no(error instanceof Error ? error.message : String(error)); });
             break;
@@ -4858,6 +4919,55 @@ export function createHost(options: HostOptions): Host {
            * its last turn was. A backend that cannot re-run one says so here
            * rather than being asked to.
            */
+          /*
+           * A directory added to or taken from this chat's own set.
+           *
+           * The same mechanism the session's set uses - the CLI is started
+           * again, resumed - applied to one chat rather than all of them. A
+           * chat may only ever narrow its session's set, so anything outside
+           * it is refused rather than quietly widening the session.
+           */
+          case 'chat/workingDirectorySet':
+          case 'chat/workingDirectoryRemoved': {
+            const owner = byChat.get(channel);
+            if (owner === undefined) {
+              no(`${channel} is not a chat this host is running`);
+              break;
+            }
+            const held = sessions.get(owner.uri);
+            if (held === undefined || held.agent.multipleDirectories !== true) {
+              no('this backend works in one directory per session');
+              break;
+            }
+            if ((statusOf(owner.uri) & Status.InProgress) !== 0) {
+              no('a working directory cannot change while a turn is running');
+              break;
+            }
+            const one = String(action.directory ?? '').replace(/^file:\/\//, '');
+            const own = [held.workingDirectory, ...(held.additional ?? [])].filter((entry) => entry !== undefined);
+            const had = beside.get(channel) ?? held.additional ?? [];
+            let next = had;
+            if (type === 'chat/workingDirectorySet') {
+              if (!own.includes(one)) {
+                no(`${one} is not a working directory of ${owner.uri}`);
+                break;
+              }
+              if (one === held.workingDirectory || had.includes(one)) break;
+              next = [...had, one];
+            }
+            else {
+              if (one === held.workingDirectory) {
+                no('the first working directory is the one the agent runs in, and cannot be removed');
+                break;
+              }
+              if (!had.includes(one)) break;
+              next = had.filter((other) => other !== one);
+            }
+            beside.set(channel, next);
+            restartChat(owner.uri, channel, tokensFor(held.agent.provider));
+            dispatch(channel, action, origin);
+            break;
+          }
           case 'chat/turnResume': {
             if (session.resume === undefined) {
               no('this backend cannot run a turn again');

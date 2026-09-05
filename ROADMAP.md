@@ -39,7 +39,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
-## 3. State actions — 75 of 96 emitted
+## 3. State actions — 86 of 96 emitted
 
 ### Terminals (4)
 - [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
@@ -57,7 +57,7 @@ correlates a question with its answer — and nothing is routed through it.
   rather than only the completed call.
 - [x] **3.3** `chat/turnResume` — emitted when a queued turn starts after the
   one before it finished.
-- [ ] **3.4** `chat/workingDirectorySet` / `workingDirectoryRemoved` — needs
+- [x] **3.4** `chat/workingDirectorySet` / `workingDirectoryRemoved` — needs
   4.3: a chat has no directory of its own until chats can differ.
 - [ ] **3.5** `chat/toolCallAuthRequired` / `toolCallAuthResolved` — mid-call
   MCP authentication. The SDK surfaces no per-call auth moment; needs a way to
@@ -86,7 +86,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **4.3a** `session/workingDirectorySet` and `Removed` on a running
   session. The SDK adds a root at runtime only when it resolves under `cwd` or
   under one passed at launch; anything else is refused in the SDK's own words.
-- [ ] **4.3b** `chat/workingDirectorySet` / `Removed` and
+- [x] **4.3b** `chat/workingDirectorySet` / `Removed` and
   `ChatState.workingDirectories`. Each chat here is its own process, so a chat
   can hold a subset of the session's without a second mechanism.
 - [x] **4.4** MCP servers that need signing in. Four parts:
@@ -105,13 +105,3 @@ correlates a question with its answer — and nothing is routed through it.
   a missing required one fails the build rather than a later audit.
 - [ ] **5.2** A capture of every command and every action, taken against a
   running daemon, kept as the conformance fixture.
-
----
-
-## Questions
-
-**Question 3 — per-chat working directories.** The session half is settled
-(4.3). VS Code's three backends advertise only `immutablePrimary` and vary
-directories per *session*; nothing in its tree varies them per chat, though the
-protocol declares `chat/workingDirectory*` and `ChatState.workingDirectories`.
-Serve the chat half as well, or stop at the session?

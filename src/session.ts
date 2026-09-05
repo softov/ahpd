@@ -1540,6 +1540,10 @@ export function createSession(options: SessionOptions): Session {
       title,
       status: status(),
       modifiedAt: modified,
+      // A chat's own set, which may be narrower than its session's: the
+      // process is rooted at the same place, and which peers it was given is
+      // this chat's to say.
+      workingDirectories: [`file://${cwd}`, ...peers.map((one) => `file://${one}`)],
       // The newest page. A resumed session can be seeded with hundreds of
       // turns, and the snapshot is what a client waits on before it draws.
       ...tail(turns),
