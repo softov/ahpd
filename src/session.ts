@@ -223,15 +223,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      *
      * **A server needing a sign-in is reported as an error, and that is the
      * closest to the specification this host can get.**
-     * `McpServerAuthRequiredState` requires two things it cannot produce: a
-     * `reason`, and a `resource` whose identifier is the canonical MCP server
-     * URI with `authorization_servers` the MCP authorization spec calls
-     * REQUIRED. All the SDK reports is a name and `needs-auth`. Emitting the
-     * state anyway would be two required fields short - a client told to sign
-     * in with nothing to sign into, which is a button that cannot be wired to
-     * anything. So the fact goes where a person can still read it, in the
-     * message, and the state is one this host can satisfy completely. See
-     * A-01-09.
+     * `authRequired` is what draws a client's sign-in, and its button ends in
+     * `authenticate` handing this host a token. There is nowhere to put one:
+     * `setMcpServers` re-declares only servers the SDK itself declared, and
+     * every server here came from the CLI's own settings - so a token would be
+     * accepted and dropped, and a person would have signed in to arrive back
+     * where they started. `startMcpServer` reaches `reconnectMcpServer`, which
+     * is the CLI running its own sign-in, and that is the way in this host
+     * actually has. See A-01-09.
      */
     const state: OnWire<McpServerState> = reported === 'connected' ? { kind: 'ready' }
       : reported === 'disabled' ? { kind: 'stopped' }
