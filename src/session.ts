@@ -510,6 +510,24 @@ export function createSession(options: SessionOptions): Session {
    */
   const settings: Record<string, unknown> = { permissionMode: 'default', ...options.settings };
 
+  /**
+   * The MCP server a tool belongs to, out of its name.
+   *
+   * `mcp__<server>__<tool>` is the CLI's own naming, and it is the only thing
+   * that says a call is somebody else's server's rather than the harness's -
+   * which is what `ToolCallMcpContributor` records and what makes a call
+   * blocked on a sign-in tellable from one blocked on its own work.
+   */
+  const serverOf = (toolName: string): string | undefined => /^mcp__(.+?)__/.exec(toolName)?.[1];
+  /**
+   * Tool calls running against an MCP server, by call id.
+   *
+   * Kept so a server that starts asking for a sign-in can say *which* calls
+   * are stuck on it: the CLI reports a server's status and never a call's, so
+   * the join is here or nowhere.
+   */
+  const onServer = new Map<string, { server: string; turnId: string; blocked: boolean }>();
+
   /** Open parts, keyed by message and index; tool calls by their own id. */
   const parts = new Map<string, Bag>();
   /**
@@ -801,12 +819,30 @@ export function createSession(options: SessionOptions): Session {
         calling.set(key, id);
         if (parts.has(id)) return;
         const name = str(block.name) ?? 'tool';
-        const call: Bag = { toolCallId: id, toolName: name, displayName: name, status: 'streaming' };
+        // Whose tool it is, when it is an MCP server's. The reducer refuses
+        // `chat/toolCallAuthRequired` on a call with no MCP contributor, so
+        // this is also what makes a sign-in mid-call sayable at all.
+        const from = serverOf(name);
+        const contributor = from === undefined
+          ? undefined
+          : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        const call: Bag = {
+          toolCallId: id,
+          toolName: name,
+          displayName: name,
+          status: 'streaming',
+          ...(contributor ? { contributor } : {}),
+        };
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
         holdPart(turn, part);
         emit('chat', {
-          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name,
+          type: 'chat/toolCallStart',
+          turnId: turn.id,
+          toolCallId: id,
+          toolName: name,
+          displayName: name,
+          ...(contributor ? { contributor } : {}),
         });
         return;
       }
@@ -899,11 +935,19 @@ export function createSession(options: SessionOptions): Session {
         if (open !== undefined && str(bag(open.toolCall).status) !== 'streaming') continue;
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
+        const from = serverOf(name);
+        const contributor = from === undefined
+          ? undefined
+          : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        // Running against somebody else's server, and so a call that can end
+        // up waiting on a sign-in rather than on its own work.
+        if (from !== undefined) onServer.set(id, { server: from, turnId: str(turn.id) ?? '', blocked: false });
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: name,
           displayName: name,
           status: 'running',
+          ...(contributor ? { contributor } : {}),
           /*
            * On the call, and not only on the action that announces it.
            *
@@ -946,12 +990,21 @@ export function createSession(options: SessionOptions): Session {
           editing.set(id, changing);
           options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
         }
-        if (open === undefined)
-          emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
+        if (open === undefined) {
+          emit('chat', {
+            type: 'chat/toolCallStart',
+            turnId: turn.id,
+            toolCallId: id,
+            toolName: name,
+            displayName: name,
+            ...(contributor ? { contributor } : {}),
+          });
+        }
         emit('chat', {
           type: 'chat/toolCallReady',
           turnId: turn.id,
           toolCallId: id,
+          ...(contributor ? { contributor } : {}),
           // The tool's name, never its input. A client draws the intention
           // above the input, so the same string in both is the command
           // printed twice on every row.
@@ -985,6 +1038,9 @@ export function createSession(options: SessionOptions): Session {
        */
       const ok = block.is_error !== true;
       call.status = 'completed';
+      // Finished, so it is no longer waiting on anything - including a
+      // sign-in nobody ever did.
+      if (id !== undefined) onServer.delete(id);
       // Back to thinking. Leaving the last tool's name up makes a session look
       // busy with something that finished.
       doing('Thinking');
@@ -1388,6 +1444,44 @@ export function createSession(options: SessionOptions): Session {
       const switched = JSON.stringify(held.enablement) !== JSON.stringify(fresh.enablement);
       if (!moved && !switched)
         continue;
+      /*
+       * Which running tool calls this moved, before the row itself.
+       *
+       * The CLI reports a *server's* status and never a call's, so a call
+       * blocked on a sign-in is only tellable by joining the two: every call
+       * running against this server is blocked when it starts asking, and
+       * unblocked when it is ready again. `chat/toolCallAuthRequired` is a
+       * no-op in the reducer unless the call carries an MCP contributor,
+       * which is why one is put on every `mcp__…` call.
+       */
+      const asking = str(fresh.state === undefined ? undefined : bag(fresh.state).kind) === 'authRequired';
+      for (const [callId, running] of onServer) {
+        if (running.server !== name || running.blocked === asking) continue;
+        running.blocked = asking;
+        const at = parts.get(callId);
+        const call = bag(at?.toolCall);
+        if (asking) {
+          const { kind: _kind, ...auth } = bag(fresh.state);
+          call.status = 'auth-required';
+          call.auth = auth;
+          emit('chat', { type: 'chat/toolCallAuthRequired', turnId: running.turnId, toolCallId: callId, auth });
+          // The same block at the session level, which is where a client
+          // looking at a list rather than at a conversation sees it.
+          inputNeededSet({
+            id: `auth:${callId}`,
+            chat: chatUri,
+            kind: 'toolAuthentication',
+            turnId: running.turnId,
+            toolCall: { ...call },
+          });
+        }
+        else {
+          call.status = 'running';
+          delete call.auth;
+          emit('chat', { type: 'chat/toolCallAuthResolved', turnId: running.turnId, toolCallId: callId });
+          inputNeededRemoved(`auth:${callId}`);
+        }
+      }
       held.state = fresh.state;
       held.enablement = fresh.enablement;
       // `mcpServerStateChanged` carries the state and nothing else, so a

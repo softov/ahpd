@@ -39,7 +39,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
-## 3. State actions — 90 of 96 emitted
+## 3. State actions — 92 of 96 emitted
 
 ### Terminals (4)
 - [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
@@ -59,7 +59,7 @@ correlates a question with its answer — and nothing is routed through it.
   one before it finished.
 - [x] **3.4** `chat/workingDirectorySet` / `workingDirectoryRemoved` — needs
   4.3: a chat has no directory of its own until chats can differ.
-- [ ] **3.5** `chat/toolCallAuthRequired` / `toolCallAuthResolved` — mid-call
+- [x] **3.5** `chat/toolCallAuthRequired` / `toolCallAuthResolved` — mid-call
   MCP authentication. The SDK surfaces no per-call auth moment; needs a way to
   tell that a tool call is blocked on a server rather than on its own work.
 
