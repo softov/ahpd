@@ -165,7 +165,10 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       enabled: true,
       ...(command ? {} : { disableUserInvocation: true }),
       ...(described ? { description: described } : {}),
-      ...(hint ? { argumentHint: hint } : {}),
+      // Under `_meta` for the reason the session's model is: `SkillCustomization`
+      // declares `description` and the two `disable*` flags and nothing else,
+      // so an argument hint sent beside them is this host's own extension.
+      ...(hint ? { _meta: { argumentHint: hint } } : {}),
     });
   }
 
@@ -1365,8 +1368,20 @@ export function createSession(options: SessionOptions): Session {
         schema: options.schema?.() ?? { type: 'object', properties: {} },
         values: { ...settings, ...(chosen ? { model: chosen } : {}) },
       },
+      /*
+       * The model this session is on, under `_meta` because the protocol has
+       * no field for it.
+       *
+       * `SessionState` declares none: `UsageInfo.model` says what some past
+       * turn ran on and `ModelSelection` says what a client asked for, and
+       * neither answers "what is this session on now" before a turn exists.
+       * `_meta` is the protocol's own escape hatch, and a client reading
+       * `_meta.model` knows it is reading an extension - where a bare `model`
+       * beside `title` and `provider` reads like a declared field, which is a
+       * mistake somebody has already made with this one.
+       */
       ...(chosen ?? str(bag(handshake).model)
-        ? { model: (chosen ?? str(bag(handshake).model)) as string }
+        ? { _meta: { model: (chosen ?? str(bag(handshake).model)) as string } }
         : {}),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.

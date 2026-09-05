@@ -1523,6 +1523,31 @@ describe('choosing a model', () => {
     expect(chat.activeTurn.message.model?.id).toBe('haiku');
   });
 
+  it('puts the session\'s current model under _meta, where an extension belongs', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
+      },
+    });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { model?: string; _meta?: { model?: string } } };
+    }).snapshot.state;
+    /*
+     * `SessionState` declares no `model`.
+     *
+     * It is the only place either implementation says what a session is on as
+     * opposed to what a past turn used, and it is worth sending - but a bare
+     * field beside the declared ones reads like one the specification forgot,
+     * which is a mistake somebody has already made with this exact field.
+     */
+    expect(state._meta?.model).toBe('haiku');
+    expect(state.model).toBeUndefined();
+  });
+
   it('resolves the default alias at the CLI, not here', async () => {
     const { client, uri } = await running();
     client.handle({
