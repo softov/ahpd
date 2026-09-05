@@ -4237,6 +4237,93 @@ describe('the fields a client reads by name', () => {
       .toBe(Status.Idle | Status.IsRead);
   });
 
+  it('holds a draft typed into a session nothing is running for', async () => {
+    sdk.sessions.push({ sessionId: 'typed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chat = 'ahp-chat://default/Y2xhdWRlOi90eXBlZA';
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+
+    const draft = { text: '/', origin: { kind: 'user' } };
+    client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft } } });
+    await settle();
+
+    /*
+     * Taken, not refused, and no agent started for it.
+     *
+     * A client applies a draft before sending it, so a refusal is a composer
+     * that empties itself as somebody types into it - which is what a slash
+     * menu opening and closing again actually is. Starting a CLI instead
+     * would be a session opened because a key was pressed.
+     */
+    const said = actions(p, chat).map((one) => one.action);
+    expect(said.some((one) => one.type === 'chat/draftChanged' && one.draft === undefined)).toBe(false);
+    expect(said.find((one) => one.type === 'chat/draftChanged')?.draft).toEqual(draft);
+    expect(p.notes.map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one) => typeof one === 'string')).toEqual([]);
+    expect(sessionQueries()).toHaveLength(0);
+
+    // And a client arriving afterwards is told, which is the whole reason a
+    // draft is on the wire rather than kept in the composer that typed it.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+      snapshot: { state: { draft?: { text?: string } } };
+    }).snapshot.state;
+    expect(state.draft?.text).toBe('/');
+  });
+
+  it('hands the draft to the session when one is finally started', async () => {
+    sdk.sessions.push({ sessionId: 'carried', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript = [];
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chat = 'ahp-chat://default/Y2xhdWRlOi9jYXJyaWVk';
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'half a th', origin: { kind: 'user' } } } },
+    });
+    await settle();
+
+    // The turn is what starts the agent, and the draft was typed into this
+    // conversation before there was one. A session that lost it on the way to
+    // starting would be one that ate what was in the composer.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on then' } } },
+    });
+    await settle();
+    expect(sessionQueries().length).toBeGreaterThan(0);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+      snapshot: { state: { draft?: { text?: string } } };
+    }).snapshot.state;
+    expect(state.draft?.text).toBe('half a th');
+  });
+
+  it('will not hold a draft for a chat naming a session it has never heard of', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: 'ahp-chat://default/Y2xhdWRlOi9ub2JvZHk',
+        action: { type: 'chat/draftChanged', draft: { text: 'x', origin: { kind: 'user' } } },
+      },
+    });
+    await settle();
+    // A chat URI is a client's to spell, so a draft kept for every one that
+    // arrived would be a map that only grows.
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused.some((one) => one.includes('not a session this host knows'))).toBe(true);
+  });
+
   it('advertises automations only where there are any', async () => {
     const { memoryAutomations } = await import('../src/automations.js');
     const without = await open().handle(hello(['0.9.0'])) as Record<string, unknown>;

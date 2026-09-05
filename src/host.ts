@@ -890,6 +890,20 @@ export function createHost(options: HostOptions): Host {
    */
   const sessionFor = (channel: string): string => heldAs(sessionOfChat(channel) ?? channel);
 
+  /**
+   * What somebody is part-way through typing in a chat with nothing running.
+   *
+   * A live chat holds its own draft, because two people on one session are
+   * meant to see each other's. A session browsed out of the catalogue has no
+   * process to hold one - and typing into it is exactly what somebody does
+   * first, before there is any reason to start an agent. Refusing it made the
+   * client revert the character it had already drawn, which is a composer that
+   * empties itself as it is typed into.
+   *
+   * Kept here until the session is started, and handed to the chat when it is.
+   */
+  const drafts = new Map<string, Bag>();
+
   const chatOf = (uri: string): string => {
     if (byChat.has(uri)) return uri;
     const session = sessionOfChat(uri);
@@ -1967,6 +1981,18 @@ export function createHost(options: HostOptions): Host {
     // other answer about it uses that same string.
     names.set(idOf(uri), uri);
     byChat.set(chatUri, { uri, chat: session });
+    /*
+     * The draft somebody left on this chat before it was running.
+     *
+     * Handed over rather than dropped: it was typed into this conversation,
+     * and a session that loses it on the way to starting is one that ate what
+     * was in the composer.
+     */
+    const typed = drafts.get(chatUri);
+    if (typed !== undefined) {
+      drafts.delete(chatUri);
+      session.setDraft(typed);
+    }
     owners.set(uri, agent);
     return session;
   };
@@ -3043,6 +3069,10 @@ export function createHost(options: HostOptions): Host {
             ...startedBy(nameOf(id)),
             ...tail(turns),
             queuedMessages: [],
+            // Held here rather than by a chat, because there is no chat. A
+            // client that typed into this row and came back finds what it
+            // typed, which is what a draft is for.
+            ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
           },
           fromSeq: serverSeq,
         });
@@ -4456,6 +4486,7 @@ export function createHost(options: HostOptions): Host {
           }
           found.chat.close();
           byChat.delete(chatUri);
+          drafts.delete(chatUri);
           held?.chats.delete(chatUri);
           if (held && held.defaultChat === chatUri) {
             held.defaultChat = [...held.chats.keys()][0] as string;
@@ -4473,6 +4504,7 @@ export function createHost(options: HostOptions): Host {
           for (const [chatUri, chat] of held.chats) {
             chat.close();
             byChat.delete(chatUri);
+            drafts.delete(chatUri);
           }
           /*
            * And the shells the session was holding.
@@ -5054,6 +5086,36 @@ export function createHost(options: HostOptions): Host {
           return;
         }
         const session = held;
+        /*
+         * A draft in a session this host is not running.
+         *
+         * The one client action worth taking without starting anything: it
+         * moves no conversation, costs a map entry, and starting a CLI
+         * because somebody typed a character would be a session opened by
+         * accident. Everything else still needs a session, and says so.
+         *
+         * Checked against the catalogue rather than taken on trust, the way
+         * `chat/turnStarted` is - a chat URI is a client's to spell, and a
+         * draft held for a session nobody has is a map that only grows.
+         */
+        if (!session && type === 'chat/draftChanged') {
+          const id = idOf(sessionFor(channel));
+          void (async () => {
+            if (!(await past(id))) {
+              refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
+              return;
+            }
+            const next = typeof action.draft === 'object' && action.draft !== null
+              ? action.draft as Bag
+              : undefined;
+            if (next === undefined) drafts.delete(channel);
+            else drafts.set(channel, next);
+            // Echoed, because the point of a draft being on the wire at all is
+            // that the other clients watching this chat see it.
+            dispatch(channel, action, origin);
+          })();
+          return;
+        }
         if (!session) {
           // With its keys, because the useful half of this line is what was
           // in the action nobody read - a type alone says only that a client
