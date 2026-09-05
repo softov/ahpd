@@ -181,6 +181,49 @@ describe('a session with a working tree of its own', () => {
     expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
   });
 
+  it('puts a client\'s own prefix in front of the branch it makes', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/prefixed';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeBranchPrefix: 'softov/' },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    // `agents/` is the built-in prefix and the client's goes in front of it,
+    // so the branch sorts where the person's other tools expect it to.
+    const on = execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
+    expect(on).toBe(`softov/agents/${'prefixed'.slice(0, 8)}`);
+  });
+
+  it('continues the chosen branch when asked not to make one', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/continued';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'release', worktreeCreateNewBranch: 'false' },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    // Isolated in a directory of its own, and on the branch that was picked
+    // rather than one made for it.
+    expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+    const on = execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
+    expect(on).toBe('release');
+  });
+
   it('leaves the folder alone when nobody asked for a worktree', async () => {
     const root = repository();
     const { client } = await joined(root);

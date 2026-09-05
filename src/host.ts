@@ -681,7 +681,7 @@ export function createHost(options: HostOptions): Host {
    * theirs, and removing it because a session ended would be this daemon
    * deleting a project.
    */
-  const worktrees = new Map<string, { repository: string; path: string }>();
+  const worktrees = new Map<string, { repository: string; path: string; branch?: string }>();
 
   /**
    * The config keys this host answered for a session, by session URI.
@@ -1675,6 +1675,9 @@ export function createHost(options: HostOptions): Host {
         isolation: 'folder',
         ...(base !== undefined ? { branch: base } : {}),
         worktreeIncludeFiles: '',
+        worktreeBranchPrefix: '',
+        worktreeCreateNewBranch: 'true',
+        worktreeBranchTrack: 'false',
       },
       schema: {
         properties: {
@@ -1722,6 +1725,43 @@ export function createHost(options: HostOptions): Host {
             title: 'Files to bring along',
             description: 'Comma-separated patterns for git-ignored files to copy into the worktree, such as .env',
             default: '',
+            sessionMutable: false,
+          },
+          /*
+           * Three a client seeds rather than a person picks.
+           *
+           * `readOnly` in the reference too: they carry a preference the
+           * client already holds - somebody's `git.branchPrefix`, and how they
+           * want a branch made - rather than a question to put in front of
+           * them. Declared so the value rides in the config bag at all; a key
+           * a host does not advertise is one a client has no reason to send.
+           */
+          worktreeBranchPrefix: {
+            type: 'string',
+            title: 'Branch prefix',
+            description: 'Prepended to the branch created for the worktree.',
+            default: '',
+            readOnly: true,
+            sessionMutable: false,
+          },
+          worktreeCreateNewBranch: {
+            type: 'string',
+            title: 'Create a branch',
+            description: 'Make a branch for the worktree, or check out the chosen one as it is.',
+            enum: ['true', 'false'],
+            enumLabels: ['Create one', 'Continue the chosen branch'],
+            default: 'true',
+            readOnly: true,
+            sessionMutable: false,
+          },
+          worktreeBranchTrack: {
+            type: 'string',
+            title: 'Track upstream',
+            description: 'Whether the created branch tracks the upstream of the one it started from.',
+            enum: ['true', 'false'],
+            enumLabels: ['Track it', 'Leave it untracked'],
+            default: 'false',
+            readOnly: true,
             sessionMutable: false,
           },
         },
@@ -1799,7 +1839,10 @@ export function createHost(options: HostOptions): Host {
   );
 
   /** The host's own keys, which a backend has never heard of. */
-  const HOSTS_OWN = ['isolation', 'branch', 'worktreeIncludeFiles'];
+  const HOSTS_OWN = [
+    'isolation', 'branch', 'worktreeIncludeFiles',
+    'worktreeBranchPrefix', 'worktreeCreateNewBranch', 'worktreeBranchTrack',
+  ];
 
   /** What the backend is given: everything except what this host answered. */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
@@ -1820,8 +1863,22 @@ export function createHost(options: HostOptions): Host {
     if (repository === undefined) {
       throw new RpcError(-32602, `${where} is not a git repository, so it has no worktrees`);
     }
-    const branch = `agents/${idOf(uri).slice(0, 8)}`;
-    const path = join(worktreesOf(repository), worktreeFor(branch));
+    const said = (key: string): string => (typeof config[key] === 'string' ? config[key] : '');
+    /*
+     * The branch this session runs on, and whether there is a new one at all.
+     *
+     * `agents/` is the built-in prefix the reference uses too, and a client's
+     * own goes in front of it: somebody whose `git.branchPrefix` is `softov/`
+     * gets `softov/agents/1a2b3c4d`, which is what their other tools already
+     * sort and filter by. `worktreeCreateNewBranch: 'false'` means there is no
+     * new branch - the session continues the one that was chosen.
+     */
+    const making = said('worktreeCreateNewBranch') !== 'false';
+    const branch = making
+      ? `${said('worktreeBranchPrefix')}agents/${idOf(uri).slice(0, 8)}`
+      : undefined;
+    const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
+    const path = join(worktreesOf(repository), worktreeFor(branch ?? base));
     /*
      * Inside somewhere this host serves, or not at all.
      *
@@ -1844,13 +1901,17 @@ export function createHost(options: HostOptions): Host {
     const include = patterns.split(',').map((one) => one.trim()).filter((one) => one !== '');
     await port.create({
       repository,
-      base: typeof config.branch === 'string' ? config.branch : 'HEAD',
-      branch,
+      base,
+      ...(branch !== undefined ? { branch } : {}),
+      ...(said('worktreeBranchTrack') === 'true' ? { track: true } : {}),
       path,
       ...(include.length > 0 ? { include } : {}),
     });
-    worktrees.set(uri, { repository, path });
-    log(`made ${path} on ${branch} for ${uri}`);
+    // The branch is remembered rather than derived from the directory later:
+    // a prefix a client asked for changes the name, and guessing it wrong at
+    // removal time either deletes nothing or names somebody else's.
+    worktrees.set(uri, { repository, path, ...(branch !== undefined ? { branch } : {}) });
+    log(`made ${path} on ${branch ?? base} for ${uri}`);
     return path;
   };
 
@@ -3519,7 +3580,7 @@ export function createHost(options: HostOptions): Host {
                 log(`kept ${tree.path}: it has changes nobody committed`);
                 return;
               }
-              await port?.remove(tree.repository, tree.path)
+              await port?.remove(tree.repository, tree.path, tree.branch)
                 .then(() => { log(`removed ${tree.path}`); })
                 .catch((error: unknown) => {
                   log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);

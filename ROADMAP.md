@@ -61,16 +61,6 @@ Two sweeps, because neither finds what the other does.
 
 [docs/AHP.md](docs/AHP.md) is the maintained table of what is served, feature by feature. This file does not repeat it: what is here are the judgements, which a table cannot hold.
 
-## A-01-16 — Three worktree keys a client seeds and this host does not take
-
-A-01-10 shipped with `isolation`, `branch` and `worktreeIncludeFiles`, and the half of this entry that was worth more is now closed too: a session created with `isolation: 'worktree'` reports it back on its own channel, read-only, beside the backend's settings — so a client can draw "isolated, on `agents/1a2b3c4d`" rather than inferring it from the path.
-
-What is left are three the reference client declares and this host does not advertise: `worktreeBranchPrefix` (a prefix the client forwards from the person's `git.branchPrefix`), `worktreeBranchTrack` (whether the new branch tracks its upstream) and `worktreeCreateNewBranch` (check out the chosen branch instead of making one). All three are `readOnly` in the reference and seeded by the client rather than picked, so their absence costs a preference and not a capability — and the last of them is the only one that changes behaviour, since this host always makes a branch.
-
-**What it costs today.** A person whose `git.branchPrefix` is `softov/` gets `agents/1a2b3c4d` rather than `softov/agents/1a2b3c4d`, and somebody who wanted the session to *continue* an existing branch cannot ask for it. Neither is a session that fails; both are a session that did something slightly other than what the person had configured elsewhere.
-
-**Suggestions.** (1) Take `worktreeCreateNewBranch` alone, since it is the one with behaviour behind it, and leave the two cosmetic ones until somebody notices. (2) Take all three, which is the same merge and the same strip as the first cut. (3) Leave them: a branch name is a name, and the daemon's is at least predictable.
-
 ## A-02-07 — A config value that is not a string still has nowhere to be read
 
 A-01-12 shipped, and closing it moved the whole session-config path from `Record<string, string>` to `Record<string, unknown>` — because `permissions` is an object and the protocol declares the bag `Record<string, unknown>`, so nothing of that shape could be carried at all. That widening is done through the port and the host. What it exposed is that *reading* a config value is still assumed to be reading a string in places nothing has needed yet.

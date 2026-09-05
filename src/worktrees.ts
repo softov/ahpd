@@ -79,16 +79,24 @@ export function gitWorktrees(): Worktrees {
     create: async (worktree: Worktree) => {
       await mkdir(dirname(worktree.path), { recursive: true });
       /*
-       * `--no-track`, because the new branch is this session's own.
+       * A new branch, or the one that was chosen.
        *
-       * Tracking would make it push to the base branch's upstream by default,
-       * so a `git push` inside a worktree session would go at the branch it
-       * was started *from*. That is the one mistake in here that reaches a
-       * shared repository.
+       * `--no-track` unless asked, because the new branch is this session's
+       * own: tracking would make it push to the base branch's upstream by
+       * default, so a `git push` inside a worktree session would go at the
+       * branch it was started *from*. That is the one mistake in here that
+       * reaches a shared repository.
+       *
+       * No branch at all is `worktreeCreateNewBranch: false` - the session
+       * continues `base` rather than starting something. Git refuses a second
+       * worktree on a branch already checked out, and that refusal is right.
        */
-      await git(worktree.repository, [
-        'worktree', 'add', '--no-track', '-b', worktree.branch, worktree.path, worktree.base,
-      ]);
+      await git(worktree.repository, worktree.branch === undefined
+        ? ['worktree', 'add', worktree.path, worktree.base]
+        : [
+          'worktree', 'add', worktree.track === true ? '--track' : '--no-track',
+          '-b', worktree.branch, worktree.path, worktree.base,
+        ]);
       for (const pattern of worktree.include ?? []) {
         // Best effort, one pattern at a time: a `.env` that is not there is
         // the ordinary case, and a session that refused to start over a
@@ -105,13 +113,18 @@ export function gitWorktrees(): Worktrees {
       return said.trim() !== '';
     },
 
-    remove: async (repository, path) => {
+    remove: async (repository, path, branch) => {
       await git(repository, ['worktree', 'remove', path]);
-      // The branch too, and only if it merged: `-d` refuses to delete one
-      // carrying commits nothing else has, which is the same judgement the
-      // dirty check makes about uncommitted work.
-      const branch = `agents/${worktreeFor(basename(path))}`;
-      await git(repository, ['branch', '-d', branch]).catch(() => undefined);
+      /*
+       * The branch too, and only the one this host made.
+       *
+       * Named by the caller rather than derived from the directory: a branch
+       * prefix a client asked for changes the name, and guessing it wrong
+       * either deletes nothing or - far worse - names somebody else's. `-d`
+       * refuses to delete a branch carrying commits nothing else has, which
+       * is the same judgement the dirty check makes about uncommitted work.
+       */
+      if (branch !== undefined) await git(repository, ['branch', '-d', branch]).catch(() => undefined);
     },
   };
 }

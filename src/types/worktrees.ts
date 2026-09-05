@@ -6,8 +6,25 @@ export interface Worktree {
   repository: string;
   /** The branch to start from. */
   base: string;
-  /** The branch to create and check out. */
-  branch: string;
+  /**
+   * The branch to create and check out, or nothing to check out `base` itself.
+   *
+   * Absent is what `worktreeCreateNewBranch: false` means: the session
+   * continues an existing branch rather than starting one. Git refuses a
+   * second worktree on a branch already checked out somewhere, which is the
+   * right refusal - two sessions on one branch is the collision worktrees
+   * exist to prevent.
+   */
+  branch?: string;
+  /**
+   * Whether the created branch tracks the upstream of the one it started from.
+   *
+   * Off unless asked. A tracking branch pushes at its upstream by default, so
+   * a `git push` inside a session's worktree would go at the branch it was
+   * started *from* - which is the one mistake in here that reaches a shared
+   * repository.
+   */
+  track?: boolean;
   /** Where to put it. */
   path: string;
   /**
@@ -70,5 +87,5 @@ export interface Worktrees {
    * Only ever called for a worktree this host made and only when `dirty`
    * answered no.
    */
-  remove(repository: string, path: string): Promise<void>;
+  remove(repository: string, path: string, branch?: string): Promise<void>;
 }
