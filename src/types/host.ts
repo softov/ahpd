@@ -243,6 +243,15 @@ export interface ToolCall {
   sessions(): { uri: string; provider: string; title: string; workingDirectories: string[] }[];
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
+  /**
+   * Read a resource this host serves, as text.
+   *
+   * Including one it does not have: a URI a connected client published is
+   * fetched from that client, which is the only way an agent reaches a
+   * plugin's virtual files or an editor's unsaved buffers. Rejects when
+   * nothing serves it, in the words of whatever refused.
+   */
+  read(uri: string): Promise<string>;
 }
 
 /** One connected client and what it is watching. */
@@ -293,6 +302,55 @@ export interface Connection {
   aliases: Map<string, string>;
 }
 
+/**
+ * The clients connected to this host, as places a resource can come from.
+ *
+ * The protocol is symmetrical about `resource*`: the ten methods a client
+ * calls on a host are the ten a host may call on a client, with the same
+ * params and the same results, and the receiver decides whether to allow the
+ * operation whichever way round it went. What that is *for* is a client that
+ * publishes something the host has no way to reach - a plugin's virtual
+ * files, an editor's unsaved buffers, a filesystem provider - and addresses
+ * it as `<scheme>://<clientId>/…`.
+ *
+ * So this is not a port handed in: it is built out of the connections a host
+ * already has, and a URI naming one of them is answered by that client rather
+ * than by the host's own filesystem.
+ */
+export interface Clients {
+  /** Every client currently connected, by the id it gave at `initialize`. */
+  ids(): string[];
+  /**
+   * The client a URI belongs to, if a connected one publishes it.
+   *
+   * `<scheme>://<clientId>/…`, which is how the reference host addresses one.
+   * `file:` is never a client's, and neither is any `ahp-` channel scheme -
+   * those are this protocol's own and their authority is not a client id.
+   */
+  owner(uri: string): string | undefined;
+
+  /** Read a file the client serves. */
+  read(client: string, uri: string, encoding?: string): Promise<unknown>;
+  /** List a directory the client serves. */
+  list(client: string, uri: string): Promise<unknown>;
+  /** Ask the client what a URI actually is. */
+  resolve(client: string, uri: string): Promise<unknown>;
+  /** Write a file the client serves. */
+  write(client: string, uri: string, content: { data: string; encoding?: string; create?: boolean; overwrite?: boolean }): Promise<unknown>;
+  /** Remove one. */
+  remove(client: string, uri: string, recursive?: boolean): Promise<unknown>;
+  /** Move one. Both URIs must be the same client's. */
+  move(client: string, source: string, destination: string, failIfExists?: boolean): Promise<unknown>;
+  /** Copy one. Both URIs must be the same client's. */
+  copy(client: string, source: string, destination: string, failIfExists?: boolean): Promise<unknown>;
+  /** Make a directory. */
+  mkdir(client: string, uri: string): Promise<unknown>;
+  /** Ask to watch one, and get back the channel the client will report on. */
+  watch(client: string, uri: string, options?: Record<string, unknown>): Promise<unknown>;
+  /** Ask the client for access to one of its resources. */
+  request(client: string, uri: string, access: { read?: boolean; write?: boolean }): Promise<unknown>;
+}
+
 /** A protocol server. One host serves many connections. */
 export interface Host {
   /**
@@ -309,6 +367,13 @@ export interface Host {
   };
   /** How many clients are currently connected. */
   connections(): number;
+  /**
+   * The connected clients, as places a resource can come from.
+   *
+   * Used by this host to answer a `resource*` command naming a URI a client
+   * published, and exposed so an embedder can read one directly.
+   */
+  clients: Clients;
   /**
    * Replace the tools this host contributes.
    *

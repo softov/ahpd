@@ -35,6 +35,17 @@ export const hostTools = (): HostTool[] => [
   },
   {
     definition: {
+      name: 'ahp_resource',
+      title: 'Read a resource this host serves',
+      description: 'Read a resource by URI, including one a connected client publishes and this machine has no copy of '
+        + '- a plugin\u2019s virtual files, an editor\u2019s unsaved buffers. Addressed as <scheme>://<client>/<path>.',
+      inputSchema: { type: 'object', properties: { uri: { type: 'string' } }, required: ['uri'] },
+      annotations: { title: 'Read a resource this host serves', readOnlyHint: true },
+    },
+    run: async (input, at) => await at.read(String(input.uri ?? '')),
+  },
+  {
+    definition: {
       name: 'ahp_terminals',
       title: 'Terminals on this host',
       description: 'The terminals this host has open, with what each is running and where. '

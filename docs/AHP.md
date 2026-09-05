@@ -51,6 +51,29 @@ specification: nothing here is listed because AHP defines it.
 | `invokeChangesetOperation` | acting on a changeset | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate |
 | `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns` | automations | 🧩 | The `automations` port. A host given none advertises no `ahp-automations://` channel and answers `-32601` |
 
+## Server-to-client commands
+
+**10 of the 10 declared.** `ServerCommandMap` carries the same ten `resource*`
+entries `CommandMap` does, with the same params and the same results: the
+family is symmetrical, and the receiver decides whether to allow an operation
+whichever peer asked for it. What it is *for* is a resource this host cannot
+reach - a plugin's virtual files, an editor's unsaved buffers, a filesystem
+provider - published by a client and addressed as `<scheme>://<clientId>/…`.
+
+Routing is the authority part of the URI: a `resource*` request naming a
+connected client's id is forwarded to that client and its answer comes back
+verbatim, refusals included. `file:` is never a client's, and neither is any
+`ahp-` scheme, whose authority is part of a channel name. `resourceMove` and
+`resourceCopy` are refused `-32602` across two different clients, because
+neither peer could carry that out. `createResourceWatch` is forwarded and the
+channel the owner mints is relayed: that client - and only that client - may
+dispatch `resourceWatch/changed` onto it, and this host passes it to whoever
+subscribed.
+
+`host.clients` is the same ten as named methods, so an embedder can read a
+client directly, and `ahp_resource` (see [state actions](#state-actions),
+`serverTools`) is how a session's agent reaches one.
+
 ## Server notifications
 
 **8 of the 8 declared.**

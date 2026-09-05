@@ -30,7 +30,7 @@ import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetState } from './types/changes.js';
-import type { Connection, Host, HostOptions, HostTool } from './types/host.js';
+import type { Clients, Connection, Host, HostOptions, HostTool } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -215,6 +215,140 @@ export function createHost(options: HostOptions): Host {
   if (!first)
     throw new Error('A host with no agents can serve nothing. Pass at least one.');
   const connections = new Set<Connection>();
+  /**
+   * The ten `resource*` methods, which run in both directions.
+   *
+   * `CommandMap` and `ServerCommandMap` carry the same ten entries with the
+   * same params and the same results, so a request naming a URI a client
+   * published is the same request sent back the other way.
+   */
+  const REVERSE = new Set([
+    'resourceRead', 'resourceWrite', 'resourceList', 'resourceCopy', 'resourceDelete',
+    'resourceMove', 'resourceResolve', 'resourceMkdir', 'resourceRequest', 'createResourceWatch',
+  ]);
+  /**
+   * Which client published a URI, if a connected one did.
+   *
+   * `<scheme>://<clientId>/…` is how the reference host addresses a
+   * client-served resource, and reading the authority is the whole of the
+   * routing. `file:` is never one - it is this machine's, and this host has a
+   * filesystem for it - and neither is an `ahp-` channel, whose authority is
+   * part of a channel name and not a client id.
+   */
+  const ownerOf = (uri: string): Connection | undefined => {
+    const found = /^([a-zA-Z][\w+.-]*):\/\/([^/]+)/.exec(uri);
+    const scheme = found?.[1];
+    const who = found?.[2];
+    if (scheme === undefined || who === undefined || scheme === 'file' || scheme.startsWith('ahp-')) return undefined;
+    return [...connections].find((one) => one.clientId === who);
+  };
+  /** Ask one client one of the ten, in its own words. */
+  const ask = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
+    const held = [...connections].find((one) => one.clientId === client);
+    if (held === undefined) throw new RpcError(-32008, `${client} is not a client this host has seen`);
+    return await held.peer.request(method, { channel: ROOT, ...params });
+  };
+  /**
+   * The connected clients, as places a resource can come from.
+   *
+   * Ten named methods over one `peer.request`, so a caller writes what it
+   * means rather than a method name and a bag - and so the params each takes
+   * are checked here rather than at the other end.
+   */
+  const clients: Clients = {
+    ids: () => [...connections].map((one) => one.clientId).filter((one) => one !== ''),
+    owner: (uri) => ownerOf(uri)?.clientId,
+    read: async (client, uri, encoding) => await ask(client, 'resourceRead', {
+      uri, ...(encoding !== undefined ? { encoding } : {}),
+    }),
+    list: async (client, uri) => await ask(client, 'resourceList', { uri }),
+    resolve: async (client, uri) => await ask(client, 'resourceResolve', { uri }),
+    write: async (client, uri, content) => await ask(client, 'resourceWrite', { uri, ...content }),
+    remove: async (client, uri, recursive) => await ask(client, 'resourceDelete', {
+      uri, ...(recursive !== undefined ? { recursive } : {}),
+    }),
+    move: async (client, source, destination, failIfExists) => await ask(client, 'resourceMove', {
+      source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
+    }),
+    copy: async (client, source, destination, failIfExists) => await ask(client, 'resourceCopy', {
+      source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
+    }),
+    mkdir: async (client, uri) => await ask(client, 'resourceMkdir', { uri }),
+    watch: async (client, uri, watching) => await ask(client, 'createResourceWatch', { uri, ...watching }),
+    request: async (client, uri, access) => await ask(client, 'resourceRequest', { uri, ...access }),
+  };
+  /**
+   * A watch channel a client minted, and the client that minted it.
+   *
+   * `createResourceWatch` on a URI another client publishes is answered by
+   * that client, and what comes back is a channel *it* will report changes
+   * on. So the channel is remembered here: its owner is allowed to dispatch
+   * `resourceWatch/changed` onto it, which this host then relays to whoever
+   * subscribed - and nobody else is, because a change to somebody else's
+   * files is not a thing a third client may claim happened.
+   */
+  const relayed = new Map<string, { owner: Connection; state: Record<string, unknown> }>();
+  /**
+   * One `resource*` request, answered by the client that published its URI.
+   *
+   * `undefined` means nobody else's: the URI is this machine's, or the client
+   * that published it has hung up - and then the host's own handler answers as
+   * it always did. Wrapped in an object so an owner answering `undefined` is
+   * still an answer.
+   *
+   * Called only for the ten, and only from there: every other request must
+   * reach its handler in the same turn of the event loop it arrived in, and
+   * an `await` here would put a microtask between the two - which is enough
+   * to lose an action dispatched while a `subscribe` is in flight.
+   */
+  const elsewhere = async (
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<{ result: unknown } | undefined> => {
+    const uri = String(params.uri ?? params.source ?? '');
+    const owner = ownerOf(uri);
+    if (owner === undefined) return undefined;
+    /*
+     * Both ends of a move or a copy, or neither.
+     *
+     * The two methods that name two URIs are the two that could ask one
+     * client to write into another's files, and neither peer could carry
+     * that out: the owner of the source cannot reach the destination. Said
+     * rather than half-done.
+     */
+    const to = params.destination === undefined ? undefined : ownerOf(String(params.destination));
+    if (params.destination !== undefined && to?.clientId !== owner.clientId) {
+      throw new RpcError(-32602, `${uri} and ${String(params.destination)} are not the same client's`);
+    }
+    const answer = await owner.peer.request(method, params);
+    /*
+     * A watch the owner minted, remembered so its reports can be relayed.
+     *
+     * The asking client subscribes to the channel that comes back, and the
+     * owner dispatches `resourceWatch/changed` onto it - which this host
+     * would otherwise refuse, because that action is a host's to say.
+     */
+    if (method === 'createResourceWatch') {
+      const channel = String((answer as { channel?: unknown } | undefined)?.channel ?? '');
+      // The same `ResourceWatchState` a watch of this host's own reports: what
+      // the watch *is*, which is the params it was made with. The owner keeps
+      // no state this host could ask for, and the protocol's reducer keeps no
+      // history - a client arriving later has missed what it was not there for.
+      if (channel !== '') {
+        relayed.set(channel, {
+          owner,
+          state: {
+            root: uri,
+            recursive: params.recursive === true,
+            ...(params.excludes !== undefined ? { excludes: params.excludes } : {}),
+            ...(params.includes !== undefined ? { includes: params.includes } : {}),
+          },
+        });
+      }
+    }
+    log(`${owner.clientId} answered ${method} for ${uri}`);
+    return { result: answer };
+  };
   /**
    * The watches clients have asked for, by the channel each was given.
    *
@@ -2491,6 +2625,19 @@ export function createHost(options: HostOptions): Host {
         cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
         running: held.exitCode() === undefined,
       })),
+      read: async (asked) => {
+        // The client that published it, if one did - that is the only thing
+        // that can read it - and this host's own store otherwise.
+        const owner = ownerOf(asked);
+        const answer = owner === undefined
+          ? await need(options.resources, 'resourceRead').read(asked, browsable())
+          : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
+        const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
+          data?: unknown; encoding?: unknown;
+        };
+        const data = String(held.data ?? '');
+        return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
+      },
     }),
   }));
 
@@ -2676,6 +2823,15 @@ export function createHost(options: HostOptions): Host {
       if (sessions.has(heldAs(owning)) || (await past(idOf(owning))) !== undefined)
         return value({ resource: channel, state: marksOf(idOf(owning)), fromSeq: serverSeq });
     }
+    /*
+     * A watch another client is keeping, which this host only relays.
+     *
+     * Its state is the params it was made with, the same as one of this
+     * host's own - and a snapshot has to be served here or the client that
+     * asked for the watch cannot subscribe to what it was given.
+     */
+    const away = relayed.get(channel);
+    if (away) return value({ resource: channel, state: away.state, fromSeq: serverSeq });
     const watching = watches.get(channel);
     if (watching) {
       // The state is what the watch *is*, not what it has seen. The protocol's
@@ -2979,6 +3135,7 @@ export function createHost(options: HostOptions): Host {
   });
 
   return {
+    clients,
     /*
      * Replaced whole, and every running session told.
      *
@@ -4438,6 +4595,21 @@ export function createHost(options: HostOptions): Host {
          * action this host has not got round to serving - and told apart only
          * here, because both used to fall into the one default.
          */
+        /*
+         * A watch this client itself keeps, whose reports this host relays.
+         *
+         * `resourceWatch/changed` is a host's to say - except on a watch over
+         * a client's own resources, where that client is the only thing that
+         * can see the files move: it was asked for the watch through
+         * `createResourceWatch` and answered with the channel. Passed
+         * straight through to whoever subscribed, and refused from anybody
+         * else by the check below - a change to somebody else's files is not
+         * a thing a third client may claim happened.
+         */
+        if (relayed.get(channel)?.owner === connection) {
+          dispatch(channel, action, origin);
+          return;
+        }
         if (dispatchable[type] === false) {
           no(`${type} is this host's to say, not a client's`);
           return;
@@ -5317,11 +5489,28 @@ export function createHost(options: HostOptions): Host {
           if (handshook && request.method === 'initialize') {
             throw new RpcError(METHOD_NOT_FOUND, `${connection.clientId || 'This client'} has already initialized`);
           }
+          /*
+           * A URI another client published is that client's to answer.
+           *
+           * Before the handler, because the handler is this host's
+           * filesystem and the resource is not on it. What goes back is
+           * whatever the owning client said, verbatim - including its
+           * refusal, which is the owner's to make.
+           */
+          if (REVERSE.has(request.method)) {
+            const away = await elsewhere(request.method, request.params ?? {});
+            if (away !== undefined) return away.result;
+          }
           return handler(request.params);
         },
         close() {
           const was = [...connection.watching];
           connections.delete(connection);
+          // And the watches it was keeping for other clients: the channel was
+          // its to report on, and with it gone nothing ever will again.
+          for (const [channel, away] of [...relayed]) {
+            if (away.owner === connection) relayed.delete(channel);
+          }
           // Before anything else looks: a watch this client owned and never
           // subscribed to has nobody left to subscribe to it.
           for (const channel of [...watches.keys()]) releaseWatch(channel);

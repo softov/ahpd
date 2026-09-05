@@ -9,7 +9,7 @@ Counted against `@microsoft/agent-host-protocol` **0.9.0**.
 
 ---
 
-## 1. Reverse commands — 0 of 10 routed
+## 1. Reverse commands — 10 of 10 routed
 
 `ServerCommandMap` declares ten methods a host may call *on* a client:
 `resourceRead`, `resourceWrite`, `resourceList`, `resourceCopy`,
@@ -17,13 +17,13 @@ Counted against `@microsoft/agent-host-protocol` **0.9.0**.
 `resourceRequest`, `createResourceWatch`. The transport exists — `Peer.request`
 correlates a question with its answer — and nothing is routed through it.
 
-- [ ] **1.1** A `Clients` port: `read`, `list`, `resolve`, `write`, `delete`,
+- [x] **1.1** A `Clients` port: `read`, `list`, `resolve`, `write`, `delete`,
   `move`, `copy`, `mkdir`, `watch`, `request`, each taking a client id and a URI
   and calling `connection.peer.request`.
-- [ ] **1.2** Route by the connection a URI arrived on. A client-served URI is
+- [x] **1.2** Route by the connection a URI arrived on. A client-served URI is
   tagged at intake with the id of the connection that sent it, the way the
   reference host encodes it as `<scheme>://<clientId>/…`.
-- [ ] **1.3** A `client:` scheme in `resources.ts` so an agent reading one of
+- [x] **1.3** A `client:` scheme in `resources.ts` so an agent reading one of
   these paths reaches the client that owns it.
 - [ ] **1.4** `ahpc` grows a `--serve <dir>` flag so there is a client that
   publishes a resource to read.

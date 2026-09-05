@@ -3694,7 +3694,7 @@ describe('tools the host contributes', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { serverTools?: { name: string }[] } };
     }).snapshot.state;
-    expect(state.serverTools?.map((one) => one.name)).toEqual(['ahp_sessions', 'ahp_terminals']);
+    expect(state.serverTools?.map((one) => one.name)).toEqual(['ahp_sessions', 'ahp_resource', 'ahp_terminals']);
 
     // A host given none contributes none, and the field is absent rather than
     // an empty list - which is the difference between "no tools" and "a host
@@ -3756,6 +3756,35 @@ describe('tools the host contributes', () => {
     // Full replacement: the action carries the new set, not the difference.
     expect(said[0]?.channel).toBe(uri);
     expect(said[0]?.action?.tools).toEqual([]);
+  });
+
+  it('reads what a client published, which is the only thing that can', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+    });
+    /*
+     * A second client, publishing something this machine has no copy of.
+     *
+     * `<scheme>://<clientId>/…` is how a client-served resource is addressed,
+     * and answering one is what the reverse `resource*` direction exists for:
+     * a plugin's virtual files, an editor's unsaved buffers. The agent inside
+     * a session cannot open any of it, so the host's own tool asks the client.
+     */
+    const publisher = peer();
+    publisher.request = async () => ({ data: 'ZG9uZQ==', encoding: 'base64' });
+    const other = served.accept(publisher);
+    await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.8.0'] } });
+
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reads', provider: 'claude' } });
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_resource')
+      ?.handler({ uri: 'virtual://plugin/notes.md' });
+    // Decoded, because a tool result is text and the model reads it.
+    expect(said?.content[0]?.text).toBe('done');
   });
 
   it('lists the terminals this host has open', async () => {
