@@ -4227,14 +4227,22 @@ export function createHost(options: HostOptions): Host {
              * message. Applied together and started once, because two keys in
              * one action are one decision.
              */
-            const ours = Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key));
+            const settled = decided.get(session.uri) ?? {};
+            const ours = Object.entries(config)
+              .filter(([key]) => HOSTS_OWN.includes(key))
+              // Only what actually differs. A client that sends its whole
+              // config bag back - the same `isolation` it was given - is
+              // agreeing with this host, and restarting a session to arrive
+              // where it already is would be a session that disposed and
+              // reopened itself for nothing.
+              .filter(([key, value]) => value !== settled[key]);
             if (ours.length > 0 && owning !== undefined) {
               const bad = ours.find(([, value]) => typeof value !== 'string');
               const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
               if (bad !== undefined) no(`${bad[0]} takes a string`);
               else if (started) no(`${ours[0]?.[0]} is fixed once the session has started`);
               else {
-                const mine = { ...(decided.get(session.uri) ?? {}) };
+                const mine = { ...settled };
                 for (const [key, value] of ours) mine[key] = value as string;
                 decided.set(session.uri, mine);
                 const uri = session.uri;

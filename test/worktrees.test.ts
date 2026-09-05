@@ -253,6 +253,36 @@ describe('a session with a working tree of its own', () => {
     expect(where).not.toBe(`file://${project(root)}`);
   });
 
+  it('does not start over for an answer it already has', async () => {
+    const root = repository();
+    const { client, peer: p } = await joined(root);
+    const uri = 'ahp-session:/agreeing';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'folder' },
+      },
+    });
+    // A client sending back the config it was given is agreeing, and a session
+    // that disposed and reopened itself to arrive where it already was would
+    // be churn a person watches happen.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'folder' } } },
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 60); });
+    const refused = p.notes
+      .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
+      .filter((reason): reason is string => typeof reason === 'string');
+    expect(refused).toEqual([]);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories?: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories?.[0]).toBe(`file://${project(root)}`);
+  });
+
   it('refuses to move one that has already been spoken in', async () => {
     const root = repository();
     const { client, peer: p } = await joined(root);
