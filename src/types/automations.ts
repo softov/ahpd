@@ -1,5 +1,7 @@
 /** Automations: a session started by a trigger rather than by a person. */
 
+import type { AutomationOperation, SessionOriginKind } from '@microsoft/agent-host-protocol';
+
 import type { Bag } from './common.js';
 
 /**
@@ -21,7 +23,7 @@ export interface Automation {
   /** More runs than were sent, if there are. */
   runsNextCursor?: string;
   /** Which of `update`, `remove`, `run` this store will accept for it now. */
-  operations: ('update' | 'remove' | 'run')[];
+  operations: `${AutomationOperation}`[];
   createdAt: string;
   modifiedAt: string;
 }
@@ -60,7 +62,7 @@ export interface StartSession {
    * nine with nobody at the keyboard is otherwise a row with no account of
    * itself, sitting among rows somebody typed.
    */
-  origin?: { kind: 'automation'; automation: string; run: string };
+  origin?: { kind: `${SessionOriginKind}`; automation: string; run: string };
 }
 
 /**

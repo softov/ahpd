@@ -1,5 +1,11 @@
 /** What a session changed, as the protocol's changeset channel carries it. */
 
+import type {
+  ChangesetOperationScope as Scope,
+  ChangesetOperationTargetKind as TargetKind,
+  ChangesetStatus,
+} from '@microsoft/agent-host-protocol';
+
 /** A pointer to content the state tree does not carry. */
 export interface ContentRef {
   uri: string;
@@ -31,13 +37,13 @@ export interface ChangesetState {
   /**
    * Where the computation is, in the protocol's own three words.
    *
-   * `ready` and not `complete`: `ChangesetStatus` declares `computing`,
-   * `ready` and `error`, and this port said `complete` for years - so every
-   * changeset this host has ever served carried a status word no client
-   * could recognise, and one reading it saw a changeset that never finished
-   * computing.
+   * Taken from `ChangesetStatus` rather than written out. This port said
+   * `computing | complete | error` for the life of the project and the
+   * protocol says `computing | ready | error`, so every changeset ever served
+   * carried a status word no client could recognise - and nothing caught it,
+   * because a hand-copied union is checked against nothing.
    */
-  status: 'computing' | 'ready' | 'error';
+  status: `${ChangesetStatus}`;
   files: ChangesetFile[];
 }
 
@@ -87,11 +93,11 @@ export interface ChangesetScope {
  * within one file. A source declares which it accepts and the host refuses an
  * invocation whose target is not among them.
  */
-export type ChangesetOperationScope = 'changeset' | 'resource' | 'range';
+export type ChangesetOperationScope = `${Scope}`;
 
 /** The file, or the lines of it, an operation was pointed at. */
 export interface ChangesetOperationTarget {
-  kind: 'resource' | 'range';
+  kind: `${TargetKind}`;
   /** The `ChangesetFile.id` of the row, which is a `file://` URI. */
   resource: string;
   /** Which side of the edit, where an operation can act on either. */

@@ -1,11 +1,29 @@
 /** The host's filesystem, as far as a client is allowed to see it. */
 
+import type {
+  ContentEncoding, ResourceChangeType, ResourceType, ResourceWriteMode,
+} from '@microsoft/agent-host-protocol';
+
+/*
+ * The vocabularies below are the protocol's own, taken as `${Enum}` rather
+ * than written out.
+ *
+ * A template literal over a string enum is the string union it declares, so
+ * `'ready'` still assigns and `'complete'` is a compile error - and the words
+ * come from the installed package rather than from a copy somebody made once.
+ * A copy is what let a changeset report `status: 'complete'` for the life of
+ * this host: the protocol says `ready`, nothing checked the difference, and a
+ * conformant client read a changeset that never finished computing.
+ *
+ * Type-only, so nothing here imports a runtime value.
+ */
+
 /** One entry in a directory listing. */
 export interface Entry {
   /** Base name, not a path. */
   name: string;
   /** Which of the two it is. A symlink is reported as what it points at. */
-  type: 'file' | 'directory';
+  type: Exclude<`${ResourceType}`, 'symlink'>;
 }
 
 /** What a path is, without opening it. */
@@ -13,7 +31,7 @@ export interface Metadata {
   /** The canonical URI, after symlinks unless they were not followed. */
   uri: string;
   /** Resource kind. */
-  type: 'file' | 'directory' | 'symlink';
+  type: `${ResourceType}`;
   /** Size in bytes. Omitted for directories. */
   size?: number;
   /** ISO 8601 last-modified time. */
@@ -39,14 +57,14 @@ export interface Metadata {
  * end, so `position: 5` means "five bytes in" for the first two and "five
  * bytes before EOF" for the third.
  */
-export type WriteMode = 'truncate' | 'append' | 'insert';
+export type WriteMode = `${ResourceWriteMode}`;
 
 /** One write, with everything the protocol lets a client ask for. */
 export interface Write {
   /** The content, encoded as `encoding` says. */
   data: string;
   /** How to read `data`. Binary content MUST arrive base64. */
-  encoding: 'utf-8' | 'base64';
+  encoding: `${ContentEncoding}`;
   /** How `data` is placed. `truncate` when the client says nothing. */
   mode?: WriteMode;
   /** The offset, read as `mode` says. Zero when the client says nothing. */
@@ -62,7 +80,7 @@ export interface Read {
   /** The content, encoded as `encoding` says. */
   data: string;
   /** How `data` is encoded. Reported rather than assumed. */
-  encoding: 'utf-8' | 'base64';
+  encoding: `${ContentEncoding}`;
   /** Sniffed MIME type, where there is one worth reporting. */
   contentType?: string;
 }
@@ -70,7 +88,7 @@ export interface Read {
 /** What happened to one path, in the protocol's three words. */
 export interface ResourceChange {
   uri: string;
-  type: 'added' | 'updated' | 'deleted';
+  type: `${ResourceChangeType}`;
 }
 
 /** What a watch was asked to report. */

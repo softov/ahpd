@@ -28,6 +28,7 @@ import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './transcript.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
+import type { WriteMode } from './types/resources.js';
 import type { ChangesetState } from './types/changes.js';
 import type { Connection, Host, HostOptions } from './types/host.js';
 import type { Summary } from './types/catalog.js';
@@ -75,6 +76,15 @@ const AUTOMATIONS = 'ahp-automations://';
  * somebody typing an exclamation mark, and it goes to the agent.
  */
 const BANG = '!';
+
+/**
+ * Where a write may be placed, as the protocol's `ResourceWriteMode` has them.
+ *
+ * Written out here because this is the one place a *client's* string has to be
+ * checked against the vocabulary rather than assigned to it - and the list is
+ * held to the protocol's by the type on the next line, so it cannot drift.
+ */
+const WRITE_MODES: string[] = ['truncate', 'append', 'insert'] satisfies WriteMode[];
 
 /** What a session's annotations channel is called, under the session's own URI. */
 const MARKS = '/annotations';
@@ -3043,7 +3053,18 @@ export function createHost(options: HostOptions): Host {
           await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, browsable(), {
             data: String(params.data ?? ''),
             encoding,
-            ...(typeof params.mode === 'string' ? { mode: params.mode as 'truncate' | 'append' | 'insert' } : {}),
+            /*
+             * Checked rather than cast, and it changes no behaviour.
+             *
+             * A client's string used to go straight into a field the rest of
+             * this codebase reads as one of three words, so `mode: 'overwrite'`
+             * reached the store typed as something it was not. The store's
+             * fallback happens to be `truncate`, so nothing was ever visibly
+             * wrong - which is the whole reason it survived. This is the same
+             * defect as a hand-copied vocabulary, one layer in: a value the
+             * compiler believes is a `WriteMode` and is not.
+             */
+            ...(WRITE_MODES.includes(String(params.mode)) ? { mode: String(params.mode) as WriteMode } : {}),
             ...(typeof params.position === 'number' ? { position: params.position } : {}),
             ...(params.createOnly === true ? { createOnly: true } : {}),
             ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
