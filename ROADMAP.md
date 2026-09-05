@@ -39,7 +39,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
-## 3. State actions — 86 of 96 emitted
+## 3. State actions — 87 of 96 emitted
 
 ### Terminals (4)
 - [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
@@ -53,7 +53,7 @@ correlates a question with its answer — and nothing is routed through it.
   keeps saying `isPty: false`.
 
 ### Chat (6)
-- [ ] **3.2** `chat/toolCallDelta` — stream tool arguments as they arrive
+- [x] **3.2** `chat/toolCallDelta` — stream tool arguments as they arrive
   rather than only the completed call.
 - [x] **3.3** `chat/turnResume` — emitted when a queued turn starts after the
   one before it finished.

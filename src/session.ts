@@ -441,6 +441,14 @@ export function createSession(options: SessionOptions): Session {
 
   /** Open parts, keyed by message and index; tool calls by their own id. */
   const parts = new Map<string, Bag>();
+  /**
+   * Which tool call a streaming content block belongs to.
+   *
+   * A `content_block_delta` names the block by its index and nothing else, so
+   * the id the block opened with has to be kept beside it. Tool calls only:
+   * prose parts are already keyed by the same index.
+   */
+  const calling = new Map<string, string>();
   let streaming: string | undefined;
 
   // The input stream. A query with a live stream stays open between turns,
@@ -695,10 +703,33 @@ export function createSession(options: SessionOptions): Session {
 
     if (type === 'content_block_start') {
       const turn = openTurn();
-      const kind = str(bag(event.content_block).type);
-      // Only prose streams into a part. A tool call's arguments stream as
-      // json, and a row redrawing per keystroke of a json blob says nothing
-      // until it is complete.
+      const block = bag(event.content_block);
+      const kind = str(block.type);
+      /*
+       * A tool call, opened while its arguments are still arriving.
+       *
+       * `streaming` is the status the protocol has for exactly this, and
+       * `partialInput` is where the half-written json goes - a client draws
+       * the row as soon as the name is known and fills the arguments in as
+       * they come, rather than waiting for the complete block. The permission
+       * callback and the completed assistant message both find this call
+       * under the same id and carry it on from here.
+       */
+      if (kind === 'tool_use') {
+        const id = str(block.id) ?? `${of}:${String(event.index)}`;
+        calling.set(key, id);
+        if (parts.has(id)) return;
+        const name = str(block.name) ?? 'tool';
+        const call: Bag = { toolCallId: id, toolName: name, displayName: name, status: 'streaming' };
+        const part: Bag = { id, kind: 'toolCall', toolCall: call };
+        parts.set(id, part);
+        holdPart(turn, part);
+        emit('chat', {
+          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name,
+        });
+        return;
+      }
+      // Everything else that is not prose has no part to open.
       if (kind !== 'text' && kind !== 'thinking') return;
       if (parts.has(key)) return;
       const part: Bag = {
@@ -714,6 +745,18 @@ export function createSession(options: SessionOptions): Session {
     }
 
     if (type === 'content_block_delta') {
+      const toolCallId = calling.get(key);
+      if (toolCallId !== undefined) {
+        const json = str(bag(event.delta).partial_json);
+        const call = bag(parts.get(toolCallId)?.toolCall);
+        // Only while it is streaming: once the arguments are complete the
+        // call carries `toolInput`, and appending to `partialInput` after
+        // that is writing into a field the reducer has stopped reading.
+        if (json === undefined || str(call.status) !== 'streaming') return;
+        call.partialInput = `${String(call.partialInput ?? '')}${json}`;
+        emit('chat', { type: 'chat/toolCallDelta', turnId: active?.id, toolCallId, content: json });
+        return;
+      }
       const part = parts.get(key);
       if (!part) return;
       const text = str(bag(event.delta).text) ?? str(bag(event.delta).thinking);
@@ -760,14 +803,22 @@ export function createSession(options: SessionOptions): Session {
 
       if (kind === 'tool_use') {
         const id = str(block.id) ?? `${of}:${index}`;
-        // Already open: the same assistant message can arrive more than once
-        // while it streams, and the permission callback opens the call under
-        // this very id when one is asked about. Either way it is one call, and
-        // a second part for it is the same row drawn twice.
-        if (parts.has(id)) continue;
+        /*
+         * The call as it stands, if something opened it already.
+         *
+         * Two things do. The arguments streaming in open it `streaming`, with
+         * the name and nothing else, and leave the input to be filled in here
+         * - which is what `chat/toolCallReady` is for. The permission callback
+         * opens it `pending-confirmation` and has already asked, so that one
+         * is left alone: completing it here would answer a question nobody
+         * put. The same assistant message can also arrive more than once while
+         * it streams, and a second part for it is the same row drawn twice.
+         */
+        const open = parts.get(id);
+        if (open !== undefined && str(bag(open.toolCall).status) !== 'streaming') continue;
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
-        const call: Bag = {
+        const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: name,
           displayName: name,
@@ -786,9 +837,20 @@ export function createSession(options: SessionOptions): Session {
           confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
         } satisfies OnWire<ToolCallRunningState>;
-        const part: Bag = { id, kind: 'toolCall', toolCall: call };
-        parts.set(id, part);
-        holdPart(turn, part);
+        if (open === undefined) {
+          const part: Bag = { id, kind: 'toolCall', toolCall: call };
+          parts.set(id, part);
+          holdPart(turn, part);
+        }
+        else {
+          // The half-written json is what `toolInput` now says properly, and
+          // a client that kept both would draw the arguments twice.
+          call.status = 'running';
+          call.invocationMessage = name;
+          call.confirmed = 'not-needed';
+          delete call.partialInput;
+          if (command) call.toolInput = command;
+        }
         doing(busyWith(name, bag(block.input)));
         /*
          * The file as it is *now*, before the tool has run.
@@ -803,7 +865,8 @@ export function createSession(options: SessionOptions): Session {
           editing.set(id, changing);
           options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
         }
-        emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
+        if (open === undefined)
+          emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: name, displayName: name });
         emit('chat', {
           type: 'chat/toolCallReady',
           turnId: turn.id,
@@ -1428,6 +1491,7 @@ export function createSession(options: SessionOptions): Session {
             active = undefined;
             ran = undefined;
             parts.clear();
+            calling.clear();
             streaming = undefined;
             /*
              * One action ends a turn, and which one says how it went.

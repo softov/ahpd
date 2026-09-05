@@ -576,6 +576,57 @@ describe('driving a turn', () => {
     expect(delta?.action.content).toBe('Hey');
   });
 
+  it('streams a tool call\'s arguments into it, and finishes it when they are complete', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      {
+        type: 'stream_event',
+        event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tc1', name: 'Read' } },
+      },
+      {
+        type: 'stream_event',
+        event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"file_path"' } },
+      },
+      {
+        type: 'stream_event',
+        event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: ':"/tmp/a"}' } },
+      },
+    );
+
+    const said = actions(p, chatUri);
+    const types = said.map((e) => e.action.type);
+    // The row exists before the arguments do, which is the whole point of a
+    // `streaming` status: a client draws the tool's name straight away.
+    expect(types.indexOf('chat/toolCallStart')).toBeLessThan(types.indexOf('chat/toolCallDelta'));
+    expect(said.filter((e) => e.action.type === 'chat/toolCallDelta').map((e) => e.action.content))
+      .toEqual(['{"file_path"', ':"/tmp/a"}']);
+    const mid = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn: { responseParts: { toolCall?: { status: string; partialInput?: string } }[] } } };
+    }).snapshot.state.activeTurn.responseParts.find((one) => one.toolCall !== undefined)?.toolCall;
+    expect(mid?.status).toBe('streaming');
+    expect(mid?.partialInput).toBe('{"file_path":"/tmp/a"}');
+
+    // The completed block is the same call, not a second one: one row, now
+    // carrying the input properly rather than the json it was typed as.
+    await emit({
+      type: 'assistant',
+      message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/tmp/a' } }] },
+    });
+    expect(said.filter((e) => e.action.type === 'chat/toolCallStart')).toHaveLength(1);
+    const done = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn: { responseParts: { toolCall?: { status: string; partialInput?: string } }[] } } };
+    }).snapshot.state.activeTurn.responseParts.filter((one) => one.toolCall !== undefined);
+    expect(done).toHaveLength(1);
+    expect(done[0]?.toolCall?.status).toBe('running');
+    expect(done[0]?.toolCall?.partialInput).toBeUndefined();
+  });
+
   it('moves the running turn into the history when it completes', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
