@@ -28,13 +28,13 @@ correlates a question with its answer — and nothing is routed through it.
 - [ ] **1.4** `ahpc` grows a `--serve <dir>` flag so there is a client that
   publishes a resource to read.
 
-## 2. Server notifications — 5 of 9 sent
+## 2. Server notifications — 8 of 9 sent
 
-- [ ] **2.1** `otlp/exportTraces` — one span per turn, child spans per tool
+- [x] **2.1** `otlp/exportTraces` — one span per turn, child spans per tool
   call, on `ahp-otlp://traces`, in the same OTLP/JSON shape `exportLogs` uses.
-- [ ] **2.2** `otlp/exportMetrics` — turn count, turn duration, token counts
+- [x] **2.2** `otlp/exportMetrics` — turn count, turn duration, token counts
   and tool-call count, on `ahp-otlp://metrics`.
-- [ ] **2.3** `root/progress` — a `progressToken` on the slow host-level work
+- [x] **2.3** `root/progress` — a `progressToken` on the slow host-level work
   there now is: making a worktree, scanning a transcript, the boot probe.
 - [ ] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
@@ -77,7 +77,7 @@ correlates a question with its answer — and nothing is routed through it.
 
 ## 4. Fields and capabilities
 
-- [ ] **4.2** `ChatSummary.interactivity` and `ChatState.steeringMessage`.
+- [x] **4.2** `ChatSummary.interactivity` and `ChatState.steeringMessage`.
 - [ ] **4.3** `capabilities.multipleWorkingDirectories: { immutablePrimary: true }`,
   and `CreateSessionParams.workingDirectories` beyond the first passed to the
   SDK as `additionalDirectories`. Index 0 is fixed for the session's lifetime,

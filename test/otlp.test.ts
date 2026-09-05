@@ -95,3 +95,75 @@ it('is not replayed, which is what stateless means', async () => {
   const replayed = (again.actions ?? []) as { action?: { type?: string } }[];
   expect(replayed.some((one) => String(one.action?.type ?? '').startsWith('otlp/'))).toBe(false);
 });
+
+/*
+ * The other two signals.
+ *
+ * A turn is a span because it starts, ends and has a duration; the counters
+ * beside it are cumulative, so a collector that arrives late reads totals
+ * rather than a difference it missed the beginning of. Both are built out of
+ * the actions this host already dispatches, so a second backend gets them
+ * without knowing they exist.
+ */
+
+const traces = (p: ReturnType<typeof peer>) => p.notes
+  .filter((n) => n.method === 'otlp/exportTraces')
+  .map((n) => (n.params as { payload: Record<string, never> }).payload);
+
+it('advertises the traces and metrics channels as literals, having no variable to offer', async () => {
+  const { hello } = await connected() as unknown as {
+    hello: { telemetry?: { logs?: string; traces?: string; metrics?: string } };
+  };
+  // The protocol defines template variables for `logs` only - severity - and
+  // says a client MUST ignore a variable it does not know, so one of this
+  // host's invention here would be a channel nobody can expand.
+  expect(hello.telemetry?.traces).toBe('ahp-otlp://traces');
+  expect(hello.telemetry?.metrics).toBe('ahp-otlp://metrics');
+});
+
+it('sends a span for the turn, once the turn has ended', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/t', provider: 'echo' } });
+  const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L3Q=';
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 60); });
+
+  const spans = traces(p).flatMap((one) => (one as unknown as {
+    resourceSpans: { scopeSpans: { spans: { name: string; traceId: string; spanId: string; kind: number }[] }[] }[];
+  }).resourceSpans[0]?.scopeSpans[0]?.spans ?? []);
+  const turn = spans.find((one) => one.name === 'turn');
+  expect(turn).toBeDefined();
+  // A turn is work this host does on somebody's behalf, which is what
+  // `SPAN_KIND_SERVER` means, and the ids are the widths OTLP declares.
+  expect(turn?.kind).toBe(2);
+  expect(turn?.traceId).toMatch(/^[0-9a-f]{32}$/);
+  expect(turn?.spanId).toMatch(/^[0-9a-f]{16}$/);
+});
+
+it('counts turns cumulatively, so a collector that arrives late reads a total', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://metrics' } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
+  const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L20=';
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 60); });
+
+  const sent = p.notes.filter((n) => n.method === 'otlp/exportMetrics');
+  expect(sent.length).toBeGreaterThan(0);
+  const last = (sent.at(-1)?.params as { payload: { resourceMetrics: { scopeMetrics: { metrics: {
+    name: string; sum: { isMonotonic: boolean; aggregationTemporality: number; dataPoints: { asInt: string }[] };
+  }[] }[] }[] } }).payload;
+  const turns = last.resourceMetrics[0]?.scopeMetrics[0]?.metrics.find((one) => one.name === 'ahpd.turns');
+  expect(turns?.sum.isMonotonic).toBe(true);
+  // `2` is cumulative: the reference point is the process start, not the last
+  // export, so a restarted collector is not reading from an unknown baseline.
+  expect(turns?.sum.aggregationTemporality).toBe(2);
+  expect(Number(turns?.sum.dataPoints[0]?.asInt)).toBeGreaterThan(0);
+});

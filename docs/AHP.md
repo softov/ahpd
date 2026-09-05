@@ -53,14 +53,14 @@ specification: nothing here is listed because AHP defines it.
 
 ## Server notifications
 
-**4 of the 8 declared.**
+**7 of the 8 declared.**
 
 | AHP | ahpd | Status | Notes |
 | --- | --- | :---: | --- |
 | `root/sessionAdded`, `root/sessionRemoved`, `root/sessionSummaryChanged` | catalogue lifecycle | ✅ | To the connections watching the root channel and no others. `sessionAdded` carries the whole `summary`; `sessionRemoved` carries `session`; `sessionSummaryChanged` carries `session` and a `changes` partial with the three identity fields left out |
 | `otlp/exportLogs` | the host's own log | ✅ | `ahp-otlp://logs/{level}`, advertised at the handshake, carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines the daemon writes to stdout. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
-| `otlp/exportTraces`, `otlp/exportMetrics` | — | 🚫 | VS Code's own client says `// Not recorded, yet` against both, so there is nothing on the other end |
-| `root/progress` | — | ➖ | Host-level work correlated by a `progressToken`. Nothing here is slow enough at the *host* level to report; the slow things are turns, and those have their own channel |
+| `otlp/exportTraces`, `otlp/exportMetrics` | turns and tool calls | ✅ | `ahp-otlp://traces` and `ahp-otlp://metrics`, both literal channels - the protocol defines template variables for `logs` alone. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, sent as each one ends and joined by `traceId`. The metrics are cumulative sums against the process start, so a collector arriving late reads totals rather than a difference. Both are built from the actions this host already dispatches, so a second backend gets them without knowing they exist |
+| `root/progress` | making a session | ✅ | Only when `createSession` carried a `progressToken`, and only to the client that sent it: the token is that request's. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree is `git worktree add` plus whatever the client asked to bring along, which on a large repository is seconds somebody otherwise waits through with nothing on screen |
 | `auth/required` | — | ➖ | What a host sends when a token it accepted has expired. This host does not verify a token, so it never learns that one has gone stale. Recognising it would mean guessing at the harness's error strings |
 
 ## State actions

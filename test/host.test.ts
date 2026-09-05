@@ -3392,6 +3392,84 @@ describe('authenticating', () => {
   });
 });
 
+describe('telling a client how far along something is', () => {
+  it('reports progress against the token the request carried, and stops at the total', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/slow', provider: 'claude', progressToken: 'tok-1' },
+    });
+    const along = p.notes
+      .filter((one) => one.method === 'root/progress')
+      .map((one) => one.params as { progressToken: string; progress: number; total?: number; message?: string });
+    /*
+     * Only when the client asked, and only to the client that asked.
+     *
+     * The token belongs to that request and means nothing to anybody else, so
+     * this is the one thing here that is not broadcast.
+     */
+    expect(along.map((one) => one.progressToken)).toEqual(['tok-1', 'tok-1', 'tok-1']);
+    expect(along.map((one) => one.progress)).toEqual([0, 1, 2]);
+    // Complete is `progress === total`, which is how the protocol spells it.
+    expect(along.at(-1)?.total).toBe(2);
+    expect(typeof along[0]?.message).toBe('string');
+  });
+
+  it('says nothing when no token was given', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/quiet', provider: 'claude' } });
+    expect(p.notes.some((one) => one.method === 'root/progress')).toBe(false);
+  });
+});
+
+describe('what a chat says about itself', () => {
+  it('declares its interactivity rather than leaving it to a default', async () => {
+    const { client, chatUri } = await running();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { interactivity?: string } };
+    }).snapshot.state;
+    // Absent means `full` by the protocol's own rule, and being assumed is not
+    // the same as being told.
+    expect(state.interactivity).toBe('full');
+  });
+
+  it('takes a steering message out of the state where the CLI reads it, not before', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually, stop' } },
+      },
+    });
+    await settle();
+    /*
+     * `steeringMessage` describes a message *waiting* to be injected, so it is
+     * cleared where the prompt generator hands it over rather than in the same
+     * tick it arrived. Against this fake the CLI is always reading, so the
+     * window is instant; against a real one mid-tool-call it is seconds. What
+     * is observable either way is that the message reached the CLI and that
+     * its removal was announced after it did.
+     */
+    expect(sdk.said).toContain('actually, stop');
+    const said = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string } })
+      .filter((one) => one.channel === chatUri)
+      .map((one) => String(one.action?.type ?? ''));
+    expect(said.indexOf('chat/pendingMessageSet')).toBeGreaterThanOrEqual(0);
+    expect(said.lastIndexOf('chat/pendingMessageRemoved'))
+      .toBeGreaterThan(said.indexOf('chat/pendingMessageSet'));
+  });
+
+});
+
 describe('a chat made out of another', () => {
   it('forks at the turn it was told to, and brings the history through it', async () => {
     const { client, uri, chatUri } = await running();

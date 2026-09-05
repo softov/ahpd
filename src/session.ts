@@ -431,9 +431,30 @@ export function createSession(options: SessionOptions): Session {
   let wake: (() => void) | undefined;
   let closed = false;
 
+  /**
+   * A steering message, for as long as it is waiting to be read.
+   *
+   * The protocol's `ChatState.steeringMessage` is "a message to inject into
+   * the current turn at a convenient point", and the convenient point is when
+   * the CLI next reads its prompt. Between the two there is a real window - a
+   * turn mid-tool-call has not read anything for some time - and this is what
+   * fills it. Cleared where the generator hands the message over, because that
+   * is the moment it stops waiting.
+   */
+  let steering: Bag | undefined;
+
   async function* input(): AsyncGenerator<(typeof waiting)[number]> {
     for (;;) {
-      while (waiting.length > 0) yield waiting.shift() as (typeof waiting)[number];
+      while (waiting.length > 0) {
+        const next = waiting.shift() as (typeof waiting)[number];
+        yield next;
+        if (steering !== undefined) {
+          const said = steering;
+          steering = undefined;
+          emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
+          touch();
+        }
+      }
       if (closed) return;
       await new Promise<void>((resolve) => { wake = resolve; });
     }
@@ -1437,6 +1458,11 @@ export function createSession(options: SessionOptions): Session {
       ...(active ? { activeTurn: active } : {}),
       ...(activity !== undefined ? { activity } : {}),
       ...(draft !== '' ? { draft } : {}),
+      // Said rather than left to a default: `Full` is what a client assumes
+      // when the field is absent, and assuming it is not the same as being
+      // told. Every chat here is one somebody can type into.
+      interactivity: 'full',
+      ...(steering !== undefined ? { steeringMessage: steering } : {}),
       queuedMessages: [...queued],
     }),
 
@@ -1760,11 +1786,15 @@ export function createSession(options: SessionOptions): Session {
     steer: (id, text) => {
       if (!active) return false;
       const message = { text, origin: { kind: 'user' } };
+      // Held in the state as well as announced, and taken out again where the
+      // CLI reads it rather than here: a client that only read the state saw
+      // nothing waiting, because the announcement and its removal used to
+      // happen in one tick.
+      steering = { id, message };
       emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
       waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
       wake?.();
       wake = undefined;
-      emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
       touch();
       return true;
     },

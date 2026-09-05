@@ -325,6 +325,9 @@ export function createHost(options: HostOptions): Host {
     status: chat.status(),
     modifiedAt: chat.modifiedAt(),
     ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
+    // The same answer the chat's own state gives. A summary that left it out
+    // while the state carried it would be two answers to one question.
+    interactivity: 'full',
   });
   /** What each chat's summary last said, so an unchanged one is not re-sent. */
   const described = new Map<string, string>();
@@ -496,6 +499,35 @@ export function createHost(options: HostOptions): Host {
    * empty one rather than refusing.
    */
   const LOGS = 'ahp-otlp://logs';
+  /**
+   * The other two OTLP signals, as literal channels.
+   *
+   * Literal rather than templates: the protocol defines template variables for
+   * `logs` only - severity - and says a client MUST ignore any variable it does
+   * not know, so a variable of this host's invention on either of these would
+   * be a channel nobody can expand.
+   */
+  const TRACES = 'ahp-otlp://traces';
+  const METRICS = 'ahp-otlp://metrics';
+
+  /** Tell whoever is watching an OTLP channel. Never replayed: these are streams. */
+  const telling = (method: string, channel: string, payload: Bag): void => {
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) connection.peer.notify(method, { channel, payload });
+    }
+  };
+
+  /** Random hex, the width an OTLP id is: 16 bytes for a trace, 8 for a span. */
+  const hex = (bytes: number): string => [...crypto.getRandomValues(new Uint8Array(bytes))]
+    .map((one) => one.toString(16).padStart(2, '0')).join('');
+
+  /** The resource every signal this host emits is attributed to. */
+  const attributed = (): Bag => ({
+    attributes: [
+      { key: 'service.name', value: { stringValue: 'ahpd' } },
+      { key: 'service.start_time', value: { stringValue: startedAt } },
+    ],
+  });
   const startedAt = new Date().toISOString();
   const log = (message: string): void => {
     options.onEvent?.(message);
@@ -817,6 +849,138 @@ export function createHost(options: HostOptions): Host {
    * client knows it missed nothing - so the counter has to advance with state,
    * never with messages.
    */
+  /**
+   * Turns and tool calls, as OTLP spans and counters.
+   *
+   * Built from the actions this host already dispatches rather than from the
+   * backend: a turn is a span because it starts, ends and has a duration, and
+   * every tool call inside it is a child of that span. Nothing here asks the
+   * backend for anything, so a second backend gets the same telemetry without
+   * knowing this exists.
+   *
+   * Each span is sent as it ends, which is what `ExportTraceServiceRequest`
+   * is for - a collector joins them by `traceId`, and holding a turn's
+   * children until the turn finished would lose them all if the daemon went.
+   */
+  const turning = new Map<string, { trace: string; span: string; at: number; text: string }>();
+  const calling = new Map<string, { span: string; at: number; name: string; turn: string }>();
+  let turnsRun = 0;
+  let toolsRun = 0;
+
+  /** One span, on the wire, with the resource it belongs to. */
+  const spanned = (span: Bag): void => {
+    telling('otlp/exportTraces', TRACES, {
+      resourceSpans: [{ resource: attributed(), scopeSpans: [{ scope: { name: 'ahpd' }, spans: [span] }] }],
+    });
+  };
+
+  /**
+   * What is true of this host right now, as OTLP metrics.
+   *
+   * Cumulative sums with the process start as their reference point, which is
+   * what `aggregationTemporality: 2` means - a collector restarted mid-run
+   * reads the totals rather than a difference it missed the start of.
+   */
+  const measured = (extra: Bag[] = []): void => {
+    const at = String(Date.now() * 1_000_000);
+    const sum = (name: string, count: number, unit: string): Bag => ({
+      name,
+      unit,
+      sum: {
+        aggregationTemporality: 2,
+        isMonotonic: true,
+        dataPoints: [{ asInt: String(count), startTimeUnixNano: String(Date.parse(startedAt) * 1_000_000), timeUnixNano: at }],
+      },
+    });
+    telling('otlp/exportMetrics', METRICS, {
+      resourceMetrics: [{
+        resource: attributed(),
+        scopeMetrics: [{
+          scope: { name: 'ahpd' },
+          metrics: [
+            sum('ahpd.turns', turnsRun, '{turn}'),
+            sum('ahpd.tool_calls', toolsRun, '{call}'),
+            ...extra,
+          ],
+        }],
+      }],
+    });
+  };
+
+  /** A turn or a tool call moving, as far as telemetry is concerned. */
+  const telemetered = (channel: string, action: Record<string, unknown>): void => {
+    const type = String(action.type ?? '');
+    if (!type.startsWith('chat/')) return;
+    const turnId = String(action.turnId ?? '');
+    const at = String(Date.now() * 1_000_000);
+    if (type === 'chat/turnStarted') {
+      const message = (typeof action.message === 'object' && action.message !== null
+        ? action.message
+        : {}) as { text?: unknown };
+      turning.set(turnId, {
+        trace: hex(16),
+        span: hex(8),
+        at: Date.now(),
+        text: typeof message.text === 'string' ? message.text : '',
+      });
+      return;
+    }
+    const turn = turning.get(turnId);
+    if (turn === undefined) return;
+    if (type === 'chat/toolCallStart') {
+      calling.set(String(action.toolCallId ?? ''), {
+        span: hex(8),
+        at: Date.now(),
+        name: String(action.toolName ?? 'tool'),
+        turn: turnId,
+      });
+      return;
+    }
+    if (type === 'chat/toolCallComplete') {
+      const call = calling.get(String(action.toolCallId ?? ''));
+      if (call === undefined) return;
+      calling.delete(String(action.toolCallId ?? ''));
+      toolsRun += 1;
+      spanned({
+        traceId: turn.trace,
+        spanId: call.span,
+        parentSpanId: turn.span,
+        name: call.name,
+        // A tool call is work this host asked something else to do, which is
+        // what `SPAN_KIND_CLIENT` is.
+        kind: 3,
+        startTimeUnixNano: String(call.at * 1_000_000),
+        endTimeUnixNano: at,
+        attributes: [
+          { key: 'ahp.chat', value: { stringValue: channel } },
+          { key: 'ahp.tool', value: { stringValue: call.name } },
+        ],
+      });
+      return;
+    }
+    if (type !== 'chat/turnComplete' && type !== 'chat/turnCancelled') return;
+    turning.delete(turnId);
+    turnsRun += 1;
+    spanned({
+      traceId: turn.trace,
+      spanId: turn.span,
+      name: 'turn',
+      // The turn is work this host is doing on somebody's behalf, which is
+      // `SPAN_KIND_SERVER`.
+      kind: 2,
+      startTimeUnixNano: String(turn.at * 1_000_000),
+      endTimeUnixNano: at,
+      attributes: [
+        { key: 'ahp.chat', value: { stringValue: channel } },
+        { key: 'ahp.turn', value: { stringValue: turnId } },
+      ],
+      // Cancelled is not an error - somebody asked - so the only status this
+      // sets is the one the protocol's own action names.
+      ...(type === 'chat/turnCancelled' ? { status: { code: 2, message: 'cancelled' } } : {}),
+    });
+    measured();
+  };
+
   const dispatch = (channel: string, action: Record<string, unknown>, origin = applying): void => {
     serverSeq += 1;
     const envelope = { channel, action, serverSeq, origin };
@@ -832,6 +996,7 @@ export function createHost(options: HostOptions): Host {
     // followed, and the client then applies those deltas too: the word
     // written twice. The live broadcast below is serialised in this same
     // tick, so it is the copy in the buffer that has to be frozen.
+    telemetered(channel, action);
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
@@ -2259,7 +2424,7 @@ export function createHost(options: HostOptions): Host {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
-    if (channel === LOGS || channel.startsWith(`${LOGS}/`)) {
+    if (channel === LOGS || channel.startsWith(`${LOGS}/`) || channel === TRACES || channel === METRICS) {
       // Nothing to snapshot: the channel is a stream, and the protocol says a
       // subscriber receives only what was emitted after it arrived. Answering
       // with an empty state is how a client is told it is subscribed rather
@@ -2729,7 +2894,7 @@ export function createHost(options: HostOptions): Host {
             // What this host emits, so a client knows there is a log to watch.
             // A template, because the variable is the severity a subscriber
             // wants rather than something the host fills in.
-            telemetry: { logs: `${LOGS}/{level}` },
+            telemetry: { logs: `${LOGS}/{level}`, traces: TRACES, metrics: METRICS },
             /*
              * Whether there are automations here at all.
              *
@@ -3603,7 +3768,25 @@ export function createHost(options: HostOptions): Host {
            * session that never existed, which is the right outcome - the
            * alternative is one running somewhere the person did not choose.
            */
+          /*
+           * How far along, for the one thing here that takes visible time.
+           *
+           * `root/progress` echoes the `progressToken` the request carried, so
+           * it is sent only when the client asked for one - and only to the
+           * client that asked, because the token is that request's and means
+           * nothing to anybody else. Making a worktree is `git worktree add`
+           * plus a copy of whatever the client asked to bring along, which on
+           * a large repository is seconds a person otherwise waits through
+           * with nothing on screen.
+           */
+          const token = typeof params.progressToken === 'string' ? params.progressToken : undefined;
+          const along = (progress: number, message: string): void => {
+            if (token === undefined) return;
+            connection.peer.notify('root/progress', { channel: ROOT, progressToken: token, progress, total: 2, message });
+          };
+          along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
           const running = await isolated(uri, config, where);
+          along(1, 'Starting the agent');
           decided.set(uri, mineOf(config));
           // The offer, kept so the session can make it again while nothing has
           // been said in it. Against the directory that was asked for, which is
@@ -3614,6 +3797,8 @@ export function createHost(options: HostOptions): Host {
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
           openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider));
+          // Complete, which the protocol spells as `progress === total`.
+          along(2, 'Ready');
           /*
            * The creator claiming its place in the session it just made.
            *
