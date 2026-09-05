@@ -77,6 +77,40 @@ const DEFINITION = {
   triggers: [],
 };
 
+it('answers the trigger list on the root channel, and refuses another', async () => {
+  const { client } = await connected();
+  /*
+   * `ListAutomationTriggerDefinitionsParams` declares `channel: 'ahp-root://'`
+   * - the triggers a host understands are the *host's*, not a property of the
+   * automations it happens to be holding, so the question is asked of the root.
+   *
+   * The automations channel is the obvious wrong guess and the one a client
+   * actually makes. Refused rather than answered: a host that took it would
+   * make that client look correct until the first conformant host refused it
+   * with nothing on screen saying why.
+   */
+  await expect(client.handle({
+    method: 'listAutomationTriggerDefinitions', params: { channel: AUTOMATIONS },
+  })).rejects.toMatchObject({ code: -32602 });
+  await expect(client.handle({
+    method: 'listAutomationTriggerDefinitions', params: { channel: 'ahp-root://' },
+  })).resolves.toBeTruthy();
+  // And a client that named no channel at all has named nothing wrong.
+  await expect(client.handle({
+    method: 'listAutomationTriggerDefinitions', params: {},
+  })).resolves.toBeTruthy();
+});
+
+it('answers a run on the automations channel, which is the one it declares', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  // The two automation commands are the exception: they declare
+  // `ahp-automations://`, because a run is of an automation this store holds.
+  await expect(client.handle({
+    method: 'runAutomation', params: { channel: 'ahp-root://', automation: ONE, requestId: 'r' },
+  })).rejects.toMatchObject({ code: -32602 });
+});
+
 it('advertises no event triggers, and manual is not one', async () => {
   const { client } = await connected();
   const found = await client.handle({

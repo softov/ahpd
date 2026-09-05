@@ -222,6 +222,38 @@ export function createHost(options: HostOptions): Host {
    * same params and the same results, so a request naming a URI a client
    * published is the same request sent back the other way.
    */
+  /**
+   * The commands whose `channel` the protocol declares as one literal.
+   *
+   * Read off the params declarations, which spell it as a string literal type
+   * rather than as `URI`: these are the host's own commands, and the channel
+   * on them is a constant a client copies rather than a thing it chooses.
+   *
+   * `initialize` and `ping` are left out deliberately, though they declare one
+   * too. They are how a client finds out it can talk at all, and refusing
+   * either turns a wrong constant into a connection that never opens - which
+   * is a worse thing to debug than the command that would have been refused.
+   */
+  const DECLARED: Record<string, string | undefined> = {
+    authenticate: ROOT,
+    createResourceWatch: ROOT,
+    listSessions: ROOT,
+    reconnect: ROOT,
+    resolveSessionConfig: ROOT,
+    resourceCopy: ROOT,
+    resourceDelete: ROOT,
+    resourceList: ROOT,
+    resourceMkdir: ROOT,
+    resourceMove: ROOT,
+    resourceRead: ROOT,
+    resourceRequest: ROOT,
+    resourceResolve: ROOT,
+    resourceWrite: ROOT,
+    sessionConfigCompletions: ROOT,
+    listAutomationTriggerDefinitions: ROOT,
+    runAutomation: AUTOMATIONS,
+    fetchAutomationRuns: AUTOMATIONS,
+  };
   const REVERSE = new Set([
     'resourceRead', 'resourceWrite', 'resourceList', 'resourceCopy', 'resourceDelete',
     'resourceMove', 'resourceResolve', 'resourceMkdir', 'resourceRequest', 'createResourceWatch',
@@ -5544,6 +5576,27 @@ export function createHost(options: HostOptions): Host {
            * whatever the owning client said, verbatim - including its
            * refusal, which is the owner's to make.
            */
+          /*
+           * A channel the protocol fixes, named as something else.
+           *
+           * Twenty commands declare `channel` as a literal - `ahp-root://`
+           * for most, `ahp-automations://` for the two automation ones -
+           * because they are about the host rather than about any one
+           * session. A host that answered them on whatever arrived would make
+           * a client sending the wrong constant look correct, which is how a
+           * client ships one: it typechecks, every test passes against the
+           * lenient host, and the first conformant one refuses it with
+           * nothing on screen saying why.
+           *
+           * Only when the client actually named one. A command sent without a
+           * `channel` has named nothing wrong, and this host has always taken
+           * those - refusing them now would be a rule applied backwards.
+           */
+          const fixed = DECLARED[request.method];
+          const named = (request.params as { channel?: unknown } | undefined)?.channel;
+          if (fixed !== undefined && typeof named === 'string' && named !== '' && named !== fixed) {
+            throw new RpcError(-32602, `${request.method} is answered on ${fixed}, not on ${named}`);
+          }
           if (REVERSE.has(request.method)) {
             const away = await elsewhere(request.method, request.params ?? {});
             if (away !== undefined) return away.result;
