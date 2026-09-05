@@ -681,7 +681,7 @@ export function createHost(options: HostOptions): Host {
    * theirs, and removing it because a session ended would be this daemon
    * deleting a project.
    */
-  const worktrees = new Map<string, { repository: string; path: string; branch?: string }>();
+  const worktrees = new Map<string, { repository: string; path: string; branch?: string; base?: string }>();
 
   /**
    * The config keys this host answered for a session, by session URI.
@@ -1372,10 +1372,27 @@ export function createHost(options: HostOptions): Host {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const meta = options.directories?.meta(dir);
+    /*
+     * The branch this session's tree was cut from, which only this host knows.
+     *
+     * `git` cannot answer it: a branch does not record what it started from,
+     * and the reflog that does is not a fact to build a field on. This host
+     * chose the base when it made the worktree, so it is the one thing here
+     * added to the port's answer rather than read from it - and it is merged
+     * into `git` rather than sent beside it, because that is the namespace the
+     * client reads and the key names in it are the reference host's.
+     */
+    const base = worktrees.get(uri)?.base;
+    const git = typeof (meta as { git?: unknown } | undefined)?.git === 'object'
+      ? (meta as { git: Record<string, unknown> }).git
+      : undefined;
+    const told = base !== undefined && base !== 'HEAD' && git !== undefined
+      ? { ...meta, git: { ...git, baseBranchName: base } }
+      : meta;
     const summary = options.changes?.summary(dir);
     return {
       project,
-      ...(meta ? { _meta: meta } : {}),
+      ...(told ? { _meta: told } : {}),
       // Not `changes`: `SessionSummary` declares it and `SessionState` does
       // not, so it goes on the row rather than in both - which is the rule
       // this helper states and had broken.
@@ -2020,7 +2037,7 @@ export function createHost(options: HostOptions): Host {
     // The branch is remembered rather than derived from the directory later:
     // a prefix a client asked for changes the name, and guessing it wrong at
     // removal time either deletes nothing or names somebody else's.
-    worktrees.set(uri, { repository, path, ...(branch !== undefined ? { branch } : {}) });
+    worktrees.set(uri, { repository, path, base, ...(branch !== undefined ? { branch } : {}) });
     log(`made ${path} on ${branch ?? base} for ${uri}`);
     return path;
   };

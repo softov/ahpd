@@ -56,8 +56,31 @@ describe('what git can say about a served directory', () => {
     // Untracked counts: a file the agent wrote and never added is exactly the
     // work somebody wants to be told about.
     expect(meta.git.uncommittedChanges).toBe(2);
+    /*
+     * And no drift at all, rather than none of it.
+     *
+     * A branch with no upstream is not zero ahead and zero behind, it is
+     * neither. A client draws these as arrows beside the branch name, so a
+     * pair of zeroes is two arrows that say nothing.
+     */
+    expect(meta.git.incomingChanges).toBeUndefined();
+    expect(meta.git.outgoingChanges).toBeUndefined();
+    expect(meta.git.upstreamBranchName).toBeUndefined();
+  });
+
+  it('counts the drift once there is something to drift from', async () => {
+    const facts = gitBranches();
+    const dir = repository();
+    const run = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+    run('branch', 'upstream');
+    run('branch', '--set-upstream-to=upstream', 'main');
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    run('commit', '-qam', 'second');
+    await facts.refresh?.(dir);
+    const meta = facts.meta(dir) as { git: Record<string, unknown> };
+    expect(meta.git.upstreamBranchName).toBe('upstream');
+    expect(meta.git.outgoingChanges).toBe(1);
     expect(meta.git.incomingChanges).toBe(0);
-    expect(meta.git.outgoingChanges).toBe(0);
   });
 
   it('says whether the remote is a GitHub one, and whose', async () => {

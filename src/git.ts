@@ -82,9 +82,19 @@ export function gitBranches(): DirectoryFacts {
     const owner = github(origin);
     const now: Record<string, unknown> = {
       branchName,
-      ...(upstream !== undefined ? { upstreamBranchName: upstream } : {}),
-      incomingChanges: behind,
-      outgoingChanges: ahead,
+      /*
+       * The drift, and only where there is something to drift from.
+       *
+       * A branch with no upstream is not zero ahead and zero behind, it is
+       * neither - and a client draws these as arrows beside the branch, so a
+       * pair of zeroes is two arrows saying nothing. The reference host omits
+       * them the same way.
+       */
+      ...(upstream === undefined ? {} : {
+        upstreamBranchName: upstream,
+        incomingChanges: behind,
+        outgoingChanges: ahead,
+      }),
       uncommittedChanges: lines.slice(1).filter((one) => one.trim() !== '').length,
       hasGitHubRemote: owner !== undefined,
       ...(owner ? { githubOwner: owner.owner, githubRepo: owner.repo } : {}),
