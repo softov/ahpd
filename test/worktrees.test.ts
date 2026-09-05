@@ -74,6 +74,23 @@ const joined = async (root: string) => {
 
 const project = (root: string) => join(root, 'project');
 
+/** Read the session back until it says what the test is waiting for. */
+type Held = { config: { values: Record<string, string> }; workingDirectories?: string[] };
+const until = async (
+  client: Awaited<ReturnType<typeof joined>>['client'],
+  uri: string,
+  done: (state: Held) => boolean,
+): Promise<Held> => {
+  for (let tries = 0; tries < 100; tries++) {
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: Held };
+    }).snapshot.state;
+    if (done(state)) return state;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+  }
+  throw new Error(`${uri} never got there`);
+};
+
 describe('a session with a working tree of its own', () => {
   it('offers the choice only where there is a repository to make one in', async () => {
     const root = repository();
@@ -166,19 +183,111 @@ describe('a session with a working tree of its own', () => {
       },
     });
     const config = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { config: { schema: { properties: Record<string, { readOnly?: boolean }> }; values: Record<string, string> } } };
+      snapshot: {
+        state: {
+          config: {
+            schema: { properties: Record<string, { readOnly?: boolean; sessionMutable?: boolean; enum?: string[] }> };
+            values: Record<string, string>;
+          };
+        };
+      };
     }).snapshot.state.config;
     // The host's keys never reach the backend, and the session channel reports
     // the backend's settings - so without this a worktree session said nothing
     // anywhere about why its directory was where it was.
     expect(config.values.isolation).toBe('worktree');
     expect(config.values.branch).toBe('main');
-    // Drawn as a row and not a control: isolation cannot change on a running
-    // session, so a client offered a picker for it would be offering a move
-    // that moves an agent's files out from under a conversation.
-    expect(config.schema.properties.isolation?.readOnly).toBe(true);
+    /*
+     * Offered, not merely reported.
+     *
+     * A client creates the backend session *before* the first message - the
+     * controls need somewhere to write their answers - and draws them from
+     * this schema. Marking the row `readOnly`, or leaving it without an
+     * `enum`, is a control that cannot be opened, which made isolation
+     * unsettable in exactly the phase it is meant to be settable in.
+     * `sessionMutable: false` is what closes it afterwards.
+     */
+    expect(config.schema.properties.isolation?.readOnly).toBeUndefined();
+    expect(config.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+    expect(config.schema.properties.isolation?.sessionMutable).toBe(false);
     // And the backend's own keys are still there beside them.
     expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
+  });
+
+  it('moves a session nobody has spoken in yet into the tree it now asks for', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/pending';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'folder' },
+      },
+    });
+    /*
+     * The phase this exists for.
+     *
+     * A client creates the backend session before the first message is sent,
+     * because its controls need somewhere to write the answers they collect.
+     * Isolation is one of those answers, and a host that fixed it the moment
+     * the session existed fixed it before anybody had been asked.
+     */
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'worktree', branch: 'main' } } },
+    });
+    // On the directory rather than the value: the answer is recorded as it
+    // arrives and the tree is made after it, so a test that waited on the
+    // value would be reading the config before the move it asked for.
+    const state = await until(
+      client,
+      uri,
+      (held) => (held.workingDirectories?.[0] ?? '') !== `file://${project(root)}`,
+    );
+    expect(state.config.values.isolation).toBe('worktree');
+    // In a tree of its own, beside the repository, and not in the repository.
+    const where = state.workingDirectories?.[0] ?? '';
+    expect(where.startsWith(`file://${worktreesOf(project(root))}`)).toBe(true);
+    expect(where).not.toBe(`file://${project(root)}`);
+  });
+
+  it('refuses to move one that has already been spoken in', async () => {
+    const root = repository();
+    const { client, peer: p } = await joined(root);
+    const uri = 'ahp-session:/spoken';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'folder' },
+      },
+    });
+    const opened = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: opened.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'worktree' } } },
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    // Said, rather than accepted and dropped: an agent whose files moved out
+    // from under a conversation is the thing this refusal is protecting.
+    const refused = p.notes
+      .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
+      .filter((reason): reason is string => typeof reason === 'string');
+    expect(refused.some((reason) => reason.includes('once the session has started'))).toBe(true);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories?: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories?.[0]).toBe(`file://${project(root)}`);
   });
 
   it('puts a client\'s own prefix in front of the branch it makes', async () => {

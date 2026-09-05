@@ -693,6 +693,16 @@ export function createHost(options: HostOptions): Host {
    * was, and a client had to infer it from the path.
    */
   const decided = new Map<string, Record<string, string>>();
+  /**
+   * The isolation schema each session was offered when it was created.
+   *
+   * Kept because a session reports its own config schema and a client draws
+   * its controls from that one rather than from `resolveSessionConfig`. Without
+   * it a session could only describe the answer it already had - a row to read
+   * - and the pre-send phase, where the answer is still somebody's to give, had
+   * nothing to draw.
+   */
+  const offered = new Map<string, Bag>();
   /** The marks on a session, empty until somebody makes one. */
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
@@ -1774,11 +1784,11 @@ export function createHost(options: HostOptions): Host {
    *
    * The schema as well as the values: a client draws a control from the
    * schema, so reporting `isolation: 'worktree'` against a schema that never
-   * mentions `isolation` is a value with nothing to draw it. Both halves are
-   * marked immutable by the schema they came from, so what a client draws is
-   * a row it can read and not a control it can move.
+   * mentions `isolation` is a value with nothing to draw it. Every one of them
+   * is `sessionMutable: false`, which is what stops the control once the
+   * session has started rather than before it has.
    */
-  const mergedConfig = (theirs: unknown, mine: Record<string, string>): Bag => {
+  const mergedConfig = (uri: string, theirs: unknown, mine: Record<string, string>): Bag => {
     const held = (typeof theirs === 'object' && theirs !== null ? theirs : {}) as Bag;
     const schema = (typeof held.schema === 'object' && held.schema !== null ? held.schema : {}) as Bag;
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
@@ -1787,28 +1797,40 @@ export function createHost(options: HostOptions): Host {
     const values = (typeof held.values === 'object' && held.values !== null ? held.values : {}) as Bag;
     return {
       ...held,
-      schema: { ...schema, properties: { ...properties, ...hostSchema(mine) } },
+      schema: { ...schema, properties: { ...properties, ...hostSchema(uri, mine) } },
       values: { ...values, ...mine },
     };
   };
 
   /**
-   * The read-only half of this host's schema, for a session that already exists.
+   * This host's own half of the schema a session reports.
    *
-   * Not the same object `resolveSessionConfig` hands out: that one offers a
-   * choice, and this one reports one already made. `isolation` cannot change
-   * on a running session - an agent whose files moved out from under a
-   * conversation - so what a client is given here has no `enum` to pick from.
+   * The same properties `resolveSessionConfig` offered, not a stripped copy of
+   * them. A client creates a backend session before anything is sent - it needs
+   * somewhere to write the answers its controls collect - and it draws those
+   * controls from the session's schema. A row with no `enum`, or one marked
+   * `readOnly`, is a control that cannot be opened, so describing the answer
+   * here instead of offering it made isolation unsettable in exactly the phase
+   * it is meant to be settable in.
+   *
+   * `sessionMutable: false` is what closes it afterwards, and it is the
+   * protocol's own field for this: a client hides such a control once the
+   * session has started, and this host refuses the change.
    */
-  const hostSchema = (mine: Record<string, string>): Bag => Object.fromEntries(
-    Object.entries({
-      isolation: { title: 'Isolation', description: 'Where the agent makes changes' },
-      branch: { title: 'Branch', description: 'Base branch the worktree started from' },
-      worktreeIncludeFiles: { title: 'Files brought along', description: 'Patterns copied into the worktree' },
-    })
-      .filter(([key]) => mine[key] !== undefined && mine[key] !== '')
-      .map(([key, about]) => [key, { type: 'string', ...about, readOnly: true, sessionMutable: false }]),
-  );
+  const hostSchema = (uri: string, mine: Record<string, string>): Bag => {
+    const properties = ((offered.get(uri)?.properties ?? {}) as Bag);
+    return Object.fromEntries(
+      Object.entries(mine)
+        .filter(([, value]) => value !== undefined && value !== '')
+        .map(([key]) => [
+          key,
+          // A session created before this host could ask - an automation on a
+          // directory that is not a repository - has no offer to repeat, and
+          // says what it settled on instead.
+          properties[key] ?? { type: 'string', title: key, readOnly: true, sessionMutable: false },
+        ]),
+    );
+  };
 
   /**
    * One property of a backend's config schema, as this host reads it.
@@ -1837,6 +1859,54 @@ export function createHost(options: HostOptions): Host {
       .filter(([key, value]) => HOSTS_OWN.includes(key) && typeof value === 'string')
       .map(([key, value]) => [key, value as string]),
   );
+
+  /**
+   * Start a session again, in the directory its config now names.
+   *
+   * The window this exists for is the one a client opens before anything is
+   * sent: a chat exists, a backend session exists because the controls need
+   * somewhere to write their answers, and no turn has run. Isolation is decided
+   * when a session is created, so changing it then is the session being created
+   * differently rather than moved - the backend is closed and started again
+   * where the new answer says, and the worktree the old answer made goes with
+   * it. Once a turn has run there is a conversation about files in a place, and
+   * the answer is fixed for good.
+   */
+  const restart = async (uri: string, credentials: Record<string, string>): Promise<void> => {
+    const held = sessions.get(uri);
+    if (!held) return;
+    const mine = decided.get(uri) ?? {};
+    // The repository rather than the worktree: the choice is made against the
+    // directory somebody asked for, and a worktree is only where a previous
+    // answer put it.
+    const from = worktrees.get(uri)?.repository ?? held.workingDirectory;
+    const was = worktrees.get(uri);
+    if (was) {
+      worktrees.delete(uri);
+      // Removed without asking whether it is dirty, unlike a disposed session:
+      // nothing has ever run in this one, so there is nothing in it to keep.
+      await options.worktrees?.remove(was.repository, was.path, was.branch)
+        .then(() => { log(`removed ${was.path}`); })
+        .catch((error: unknown) => {
+          log(`kept ${was.path}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
+    const to = await isolated(uri, mine, from);
+    const before = held.workingDirectory;
+    for (const [chatUri, chat] of held.chats) {
+      chat.close();
+      byChat.delete(chatUri);
+    }
+    sessions.delete(uri);
+    spawn(held.agent, uri, held.defaultChat, held.config, undefined, to, credentials);
+    log(`restarted ${uri}${to === undefined ? '' : ` in ${to}`}`);
+    if (before === to) return;
+    // Said in the protocol's own words. A client holding this session's state
+    // has the old directory in it, and a session that moved without saying so
+    // is one whose files a client goes looking for in the wrong place.
+    if (before !== undefined) dispatch(uri, { type: 'session/workingDirectoryRemoved', directory: `file://${before}` });
+    if (to !== undefined) dispatch(uri, { type: 'session/workingDirectorySet', directory: `file://${to}` });
+  };
 
   /** The host's own keys, which a backend has never heard of. */
   const HOSTS_OWN = [
@@ -2237,7 +2307,7 @@ export function createHost(options: HostOptions): Host {
         // What this host answered, beside what the backend did. Its own keys
         // never reached the backend, so this is the only place they can be
         // read back from.
-        ...(mine === undefined ? {} : { config: mergedConfig(theirs.config, mine) }),
+        ...(mine === undefined ? {} : { config: mergedConfig(channel, theirs.config, mine) }),
         ...describes(channel),
         ...changesetsOf(channel),
         // Required by the protocol and empty until somebody announces
@@ -2424,6 +2494,7 @@ export function createHost(options: HostOptions): Host {
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
     decided.set(uri, mineOf(config));
+    offered.set(uri, (await isolating(wanted.workingDirectory)).schema);
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -3470,6 +3541,11 @@ export function createHost(options: HostOptions): Host {
            */
           const running = await isolated(uri, config, where);
           decided.set(uri, mineOf(config));
+          // The offer, kept so the session can make it again while nothing has
+          // been said in it. Against the directory that was asked for, which is
+          // the repository - a worktree's own has one branch and is not where
+          // the choice is made.
+          offered.set(uri, (await isolating(where)).schema);
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
@@ -3628,6 +3704,7 @@ export function createHost(options: HostOptions): Host {
           // session anybody ever opened.
           marks.delete(idOf(uri));
           decided.delete(uri);
+          offered.delete(uri);
           for (const channel of [...shown.keys()]) {
             if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
           }
@@ -4138,7 +4215,40 @@ export function createHost(options: HostOptions): Host {
               // session remember the word `[object Object]`.
               for (const [key, value] of Object.entries(config)) owning.config[key] = value;
             }
+            /*
+             * This host's own keys, which no backend has heard of.
+             *
+             * `isolation` and its companions decide a directory, and a
+             * directory is decided when a session is created - so the answer
+             * can still move while nothing has been said, and not afterwards.
+             * That window is exactly the one a client puts these controls in
+             * front of somebody in: it creates the backend session first so
+             * the controls have somewhere to write, then sends the first
+             * message. Applied together and started once, because two keys in
+             * one action are one decision.
+             */
+            const ours = Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key));
+            if (ours.length > 0 && owning !== undefined) {
+              const bad = ours.find(([, value]) => typeof value !== 'string');
+              const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
+              if (bad !== undefined) no(`${bad[0]} takes a string`);
+              else if (started) no(`${ours[0]?.[0]} is fixed once the session has started`);
+              else {
+                const mine = { ...(decided.get(session.uri) ?? {}) };
+                for (const [key, value] of ours) mine[key] = value as string;
+                decided.set(session.uri, mine);
+                const uri = session.uri;
+                void restart(uri, tokensFor(owning.agent.provider))
+                  .then(() => {
+                    for (const [key, value] of ours)
+                      dispatch(uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
+                  })
+                  .catch((error: unknown) => { no(error instanceof Error ? error.message : String(error)); });
+              }
+            }
             for (const [key, value] of Object.entries(config)) {
+              // Answered above, and not the backend's to hear about.
+              if (HOSTS_OWN.includes(key)) continue;
               /*
                * What the schema says about this key, rather than what this
                * file used to know about four of them.

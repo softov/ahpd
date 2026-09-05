@@ -118,7 +118,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 
 **The 21 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. One of those reasons is worth arguing about rather than reading:
 
-- The `workingDirectory*` set is not a gap. Directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about.
+- The `workingDirectory*` set is nearly not a gap. `session/workingDirectorySet` and `Removed` are emitted in one window only: a client creates a backend session before the first message is sent, so the session exists while the answer about where it runs is still somebody's to give, and a change of isolation there starts it again in the directory the new answer names. After a turn has run the directory is fixed, because a session that moves is a conversation whose second half cannot see the files its first half was about. `chat/workingDirectorySet` is still never emitted: a chat does not have one of its own here.
 
 `chat/truncated` stays refused for a reason worth keeping: it means "drop the turns before this one", and when the harness compacts, every one of them is still in the transcript and still readable. What was compacted is the model's context, not the conversation.
 
