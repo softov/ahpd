@@ -287,3 +287,60 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
   expect(opened.snapshot.state.inputNeeded).toBeUndefined();
   expect(opened.snapshot.state.status).toBe(1);
 });
+
+/*
+ * The two fields the host reads off a backend's schema.
+ *
+ * `host.ts` imports no backend and used to hold four Claude key names, routing
+ * `permissionMode`, `model`, `effortLevel` and `outputStyle` by name and
+ * refusing `thinking` by name. Nothing about any of that was a fact about the
+ * host: they are properties of whatever schema a backend published, and what
+ * the generic layer needs to know is declared there. `notes` advertises no
+ * Claude key at all, which is what makes it the honest place to check.
+ */
+it('refuses a key its schema marks immutable, without the backend being asked', async () => {
+  const { client, peer: p, uri } = await talking();
+  /*
+   * Echoes, not refusals.
+   *
+   * A refusal is an `action` envelope carrying the very action it declined,
+   * so counting by action type alone counts the no as a yes - which is what
+   * this test did before it was corrected.
+   */
+  const echoed = () => p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: { type: string }; rejectionReason?: string })
+    .filter((n) => n.channel === uri && n.rejectionReason === undefined
+      && n.action.type === 'session/configChanged').length;
+  const before = echoed();
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { tone: 'terse' } } },
+  });
+  await settle();
+  expect(echoed()).toBe(before);
+  const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
+  expect(why.rejectionReason).toContain('fixed when the session is created');
+});
+
+it('takes one its schema marks mutable, and says so in the backend\'s words when the value is wrong', async () => {
+  const { client, peer: p, uri } = await talking();
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'never' } } },
+  });
+  await settle();
+  expect(actions(p, uri).some((a) => a.type === 'session/configChanged'
+    && (a.config as { ask?: string }).ask === 'never')).toBe(true);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'sometimes' } } },
+  });
+  await settle();
+  // The backend's sentence, not the host's: only it knows whether the key or
+  // the value was the problem, and saying "no such key" about a bad value
+  // would tell a client to stop drawing a control that works.
+  const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
+  expect(why.rejectionReason).toContain('sometimes');
+});

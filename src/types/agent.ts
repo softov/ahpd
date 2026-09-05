@@ -115,9 +115,19 @@ export interface Agent {
    * What a session of this kind can be told to do differently.
    *
    * A JSON-Schema-shaped `{ properties }`. Each property may carry `title`,
-   * `description`, `enum`, `enumLabels`, `enumDescriptions`, `default` and
-   * `sessionMutable` - the last deciding whether a client offers it on a
-   * session that is already running.
+   * `description`, `enum`, `enumLabels`, `enumDescriptions`, `default`,
+   * `sessionMutable` and `scope`.
+   *
+   * The last two are what the *host* reads, and they are the only two things
+   * it needs to know about a key it otherwise knows nothing about.
+   * `sessionMutable: false` is refused on a running session rather than
+   * accepted and dropped. `scope` is `'session'` - the default - for a key the
+   * chats of one session share, and `'chat'` for one each chat answers for
+   * itself: a permission mode is the session's, and a model is the chat's.
+   * `scope` is this library's, not the protocol's, whose config schema is
+   * deliberately generic and says nothing about either.
+   *
+   * Everything else is between the backend and whatever client draws it.
    *
    * One schema, used before a session exists and by every session that does.
    * Two copies drift, and a composer then offers one set of controls on the

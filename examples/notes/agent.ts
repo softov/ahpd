@@ -151,10 +151,25 @@ export function notes(options: NotesOptions): Agent {
         default: 'writes',
         sessionMutable: true,
       },
+      /*
+       * One this backend will not take once a session is running.
+       *
+       * Declared so the *host* refuses it rather than this backend: the two
+       * fields the host reads off a schema are `sessionMutable` and `scope`,
+       * and a key marked immutable never reaches `setConfig` at all.
+       */
+      tone: {
+        type: 'string',
+        title: 'Tone',
+        description: 'How the notes are written. Fixed when the session starts.',
+        enum: ['plain', 'terse'],
+        default: 'plain',
+        sessionMutable: false,
+      },
     },
   });
 
-  const defaults = (): Record<string, string> => ({ ask: 'writes' });
+  const defaults = (): Record<string, unknown> => ({ ask: 'writes', tone: 'plain' });
 
   /** Every note there is, newest name last. Missing directory means none yet. */
   const listNotes = async (): Promise<string[]> => {
@@ -679,26 +694,24 @@ export function notes(options: NotesOptions): Agent {
       /**
        * This backend's own key, changed on a running session.
        *
-       * False for a key or a value it does not have, and false is a real
-       * answer: a setter that reported success and changed nothing would leave
-       * a client showing a session in a mode it is not in.
+       * A sentence for a key or a value it does not have, and saying which is
+       * the point: a setter that reported success and changed nothing would
+       * leave a client showing a session in a mode it is not in, and one that
+       * said "no such key" about a bad *value* would tell it to stop drawing a
+       * control that works.
        */
       setConfig: (key, value) => {
-        if (key !== 'ask') return false;
-        if (value !== 'writes' && value !== 'always' && value !== 'never') return false;
+        if (key !== 'ask') return `${key} is not a config key this backend takes`;
+        if (value !== 'writes' && value !== 'always' && value !== 'never') {
+          return `ask is one of writes, always or never - not ${String(value)}`;
+        }
         settings.ask = value;
         return true;
       },
 
-      setPermissionMode: () => false,
-
       setCustomizationEnabled: async () => false,
       startMcpServer: async () => false,
       stopMcpServer: async () => false,
-      setModel: async () => false,
-      setEffort: () => false,
-      setOutputStyle: () => false,
-
       settings: () => ({ ...settings }),
       close: () => {
         closed = true;

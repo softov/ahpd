@@ -3268,6 +3268,36 @@ describe('more than one chat in a session', () => {
     expect(result.snapshots[0]?.state.agents[0]?.capabilities?.multipleChats).toEqual({});
   });
 
+  it('spreads a session-scoped key across every chat, and keeps a chat-scoped one where it was', async () => {
+    const { client, uri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    const before = sdk.modesSet.length;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
+    });
+    await settle();
+    /*
+     * Both chats, because the schema says `scope: 'session'`.
+     *
+     * The chats of one session are peers on one config: a permission mode set
+     * on one of them and not the other is a session where two conversations
+     * are allowed different things. This used to be `host.ts` knowing the name
+     * `permissionMode`; it is now the backend's schema saying so.
+     */
+    expect(sdk.modesSet.length - before).toBe(2);
+
+    const efforts = sdk.effortsSet.length;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+    });
+    await settle();
+    // One, because that one says `scope: 'chat'`. How hard a conversation
+    // thinks is that conversation's.
+    expect(sdk.effortsSet.length - efforts).toBe(1);
+  });
+
   it('opens one, and lists both on the session', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });

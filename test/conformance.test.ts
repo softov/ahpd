@@ -707,13 +707,17 @@ it('takes one on a running session, and leaves the advertised control saying wha
   });
   await settle();
   expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toHaveLength(before);
-  // And said no rather than said nothing. The client applied this before
-  // sending it, so a host that dropped it left a control showing a mode the
-  // session was never in and nothing anywhere to put it back.
-  // The backend's own answer, which is a bare no: `setConfig` reports whether
-  // it took the pair, so what comes back names the key rather than the value
-  // it would not take.
-  expect(refusals(p, uri).some((why) => why.startsWith('mode is not a config key'))).toBe(true);
+  /*
+   * And said no rather than said nothing, in the backend's own words.
+   *
+   * The client applied this before sending it, so a host that dropped it left
+   * a control showing a mode the session was never in and nothing anywhere to
+   * put it back. What comes back names the *value*, because `mode` is a key
+   * this backend does take: `setConfig` answers `true` or a sentence, and only
+   * the backend knows which of the two things went wrong. Saying "no such key"
+   * about a bad value would tell a client to stop drawing a control that works.
+   */
+  expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
 });
 
 it('still starts the harness on what the schema says', async () => {

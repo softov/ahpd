@@ -346,13 +346,6 @@ export function echo(options: EchoOptions): Agent {
       startMcpServer: async () => false,
       stopMcpServer: async () => false,
 
-      // No models to choose between, and saying so is better than accepting a
-      // choice and ignoring it.
-      setModel: async () => false,
-      setPermissionMode: () => false,
-      setEffort: () => false,
-      setOutputStyle: () => false,
-
       settings: () => ({ ...settings }),
       close: () => { closed = true; },
     };

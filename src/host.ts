@@ -1762,6 +1762,27 @@ export function createHost(options: HostOptions): Host {
       .map(([key, about]) => [key, { type: 'string', ...about, readOnly: true, sessionMutable: false }]),
   );
 
+  /**
+   * One property of a backend's config schema, as this host reads it.
+   *
+   * Two fields and no more: `sessionMutable`, which the protocol already
+   * declares, and `scope`, which it does not - the protocol's schema is
+   * deliberately generic and says nothing about whether a key belongs to a
+   * session or to one chat inside it. A backend that says neither gets the
+   * safe answers: mutable, and the session's.
+   */
+  const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
+    if (!agent) return undefined;
+    const schema = agent.schema();
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Bag;
+    const held = properties[key];
+    return typeof held === 'object' && held !== null
+      ? held as { sessionMutable?: boolean; scope?: string }
+      : undefined;
+  };
+
   /** What this host answered, as strings, for saying back on the session. */
   const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
     Object.entries(config)
@@ -4017,77 +4038,56 @@ export function createHost(options: HostOptions): Host {
               for (const [key, value] of Object.entries(config)) owning.config[key] = value;
             }
             for (const [key, value] of Object.entries(config)) {
-              const everywhere: Session[] = owning ? [...owning.chats.values()] : [session];
-              if (key === 'permissionMode') {
-                for (const chat of everywhere) {
-                  if (chat !== session) chat.setPermissionMode(String(value));
-                }
-                // Confirmed, like every other key here. Applying it in
-                // silence leaves each client showing whatever it last chose
-                // for itself, and the two disagree the moment there are two.
-                if (session.setPermissionMode(String(value))) {
-                  dispatch(session.uri, { type: 'session/configChanged', config: { permissionMode: String(value) } });
-                }
-                else {
-                  no(`The harness has no permission mode called ${String(value)}`);
-                }
-                continue;
-              }
-              if (key === 'model') {
-                void session.setModel(String(value)).then((took) => {
-                  if (took)
-                    dispatch(session.uri, { type: 'session/configChanged', config: { model: String(value) } }, origin);
-                  else
-                    no(`The harness would not take model ${String(value)}`);
-                });
-                continue;
-              }
-              if (key === 'effortLevel') {
-                if (session.setEffort(String(value))) {
-                  dispatch(session.uri, { type: 'session/configChanged', config: { effortLevel: String(value) } });
-                }
-                continue;
-              }
-              if (key === 'outputStyle') {
-                // Every chat in the session, like the permission mode: they
-                // are peers on one config, and a voice set on one of them is
-                // a session where two conversations answer differently.
-                for (const chat of everywhere) {
-                  if (chat !== session) chat.setOutputStyle(String(value));
-                }
-                if (session.setOutputStyle(String(value))) {
-                  dispatch(session.uri, { type: 'session/configChanged', config: { outputStyle: String(value) } });
-                }
-                else {
-                  no(`The harness has no output style called ${String(value)}`);
-                }
-                continue;
-              }
-              if (key === 'thinking') {
-                // Immutable, and said so rather than accepted and dropped: a
-                // control that reports success and changes nothing is worse
-                // than one that refuses.
-                no('thinking is fixed when the session is created');
-                continue;
-              }
               /*
-               * Anything else is the backend's own, and is delivered.
+               * What the schema says about this key, rather than what this
+               * file used to know about four of them.
                *
-               * The four keys above are routed by name because they mean
-               * something *here* - a permission mode and an output style are
-               * set on every chat in the session, not only the one that was
-               * asked. Every other key is a property of whatever schema this
-               * backend published, and a client draws its controls from that
-               * schema: a key that reached nothing was a control that moved
-               * and changed the session not at all.
+               * `host.ts` imports no backend and is meant not to know one
+               * exists, and it held the names `permissionMode`, `model`,
+               * `effortLevel` and `outputStyle` and refused `thinking` by
+               * name. Every one of those is a property of whatever schema the
+               * backend published, and the two things this layer actually
+               * needs to know are declared there: whether the key can move on
+               * a running session, and whether it belongs to the session or
+               * to one chat in it.
                */
+              const property = propertyOf(owning?.agent, key);
+              /*
+               * Absent is not a refusal.
+               *
+               * `autoApprove` and `mode` are conventional names a client
+               * sends whatever a host advertises, and this backend takes both
+               * without declaring either - so the schema decides how a key
+               * behaves and the backend decides whether it is taken at all.
+               */
+              // Immutable, and said so rather than accepted and dropped: a
+              // control that reports success and changes nothing is worse
+              // than one that refuses.
+              if (property?.sessionMutable === false) {
+                no(`${key} is fixed when the session is created`);
+                continue;
+              }
               if (session.setConfig === undefined) {
                 no(`${key} is not a config key this backend takes`);
                 continue;
               }
-              void Promise.resolve(session.setConfig(key, value)).then((took) => {
-                if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
-                else no(`${key} is not a config key this backend takes`);
+              /*
+               * Every chat, or only this one, as the property says.
+               *
+               * A permission mode and an output style are the session's: the
+               * chats are peers on one config, and a voice set on one of them
+               * is a session where two conversations answer differently. A
+               * model is the chat's. Neither is a fact about this host.
+               */
+              const everywhere = property?.scope === 'chat'
+                ? []
+                : (owning ? [...owning.chats.values()] : []).filter((chat) => chat !== session);
+              for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
+              void Promise.resolve(session.setConfig(key, value)).then((answer) => {
+                // The backend's own words when it refused, because only it
+                // knows whether the key or the value was the problem.
+                if (answer === true) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
+                else no(answer);
               });
             }
             break;

@@ -181,26 +181,22 @@ export interface Session {
   /** Answer a question the agent asked, keyed by question id. */
   answer(requestId: string, accepted: boolean, answers: Bag): void;
 
-  /** Run later turns on this model. False when the agent would not take it. */
-  setModel(model: string): Promise<boolean>;
-  /** Change how much the agent may do before asking. False when the mode is not one. */
-  setPermissionMode(mode: string): boolean;
   /**
-   * Change any other key of this backend's own schema. False when it is not one.
+   * Take one config value, or say why not.
    *
-   * `permissionMode`, `model`, `effortLevel` and `outputStyle` have their own
-   * setters because they mean something to the host - a permission mode and an
-   * output style are set on every chat in a session, not only the one that was
-   * asked. Everything else a backend published in `schema()` arrives here, and
-   * a backend without this takes none of them: a client draws its controls from
-   * that schema, so a key that reaches nothing is a control that moves and
-   * changes the session not at all.
+   * Every key a client sets goes through here, including the ones a backend
+   * advertises in its own schema: the host reads that schema for how a key
+   * behaves - whether it can move on a running session, whether it belongs to
+   * the session or to one chat - and knows nothing about what any key means.
+   *
+   * `true` when it was taken. A string is the refusal, in the backend's own
+   * words, and it is a string rather than `false` because only the backend
+   * knows which of the two things went wrong: a key it does not serve, or a
+   * value it will not take for a key it does. A host that answered both with
+   * one sentence would be telling a client its control does not exist when
+   * the truth is that the value was wrong.
    */
-  setConfig?(key: string, value: unknown): boolean | Promise<boolean>;
-  /** Change how hard it thinks. False when the level is not one. */
-  setEffort(level: string): boolean;
-  /** Change the voice it answers in. False when the CLI has no such style. */
-  setOutputStyle(style: string): boolean;
+  setConfig?(key: string, value: unknown): true | string | Promise<true | string>;
   /** The config in force, by key. */
   settings(): Record<string, unknown>;
 

@@ -1354,22 +1354,6 @@ export function createSession(options: SessionOptions): Session {
      * Write-ahead: the turn is real the moment the client says so, and the
      * host's job is to make it true rather than to decide whether it may.
      */
-    /**
-     * Validated, not forwarded.
-     *
-     * The CLI takes a fixed set, and a mode it does not know is a mistake
-     * worth refusing here rather than a rejected promise nobody reads - and
-     * `bypassPermissions` arriving as `bypass` is the kind of near-miss a
-     * client makes.
-     */
-    setPermissionMode: (mode) => {
-      const known = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
-      const found = known.find((value) => value === mode);
-      if (!found) return false;
-      settings.permissionMode = found;
-      void handle.setPermissionMode(found).catch(() => {});
-      return true;
-    },
 
     /**
      * A key this backend does not advertise, taken anyway when it means one.
@@ -1383,7 +1367,7 @@ export function createSession(options: SessionOptions): Session {
      * reported success and changed nothing would leave a client showing a
      * session in a state it is not in.
      */
-    setConfig: (key, value) => {
+    setConfig: async (key, value) => {
       /*
        * The lists, which really do move on a running session.
        *
@@ -1395,49 +1379,66 @@ export function createSession(options: SessionOptions): Session {
        */
       if (key === 'permissions') {
         const held = listsOf(value);
-        if (!held) return false;
+        if (!held) return `${key} takes an object with allow and deny, not ${typeof value}`;
         allowed = held;
         settings.permissions = held;
         return true;
       }
-      const found = permissionFor(key, typeof value === 'string' ? value : '');
-      if (!found) return false;
+      const said = typeof value === 'string' ? value : '';
+      if (key === 'model') {
+        try {
+          await handle.setModel(said === 'default' ? undefined : said);
+          chosen = said;
+          settings.model = said;
+          return true;
+        }
+        catch { return `The harness would not take model ${said}`; }
+      }
+      if (key === 'effortLevel') {
+        const known = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+        const found = known.find((one) => one === said);
+        if (!found) return `The harness has no effort level called ${said}`;
+        settings.effortLevel = found;
+        void handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
+        return true;
+      }
+      /*
+       * Taken unvalidated until the CLI has said what it has.
+       *
+       * Before the handshake the list is not known, and refusing then would
+       * refuse every style there is - so it is taken and the CLI is left to
+       * disagree. The only wrong answer is a control that reports success and
+       * changes nothing.
+       */
+      if (key === 'outputStyle') {
+        if (styles.length > 0 && !styles.includes(said)) return `The harness has no output style called ${said}`;
+        settings.outputStyle = said;
+        void handle.applyFlagSettings({ outputStyle: said }).catch(() => {});
+        return true;
+      }
+      /*
+       * The mode this backend advertises, and the two conventional names for
+       * the same axis.
+       *
+       * `permissionMode` is the schema's own property and its five values are
+       * the CLI's. `autoApprove` and `mode` are what a client sends whatever a
+       * host advertises, and `permissionFor` maps them onto the same axis.
+       */
+      const modes = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto'] as const;
+      const found = key === 'permissionMode'
+        ? modes.find((one) => one === said)
+        : permissionFor(key, said);
+      if (!found) {
+        return key === 'permissionMode' || key === 'autoApprove' || key === 'mode'
+          ? `The harness has no permission mode called ${said}`
+          : `${key} is not a config key this backend takes`;
+      }
       settings.permissionMode = found;
       void handle.setPermissionMode(found).catch(() => {});
       return true;
     },
 
-    /**
-     * Effort, which is the thinking control that can actually be changed.
-     *
-     * `thinking` itself is fixed when the query is built; the level it runs at
-     * is a flag setting the CLI takes at any time. Conflating the two would
-     * offer one live control that is really two, and half of it would not work.
-     */
-    setEffort: (level) => {
-      const known = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-      const found = known.find((value) => value === level);
-      if (!found) return false;
-      settings.effortLevel = found;
-      void handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
-      return true;
-    },
 
-    /**
-     * The voice it answers in.
-     *
-     * Validated against what the CLI said it has, once it has said so. Before
-     * then the list is not known and refusing would refuse every style there
-     * is, so an unvalidated one is taken and the CLI is left to disagree - the
-     * only wrong answer here is a control that reports success and changes
-     * nothing.
-     */
-    setOutputStyle: (name) => {
-      if (styles.length > 0 && !styles.includes(name)) return false;
-      settings.outputStyle = name;
-      void handle.applyFlagSettings({ outputStyle: name }).catch(() => {});
-      return true;
-    },
 
     settings: () => ({ ...settings, ...(chosen ? { model: chosen } : {}) }),
 
@@ -1529,14 +1530,6 @@ export function createSession(options: SessionOptions): Session {
       return true;
     },
 
-    setModel: async (model) => {
-      try {
-        await handle.setModel(model === 'default' ? undefined : model);
-        chosen = model;
-        settings.model = model;
-        return true;
-      } catch { return false; }
-    },
 
     /**
      * A model named on the turn takes effect and **stays** in effect.

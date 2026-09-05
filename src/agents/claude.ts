@@ -124,6 +124,7 @@ export function claude(options: ClaudeOptions): Agent {
        * takes: the agent deciding, per call, whether it needs to ask.
        */
       permissionMode: {
+        scope: 'session',
         type: 'string',
         title: 'Approvals',
         description: 'How the agent handles tool approvals.',
@@ -154,6 +155,7 @@ export function claude(options: ClaudeOptions): Agent {
        * model is not advertised here as a control of its own.
        */
       effortLevel: {
+        scope: 'chat',
         type: 'string',
         title: 'Effort',
         description: 'How hard it thinks before answering.',
@@ -167,6 +169,7 @@ export function claude(options: ClaudeOptions): Agent {
       ...(styles.length > 0
         ? {
             outputStyle: {
+        scope: 'session',
               type: 'string',
               title: 'Output style',
               description: 'The voice it answers in.',
@@ -204,6 +207,7 @@ export function claude(options: ClaudeOptions): Agent {
        * shape could be carried at all.
        */
       permissions: {
+        scope: 'session',
         type: 'object',
         title: 'Permissions',
         description: 'Per-tool session permissions. Updated when a tool is approved for this session.',

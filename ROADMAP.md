@@ -55,6 +55,8 @@ Two sweeps, because neither finds what the other does.
 
 **Diff the protocol's own sources on every bump.** Every wire payload this host builds used to be a `Bag`, which is what made the shape of a release invisible: the 0.9.0 bump moved zero types here and needed no code change, while two of the four things it moved were live and wrong. The payloads are now typed against the package at the places they are constructed — `src/types/wire.ts` says how — so a field the protocol *removes* is a compile error. That still does not catch a field the protocol *adds* which this host should start sending, and catching those is what the diff is for: the automation channel and the error response part were both found that way, and neither typing nor a test would have.
 
+**Ask the schema, not the key name.** `host.ts` imports no backend and is meant not to know one exists, and it held four Claude property names — routing `permissionMode`, `model`, `effortLevel` and `outputStyle` by name and refusing `thinking` by name. None of that was a fact about the host. A backend's schema now declares the two things the generic layer needs: `sessionMutable`, which the protocol already has, and `scope` — `'session'` for a key the chats of one session share, `'chat'` for one each answers for itself. Everything else goes through one `setConfig`, which answers `true` or a sentence, because only the backend knows whether a key or a value was the problem.
+
 **Read the reference client too, not only the package.** The keys that cost the most this year are not in `@microsoft/agent-host-protocol` at all — `autoApprove`, `mode`, `isolation`, `branch`, `Permissions` and the `worktree*` family live in `vscode/src/vs/platform/agentHost`, because the protocol's config schema is deliberately generic and the conventional names live where the pickers do. A-01-10, A-01-11 and A-01-12 all came out of reading that tree. An audit counted against the package's declared types cannot see any of them.
 
 [docs/AHP.md](docs/AHP.md) is the maintained table of what is served, feature by feature. This file does not repeat it: what is here are the judgements, which a table cannot hold.
@@ -90,14 +92,6 @@ So this host offers one effort control for models that do not all take the same 
 **What it costs today.** An effort level the chosen model does not support is accepted and then does nothing. A client cannot show a context window, cannot grey out a model whose policy blocks it, and cannot tell a vision model from one that will refuse an image.
 
 **Suggestions.** (1) Take `configSchema` first and leave the rest: it is the only one of the six that draws a control, and the CLI's `supportedModels()` is already called at startup. (2) Take the numeric limits alongside it if the control protocol reports them, and leave `policyState` — this host enforces no model policy and inventing one would be worse than an absent field. (3) Leave `effortLevel` advertised as well during a transition, since removing a key a client has drawn is a control that vanishes.
-
-## A-02-04 — The generic layer holds a list of Claude property names
-
-`src/host.ts` routes `permissionMode`, `model`, `effortLevel` and `outputStyle` by name, and refuses `thinking` by name, in a file that imports no backend and is meant not to know one exists. Every other seam in this repository is a port; this one is four string comparisons.
-
-**What it costs today.** Nothing a person can see, and everything a second backend would hit: `examples/` already ships two, and a config key either of them advertises is a key `host.ts` fans out to the wrong place or drops. The bug is latent rather than absent — the schema says what a property *is* and not who applies it, so the knowledge has to live somewhere, and it ended up in the one file that should not have it.
-
-**Suggestions.** (1) Two fields on the schema property type — `scope: 'session' | 'chat'` and `mutable: boolean` — and `host.ts` fans out by scope and refuses immutables generically. Not an abstraction layer; two fields, and the property names go back to the backend that owns them. (2) Move the whole fan-out into the `Session` port and let a backend take its own config, which is more honest and more to write. (3) Leave it, and say in `host.ts` that the generic layer knows four Claude keys — a comment is worth more than a silence, and it is what the next backend author would need.
 
 ## A-01-09 — An MCP server that needs signing in cannot be signed into
 
