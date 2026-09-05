@@ -1050,6 +1050,47 @@ describe('what the harness offers', () => {
     expect(models.find((one) => one.id === 'haiku')?.configSchema).toBeUndefined();
   });
 
+  it('offers one effort control, not the model\'s and the session\'s both', async () => {
+    sdk.init = {
+      models: [
+        { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
+      ],
+      commands: [], agents: [],
+    };
+    const { client } = await running();
+    const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
+      schema: { properties: Record<string, unknown> };
+      values: Record<string, unknown>;
+    };
+    /*
+     * Two controls for one setting is one too many.
+     *
+     * A model's `configSchema` and the session-wide `effortLevel` reach the
+     * same place, and a client draws both - so a person sees two effort
+     * pickers sitting on different values. The model's is the truthful one: it
+     * lists what that model supports, where the session key lists all five
+     * whatever is chosen.
+     */
+    expect(Object.keys(cfg.schema.properties)).not.toContain('effortLevel');
+    // And no orphan value either: a value whose property is gone is a setting
+    // nothing can draw and nothing can change.
+    expect(cfg.values.effortLevel).toBeUndefined();
+  });
+
+  it('keeps the session-wide effort where no model has one of its own', async () => {
+    sdk.init = {
+      models: [{ value: 'haiku', displayName: 'Haiku' }],
+      commands: [], agents: [],
+    };
+    const { client } = await running();
+    const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
+      schema: { properties: Record<string, unknown> };
+    };
+    // Otherwise a harness whose models say nothing about effort would offer no
+    // effort control at all, which is worse than a general one.
+    expect(Object.keys(cfg.schema.properties)).toContain('effortLevel');
+  });
+
   it('runs a turn on the model and the thinking level the client chose', async () => {
     const { client, uri } = await running();
     client.handle({

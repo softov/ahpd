@@ -86,6 +86,18 @@ export function claude(options: ClaudeOptions): Agent {
    * and the control is simply absent until it is known.
    */
   let styles: string[] = [];
+
+  /**
+   * Whether the models this harness offers carry effort controls of their own.
+   *
+   * A model's `configSchema` and the session-wide `effortLevel` reach the same
+   * setting, and a client draws both - so a person is shown two effort
+   * controls, on two different values, for one thing. The model's is the
+   * truthful one: it lists what that model actually supports, where the
+   * session-wide key lists all five whatever is chosen. So this backend offers
+   * the session key only while there is nothing better.
+   */
+  let perModelEffort = false;
   let style: string | undefined;
 
   /**
@@ -154,16 +166,18 @@ export function claude(options: ClaudeOptions): Agent {
        * `session/configChanged` with a `model` key is still honoured, but the
        * model is not advertised here as a control of its own.
        */
-      effortLevel: {
-        scope: 'chat',
-        type: 'string',
-        title: 'Effort',
-        description: 'How hard it thinks before answering.',
-        enum: [...EFFORTS],
-        enumLabels: EFFORTS.map((one) => EFFORT_LABELS[one]),
-        default: 'high',
-        sessionMutable: true,
-      },
+      ...(perModelEffort ? {} : {
+        effortLevel: {
+          scope: 'chat',
+          type: 'string',
+          title: 'Effort',
+          description: 'How hard it thinks before answering.',
+          enum: [...EFFORTS],
+          enumLabels: EFFORTS.map((one) => EFFORT_LABELS[one]),
+          default: 'high',
+          sessionMutable: true,
+        },
+      }),
       // Learned, so absent until the probe has answered and absent for good
       // on a harness that has no styles.
       ...(styles.length > 0
@@ -226,7 +240,9 @@ export function claude(options: ClaudeOptions): Agent {
 
   const defaults = (): Record<string, unknown> => ({
     permissionMode: 'default',
-    effortLevel: 'high',
+    // Beside its schema or not at all: a value with no property to draw it is
+    // a control a client cannot show and cannot change.
+    ...(perModelEffort ? {} : { effortLevel: 'high' }),
     thinking: 'adaptive',
     permissions: { allow: [], deny: [] },
     ...(style !== undefined ? { outputStyle: style } : {}),
@@ -247,6 +263,7 @@ export function claude(options: ClaudeOptions): Agent {
       const offered = await probe(dir);
       styles = offered.outputStyles ?? [];
       style = offered.outputStyle;
+      perModelEffort = offered.models.some((model) => model.configSchema !== undefined);
       return offered;
     },
 
