@@ -106,3 +106,28 @@ export interface Terminal {
   /** Kill the process and let go. */
   close(): void;
 }
+
+/**
+ * A pseudoterminal, as this host needs one.
+ *
+ * Handed in rather than imported: a PTY is a native binding, and a library
+ * that depended on one would not load under a runtime it was not built for.
+ * The daemon passes `node-pty` when it has it; a host on another runtime
+ * passes its own, and one that passes none keeps pipes and says `isPty: false`.
+ */
+export interface Pty {
+  /** Everything the terminal writes, VT sequences included. */
+  onData(listen: (data: string) => void): void;
+  /** Called once, when the process goes. */
+  onExit(listen: (exit: { exitCode: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+}
+
+/** Start one. The shape `node-pty`'s own `spawn` already has. */
+export type SpawnPty = (
+  file: string,
+  args: string[],
+  options: { cwd?: string; cols: number; rows: number; env: Record<string, string | undefined> },
+) => Pty;

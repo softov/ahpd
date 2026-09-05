@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { Terminal, TerminalOptions } from './types/terminals.js';
+import type { Pty, SpawnPty, Terminal, TerminalOptions } from './types/terminals.js';
 import type { TerminalStore } from './types/host.js';
 
 /**
@@ -17,7 +17,22 @@ import type { TerminalStore } from './types/host.js';
 /** What runs, when nothing else was asked for. */
 const shellOf = (asked?: string): string => asked ?? process.env.SHELL ?? '/bin/sh';
 
-export function createTerminal(options: TerminalOptions): Terminal {
+/**
+ * What a shell says about itself, in the escape sequences it says it with.
+ *
+ * OSC 133 is the command-boundary convention every shell integration script
+ * writes - `A` before the prompt, `B` where the command starts, `C` where its
+ * output does, `D;<code>` when it finished - and OSC 7 is the directory. They
+ * arrive mixed into the output, so this reads them out and leaves the rest
+ * alone: the bytes still go to the client, which is drawing a terminal and
+ * needs them.
+ *
+ * Only under a pseudoterminal, because only then is there a shell running its
+ * own prompt to emit them.
+ */
+const MARKS = /\u001b\](133|7);([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
+
+export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Terminal {
   const { uri, cwd, emit } = options;
   const shell = shellOf(options.shell);
   let title = options.name ?? shell.slice(shell.lastIndexOf('/') + 1);
@@ -42,12 +57,84 @@ export function createTerminal(options: TerminalOptions): Terminal {
   /*
    * `-c` when there is a command, and nothing when there is not.
    *
-   * A shell given `-c` runs the one thing and exits, which is the only
-   * completion signal available here: without a pseudoterminal there is no
-   * shell integration, so nothing can tell where one command's output ends
-   * and the next begins.
+   * A shell given `-c` runs the one thing and exits. Under pipes that is the
+   * only completion signal there is; under a pseudoterminal the shell says so
+   * itself, in OSC 133.
    */
-  const child = spawn(shell, options.command === undefined ? [] : ['-c', options.command], {
+  const args = options.command === undefined ? [] : ['-c', options.command];
+  const environment = {
+    ...process.env,
+    // A real terminal under a pty, and an honest `dumb` without one.
+    TERM: pty ? (process.env.TERM ?? 'xterm-256color') : 'dumb',
+    COLUMNS: String(cols),
+    LINES: String(rows),
+  };
+
+  /** Where the shell says it is, once it has said. */
+  let where = cwd;
+  /** The command being run, from `C` until `D`. */
+  let command: { id: string; line: string; at: number } | undefined;
+  /** What has been typed since the prompt, so the command line can be read back. */
+  let typed = '';
+
+  /**
+   * Read the shell's own marks out of a chunk, and say what they meant.
+   *
+   * The chunk still reaches the client whole: this is a reader, not a filter,
+   * and a client drawing a terminal needs the bytes it was sent.
+   */
+  const marked = (data: string): void => {
+    for (const found of data.matchAll(MARKS)) {
+      const [, kind, body = ''] = found;
+      if (kind === '7') {
+        // `file://host/path`, per the convention. The host part is dropped:
+        // the path is on this machine, and that is what a client opens.
+        const path = body.replace(/^file:\/\/[^/]*/, '');
+        if (path !== '' && path !== where) {
+          where = path;
+          emit('terminal', { type: 'terminal/cwdChanged', cwd: `file://${path}` });
+        }
+        continue;
+      }
+      const mark = body.split(';')[0];
+      if (mark === 'A') { typed = ''; continue; }
+      if (mark === 'C') {
+        command = { id: `c${String(Date.now())}`, line: typed.trim(), at: Date.now() };
+        emit('terminal', {
+          type: 'terminal/commandExecuted',
+          commandId: command.id,
+          commandLine: command.line,
+          timestamp: command.at,
+        });
+        continue;
+      }
+      if (mark !== 'D' || command === undefined) continue;
+      const code = Number(body.split(';')[1]);
+      emit('terminal', {
+        type: 'terminal/commandFinished',
+        commandId: command.id,
+        ...(Number.isFinite(code) ? { exitCode: code } : {}),
+        durationMs: Date.now() - command.at,
+      });
+      command = undefined;
+    }
+  };
+
+  const terminal: Pty | undefined = pty?.(shell, args, {
+    ...(cwd !== undefined ? { cwd } : {}),
+    cols,
+    rows,
+    env: environment,
+  });
+  if (terminal !== undefined) {
+    terminal.onData((data) => { marked(data); said(data); });
+    terminal.onExit(({ exitCode: code }) => { exitCode = code; ended(); });
+    // Said once, at the start. A client MUST check this before relying on
+    // command boundaries, and the same fact is on the state.
+    emit('terminal', { type: 'terminal/commandDetectionAvailable' });
+  }
+
+  const child = terminal !== undefined ? undefined : spawn(shell, args, {
     cwd,
     /*
      * Its own process group, so a signal reaches what it started.
@@ -61,11 +148,11 @@ export function createTerminal(options: TerminalOptions): Terminal {
     // no point asking it to be interactive: it would print a prompt nobody
     // can answer the way it expects.
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, TERM: 'dumb', COLUMNS: String(cols), LINES: String(rows) },
+    env: environment,
   });
 
-  child.stdout.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
-  child.stderr.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
+  child?.stdout.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
+  child?.stderr.on('data', (chunk: Buffer) => said(chunk.toString('utf8')));
   /**
    * Said once, whichever of the three got here first.
    *
@@ -79,12 +166,12 @@ export function createTerminal(options: TerminalOptions): Terminal {
     announced = true;
     emit('terminal', { type: 'terminal/exited', exitCode });
   };
-  child.on('error', (error: Error) => {
+  child?.on('error', (error: Error) => {
     said(`${error.message}\n`);
     exitCode = 127;
     ended();
   });
-  child.on('exit', (code: number | null, signal: string | null) => {
+  child?.on('exit', (code: number | null, signal: string | null) => {
     // A signal is not an exit code, and 128+n is the shell's own convention
     // for one - better than reporting nothing, which reads as still running.
     exitCode = code ?? (signal ? 128 : 0);
@@ -98,7 +185,7 @@ export function createTerminal(options: TerminalOptions): Terminal {
    * result before the result had arrived - which is exactly what a `!`
    * command in the composer reads back.
    */
-  child.on('close', () => {
+  child?.on('close', () => {
     // A process that closed without an exit event was killed outright.
     exitCode ??= 0;
     ended();
@@ -122,8 +209,11 @@ export function createTerminal(options: TerminalOptions): Terminal {
       // to divide the output at. The protocol's shape, not a flat string.
       content: buffered === '' ? [] : [{ type: 'unclassified', value: buffered }],
       claim,
-      supportsCommandDetection: false,
-      isPty: false,
+      // Both true only under a pseudoterminal: without one there is no shell
+      // running its own prompt, so there are no boundaries to report and no
+      // VT sequences for a client to parse.
+      supportsCommandDetection: terminal !== undefined,
+      isPty: terminal !== undefined,
       /*
        * Both spellings, because this host speaks five versions.
        *
@@ -151,21 +241,38 @@ export function createTerminal(options: TerminalOptions): Terminal {
        * command cannot be stopped in. Sending the signal is what the driver
        * would have done.
        */
+      /*
+       * Under a pseudoterminal the byte is the signal.
+       *
+       * A pty has a line discipline: `^C` reaches it as input and it sends
+       * SIGINT to the foreground group itself, which is the whole point of
+       * having one. So this writes it through and does nothing clever.
+       */
+      if (terminal !== undefined) {
+        terminal.write(data);
+        // Kept so a command line can be read back at the next `C` mark; the
+        // shell echoes what was typed, but the echo arrives as output and
+        // this is the only place the input itself is seen.
+        typed += data;
+        return;
+      }
       const at = data.indexOf('\u0003');
       if (at !== -1) {
         const rest = data.slice(0, at) + data.slice(at + 1);
-        if (rest !== '' && child.stdin.writable) child.stdin.write(rest);
-        try { process.kill(-(child.pid ?? 0), 'SIGINT'); }
+        if (rest !== '' && child?.stdin.writable) child.stdin.write(rest);
+        try { process.kill(-(child?.pid ?? 0), 'SIGINT'); }
         // The group is gone, which is the outcome asked for.
         catch { /* nothing left to interrupt */ }
         return;
       }
-      if (child.stdin.writable) child.stdin.write(data);
+      if (child?.stdin.writable) child.stdin.write(data);
     },
 
-    // Kept because the state reports them and a client draws to them. Nothing
-    // is told: there is no pseudoterminal to send SIGWINCH to.
+    // Told, when there is something to tell: a pseudoterminal gets the new
+    // size and sends SIGWINCH itself. Without one these are kept because the
+    // state reports them and a client draws to them.
     resize: (nextCols, nextRows) => {
+      terminal?.resize(nextCols, nextRows);
       cols = nextCols;
       rows = nextRows;
       emit('terminal', { type: 'terminal/resized', cols, rows });
@@ -190,10 +297,14 @@ export function createTerminal(options: TerminalOptions): Terminal {
     },
 
     close: () => {
-      child.stdin.end();
+      if (terminal !== undefined) {
+        terminal.kill();
+        return;
+      }
+      child?.stdin.end();
       // The group, not the shell: detached, its children outlive it otherwise.
-      try { process.kill(-(child.pid ?? 0), 'SIGKILL'); }
-      catch { child.kill(); }
+      try { process.kill(-(child?.pid ?? 0), 'SIGKILL'); }
+      catch { child?.kill(); }
     },
   };
 }
@@ -207,5 +318,19 @@ export function createTerminal(options: TerminalOptions): Terminal {
  * ```ts
  * createHost({ path, agents, terminals: shellTerminals() });
  * ```
+ *
+ * Given a `pty` it runs shells under a pseudoterminal instead, which is what
+ * makes shell integration possible: the shell prints its own OSC 133 marks, so
+ * command boundaries and the working directory become facts rather than
+ * guesses. The binding is handed in because it is native code - `node-pty` is
+ * the daemon's dependency and never this library's, and a host on another
+ * runtime passes whatever it has.
+ *
+ * ```ts
+ * import { spawn } from 'node-pty';
+ * createHost({ path, agents, terminals: shellTerminals({ pty: spawn }) });
+ * ```
  */
-export const shellTerminals = (): TerminalStore => ({ create: createTerminal });
+export const shellTerminals = (options: { pty?: SpawnPty } = {}): TerminalStore => ({
+  create: (asked) => createTerminal(asked, options.pty),
+});

@@ -9,6 +9,7 @@ import { gitChanges } from './changes.js';
 import { scheduledAutomations } from './scheduled.js';
 import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
+import type { SpawnPty } from './types/terminals.js';
 import { gitWorktrees } from './worktrees.js';
 import { listen } from './listen.js';
 
@@ -249,6 +250,27 @@ if (options.help) {
 
 const { token, from } = secret(options);
 
+/**
+ * A pseudoterminal binding, if this machine has one built.
+ *
+ * `node-pty` is native code and an optional dependency: with it, shells run
+ * under a real terminal and the shell's own OSC 133 marks turn into command
+ * boundaries; without it they run on pipes and the state says `isPty: false`,
+ * which is what the protocol has that flag for. Imported here rather than in
+ * the library, so `ahpd` as a package stays loadable under any runtime.
+ */
+const pty = async (): Promise<{ pty?: SpawnPty }> => {
+  try {
+    // By name at runtime, so the type checker is not asked for a module that
+    // may not be installed - which is the whole point of it being optional.
+    const found = await import(/* @vite-ignore */ 'node-pty' as string) as { spawn?: unknown };
+    return typeof found.spawn === 'function' ? { pty: found.spawn as SpawnPty } : {};
+  }
+  catch {
+    return {};
+  }
+};
+
 const host = createHost({
   path: options.paths[0] as string,
   // The daemon serves Claude Code. The host serves whatever it is given -
@@ -264,7 +286,7 @@ const host = createHost({
    * `-32601` when asked for one.
    */
   resources: fileResources(),
-  terminals: shellTerminals(),
+  terminals: shellTerminals(await pty()),
   directories: gitBranches(),
   changes: gitChanges(),
   worktrees: gitWorktrees(),

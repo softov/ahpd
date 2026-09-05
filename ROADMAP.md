@@ -42,11 +42,11 @@ correlates a question with its answer — and nothing is routed through it.
 ## 3. State actions — 75 of 96 emitted
 
 ### Terminals (4)
-- [ ] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
+- [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
   `commandDetectionAvailable`, plus `TerminalState.supportsCommandDetection`
   and `isPty: true`. Shell integration: OSC 133 sequences parsed out of the
   stream, and OSC 7 for the directory.
-- [ ] **3.1a** The pty binding is handed in, not imported: a
+- [x] **3.1a** The pty binding is handed in, not imported: a
   `pty?: (command, args, options) => PtyProcess` option on `shellTerminals()`,
   so `node-pty` is the daemon's dependency and never the library's, and a host
   on Bun or Deno passes its own. Without one the port keeps spawning pipes and
