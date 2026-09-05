@@ -81,6 +81,13 @@ channel the owner mints is relayed: that client - and only that client - may
 dispatch `resourceWatch/changed` onto it, and this host passes it to whoever
 subscribed.
 
+A refusal comes back to the asking client exactly as the owner sent it - this
+host has no standing to soften somebody else's `-32009` - and is written to the
+log with the method, the URI, the client that refused and the code, because
+that is the only place all four are visible at once. A client on the other end
+of a `-32009` cannot tell "published read-only" from "not yet sure who is
+asking".
+
 `host.clients` is the same ten as named methods, so an embedder can read a
 client directly, and `ahp_resource` (see [state actions](#state-actions),
 `serverTools`) is how a session's agent reaches one.

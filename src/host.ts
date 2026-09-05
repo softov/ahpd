@@ -355,7 +355,23 @@ export function createHost(options: HostOptions): Host {
     if (params.destination !== undefined && to?.clientId !== owner.clientId) {
       throw new RpcError(-32602, `${uri} and ${String(params.destination)} are not the same client's`);
     }
-    const answer = await owner.peer.request(method, params);
+    /*
+     * The owner's refusal is the owner's, and it is written down here.
+     *
+     * What goes back to the asking client is whatever the owner said, code
+     * and all - this host has no standing to soften somebody else's refusal.
+     * But a refusal that crossed a connection is one the asking client cannot
+     * attribute: `-32009` from a client that published a directory read-only
+     * and `-32009` from one that has not finished working out who is asking
+     * are the same three digits, and the only place both are visible at once
+     * is this log.
+     */
+    const answer = await owner.peer.request(method, params).catch((error: unknown) => {
+      const code = (error as { code?: unknown }).code;
+      const said = error instanceof Error ? error.message : String(error);
+      log(`${owner.clientId} refused ${method} for ${uri}${typeof code === 'number' ? ` (${String(code)})` : ''}: ${said}`);
+      throw error;
+    });
     /*
      * A watch the owner minted, remembered so its reports can be relayed.
      *

@@ -44,7 +44,13 @@ function peer(name: string): Peer & {
   return held;
 }
 
-const host = () => createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], resources: fileResources() });
+const said: string[] = [];
+const host = () => createHost({
+  path: DIR,
+  agents: [echo({ path: DIR, pace: 0 })],
+  resources: fileResources(),
+  onEvent: (line) => said.push(line),
+});
 
 async function joined(one: ReturnType<typeof host>, clientId: string) {
   const p = peer(clientId);
@@ -188,4 +194,40 @@ it('reads a client\'s resource through the port, base64 and all', async () => {
   expect(await served.clients.read('plugin', 'virtual://plugin/notes.md'))
     .toEqual({ data: 'ZG9uZQ==', encoding: 'base64' });
   expect(publisher.peer.asked.map((one) => one.method)).toEqual(['resourceRead']);
+});
+
+it('writes down a refusal that crossed a connection, without softening it', async () => {
+  said.length = 0;
+  const served = host();
+  const publisher = await joined(served, 'plugin');
+  const reader = await joined(served, 'editor');
+  publisher.peer.request = async () => {
+    throw Object.assign(new Error('This client published its directory read-only.'), { code: -32009 });
+  };
+
+  /*
+   * The owner's refusal, verbatim.
+   *
+   * This host has no standing to soften somebody else's `-32009` - the client
+   * that published the resource is the one deciding - so what the reader gets
+   * is what the publisher said.
+   */
+  await expect(reader.client.handle({
+    method: 'resourceWrite',
+    params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt', data: 'x', encoding: 'utf-8' },
+  })).rejects.toMatchObject({ code: -32009 });
+
+  /*
+   * And written down, because the asking client cannot attribute it.
+   *
+   * `-32009` for a directory published read-only and `-32009` for a client
+   * that has not worked out who is asking yet are the same three digits. The
+   * log is the only place the method, the URI, the client that refused and
+   * the code are visible together.
+   */
+  const wrote = said.find((line) => line.includes('refused'));
+  expect(wrote).toContain('plugin');
+  expect(wrote).toContain('resourceWrite');
+  expect(wrote).toContain('virtual://plugin/a.txt');
+  expect(wrote).toContain('-32009');
 });
