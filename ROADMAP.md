@@ -55,7 +55,7 @@ correlates a question with its answer — and nothing is routed through it.
 ### Chat (6)
 - [ ] **3.2** `chat/toolCallDelta` — stream tool arguments as they arrive
   rather than only the completed call.
-- [ ] **3.3** `chat/turnResume` — emitted when a queued turn starts after the
+- [x] **3.3** `chat/turnResume` — emitted when a queued turn starts after the
   one before it finished.
 - [ ] **3.4** `chat/workingDirectorySet` / `workingDirectoryRemoved` — needs
   4.3: a chat has no directory of its own until chats can differ.
@@ -64,10 +64,10 @@ correlates a question with its answer — and nothing is routed through it.
   tell that a tool call is blocked on a server rather than on its own work.
 
 ### Session (4)
-- [ ] **3.6** `session/creationFailed` — created sessions fail inside
+- [x] **3.6** `session/creationFailed` — created sessions fail inside
   `createSession` today. Emit it for a session an automation could not start,
   where there is no request to fail.
-- [ ] **3.7** `session/customizationRemoved` — send the removal rather than
+- [x] **3.7** `session/customizationRemoved` — send the removal rather than
   re-sending the whole list.
 - [ ] **3.8** `session/serverToolsChanged` — needs 4.5.
 - [x] **3.9** `session/workingDirectoryReplaced` — needs 4.3.
@@ -96,7 +96,7 @@ correlates a question with its answer — and nothing is routed through it.
   `<url>/.well-known/oauth-protected-resource`; apply a token from
   `authenticate` as that server's `Authorization` header.
 - [ ] **4.5** `serverTools` — tools this host contributes to every session.
-- [ ] **4.6** `InvokeChangesetOperationResult.followUp`.
+- [x] **4.6** `InvokeChangesetOperationResult.followUp`.
 
 ## 5. Verification
 

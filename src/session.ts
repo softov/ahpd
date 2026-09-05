@@ -1255,6 +1255,22 @@ export function createSession(options: SessionOptions): Session {
       else
         emit('session', { type: 'session/mcpServerStateChanged', id, state: fresh.state });
     }
+    /*
+     * And the ones that are no longer there.
+     *
+     * A server taken out of the configuration stops being reported, and a
+     * customization list that only ever grew left it drawn for as long as the
+     * session ran. Said one at a time rather than by re-sending the list: the
+     * removal is the change, and a list re-sent on every refresh is the row
+     * redrawn whether or not anything moved.
+     */
+    const still = new Set(found.map((raw) => `mcp:${str(bag(raw).name) ?? ''}`));
+    for (const entry of [...customizations]) {
+      const id = str(entry.id) ?? '';
+      if (!id.startsWith('mcp:') || still.has(id)) continue;
+      customizations.splice(customizations.indexOf(entry), 1);
+      emit('session', { type: 'session/customizationRemoved', id });
+    }
   };
 
   /*
@@ -1965,6 +1981,42 @@ export function createSession(options: SessionOptions): Session {
       queued.push(...moved);
       emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => str(held.id) ?? '') });
       touch();
+    },
+
+    /*
+     * The same turn, run again.
+     *
+     * The protocol is precise about this: the latest turn, in `error`, reopened
+     * with its message and parts intact rather than replaced by a new one. So
+     * the turn moves back to `active` as it was and its text goes to the CLI
+     * again - which is what makes a failed turn retryable without somebody
+     * having to type it a second time.
+     */
+    resume: (turnId) => {
+      if (active !== undefined) return false;
+      const last = turns.at(-1);
+      if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') return false;
+      turns.pop();
+      const again = { ...last } as Bag;
+      // `state` and `duration` are what made it a finished turn; an active one
+      // has neither, and the protocol says the reducer reopens *this* turn
+      // rather than replacing it.
+      delete again.state;
+      delete again.duration;
+      active = again as unknown as NonNullable<typeof active>;
+      startedAt = Date.now();
+      failed = undefined;
+      doing('Thinking');
+      const message = bag((active as Bag).message);
+      waiting.push({
+        type: 'user',
+        message: { role: 'user', content: str(message.text) ?? '' },
+        parent_tool_use_id: null,
+      });
+      wake?.();
+      wake = undefined;
+      touch();
+      return true;
     },
 
     cancel: (turnId) => {

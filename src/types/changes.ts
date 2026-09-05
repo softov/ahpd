@@ -172,6 +172,18 @@ export interface ChangesetOperationRequest {
 export interface ChangesetOperationResult {
   /** One line for the client to show. */
   message?: string;
+  /**
+   * Something to open afterwards, when the operation produced one.
+   *
+   * A `ContentRef` - a URI, a size hint, a content type - and whether the
+   * client should open it in a browser rather than inline. A pull request a
+   * commit-and-push produced is the case this exists for: the operation
+   * succeeded, and the useful thing about it is a page somewhere.
+   */
+  followUp?: {
+    content: { uri: string; sizeHint?: number; contentType?: string; nonce?: string };
+    external?: boolean;
+  };
 }
 
 /**

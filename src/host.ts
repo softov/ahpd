@@ -2197,16 +2197,37 @@ export function createHost(options: HostOptions): Host {
       ? { resume: lead.agentId() as string, seed: lead.allTurns() }
       : undefined;
     sessions.delete(uri);
-    spawn(
-      held.agent,
-      uri,
-      held.defaultChat,
-      held.config,
-      talking,
-      to,
-      credentials,
-      keeping?.additional ?? held.additional,
-    );
+    try {
+      spawn(
+        held.agent,
+        uri,
+        held.defaultChat,
+        held.config,
+        talking,
+        to,
+        credentials,
+        keeping?.additional ?? held.additional,
+      );
+    }
+    catch (error) {
+      /*
+       * A session that existed and now does not.
+       *
+       * `createSession` fails inside its own request and there is nothing to
+       * announce, but this is the other case: clients are subscribed, the old
+       * backend is gone, and the new one would not start. `creationFailed` is
+       * the action for exactly that, and saying nothing would leave every one
+       * of them watching a channel that will never speak again.
+       */
+      dispatch(uri, {
+        type: 'session/creationFailed',
+        error: {
+          errorType: 'sessionStartFailed',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
     log(`restarted ${uri}${to === undefined ? '' : ` in ${to}`}`);
     if (before === to) return;
     /*
@@ -3816,7 +3837,13 @@ export function createHost(options: HostOptions): Host {
             refreshFacts(at.dir);
             await options.changes?.refresh?.(at.dir).catch(() => false);
             await contentMoved(at.owner);
-            return { ...(result.message !== undefined ? { message: result.message } : {}) };
+            return {
+              ...(result.message !== undefined ? { message: result.message } : {}),
+              // What the operation produced, when it produced something worth
+              // opening. A pull request a push made is the case: the operation
+              // succeeded, and the useful part of it is a page somewhere.
+              ...(result.followUp !== undefined ? { followUp: result.followUp } : {}),
+            };
           }
           catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -4820,6 +4847,24 @@ export function createHost(options: HostOptions): Host {
                 if (answer === true) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
                 else no(answer);
               });
+            }
+            break;
+          }
+          /*
+           * The latest turn, run again rather than typed again.
+           *
+           * The protocol's own conditions - latest, errored, message and parts
+           * intact - are the backend's to check, because only it knows what
+           * its last turn was. A backend that cannot re-run one says so here
+           * rather than being asked to.
+           */
+          case 'chat/turnResume': {
+            if (session.resume === undefined) {
+              no('this backend cannot run a turn again');
+              break;
+            }
+            if (!session.resume(String(action.turnId ?? ''))) {
+              no(`${String(action.turnId ?? '')} is not a turn that can be resumed`);
             }
             break;
           }

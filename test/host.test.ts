@@ -415,11 +415,12 @@ describe('what it will not pretend', () => {
 
   it('tells a host-only action apart from one it has not got round to', async () => {
     const { client, peer: p, uri } = await running();
-    // `chat/turnResume` *is* a client's to send - this host just does not
-    // serve it. Two different complaints, and they used to be the same one.
+    // `chat/workingDirectorySet` *is* a client's to send - this host just does
+    // not serve it yet, because a chat here has no directory of its own. Two
+    // different complaints, and they used to be the same one.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnResume', turnId: 't1' } },
+      params: { channel: uri, action: { type: 'chat/workingDirectorySet', directory: 'file:///tmp' } },
     });
     const refused = p.notes.filter((note) => note.method === 'action').at(-1);
     expect(refused?.params).toMatchObject({
@@ -3389,6 +3390,53 @@ describe('authenticating', () => {
     // Per connection, which the specification is explicit about. A token one
     // client offered is theirs.
     expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
+  });
+});
+
+describe('running a failed turn again', () => {
+  it('reopens the same turn rather than starting another', async () => {
+    const { client, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'do it' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 5 });
+    const said = sdk.said.length;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+    });
+    await settle();
+    /*
+     * The same prompt, sent again.
+     *
+     * The protocol is precise: the latest turn, in `error`, reopened with its
+     * message and parts intact rather than replaced. So the text goes back to
+     * the CLI without anybody having to type it a second time.
+     */
+    expect(sdk.said.length).toBe(said + 1);
+    expect(sdk.said.at(-1)).toBe('do it');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: unknown[]; activeTurn?: { id: string } } };
+    }).snapshot.state;
+    expect(state.activeTurn?.id).toBe('t1');
+    // Reopened, not duplicated: the finished copy is gone from the history.
+    expect(state.turns).toEqual([]);
+  });
+
+  it('refuses one that is not the latest errored turn', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 'nothing' } },
+    });
+    await settle();
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused.some((one) => one.includes('not a turn that can be resumed'))).toBe(true);
   });
 });
 

@@ -222,6 +222,18 @@ export interface Session {
 
   /** Start a turn with what the person said, optionally naming a model. */
   begin(turnId: string, text: string, model?: Chosen): void;
+  /**
+   * Run the latest turn again, without adding a message.
+   *
+   * What `chat/turnResume` asks for: the turn errored, its message and its
+   * parts are intact, and the client wants the same prompt tried again rather
+   * than typed again. Answers whether there was such a turn to resume.
+   *
+   * Optional. A backend that cannot re-run a turn leaves it out, and the host
+   * refuses the action with that as the reason.
+   */
+  resume?(turnId: string): boolean;
+
   /** Stop the running turn, and answer anything it was blocked on. */
   cancel(turnId: string): void;
 
