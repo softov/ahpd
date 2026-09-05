@@ -165,7 +165,10 @@ export function echo(options: EchoOptions): Agent {
       (active.responseParts as Bag[]).push(part);
       start.emit('chat', { type: 'chat/responsePart', turnId, part });
 
-      const words = speak(settings.voice ?? 'plain', text).split(/\s+/).filter((word) => word !== '');
+      // A config value is `unknown` on the wire, so a backend narrows the ones
+      // it declared rather than assuming every key is a string.
+      const voice = typeof settings.voice === 'string' ? settings.voice : 'plain';
+      const words = speak(voice, text).split(/\s+/).filter((word) => word !== '');
       const began = Date.now();
       void (async () => {
         for (const word of words) {

@@ -51,7 +51,7 @@ export interface StartSession {
   /** Where it should work. */
   workingDirectory?: string;
   /** Config values for the new session. */
-  config?: Record<string, string>;
+  config?: Record<string, unknown>;
   /** The first message, which is what the automation is *for*. */
   text: string;
   /**

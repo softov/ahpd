@@ -292,6 +292,22 @@ export function permissionFor(key: string, value: string): PermissionMode | unde
   return undefined;
 }
 
+/**
+ * A `permissions` value, if it is one.
+ *
+ * `undefined` for anything else, which is what makes `setConfig` able to
+ * refuse: a client sending a string where the schema says an object should
+ * hear that the value was not taken rather than have it quietly ignored.
+ */
+const listsOf = (value: unknown): { allow: string[]; deny: string[] } | undefined => {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const held = value as { allow?: unknown; deny?: unknown };
+  const names = (one: unknown): string[] =>
+    (Array.isArray(one) ? one : []).filter((entry): entry is string => typeof entry === 'string');
+  if (held.allow === undefined && held.deny === undefined) return undefined;
+  return { allow: names(held.allow), deny: names(held.deny) };
+};
+
 export function createSession(options: SessionOptions): Session {
   const { uri, chatUri, cwd, emit } = options;
 
@@ -311,6 +327,15 @@ export function createSession(options: SessionOptions): Session {
    * `session/inputNeededSet` says it adds or updates *matched by id*.
    */
   const pending = new Map<string, PendingInput>();
+  /**
+   * The tools this session has already been told about, by name.
+   *
+   * Held here as well as handed to the SDK, because the SDK takes them when
+   * the query is built: a list changed on a running session reaches the agent
+   * only through `canUseTool`, which is the one place this host sits between
+   * the two.
+   */
+  let allowed = listsOf(options.settings?.permissions) ?? { allow: [], deny: [] };
   let title = str(bag(bag((options.seed ?? [])[0]).message).text)?.slice(0, 60) || 'New session';
   let modified = new Date().toISOString();
   /**
@@ -370,7 +395,14 @@ export function createSession(options: SessionOptions): Session {
   /** What the client picked. Absent means whatever the CLI defaults to. */
   let chosen: string | undefined;
   /** The config in force, by key. What `session/configChanged` merges into. */
-  const settings: Record<string, string> = { permissionMode: 'default', ...options.settings };
+  /*
+   * What this session was told to run as.
+   *
+   * `unknown` and not `string`, because the protocol declares a config bag
+   * `Record<string, unknown>` and `permissions` is an object. Keys this
+   * backend declared a string are narrowed where they are read.
+   */
+  const settings: Record<string, unknown> = { permissionMode: 'default', ...options.settings };
 
   /** Open parts, keyed by message and index; tool calls by their own id. */
   const parts = new Map<string, Bag>();
@@ -768,8 +800,34 @@ export function createSession(options: SessionOptions): Session {
 
   // ------------------------------------------------------ asking a person
 
-  const canUseTool = async (toolName: string, raw: Bag, asked?: Bag): Promise<unknown> =>
-    new Promise((settle) => {
+  /**
+   * Which tools a person has already answered for, for this session.
+   *
+   * Deny wins over allow, because the two lists are answers to different
+   * questions: allow says "stop asking me", deny says "never do this", and a
+   * tool in both is one somebody has forbidden and also once approved.
+   */
+  const settled = (toolName: string): 'allow' | 'deny' | undefined => {
+    if (allowed.deny.includes(toolName)) return 'deny';
+    if (allowed.allow.includes(toolName)) return 'allow';
+    return undefined;
+  };
+
+  const canUseTool = async (toolName: string, raw: Bag, asked?: Bag): Promise<unknown> => {
+    /*
+     * Answered from the lists, before anybody is asked.
+     *
+     * The SDK was handed the same lists when the query was built, so in the
+     * ordinary case it never calls this at all. This is what makes a list set
+     * *during* a session take effect: the query cannot be told, and this can.
+     * Nothing is announced either way - a tool nobody was asked about is not
+     * a question that was answered, and drawing one would put a row on screen
+     * for a decision made before the turn began.
+     */
+    const already = settled(toolName);
+    if (already === 'allow') return { behavior: 'allow', updatedInput: raw };
+    if (already === 'deny') return { behavior: 'deny', message: `${toolName} is denied for this session` };
+    return await new Promise((settle) => {
       const turn = openTurn();
       const about = bag(asked);
       /*
@@ -871,6 +929,7 @@ export function createSession(options: SessionOptions): Session {
       inputNeededSet(entry);
       touch();
     });
+  };
 
   // ------------------------------------------------------------------ the run
 
@@ -892,7 +951,17 @@ export function createSession(options: SessionOptions): Session {
       ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
-      ...(settings.permissionMode ? { permissionMode: settings.permissionMode } : {}),
+      ...(typeof settings.permissionMode === 'string' ? { permissionMode: settings.permissionMode } : {}),
+      /*
+       * The lists, at the moment the query is built.
+       *
+       * The SDK takes them natively, which is what makes this the smallest
+       * thing that works - and it is only half of it: the SDK has nowhere to
+       * put a later change, so `canUseTool` reads the same lists on every
+       * call and that is what makes one set mid-session take effect.
+       */
+      ...(allowed.allow.length > 0 ? { allowedTools: [...allowed.allow] } : {}),
+      ...(allowed.deny.length > 0 ? { disallowedTools: [...allowed.deny] } : {}),
       // Resumed, not replayed: the agent picks up the context it built - the
       // files it read, the decisions it made - rather than being handed a
       // transcript of them and asked to infer the rest.
@@ -1068,7 +1137,7 @@ export function createSession(options: SessionOptions): Session {
      * is whatever the CLI already runs on, and reporting anything else would
      * draw a control sitting on a value that is not in force.
      */
-    const asked = settings.outputStyle;
+    const asked = str(settings.outputStyle);
     const running = str(init.output_style);
     if (asked !== undefined && asked !== running) {
       await handle.applyFlagSettings({ outputStyle: asked }).catch(() => {});
@@ -1315,7 +1384,23 @@ export function createSession(options: SessionOptions): Session {
      * session in a state it is not in.
      */
     setConfig: (key, value) => {
-      const found = permissionFor(key, value);
+      /*
+       * The lists, which really do move on a running session.
+       *
+       * The SDK takes `allowedTools` / `disallowedTools` when the query is
+       * built and has nowhere to put a later change, so a list set halfway
+       * through would be a control that reported success and did nothing.
+       * `canUseTool` is the other half and reads `allowed` on every call -
+       * which is where a change made now takes effect.
+       */
+      if (key === 'permissions') {
+        const held = listsOf(value);
+        if (!held) return false;
+        allowed = held;
+        settings.permissions = held;
+        return true;
+      }
+      const found = permissionFor(key, typeof value === 'string' ? value : '');
       if (!found) return false;
       settings.permissionMode = found;
       void handle.setPermissionMode(found).catch(() => {});

@@ -20,7 +20,7 @@ export interface SessionOptions {
   /** The directory the agent works in. */
   cwd: string;
   /** Config values chosen at creation, by key. */
-  settings?: Record<string, string>;
+  settings?: Record<string, unknown>;
   /** The config schema this session reports, shared with the root channel. */
   schema?: () => Bag;
   /** Customizations to report until the agent reports its own. */
@@ -196,13 +196,13 @@ export interface Session {
    * that schema, so a key that reaches nothing is a control that moves and
    * changes the session not at all.
    */
-  setConfig?(key: string, value: string): boolean | Promise<boolean>;
+  setConfig?(key: string, value: unknown): boolean | Promise<boolean>;
   /** Change how hard it thinks. False when the level is not one. */
   setEffort(level: string): boolean;
   /** Change the voice it answers in. False when the CLI has no such style. */
   setOutputStyle(style: string): boolean;
   /** The config in force, by key. */
-  settings(): Record<string, string>;
+  settings(): Record<string, unknown>;
 
   /**
    * Turn a customization on or off. False when this backend cannot.

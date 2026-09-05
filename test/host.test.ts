@@ -1292,6 +1292,91 @@ describe('choosing a model', () => {
     expect(sdk.effortsSet).toEqual(['max']);
   });
 
+  it('hands the allow and deny lists to the harness when the session starts', async () => {
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/listed', provider: 'claude',
+        config: { permissions: { allow: ['Read', 'Grep'], deny: ['Bash'] } },
+      },
+    });
+    await settle();
+    // The SDK takes both natively, which is what makes advertising the key
+    // the smallest thing that works - and it is the half that only applies to
+    // a session being built.
+    const options = sessionQueries().at(-1)?.options;
+    expect(options?.allowedTools).toEqual(['Read', 'Grep']);
+    expect(options?.disallowedTools).toEqual(['Bash']);
+  });
+
+  it('answers a tool from the list instead of asking, once one is set', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'session/configChanged', config: { permissions: { allow: ['Read'], deny: ['Bash'] } } },
+      },
+    });
+    await settle();
+    // Kept as an object, not stringified: this is the first config value that
+    // is not a string, and the whole path used to be `Record<string, string>`.
+    const values = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state.config.values;
+    expect(values.permissions).toEqual({ allow: ['Read'], deny: ['Bash'] });
+
+    /*
+     * The live half. The query was built before the list existed, so the SDK
+     * cannot have been told - `canUseTool` is the only thing that can answer,
+     * and a control that reported success and changed nothing is what this
+     * would otherwise be.
+     */
+    expect(await sdk.canUseTool?.('Read', { path: 'x' }, { toolUseID: 'c1' }))
+      .toMatchObject({ behavior: 'allow' });
+    expect(await sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'c2' }))
+      .toMatchObject({ behavior: 'deny' });
+  });
+
+  it('lets a denial win over an approval, because they answer different questions', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'session/configChanged', config: { permissions: { allow: ['Bash'], deny: ['Bash'] } } },
+      },
+    });
+    await settle();
+    // Allow says "stop asking me" and deny says "never do this". A tool in
+    // both is one somebody has forbidden and also, once, approved.
+    expect(await sdk.canUseTool?.('Bash', {}, { toolUseID: 'c1' })).toMatchObject({ behavior: 'deny' });
+  });
+
+  it('refuses a permissions value that is not one, and takes one that is', async () => {
+    const { client, peer: p, uri } = await running();
+    const set = async (value: unknown) => {
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'session/configChanged', config: { permissions: value } } },
+      });
+      await settle();
+      return p.notes.filter((note) => note.method === 'action').at(-1)?.params as {
+        rejectionReason?: string; action?: { config?: Record<string, unknown> };
+      };
+    };
+    // A client sending a string where the schema says an object should hear
+    // that the value was not taken, rather than have it quietly ignored.
+    expect(await set('all')).toMatchObject({ rejectionReason: expect.stringContaining('permissions') });
+    // And the good one is echoed rather than refused - asserted here so this
+    // cannot pass in a world where every value is turned away.
+    const took = await set({ allow: ['Read'], deny: [] });
+    expect(took.rejectionReason).toBeUndefined();
+    expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });
+  });
+
   it('refuses an effort level that is not one, rather than passing it on', async () => {
     const { client, uri } = await running();
     client.handle({

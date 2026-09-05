@@ -69,15 +69,15 @@ What is left are three the reference client declares and this host does not adve
 
 **Suggestions.** (1) Take `worktreeCreateNewBranch` alone, since it is the one with behaviour behind it, and leave the two cosmetic ones until somebody notices. (2) Take all three, which is the same merge and the same strip as the first cut. (3) Leave them: a branch name is a name, and the daemon's is at least predictable.
 
-## A-01-12 — Tools cannot be allowed or denied for a session
+## A-02-07 — A config value that is not a string still has nowhere to be read
 
-`Permissions` is a platform config key — per-tool allow and deny lists — and VS Code's own Claude host advertises it *unchanged*, with a comment saying why: "the Claude SDK accepts `allowedTools` / `disallowedTools` natively". This host advertises nothing of the sort, so the only permission control it offers is the all-or-nothing mode in A-01-10's neighbour.
+A-01-12 shipped, and closing it moved the whole session-config path from `Record<string, string>` to `Record<string, unknown>` — because `permissions` is an object and the protocol declares the bag `Record<string, unknown>`, so nothing of that shape could be carried at all. That widening is done through the port and the host. What it exposed is that *reading* a config value is still assumed to be reading a string in places nothing has needed yet.
 
-**What it costs today.** "Always allow this tool in this session" is the ordinary way a person stops being asked about the one command they trust, and it is the control that makes `default` mode usable on a long session. Without it the only way to stop being asked is `bypassPermissions`, which stops being asked about *everything* — the safety control is a cliff rather than a slope.
+**What is actually left.** Every key this host declares a string is now narrowed where it is used — `typeof value === 'string'` at the point of use rather than a promise made by the type. That is correct and it is also unenforced: a backend that declares an object-valued key and then reads it as a string gets `undefined` rather than a compile error, which is the same class of defect as a hand-copied vocabulary. The schema says what shape a key is; nothing checks a reader against it.
 
-The SDK takes both lists when the query is built, and `canUseTool` is where this host already sits between the agent and the person, so a list could be enforced here as well as passed down.
+**What it costs today.** Nothing, and that is worth stating plainly rather than dressing up: this host declares one object-valued key and reads it in one place. It becomes a cost when a backend declares a second, or when somebody reads `settings.permissions` expecting a string because every other key is one.
 
-**Suggestions.** (1) Advertise the platform key and pass the lists to the SDK at creation, which is the smallest thing that works and matches what the reference host does. (2) Enforce in `canUseTool` too, so a list changed on a *running* session takes effect without a restart — the SDK takes these when the query is built and this host is the only thing that can act on a later change. (3) Leave it, and accept that this host's permission control is one axis with no exceptions.
+**Suggestions.** (1) Leave it, and let the narrowing at each use site be the whole story — three lines of `typeof` in a codebase this size is not a subsystem. (2) Give `Agent.schema()` a typed shape so a declared key's TypeScript type follows from its `type` field, which is real work and would catch the reader as well as the writer. (3) Revisit only if a second object-valued key appears.
 
 ## A-01-11 — A model is two fields out of ten, and the effort control is in the wrong place
 

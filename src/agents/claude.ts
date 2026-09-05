@@ -187,13 +187,44 @@ export function claude(options: ClaudeOptions): Agent {
         default: 'adaptive',
         sessionMutable: false,
       },
+      /*
+       * Per-tool allow and deny, which is the slope the mode above is a cliff.
+       *
+       * A platform key rather than one of this backend's invention: it is what
+       * the reference client's permission picker writes when somebody approves
+       * a tool "in this session", and its own Claude host advertises it
+       * unchanged because the SDK takes `allowedTools` / `disallowedTools`
+       * natively. Without it the only way to stop being asked about the one
+       * command you trust is `bypassPermissions`, which stops asking about
+       * everything.
+       *
+       * An object, and the first config value here that is not a string. The
+       * protocol declares the bag `Record<string, unknown>`; this host used to
+       * declare it `Record<string, string>`, which is why nothing of this
+       * shape could be carried at all.
+       */
+      permissions: {
+        type: 'object',
+        title: 'Permissions',
+        description: 'Per-tool session permissions. Updated when a tool is approved for this session.',
+        properties: {
+          allow: { type: 'array', title: 'Allowed tools', items: { type: 'string', title: 'Tool name' } },
+          deny: { type: 'array', title: 'Denied tools', items: { type: 'string', title: 'Tool name' } },
+        },
+        default: { allow: [], deny: [] },
+        // Unlike `thinking`, this one really can move on a running session:
+        // the SDK takes the lists when the query is built, and `canUseTool`
+        // is where this host already sits between the agent and the person.
+        sessionMutable: true,
+      },
     },
   });
 
-  const defaults = (): Record<string, string> => ({
+  const defaults = (): Record<string, unknown> => ({
     permissionMode: 'default',
     effortLevel: 'high',
     thinking: 'adaptive',
+    permissions: { allow: [], deny: [] },
     ...(style !== undefined ? { outputStyle: style } : {}),
   });
 

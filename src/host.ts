@@ -274,7 +274,7 @@ export function createHost(options: HostOptions): Host {
     /** Which of them a client gets when it names none. */
     defaultChat: string;
     /** Config in force. Every chat in the session runs on it. */
-    config: Record<string, string>;
+    config: Record<string, unknown>;
     /** Where they work, when the client named a directory. */
     workingDirectory: string | undefined;
     /**
@@ -438,7 +438,7 @@ export function createHost(options: HostOptions): Host {
    * By the id, for the reason `flags` is: settings arrive before a listing has
    * said what this host will call the session.
    */
-  const chosen = new Map<string, Record<string, string>>();
+  const chosen = new Map<string, Record<string, unknown>>();
   /**
    * What one backend turned out to offer.
    *
@@ -1404,7 +1404,7 @@ export function createHost(options: HostOptions): Host {
     agent: Agent,
     uri: string,
     chatUri: string,
-    config: Record<string, string>,
+    config: Record<string, unknown>,
     resuming?: { resume: string; seed: Bag[] },
     workingDirectory?: string,
     credentials?: Record<string, string>,
@@ -1762,11 +1762,18 @@ export function createHost(options: HostOptions): Host {
       .map(([key, about]) => [key, { type: 'string', ...about, readOnly: true, sessionMutable: false }]),
   );
 
+  /** What this host answered, as strings, for saying back on the session. */
+  const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
+    Object.entries(config)
+      .filter(([key, value]) => HOSTS_OWN.includes(key) && typeof value === 'string')
+      .map(([key, value]) => [key, value as string]),
+  );
+
   /** The host's own keys, which a backend has never heard of. */
   const HOSTS_OWN = ['isolation', 'branch', 'worktreeIncludeFiles'];
 
   /** What the backend is given: everything except what this host answered. */
-  const backendsOwn = (config: Record<string, string>): Record<string, string> =>
+  const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
     Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
 
   /**
@@ -1777,7 +1784,7 @@ export function createHost(options: HostOptions): Host {
    * directory that is - the folder, or a worktree made for this session - is
    * exactly the decision the client made with `isolation`.
    */
-  const isolated = async (uri: string, config: Record<string, string>, where: string | undefined): Promise<string | undefined> => {
+  const isolated = async (uri: string, config: Record<string, unknown>, where: string | undefined): Promise<string | undefined> => {
     const port = options.worktrees;
     if (!port || config.isolation !== 'worktree' || where === undefined) return where;
     const repository = await port.repository(where);
@@ -1799,13 +1806,16 @@ export function createHost(options: HostOptions): Host {
     if (!roots.some((root) => within(root, path))) {
       throw new RpcError(-32602, `A worktree of ${repository} would live at ${path}, which this host does not serve`);
     }
-    const include = (config.worktreeIncludeFiles ?? '')
-      .split(',')
-      .map((one) => one.trim())
-      .filter((one) => one !== '');
+    // Read as a string, because that is what the schema for it says. A config
+    // value is `unknown` on the wire - the protocol declares the bag
+    // `Record<string, unknown>` and `permissions` is an object - so a key
+    // this host declared a string is narrowed where it is used rather than
+    // assumed everywhere.
+    const patterns = typeof config.worktreeIncludeFiles === 'string' ? config.worktreeIncludeFiles : '';
+    const include = patterns.split(',').map((one) => one.trim()).filter((one) => one !== '');
     await port.create({
       repository,
-      base: config.branch ?? 'HEAD',
+      base: typeof config.branch === 'string' ? config.branch : 'HEAD',
       branch,
       path,
       ...(include.length > 0 ? { include } : {}),
@@ -2256,7 +2266,7 @@ export function createHost(options: HostOptions): Host {
   const openSession = (
     uri: string,
     provider: string,
-    config: Record<string, string>,
+    config: Record<string, unknown>,
     where: string | undefined,
     origin?: { kind: 'automation'; automation: string; run: string },
     credentials?: Record<string, string>,
@@ -2301,9 +2311,7 @@ export function createHost(options: HostOptions): Host {
     // backend's to read. An automation asking for isolation is the case this
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
-    decided.set(uri, Object.fromEntries(
-      Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key)),
-    ));
+    decided.set(uri, mineOf(config));
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -3339,9 +3347,7 @@ export function createHost(options: HostOptions): Host {
            * alternative is one running somewhere the person did not choose.
            */
           const running = await isolated(uri, config, where);
-          decided.set(uri, Object.fromEntries(
-            Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key)),
-          ));
+          decided.set(uri, mineOf(config));
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
@@ -3535,7 +3541,7 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32002, `No provider called ${provider}`);
           const answered = (typeof params.config === 'object' && params.config !== null
             ? params.config
-            : {}) as Record<string, string>;
+            : {}) as Record<string, unknown>;
           /*
            * The host's own properties, merged over the backend's.
            *
@@ -4005,7 +4011,10 @@ export function createHost(options: HostOptions): Host {
             // chat opened after this one is answered starts on it too.
             const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
             if (owning) {
-              for (const [key, value] of Object.entries(config)) owning.config[key] = String(value);
+              // Kept as it arrived. A config value is `unknown` on the wire,
+              // and `permissions` is an object - stringifying it made a
+              // session remember the word `[object Object]`.
+              for (const [key, value] of Object.entries(config)) owning.config[key] = value;
             }
             for (const [key, value] of Object.entries(config)) {
               const everywhere: Session[] = owning ? [...owning.chats.values()] : [session];
@@ -4076,8 +4085,8 @@ export function createHost(options: HostOptions): Host {
                 no(`${key} is not a config key this backend takes`);
                 continue;
               }
-              void Promise.resolve(session.setConfig(key, String(value))).then((took) => {
-                if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: String(value) } }, origin);
+              void Promise.resolve(session.setConfig(key, value)).then((took) => {
+                if (took) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
                 else no(`${key} is not a config key this backend takes`);
               });
             }

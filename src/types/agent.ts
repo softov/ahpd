@@ -33,7 +33,7 @@ export interface Start {
   /** The chat channel URI beneath it. */
   chatUri: string;
   /** Config values in force, by key: this agent's defaults with the client's on top. */
-  settings: Record<string, string>;
+  settings: Record<string, unknown>;
   /**
    * The directory the client asked the agent to work in, if it named one.
    *
@@ -125,7 +125,7 @@ export interface Agent {
    */
   schema(): Bag;
   /** What each schema key sits at when nothing has been chosen. */
-  defaults(): Record<string, string>;
+  defaults(): Record<string, unknown>;
 
   /**
    * What the backend offers, asked once at startup.
