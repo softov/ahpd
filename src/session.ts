@@ -1573,6 +1573,34 @@ export function createSession(options: SessionOptions): Session {
     },
 
     /**
+     * Into the turn that is already running, rather than after it.
+     *
+     * The whole of it is `waiting.push` and a wake, which is the same door
+     * `begin` and the queue go through: the prompt handed to the CLI is a
+     * generator that stays open for the life of the session, so a message
+     * pushed while a turn runs is delivered to that turn. This was refused on
+     * the grounds that "the SDK has nowhere to put one", which was a claim
+     * about the harness nobody had tested and is not true of this one.
+     *
+     * Set and removed in the same breath, because it is consumed the instant
+     * it arrives: `steeringMessage` describes a message *waiting* to be
+     * injected, and nothing waits here. The protocol says the server emits
+     * the removal when it consumes one, so both go out and the state field
+     * stays empty - which is the honest description of what happened.
+     */
+    steer: (id, text) => {
+      if (!active) return false;
+      const message = { text, origin: { kind: 'user' } };
+      emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
+      waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+      wake?.();
+      wake = undefined;
+      emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+      touch();
+      return true;
+    },
+
+    /**
      * Wait, then be the next turn.
      *
      * Idle *now* means this is not a queue at all, and the protocol says the

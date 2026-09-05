@@ -2062,17 +2062,59 @@ describe('a message typed while a turn is running', () => {
     expect(opened.snapshot.state.queuedMessages.map((m) => m.id)).toEqual(['c', 'a', 'b']);
   });
 
-  it('refuses a steering message rather than queueing it behind the turn it was for', async () => {
+  it('puts a steering message into the turn that is running, not behind it', async () => {
     const { client, chatUri } = await busy();
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
     });
     await settle();
+    /*
+     * Both, and before the turn ended.
+     *
+     * This was refused for years on the stated grounds that "the SDK has
+     * nowhere to put one". The prompt handed to the CLI is a generator that
+     * stays open for the life of the session, so a message pushed while a
+     * turn runs is delivered to that turn - which is what `sdk.said` records,
+     * and it records the second one here with the turn still open.
+     */
+    expect(sdk.said).toEqual(['first', 'now']);
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
-    // Steering is injected *into* the running turn. Delivering it to the next
-    // one would be delivering it to a different conversation.
-    expect(sdk.said).toEqual(['first']);
+    expect(sdk.said).toEqual(['first', 'now']);
+  });
+
+  it('says it and then says it is gone, because it is consumed as it arrives', async () => {
+    const { client, peer: p, chatUri } = await busy();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+    });
+    await settle();
+    const said = actions(p, chatUri).map((one) => one.action)
+      .filter((one) => String(one.type).startsWith('chat/pendingMessage'));
+    // `steeringMessage` describes a message *waiting* to be injected, and
+    // nothing waits here - so the pair goes out and the field stays empty.
+    expect(said.map((one) => one.type)).toEqual(['chat/pendingMessageSet', 'chat/pendingMessageRemoved']);
+    expect(said.every((one) => one.kind === 'steering')).toBe(true);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { steeringMessage?: unknown } };
+    }).snapshot.state;
+    expect(state.steeringMessage).toBeUndefined();
+  });
+
+  it('refuses one sent at a chat with nothing running to steer', async () => {
+    const { client, peer: p, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+    });
+    await settle();
+    // A real refusal now, rather than the blanket one: there is no turn to
+    // put it into, and turning it into an ordinary message would be sending
+    // something the person meant as a correction.
+    const refused = actions(p, chatUri).filter((one) => one.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('Nothing is running');
+    expect(sdk.said).toEqual([]);
   });
 
   it('starts one straight away when nothing is running', async () => {

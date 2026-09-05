@@ -79,16 +79,6 @@ What is left are three the reference client declares and this host does not adve
 
 **Suggestions.** (1) Take `worktreeCreateNewBranch` alone, since it is the one with behaviour behind it, and leave the two cosmetic ones until somebody notices. (2) Take all three, which is the same merge and the same strip as the first cut. (3) Leave them: a branch name is a name, and the daemon's is at least predictable.
 
-## A-02-03 — Steering is refused for a reason that may no longer be true
-
-`chat/pendingMessageSet` with `kind: 'steering'` is answered `steering messages are not served yet`, on the grounds — written in `src/host.ts` — that "the SDK has nowhere to put one".
-
-That looks wrong. The prompt this host hands the SDK is an async generator that stays open for the life of the session (`input()` in `src/session.ts`): it yields whatever is pushed into `waiting` and parks when there is nothing. Pushing a message into it while a turn is running is exactly what steering is, and nothing in the loop stops it — `queue` already pushes through the same door, it just waits for the turn to end first.
-
-**What it costs today.** Typing while the agent works queues the message behind the turn it was about. A person correcting an agent mid-way — the most ordinary thing there is — is answered after it has finished doing the thing they were trying to stop.
-
-**Suggestions.** (1) Try it: push the message immediately instead of queueing, and see whether the CLI takes it mid-turn. The change is one branch, and the reason for refusing is a claim nobody has tested. (2) If it does not work, keep the refusal and say the *tested* reason rather than the assumed one. (3) Either way, `ChatState.steeringMessage` and `ChatSummary.interactivity` are the two state fields this host never sets, and the first is only unset because of this.
-
 ## A-01-12 — Tools cannot be allowed or denied for a session
 
 `Permissions` is a platform config key — per-tool allow and deny lists — and VS Code's own Claude host advertises it *unchanged*, with a comment saying why: "the Claude SDK accepts `allowedTools` / `disallowedTools` natively". This host advertises nothing of the sort, so the only permission control it offers is the all-or-nothing mode in A-01-10's neighbour.
@@ -143,7 +133,7 @@ AHP is symmetrical: `ServerCommandMap` declares ten methods a host may call *on*
 
 ## A-01-03 — What is left of the protocol
 
-Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **74 actions**. The per-channel breakdown is [docs/AHP.md](docs/AHP.md) and is not repeated here — it drifted from this file once already, and one maintained table is worth more than two that disagree.
+Counted against `@microsoft/agent-host-protocol` **0.9.0**, which is the version this host builds against and the newest published: **40 commands** and **96 state actions** declared, of which this host serves **34 commands** and names **75 actions**. The per-channel breakdown is [docs/AHP.md](docs/AHP.md) and is not repeated here — it drifted from this file once already, and one maintained table is worth more than two that disagree.
 
 The version is worth stating rather than glossing, and the thing it used to explain has gone. VS Code advertises `1.0.0`, which is **not published** — its copy is vendored from the protocol repository and runs ahead of npm, where 0.9.0 is the newest. So negotiating down is permanent rather than temporary: this host answers 0.9.0 to a VS Code that asked for 1.0.0 first, and will keep doing that until whatever 1.0.0 is ships.
 
@@ -156,7 +146,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 - **A-01-03g — `root/progress`**: VS Code *does* consume this — it fires as a notification and is meant for host-level work correlated by a `progressToken`, "e.g. a shared SDK download". This host has nothing slow enough at the host level to report; the slow things are turns, and those have their own channel. A refusal, but a thinner one than the others: the moment something here takes a visible amount of time outside a turn, it should say so.
 - **A-01-03h — `auth/required`**: `authenticate` shipped and this did not. It is what a host sends when a token it accepted has expired or when a resource newly needs one, and nothing here can tell: this host does not verify a token, so it never learns that one has gone stale — a session started with a dead key fails inside the harness, and the harness's words are what a client sees. Emitting it would mean recognising an authentication failure in the agent's own error output, which is a guess about another program's strings. A refusal, and a thinner one than it looks: the moment this host verifies a token, it can say when one stopped working.
 
-**The 22 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. One of those reasons is worth arguing about rather than reading:
+**The 21 state actions never emitted** are grouped by channel in [docs/AHP.md](docs/AHP.md), each with its reason. One of those reasons is worth arguing about rather than reading:
 
 - The `workingDirectory*` set is not a gap. Directories are fixed at creation here, and a session that moves is a conversation whose second half cannot see the files its first half was about.
 
@@ -168,7 +158,7 @@ What the bump did close is the automation channel, which 0.8.0 did not declare a
 
 | surface | this host |
 | --- | --- |
-| state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because of A-02-03. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
+| state fields | every field of `RootState`, `AgentInfo`, `SessionState`, `ChatState`, `Turn`, `TerminalState`, `ChangesetState` and `ChatSummary` is filled. `SessionModelInfo` is 3 of 10 (A-01-11), and `ChatState.steeringMessage` is unset because a steering message is consumed as it arrives, so nothing ever waits in it. `ChatSummary.interactivity` is absent, which the protocol says defaults to `Full` — the right answer for a host with no read-only chats |
 | command params and results | one field unread out of every declared `*Params` / `*Result`: `InvokeChangesetOperationResult.followUp` (optional, and this host's operations produce no follow-up). `CreateSessionParams.activeClient` is read, and takes the creator into the session as it is made. `PaginatedParams` is read by both `fetchTurns` and `listSessions`, the second of them only when a client asks: `limit` omitted means the whole catalogue, because neither client that connects to this host reads `nextCursor`. `DispatchActionParams.clientSeq` is read now, and echoed back inside `origin`, which is the thing a client reconciles against |
 | error codes | all 15 declared are raised. `TurnInProgress` (-32004) is the newest of them and answers a *changeset operation* dispatched mid-turn; a **turn** dispatched while one is running is still queued rather than refused, which is the better answer and the one a client can act on |
 | `_meta` | the types name no well-known keys at all, so there is nothing to diff. What is known came from a conformance case, which is why `git.branch` is the only one written |

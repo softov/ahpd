@@ -4097,16 +4097,32 @@ export function createHost(options: HostOptions): Host {
            */
           case 'chat/pendingMessageSet': {
             const kind = String(action.kind ?? 'queued');
-            if (kind !== 'queued') {
-              // Steering is injected *into* the running turn. The SDK has
-              // nowhere to put one, and queueing it behind the turn it was
-              // meant for would deliver it to the wrong conversation.
-              no(`${kind} messages are not served yet`);
-              break;
-            }
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;
+            /*
+             * Into the running turn, rather than behind it.
+             *
+             * Somebody correcting an agent halfway is the most ordinary thing
+             * there is, and queueing it delivered the correction after the
+             * thing it was trying to stop. The two refusals left are real: a
+             * backend that cannot take a message mid-turn, and a chat with
+             * nothing running to steer.
+             */
+            if (kind === 'steering') {
+              if (!session.steer) {
+                no('This backend cannot take a message mid-turn');
+                break;
+              }
+              if (!session.steer(String(action.id ?? ''), String(message.text ?? ''))) {
+                no('Nothing is running in this chat to steer');
+              }
+              break;
+            }
+            if (kind !== 'queued') {
+              no(`${kind} is neither a steering message nor a queued one`);
+              break;
+            }
             const model = (typeof message.model === 'object' && message.model !== null
               ? message.model
               : {}) as Record<string, unknown>;

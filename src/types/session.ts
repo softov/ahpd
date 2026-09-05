@@ -137,6 +137,20 @@ export interface Session {
    */
   ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>): void;
 
+  /**
+   * Put a message into the turn that is already running.
+   *
+   * Steering, in the protocol's word: somebody correcting an agent halfway
+   * rather than waiting for it to finish doing the thing they are trying to
+   * stop. Answers whether there was a turn to steer - a chat with nothing
+   * running has nothing to inject into, and the caller says so rather than
+   * quietly turning it into an ordinary message.
+   *
+   * Optional. A backend that cannot take a message mid-turn leaves it out,
+   * and this host refuses steering for that backend with that as the reason.
+   */
+  steer?(id: string, text: string): boolean;
+
   /** Start a turn with what the person said, optionally naming a model. */
   begin(turnId: string, text: string, model?: string): void;
   /** Stop the running turn, and answer anything it was blocked on. */
