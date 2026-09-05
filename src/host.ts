@@ -2728,6 +2728,16 @@ export function createHost(options: HostOptions): Host {
          * number is what tells "already in the snapshot" from "after it", and
          * this host keeps one for exactly this reason.
          */
+        /**
+         * Watch a channel, and answer with what it holds now.
+         *
+         * Subscribing twice to one channel answers twice. Nothing here marks a
+         * subscription pending while its snapshot is taken, so a second
+         * request that arrives during the first is an ordinary second request
+         * rather than a replacement - the reference host cancels the earlier
+         * one and answers it `-32001` naming a channel it is actively serving,
+         * which reads like a session that does not exist.
+         */
         subscribe: async (params) => {
           const channel = String(params.channel ?? '');
           // What it means here, and what it was called there. The snapshot is
