@@ -1050,6 +1050,38 @@ describe('what the harness offers', () => {
     expect(models.find((one) => one.id === 'haiku')?.configSchema).toBeUndefined();
   });
 
+  it('runs a turn on the model and the thinking level the client chose', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: {
+          type: 'chat/turnStarted',
+          turnId: 't1',
+          message: { text: 'hi', model: { id: 'sonnet', config: { thinkingLevel: 'xhigh' } } },
+        },
+      },
+    });
+    await settle();
+    /*
+     * `TurnMessage.model` is a `ModelSelection` - an object - and this host
+     * read it as a string, so the model a client named on a turn was dropped
+     * every time. The `config` beside it is the form that model advertised,
+     * and a schema a client draws as a control that changes nothing is worse
+     * than no control at all.
+     */
+    expect(sdk.modelsSet).toContain('sonnet');
+    expect(sdk.effortsSet).toContain('xhigh');
+    // And the session-wide control is told, because the CLI holds one effort
+    // setting for the whole query: two controls describing different futures
+    // is the state this avoids.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, string> } } };
+    }).snapshot.state;
+    expect(state.config.values.effortLevel).toBe('xhigh');
+  });
+
   it('says what a harness offers on the root channel, before any session exists', async () => {
     // No models: a harness nobody has signed into enumerates none and still
     // has skills and servers. This is the case that used to answer nothing.
@@ -1433,7 +1465,10 @@ describe('choosing a model', () => {
       method: 'dispatchAction',
       params: {
         channel: uri,
-        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: 'haiku' } },
+        // `ModelSelection`, which is an object. This test used to send a bare
+        // string and the host used to read one, so the two agreed with each
+        // other and with nothing a client sends.
+        action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
       },
     });
     await settle();

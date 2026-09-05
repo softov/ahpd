@@ -11,6 +11,26 @@ import type { Bag } from './common.js';
  */
 export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
 
+/**
+ * The model a turn runs on.
+ *
+ * An object rather than a name, because a model that carries a `configSchema`
+ * is chosen by picking a row *and* answering its form: the protocol's
+ * `ModelSelection` is `{ id, config }`, and a host that read only the id would
+ * accept a form it then ignored.
+ */
+export interface Chosen {
+  /** The model, spelled as `RootState.agents[].models[].id` spells it. */
+  id: string;
+  /**
+   * What the client filled that model's own `configSchema` in with.
+   *
+   * JSON primitives, which is what the protocol carries here: most pickers
+   * produce strings and a numeric one produces a number.
+   */
+  config?: Record<string, string | number | boolean | null>;
+}
+
 /** How to construct a session. */
 export interface SessionOptions {
   /** The session channel URI, `ahp-session:/<id>`. */
@@ -152,7 +172,7 @@ export interface Session {
   steer?(id: string, text: string): boolean;
 
   /** Start a turn with what the person said, optionally naming a model. */
-  begin(turnId: string, text: string, model?: string): void;
+  begin(turnId: string, text: string, model?: Chosen): void;
   /** Stop the running turn, and answer anything it was blocked on. */
   cancel(turnId: string): void;
 
@@ -163,7 +183,7 @@ export interface Session {
    * would be the only thing that could ever send it, and nothing in a client
    * watches for a turn to end. The same `id` twice edits what is waiting.
    */
-  queue(id: string, text: string, model?: string): void;
+  queue(id: string, text: string, model?: Chosen): void;
   /** Take one back, while it is still waiting. */
   unqueue(id: string): void;
   /**

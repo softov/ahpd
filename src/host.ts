@@ -2332,6 +2332,28 @@ export function createHost(options: HostOptions): Host {
     // says about a session whose agent has gone.
     throw new RpcError(-32001, `No agent for session ${channel}`);
   };
+  /**
+   * The model a message names, or nothing when it names none.
+   *
+   * `TurnMessage.model` is a `ModelSelection` - `{ id, config }` - and reading
+   * it as a string is how a client's choice was accepted and dropped. The
+   * `config` is the form that model advertised, and its values are primitives
+   * because that is what the protocol carries; anything else reached this host
+   * by not being what it says it is, and is left out.
+   */
+  const modelIn = (value: unknown): { id: string; config?: Record<string, string | number | boolean | null> } | undefined => {
+    const held = (typeof value === 'object' && value !== null ? value : {}) as Bag;
+    if (typeof held.id !== 'string') return undefined;
+    const values = typeof held.config === 'object' && held.config !== null ? held.config as Bag : undefined;
+    if (values === undefined) return { id: held.id };
+    const config: Record<string, string | number | boolean | null> = {};
+    for (const [key, one] of Object.entries(values)) {
+      if (one === null || ['string', 'number', 'boolean'].includes(typeof one))
+        config[key] = one as string | number | boolean | null;
+    }
+    return Object.keys(config).length === 0 ? { id: held.id } : { id: held.id, config };
+  };
+
   /** Every resource identifier any agent here advertised. */
   const advertised = (): Set<string> => {
     const out = new Set<string>();
@@ -4052,7 +4074,7 @@ export function createHost(options: HostOptions): Host {
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;
-            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), typeof message.model === 'string' ? message.model : undefined);
+            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model));
           })();
           return;
         }
@@ -4093,7 +4115,7 @@ export function createHost(options: HostOptions): Host {
               }));
               break;
             }
-            session.begin(turnId, text, typeof message.model === 'string' ? message.model : undefined);
+            session.begin(turnId, text, modelIn(message.model));
             break;
           }
           /**
@@ -4214,11 +4236,7 @@ export function createHost(options: HostOptions): Host {
             const model = (typeof message.model === 'object' && message.model !== null
               ? message.model
               : {}) as Record<string, unknown>;
-            session.queue(
-              String(action.id ?? ''),
-              String(message.text ?? ''),
-              typeof model.id === 'string' ? model.id : undefined,
-            );
+            session.queue(String(action.id ?? ''), String(message.text ?? ''), modelIn(model));
             break;
           }
           /**

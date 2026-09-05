@@ -5,7 +5,22 @@ import { tail } from './transcript.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
-import type { Session, SessionOptions } from './types/session.js';
+import type { Chosen, Session, SessionOptions } from './types/session.js';
+
+/**
+ * The effort levels this backend has, weakest first.
+ *
+ * One list, because two of them drifted: a model's own `thinkingLevel` form
+ * and the session-wide `effortLevel` key are the same five words reaching the
+ * same setting, and a client that read one set of labels from one control and
+ * another set from the other is being told they are different things.
+ */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** What a person reads instead of an effort level. The reference client's words. */
+export const EFFORT_LABELS: Record<typeof EFFORTS[number], string> = {
+  low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
+};
 
 /** What the SDK will accept as a session id of our choosing. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -999,15 +1014,34 @@ export function createSession(options: SessionOptions): Session {
    * makes the queue empty as its turns start rather than needing a second
    * action to say so.
    */
-  const beginTurn = (turnId: string, text: string, model?: string, queuedMessageId?: string): void => {
-    if (model && model !== chosen) {
-      chosen = model;
-      void handle.setModel(model === 'default' ? undefined : model).catch(() => {});
+  const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string): void => {
+    if (model !== undefined && model.id !== chosen) {
+      chosen = model.id;
+      void handle.setModel(model.id === 'default' ? undefined : model.id).catch(() => {});
+    }
+    /*
+     * The form the model came with, which is one key here.
+     *
+     * `thinkingLevel` is what a client writes into `ModelSelection.config`,
+     * and the CLI holds one effort setting for the whole query rather than one
+     * per turn - so a turn that names a level sets it from here on, and the
+     * session-wide `effortLevel` is told so the two controls do not describe
+     * different futures.
+     */
+    const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
+    if (level !== undefined && level !== settings.effortLevel) {
+      settings.effortLevel = level;
+      void handle.applyFlagSettings({ effortLevel: level }).catch(() => {});
+      emit('session', { type: 'session/configChanged', config: { effortLevel: level } });
     }
     active = {
       id: turnId,
       startedAt: new Date().toISOString(),
-      message: { text, origin: { kind: 'user' }, ...(chosen ? { model: { id: chosen } } : {}) },
+      message: {
+        text,
+        origin: { kind: 'user' },
+        ...(chosen ? { model: { id: chosen, ...(model?.config ? { config: model.config } : {}) } } : {}),
+      },
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
@@ -1046,7 +1080,14 @@ export function createSession(options: SessionOptions): Session {
     if (!next)
       return;
     const message = bag(next.message);
-    beginTurn(crypto.randomUUID(), str(message.text) ?? '', str(bag(message.model).id), str(next.id));
+    // Read back, not re-parsed: `queue` wrote this entry from a `Chosen` and
+    // the values in it are the ones it kept.
+    const named = bag(message.model);
+    const id = str(named.id);
+    let model: Chosen | undefined;
+    if (id !== undefined)
+      model = named.config ? { id, config: named.config as NonNullable<Chosen['config']> } : { id };
+    beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id));
   };
 
   /**
@@ -1395,8 +1436,7 @@ export function createSession(options: SessionOptions): Session {
         catch { return `The harness would not take model ${said}`; }
       }
       if (key === 'effortLevel') {
-        const known = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
-        const found = known.find((one) => one === said);
+        const found = EFFORTS.find((one) => one === said);
         if (!found) return `The harness has no effort level called ${said}`;
         settings.effortLevel = found;
         void handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
@@ -1687,7 +1727,14 @@ export function createSession(options: SessionOptions): Session {
      * leave rather than one that was never there.
      */
     queue: (id, text, model) => {
-      const entry: Bag = { id, message: { text, origin: { kind: 'user' }, ...(model ? { model: { id: model } } : {}) } };
+      const entry: Bag = {
+        id,
+        message: {
+          text,
+          origin: { kind: 'user' },
+          ...(model ? { model: { id: model.id, ...(model.config ? { config: model.config } : {}) } } : {}),
+        },
+      };
       const at = queued.findIndex((held) => str(held.id) === id);
       // The same id again edits what is waiting; a fresh one appends. That is
       // the client's spelling for "change my mind" and it costs nothing here.
