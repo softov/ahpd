@@ -214,6 +214,73 @@ describe('a session with a working tree of its own', () => {
     expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
   });
 
+  it('answers the branches a client types for, not the whole list', async () => {
+    const root = repository();
+    const run = (...args: string[]) => execFileSync('git', ['-C', project(root), ...args], { stdio: 'pipe' });
+    run('branch', 'feature/parser');
+    run('branch', 'feature/reducer');
+    run('branch', 'chore/deps');
+    const { client } = await joined(root);
+    const found = await client.handle({
+      method: 'sessionConfigCompletions',
+      params: {
+        channel: 'ahp-root://', provider: 'echo',
+        workingDirectory: `file://${project(root)}`,
+        property: 'branch', query: 'feature',
+      },
+    }) as { items: { value: string; label: string }[] };
+    /*
+     * The one key here with more values than a picker holds.
+     *
+     * A repository with four hundred branches used to send four hundred, on
+     * every resolve, to fill a list nobody can read. `enumDynamic` says the
+     * schema carries seeds and this command answers what somebody types.
+     */
+    expect(found.items.map((one) => one.value).sort()).toEqual(['feature/parser', 'feature/reducer']);
+
+    // Substring, not prefix: somebody looking for `feature/reducer` types
+    // `reducer`, and a prefix match would answer nothing.
+    const typed = await client.handle({
+      method: 'sessionConfigCompletions',
+      params: {
+        channel: 'ahp-root://', provider: 'echo',
+        workingDirectory: `file://${project(root)}`,
+        property: 'branch', query: 'reducer',
+      },
+    }) as { items: { value: string }[] };
+    expect(typed.items.map((one) => one.value)).toEqual(['feature/reducer']);
+
+    // And a key this host has no lookup for is answered, not refused: the
+    // client asked what else there is and nothing else is an answer.
+    const none = await client.handle({
+      method: 'sessionConfigCompletions',
+      params: { channel: 'ahp-root://', provider: 'echo', property: 'permissionMode' },
+    }) as { items: unknown[] };
+    expect(none.items).toEqual([]);
+  });
+
+  it('offers the branch as a choice only while a worktree is being made', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const ask = async (isolation: string) => (await client.handle({
+      method: 'resolveSessionConfig',
+      params: {
+        channel: 'ahp-root://', provider: 'echo',
+        workingDirectory: `file://${project(root)}`,
+        config: { isolation },
+      },
+    }) as { schema: { properties: Record<string, { enumDynamic?: boolean; readOnly?: boolean }> } }).schema.properties;
+
+    // A folder session works on the branch that is checked out, so choosing
+    // another there is a control that changes nothing.
+    expect((await ask('folder')).branch?.readOnly).toBe(true);
+    expect((await ask('folder')).branch?.enumDynamic).toBe(false);
+
+    const making = await ask('worktree');
+    expect(making.branch?.enumDynamic).toBe(true);
+    expect(making.branch?.readOnly).toBeUndefined();
+  });
+
   it('answers about the folder the question named, not the host\'s own', async () => {
     const root = repository();
     const { client } = await joined(root);

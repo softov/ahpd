@@ -1670,7 +1670,15 @@ export function createHost(options: HostOptions): Host {
    * a repository: `isolation` with one value is a control a client draws and
    * nobody can move.
    */
-  const isolating = async (where: string | undefined): Promise<{
+  /**
+   * How many branches ride along in the schema before a client has to ask.
+   *
+   * The list is ordered by most recent commit, so the first few are the ones
+   * somebody means. The rest arrive through `sessionConfigCompletions` as they
+   * are typed for.
+   */
+  const SEEDS = 20;
+  const isolating = async (where: string | undefined, chosen?: string): Promise<{
     schema: Bag;
     defaults: Record<string, string>;
     repository?: string;
@@ -1720,14 +1728,32 @@ export function createHost(options: HostOptions): Host {
             // an agent whose files moved out from under a conversation.
             sessionMutable: false,
           },
+          /*
+           * The branches, as seeds rather than as the whole list.
+           *
+           * `enumDynamic` is the protocol's word for "there are more of these
+           * than a picker can hold": the `enum` becomes the rows shown before
+           * anybody types, and `sessionConfigCompletions` answers what they
+           * type. A repository with four hundred branches used to send four
+           * hundred, on every resolve, to fill a list nobody can read.
+           *
+           * Dynamic only while a worktree is being made, which is the one time
+           * the choice means anything - the reference host does the same, and
+           * marks the row read-only otherwise, because a folder session works
+           * on the branch that is checked out and choosing another would be a
+           * control that changes nothing.
+           */
           ...(offered.length > 0 ? {
             branch: {
               type: 'string',
               title: 'Branch',
               description: 'Base branch the worktree starts from',
-              enum: offered,
-              enumLabels: offered,
+              enum: offered.slice(0, SEEDS),
+              enumLabels: offered.slice(0, SEEDS),
               ...(base !== undefined ? { default: base } : {}),
+              ...(chosen === 'worktree'
+                ? { enumDynamic: true }
+                : { enumDynamic: false, readOnly: true }),
               sessionMutable: false,
             },
           } : {}),
@@ -2509,7 +2535,7 @@ export function createHost(options: HostOptions): Host {
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
     decided.set(uri, mineOf(config));
-    offered.set(uri, (await isolating(wanted.workingDirectory)).schema);
+    offered.set(uri, (await isolating(wanted.workingDirectory, typeof config.isolation === 'string' ? config.isolation : undefined)).schema);
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -3560,7 +3586,7 @@ export function createHost(options: HostOptions): Host {
           // been said in it. Against the directory that was asked for, which is
           // the repository - a worktree's own has one branch and is not where
           // the choice is made.
-          offered.set(uri, (await isolating(where)).schema);
+          offered.set(uri, (await isolating(where, typeof config.isolation === 'string' ? config.isolation : undefined)).schema);
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
@@ -3780,7 +3806,10 @@ export function createHost(options: HostOptions): Host {
           const asked = one ?? (Array.isArray(params.workingDirectories)
             ? params.workingDirectories.find((entry) => typeof entry === 'string')
             : undefined);
-          const mine = await isolating(typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir);
+          const mine = await isolating(
+            typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir,
+            typeof answered.isolation === 'string' ? answered.isolation : undefined,
+          );
           const theirs = agent.schema();
           const properties = {
             ...(typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}),
@@ -3792,6 +3821,36 @@ export function createHost(options: HostOptions): Host {
             schema: { ...theirs, properties },
             values: { ...agent.defaults(), ...mine.defaults, ...answered },
           };
+        },
+        /**
+         * The values behind a property whose list is too long to send.
+         *
+         * Only `branch`, because it is the only key here with more values than
+         * a picker holds - the rest are enums of five things or fewer, and a
+         * client is told so by their schema. A property this host has no
+         * lookup for answers with nothing rather than an error: the client
+         * asked what else there is, and "nothing else" is an answer.
+         */
+        sessionConfigCompletions: async (params) => {
+          const property = String(params.property ?? '');
+          const asked = typeof params.workingDirectory === 'string' ? params.workingDirectory : undefined;
+          const port = options.worktrees;
+          if (property !== 'branch' || !port) return { items: [] };
+          const where = (asked ?? `file://${dir}`).replace(/^file:\/\//, '');
+          const repository = await port.repository(where).catch(() => undefined);
+          if (repository === undefined) return { items: [] };
+          const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';
+          const branches = await port.branches(repository).catch(() => [] as string[]);
+          /*
+           * Substring rather than prefix, and capped.
+           *
+           * Somebody looking for `softov/agents/1a2b` types `1a2b`, and a
+           * prefix match would answer nothing. The cap is the same one the
+           * schema seeds with, because the list is ordered by most recent
+           * commit and a picker showing four hundred rows is one nobody reads.
+           */
+          const found = branches.filter((name) => name.toLowerCase().includes(query));
+          return { items: found.slice(0, SEEDS).map((name) => ({ value: name, label: name })) };
         },
       };
       /**
