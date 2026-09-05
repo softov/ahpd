@@ -23,10 +23,13 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **1.2** Route by the connection a URI arrived on. A client-served URI is
   tagged at intake with the id of the connection that sent it, the way the
   reference host encodes it as `<scheme>://<clientId>/…`.
-- [x] **1.3** A `client:` scheme in `resources.ts` so an agent reading one of
-  these paths reaches the client that owns it.
+- [x] **1.3** A way for an agent to read one of these paths: `ahp_resource`,
+  a host tool, so a session reaches the client that owns the URI. Routed in
+  `host.ts` rather than in `resources.ts` — a store is handed no connections,
+  and every store benefits from the routing being above it.
 - [ ] **1.4** `ahpc` grows a `--serve <dir>` flag so there is a client that
-  publishes a resource to read.
+  publishes a resource to read. **The `ahpc` side, not this repository's** —
+  everything the host needs is served and tested in `test/clients.test.ts`.
 
 ## 2. Server notifications — 9 of 9 sent
 
