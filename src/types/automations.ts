@@ -123,6 +123,20 @@ export interface AutomationStore {
   runs(resource: string, cursor?: string): { items: Bag[]; nextCursor?: string };
 
   /**
+   * Let go of a session a run was holding.
+   *
+   * Called when the session is disposed: a run keeps a list of URIs and a
+   * host that removed the session without saying so would leave a run
+   * pointing at a channel nobody can open. Removing the primary clears it,
+   * which is what the protocol says. Answers whether the set actually moved,
+   * so a URI a run never had is a no-op rather than an announcement.
+   *
+   * Optional, like everything else a store may not do: a store that keeps its
+   * runs immutable simply leaves it out.
+   */
+  unlink?(run: string, session: string): boolean;
+
+  /**
    * Called when something in here moved, so the host can say so.
    *
    * The store owns the clock and the host owns the channels, so this is the

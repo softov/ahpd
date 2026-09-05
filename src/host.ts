@@ -305,6 +305,13 @@ export function createHost(options: HostOptions): Host {
    * origin, which is what the protocol says absent means.
    */
   const origins = new Map<string, { kind: 'automation'; automation: string; run: string }>();
+  /**
+   * The sessions each run was last announced as having, by run URI.
+   *
+   * Kept because the two actions that move the list carry one session each:
+   * telling a client what changed means knowing what it was told before.
+   */
+  const linked = new Map<string, string[]>();
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
@@ -1283,6 +1290,22 @@ export function createHost(options: HostOptions): Host {
       // says what it is doing, and the catalogue's says which session it is
       // doing it in.
       dispatch(event.run, { type: 'automationRun/lifecycleChanged', lifecycle: run.lifecycle });
+      /*
+       * Which sessions it has, as the difference rather than the list.
+       *
+       * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
+       * away - there is no action carrying the whole set - so what is sent is
+       * what moved since the last time this looked. A run that started one
+       * session says so once; one whose session was disposed says that too,
+       * and a client watching the run channel is not left pointing at a
+       * channel nobody can open.
+       */
+      const before = linked.get(event.run) ?? [];
+      for (const gone of before.filter((one) => !run.sessions.includes(one)))
+        dispatch(event.run, { type: 'automationRun/sessionRemoved', session: gone });
+      for (const added of run.sessions.filter((one) => !before.includes(one)))
+        dispatch(event.run, { type: 'automationRun/sessionSet', session: added });
+      linked.set(event.run, [...run.sessions]);
       if (run.primarySession !== undefined) {
         dispatch(event.run, { type: 'automationRun/primarySessionChanged', primarySession: run.primarySession });
       }
@@ -4250,6 +4273,16 @@ export function createHost(options: HostOptions): Host {
             })();
           }
           sessions.delete(uri);
+          /*
+           * And the run that started it, which is now holding a URI that
+           * opens onto nothing.
+           *
+           * The store answers whether the set actually moved and says so
+           * through `onChanged`, which is where the action comes from - so a
+           * store that keeps its runs immutable simply changes nothing here.
+           */
+          const from = origins.get(uri);
+          if (from !== undefined) options.automations?.unlink?.(from.run, uri);
           origins.delete(uri);
           presence.delete(idOf(uri));
           // And what was kept *about* it. Both of these are keyed by a session

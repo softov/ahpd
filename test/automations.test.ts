@@ -230,3 +230,116 @@ it('will not remove one the catalogue says may not be, even when asked', async (
   // removal of something else.
   expect(await entries(client)).toHaveLength(1);
 });
+
+/*
+ * A store the test drives, so the two actions can be seen rather than the
+ * state they add up to.
+ *
+ * `memoryAutomations` starts its session inside `run`, which resolves before
+ * anything could subscribe to the run's own channel - so what a client
+ * watching one actually receives is only visible with a store that says a run
+ * moved when the test says so.
+ */
+const controllable = () => {
+  const run = {
+    resource: 'ahp-automation-run:/r1',
+    automation: ONE,
+    origin: { kind: 'schedule' },
+    lifecycle: { status: 'running' },
+    sessions: [] as string[],
+    primarySession: undefined as string | undefined,
+  };
+  let watcher: ((event: { automation?: string; run?: string; removed?: string }) => void) | undefined;
+  const moved = () => watcher?.({ automation: ONE, run: run.resource });
+  return {
+    run,
+    moved,
+    store: {
+      list: () => [],
+      get: () => undefined,
+      triggers: () => [],
+      create: () => ({ resource: ONE, definition: {}, runs: [], operations: [], createdAt: '', modifiedAt: '' }),
+      update: () => undefined,
+      remove: () => false,
+      run: async () => run,
+      runOf: (resource: string) => (resource === run.resource ? run : undefined),
+      runs: () => ({ items: [] }),
+      onChanged: (observer: (event: { automation?: string; run?: string; removed?: string }) => void) => {
+        watcher = observer;
+      },
+    },
+  };
+};
+
+it('says which sessions a run has, one action per session', async () => {
+  const driven = controllable();
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR, pace: 0 })],
+    automations: driven.store as never,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await client.handle({ method: 'subscribe', params: { channel: driven.run.resource } });
+
+  /*
+   * The difference, not the list.
+   *
+   * There is no action carrying a run's whole set of sessions:
+   * `automationRun/sessionSet` appends one and `sessionRemoved` takes one
+   * away. So a client watching the run channel builds the list out of these,
+   * and a host that only announced the primary would leave it building one
+   * with a single entry however many the run has.
+   */
+  driven.run.sessions = ['ahp-session:/one', 'ahp-session:/two'];
+  driven.run.primarySession = 'ahp-session:/one';
+  driven.moved();
+  expect(actions(p, driven.run.resource)
+    .filter((one) => one.type === 'automationRun/sessionSet')
+    .map((one) => one.session))
+    .toEqual(['ahp-session:/one', 'ahp-session:/two']);
+
+  // And nothing said twice: the run moved again, and its sessions did not.
+  driven.run.lifecycle = { status: 'completed' };
+  driven.moved();
+  expect(actions(p, driven.run.resource).filter((one) => one.type === 'automationRun/sessionSet')).toHaveLength(2);
+
+  driven.run.sessions = ['ahp-session:/two'];
+  driven.moved();
+  expect(actions(p, driven.run.resource)
+    .filter((one) => one.type === 'automationRun/sessionRemoved')
+    .map((one) => one.session))
+    .toEqual(['ahp-session:/one']);
+});
+
+it('lets go of a session a run was holding when the session is disposed', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  await write(client, DEFINITION);
+
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  }) as { resource: string };
+  await client.handle({ method: 'subscribe', params: { channel: run.resource } });
+  await settle();
+  const session = String((await client.handle({ method: 'subscribe', params: { channel: run.resource } }) as {
+    snapshot: { state: { sessions: string[] } };
+  }).snapshot.state.sessions[0] ?? '');
+  expect(session.startsWith('ahp-session:/')).toBe(true);
+
+  await client.handle({ method: 'disposeSession', params: { channel: session } });
+  await settle();
+  const gone = actions(p, run.resource).filter((one) => one.type === 'automationRun/sessionRemoved');
+  expect(gone.map((one) => one.session)).toEqual([session]);
+  // And the primary with it: a run pointing at a session nobody can open is
+  // a run a client opens onto nothing.
+  const state = (await client.handle({ method: 'subscribe', params: { channel: run.resource } }) as {
+    snapshot: { state: { sessions: string[]; primarySession?: string } };
+  }).snapshot.state;
+  expect(state.sessions).toEqual([]);
+  expect(state.primarySession).toBeUndefined();
+});

@@ -39,7 +39,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
-## 3. State actions — 88 of 96 emitted
+## 3. State actions — 90 of 96 emitted
 
 ### Terminals (4)
 - [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
@@ -73,7 +73,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **3.9** `session/workingDirectoryReplaced` — needs 4.3.
 
 ### Automation runs (2)
-- [ ] **3.10** `automationRun/sessionSet` / `sessionRemoved` — a run that
+- [x] **3.10** `automationRun/sessionSet` / `sessionRemoved` — a run that
   starts more than one session. `scheduled.ts` starts one.
 
 ## 4. Fields and capabilities

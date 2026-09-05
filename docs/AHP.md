@@ -65,7 +65,7 @@ specification: nothing here is listed because AHP defines it.
 
 ## State actions
 
-**88 of the 96 declared, across nine channels.** Grouped by channel; a group is
+**90 of the 96 declared, across nine channels.** Grouped by channel; a group is
 🚧 when some of it is served.
 
 | channel | ahpd | Status | Notes |
@@ -76,7 +76,7 @@ specification: nothing here is listed because AHP defines it.
 | `terminal/*` | 11 of 11 | ✅ | `data`, `input`, `resized`, `claimed`, `titleChanged`, `cleared`, `exited`. `cleared` drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up - and nothing reaches the process, which has no notion of its own output being discarded. `exited` is announced when the pipes drain rather than when the process goes, because between the two there is output written and not yet read. The other four are shell integration and arrive with a pseudoterminal: `shellTerminals({ pty })` takes a binding rather than importing one - `node-pty` is the daemon's optional dependency and never the library's - and under it the shell prints its own OSC 133 marks, which become `commandExecuted`, `commandFinished` and `cwdChanged`, with `commandDetectionAvailable` said once at the start. Without a binding the shells run on pipes and the state says `isPty: false` and `supportsCommandDetection: false`, which is what the protocol has those flags for |
 | `changeset/*` | 8 of 8 | ✅ | Both forms, chosen per change: `fileSet` / `fileRemoved` when fewer actions than files moved, `cleared` when everything went, `statusChanged` when only the status did, and `contentChanged` when the whole set is the smaller thing to send. They reduce to the same state, which is what makes choosing between them safe. A changeset whose files did not move says nothing about them at all - re-sending the set a client already holds tells it nothing |
 | `automation/*` | 4 of 4 | ✅ | |
-| `automationRun/*` | 3 of 5 | 🚧 | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`. `sessionSet` / `sessionRemoved` are for a run with more than one session, and a run here has one |
+| `automationRun/*` | 5 of 5 | ✅ | `lifecycleChanged`, `primarySessionChanged`, `cancelRequested`, and `sessionSet` / `sessionRemoved` - sent as the difference, because neither carries a whole set: one action per session that joined and one per session that went. `memoryAutomations` starts one session per run and a store may start several; either way a session disposed is unlinked from the run it belonged to, which clears `primarySession` when it was that one |
 | `resourceWatch/*` | 1 of 1 | ✅ | |
 | `annotations/*` | 5 of 5 | ✅ | An editor's furniture, and the one channel whose state is entirely a client's: nothing here produces a mark, and what this host contributes is that a mark one client made is one every other client in the session can see. Kept per session under `<sessionUri>/annotations`, reduced with the package's own `annotationsReducer` so host and client cannot disagree, and echoed with `origin`. An action naming an annotation the session does not have is refused rather than echoed - the reducer answers an unknown id by handing back the state it was given, and echoing that would leave the client holding a mark this host never kept |
 

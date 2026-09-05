@@ -177,6 +177,17 @@ export function memoryAutomations(): AutomationStore {
 
     runOf: (resource) => byRun.get(resource),
 
+    unlink: (resource, session) => {
+      const run = byRun.get(resource);
+      if (run === undefined || !run.sessions.includes(session)) return false;
+      run.sessions = run.sessions.filter((one) => one !== session);
+      // The protocol says removing the primary clears it. A run pointing at a
+      // session that is gone is a run a client opens onto nothing.
+      if (run.primarySession === session) delete run.primarySession;
+      said({ automation: run.automation, run: run.resource });
+      return true;
+    },
+
     runs: (resource, cursor) => {
       const all = history.get(resource) ?? [];
       const from = cursor === undefined ? 0 : Number(cursor);
