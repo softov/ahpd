@@ -51,13 +51,14 @@ specification: nothing here is listed because AHP defines it.
 | `invokeChangesetOperation` | acting on a changeset | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate |
 | `listAutomationTriggerDefinitions`, `runAutomation`, `fetchAutomationRuns` | automations | 🧩 | The `automations` port. A host given none advertises no `ahp-automations://` channel and answers `-32601`. `listAutomationTriggerDefinitions` is answered on `ahp-root://` and the other two on `ahp-automations://`, which is what each declares - the triggers a host understands are the host's, and a run is of an automation the store holds |
 
-Eighteen of the commands declare `channel` as a literal rather than as a URI a
+Twenty of the commands declare `channel` as a literal rather than as a URI a
 client chooses - `ahp-root://` for all but `runAutomation` and
-`fetchAutomationRuns`. A client that names a different one is refused `-32602`
+`fetchAutomationRuns`. Eighteen of those are enforced: a client that names a
+different one is refused `-32602`
 saying which is right, because a host that answered anyway would make that
 client look correct until the first conformant host refused it with nothing on
 screen saying why. A client that names *no* channel is taken: it has named
-nothing wrong. `initialize` and `ping` declare one too and are exempt - they are
+nothing wrong. `initialize` and `ping` are the other two and are exempt - they are
 how a client finds out it can talk at all, and refusing either turns a wrong
 constant into a connection that never opens.
 

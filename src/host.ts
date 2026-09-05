@@ -278,7 +278,10 @@ export function createHost(options: HostOptions): Host {
   const ask = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
     const held = [...connections].find((one) => one.clientId === client);
     if (held === undefined) throw new RpcError(-32008, `${client} is not a client this host has seen`);
-    return await held.peer.request(method, { channel: ROOT, ...params });
+    // The channel last, not first: every one of the ten declares it as the
+    // literal `ahp-root://`, and this host refuses a client that names another
+    // - so a caller here cannot be the thing that gets it wrong either.
+    return await held.peer.request(method, { ...params, channel: ROOT });
   };
   /**
    * The connected clients, as places a resource can come from.
