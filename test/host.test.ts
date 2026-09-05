@@ -3392,6 +3392,98 @@ describe('authenticating', () => {
   });
 });
 
+describe('more than one directory', () => {
+  it('advertises that it can, and which slot is fixed', async () => {
+    const client = open();
+    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+      snapshots: { state: { agents: { capabilities?: { multipleWorkingDirectories?: unknown } }[] } }[];
+    };
+    /*
+     * Both, deliberately.
+     *
+     * `immutablePrimary` because the backend's process is rooted at index 0
+     * and cannot move while it runs; `primaryReplacement` because this host
+     * can start it again somewhere else, and the protocol says a backend MAY
+     * advertise both so an older client keeps the safe reading.
+     */
+    expect(result.snapshots[0]?.state.agents[0]?.capabilities?.multipleWorkingDirectories)
+      .toEqual({ immutablePrimary: true, primaryReplacement: true });
+  });
+
+  it('hands every directory the client named to the harness', async () => {
+    const host = serving('/home/softov');
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/wide', provider: 'claude',
+        workingDirectories: ['file:///home/softov/one', 'file:///home/softov/two'],
+      },
+    });
+    // The first is the process root; the rest are its peers, which the SDK
+    // takes at startup as `additionalDirectories`.
+    expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov/one');
+    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual(['/home/softov/two']);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/wide' } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories).toEqual(['file:///home/softov/one', 'file:///home/softov/two']);
+  });
+
+  it('starts the agent again, resumed, when a directory is added to a running session', async () => {
+    const { client, uri } = await running();
+    // The CLI names the conversation, and that name is what a resume asks for.
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-wide' });
+    const before = sessionQueries().length;
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'session/workingDirectorySet', directory: 'file:///home/softov/extra' },
+      },
+    });
+    await settle();
+    /*
+     * A new CLI, on the same conversation.
+     *
+     * The SDK takes its directories when the process starts and offers no way
+     * to add one after, so the honest implementation is to start it again and
+     * *resume* - which is what makes this the same conversation in a wider
+     * place rather than a new one.
+     */
+    expect(sessionQueries().length).toBe(before + 1);
+    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual(['/home/softov/extra']);
+    expect(sessionQueries().at(-1)?.options.resume).toBeDefined();
+  });
+
+  it('refuses to remove the directory the agent runs in', async () => {
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0']));
+    const uri = 'ahp-session:/rooted';
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'claude', workingDirectories: ['file:///home/softov/one'] },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'session/workingDirectoryRemoved', directory: 'file:///home/softov/one' },
+      },
+    });
+    await settle();
+    // The protocol says a client MUST NOT remove index 0. Said out loud rather
+    // than ignored, so a client that tried learns why nothing happened.
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused.some((one) => one.includes('cannot be removed'))).toBe(true);
+  });
+});
+
 describe('telling a client how far along something is', () => {
   it('reports progress against the token the request carried, and stops at the total', async () => {
     const { client, peer: p } = await running();

@@ -43,6 +43,8 @@ export interface Start {
    * nobody asked for, and nothing on screen says which.
    */
   workingDirectory?: string;
+  /** Directories beside it the agent may also work in. */
+  additional?: string[];
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */
@@ -111,6 +113,15 @@ export interface Agent {
    * chats; it just cannot be asked to make one out of another.
    */
   chats?: { fork?: boolean; sideChat?: boolean };
+
+  /**
+   * Whether a session of this backend can work in more than one directory.
+   *
+   * The first is the process root and never moves; the rest are its peers.
+   * A backend that leaves this out gets one directory per session, which is
+   * what a client is told when the capability is absent.
+   */
+  multipleDirectories?: boolean;
 
   /**
    * OAuth protected resources this backend can be given a token for.

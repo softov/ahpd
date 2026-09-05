@@ -69,7 +69,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [ ] **3.7** `session/customizationRemoved` — send the removal rather than
   re-sending the whole list.
 - [ ] **3.8** `session/serverToolsChanged` — needs 4.5.
-- [ ] **3.9** `session/workingDirectoryReplaced` — needs 4.3.
+- [x] **3.9** `session/workingDirectoryReplaced` — needs 4.3.
 
 ### Automation runs (2)
 - [ ] **3.10** `automationRun/sessionSet` / `sessionRemoved` — a run that
@@ -78,11 +78,11 @@ correlates a question with its answer — and nothing is routed through it.
 ## 4. Fields and capabilities
 
 - [x] **4.2** `ChatSummary.interactivity` and `ChatState.steeringMessage`.
-- [ ] **4.3** `capabilities.multipleWorkingDirectories: { immutablePrimary: true }`,
+- [x] **4.3** `capabilities.multipleWorkingDirectories: { immutablePrimary: true }`,
   and `CreateSessionParams.workingDirectories` beyond the first passed to the
   SDK as `additionalDirectories`. Index 0 is fixed for the session's lifetime,
   which is what `immutablePrimary` means and what the SDK enforces anyway.
-- [ ] **4.3a** `session/workingDirectorySet` and `Removed` on a running
+- [x] **4.3a** `session/workingDirectorySet` and `Removed` on a running
   session. The SDK adds a root at runtime only when it resolves under `cwd` or
   under one passed at launch; anything else is refused in the SDK's own words.
 - [ ] **4.3b** `chat/workingDirectorySet` / `Removed` and

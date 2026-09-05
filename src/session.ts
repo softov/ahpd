@@ -432,6 +432,16 @@ export function createSession(options: SessionOptions): Session {
   let closed = false;
 
   /**
+   * The directories beside `cwd`, as this session currently has them.
+   *
+   * Mutable because a client may add and remove peers on a running session;
+   * `cwd` itself never moves, which is what the protocol's `immutablePrimary`
+   * says and what the SDK enforces anyway.
+   */
+  let peers = [...(options.additional ?? [])];
+
+
+  /**
    * A steering message, for as long as it is waiting to be read.
    *
    * The protocol's `ChatState.steeringMessage` is "a message to inject into
@@ -975,6 +985,9 @@ export function createSession(options: SessionOptions): Session {
     prompt: input(),
     options: {
       cwd,
+      // The peers of `cwd`, which the SDK takes at startup. The first entry is
+      // the process root and is not one of these.
+      ...(peers.length > 0 ? { additionalDirectories: [...peers] } : {}),
       includePartialMessages: true,
       /*
        * Over the daemon's own environment, never instead of it.
@@ -1398,7 +1411,7 @@ export function createSession(options: SessionOptions): Session {
     activity: () => activity,
     title: () => title,
     modifiedAt: () => modified,
-    workingDirectories: () => [`file://${cwd}`],
+    workingDirectories: () => [`file://${cwd}`, ...peers.map((one) => `file://${one}`)],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -1409,7 +1422,7 @@ export function createSession(options: SessionOptions): Session {
       lifecycle: 'ready',
       defaultChat: chatUri,
       chats: [{ resource: chatUri, title }],
-      workingDirectories: [`file://${cwd}`],
+      workingDirectories: [`file://${cwd}`, ...peers.map((one) => `file://${one}`)],
       customizations,
       // What it is doing, only while it is doing something. The protocol has
       // a session mirror its default chat's, which is where this is set.

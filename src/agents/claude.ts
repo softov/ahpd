@@ -255,6 +255,9 @@ export function claude(options: ClaudeOptions): Agent {
     // `forkSession` continues from a turn under a new id, and a side chat is
     // an unresumed session handed what that turn said.
     chats: { fork: true, sideChat: true },
+    // The SDK takes `additionalDirectories` at startup, so a session works in
+    // as many as it was given; the first is the process root and is fixed.
+    multipleDirectories: true,
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
@@ -307,6 +310,11 @@ export function claude(options: ClaudeOptions): Agent {
       uri: start.uri,
       chatUri: start.chatUri,
       cwd: workingDirectory(start.workingDirectory),
+      // Each one checked the way the first is: a directory this host does not
+      // serve is not one an agent may be pointed at, however it arrived.
+      ...(start.additional && start.additional.length > 0
+        ? { additional: start.additional.map((one) => workingDirectory(one)) }
+        : {}),
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,

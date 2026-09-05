@@ -278,6 +278,13 @@ export function createHost(options: HostOptions): Host {
     /** Where they work, when the client named a directory. */
     workingDirectory: string | undefined;
     /**
+     * The peers of that directory, which the agent may also work in.
+     *
+     * Held here as well as inside each chat because a restart rebuilds the
+     * chats and has to hand them back what they had.
+     */
+    additional: string[] | undefined;
+    /**
      * ISO 8601, when the session was first started.
      *
      * Not when it last moved. `createdAt` is an identity field - the protocol
@@ -1612,12 +1619,14 @@ export function createHost(options: HostOptions): Host {
     resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; context?: string },
     workingDirectory?: string,
     credentials?: Record<string, string>,
+    additional?: string[],
   ): Session => {
     const session = agent.create({
       uri,
       chatUri,
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
+      ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
       ...(resuming?.resume !== undefined ? { resume: resuming.resume } : {}),
       ...(resuming?.seed !== undefined ? { seed: resuming.seed } : {}),
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
@@ -1681,6 +1690,7 @@ export function createHost(options: HostOptions): Host {
       defaultChat: chatUri,
       config,
       workingDirectory,
+      additional,
       // The catalogue's value for a session being resumed; now, for one being
       // started. A second chat in a session that already exists takes the
       // session's own, because `sessions.get` answered above.
@@ -1760,6 +1770,19 @@ export function createHost(options: HostOptions): Host {
         ...(agent.chats?.fork ? { fork: true } : {}),
         ...(agent.chats?.sideChat ? { sideChat: true } : {}),
       },
+      /*
+       * More than one directory, with the first of them fixed.
+       *
+       * `immutablePrimary` because the backend's process is rooted at index 0
+       * and that root cannot move while it runs. `primaryReplacement` beside
+       * it because this host *can* replace that slot - it starts the backend
+       * again in the new directory - and the protocol says a backend MAY
+       * advertise both, so a client that knows only the older capability keeps
+       * the safe reading and a newer one gets the action.
+       */
+      ...(agent.multipleDirectories
+        ? { multipleWorkingDirectories: { immutablePrimary: true, primaryReplacement: true } }
+        : {}),
     },
   }));
   /**
@@ -2100,7 +2123,11 @@ export function createHost(options: HostOptions): Host {
    * it. Once a turn has run there is a conversation about files in a place, and
    * the answer is fixed for good.
    */
-  const restart = async (uri: string, credentials: Record<string, string>): Promise<void> => {
+  const restart = async (
+    uri: string,
+    credentials: Record<string, string>,
+    keeping?: { additional?: string[] },
+  ): Promise<void> => {
     const held = sessions.get(uri);
     if (!held) return;
     const mine = decided.get(uri) ?? {};
@@ -2125,15 +2152,41 @@ export function createHost(options: HostOptions): Host {
       chat.close();
       byChat.delete(chatUri);
     }
+    /*
+     * The conversation, when this is a restart rather than a re-creation.
+     *
+     * Adding a directory to a session somebody is in the middle of using is a
+     * new CLI with a wider set - the SDK takes its directories at startup and
+     * exposes no way to add one after - so the backend is started again and
+     * *resumed*, which is what makes it the same conversation rather than a
+     * new one in the same place.
+     */
+    const lead = leadOf(held);
+    const talking = keeping !== undefined && lead !== undefined && lead.agentId() !== undefined
+      ? { resume: lead.agentId() as string, seed: lead.allTurns() }
+      : undefined;
     sessions.delete(uri);
-    spawn(held.agent, uri, held.defaultChat, held.config, undefined, to, credentials);
+    spawn(
+      held.agent,
+      uri,
+      held.defaultChat,
+      held.config,
+      talking,
+      to,
+      credentials,
+      keeping?.additional ?? held.additional,
+    );
     log(`restarted ${uri}${to === undefined ? '' : ` in ${to}`}`);
     if (before === to) return;
-    // Said in the protocol's own words. A client holding this session's state
-    // has the old directory in it, and a session that moved without saying so
-    // is one whose files a client goes looking for in the wrong place.
-    if (before !== undefined) dispatch(uri, { type: 'session/workingDirectoryRemoved', directory: `file://${before}` });
-    if (to !== undefined) dispatch(uri, { type: 'session/workingDirectorySet', directory: `file://${to}` });
+    /*
+     * Replaced, not removed and re-added.
+     *
+     * Index 0 is the process root, and the protocol has one action for a root
+     * that moves: `workingDirectoryReplaced`. Saying it as a removal followed
+     * by an addition would be a client briefly holding a session with no
+     * directory at all.
+     */
+    if (to !== undefined) dispatch(uri, { type: 'session/workingDirectoryReplaced', directory: `file://${to}` });
   };
 
   /** The host's own keys, which a backend has never heard of. */
@@ -2681,6 +2734,7 @@ export function createHost(options: HostOptions): Host {
     where: string | undefined,
     origin?: { kind: 'automation'; automation: string; run: string },
     credentials?: Record<string, string>,
+    additional?: string[],
   ): void => {
     named(uri, 'session');
     if (sessions.has(uri))
@@ -2689,7 +2743,7 @@ export function createHost(options: HostOptions): Host {
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
     try {
-      spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials);
+      spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional);
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -3753,12 +3807,15 @@ export function createHost(options: HostOptions): Host {
            * paths, and a backend handed a URI would open a directory called
            * `file:`.
            */
-          const asked = Array.isArray(params.workingDirectories)
-            ? params.workingDirectories.find((entry) => typeof entry === 'string')
-            : undefined;
-          const where = typeof asked === 'string'
-            ? asked.replace(/^file:\/\//, '')
-            : undefined;
+          const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
+            .filter((entry): entry is string => typeof entry === 'string')
+            .map((entry) => entry.replace(/^file:\/\//, ''));
+          const asked = wanted[0];
+          const where = asked;
+          // The peers of the first, which the protocol says are equal to each
+          // other and to it in everything but which one the process is rooted
+          // at. A backend that cannot take them is told none.
+          const beside = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
           /*
            * The worktree, before anything is started in it.
            *
@@ -3796,7 +3853,7 @@ export function createHost(options: HostOptions): Host {
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
-          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider));
+          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), beside);
           // Complete, which the protocol spells as `progress === total`.
           along(2, 'Ready');
           /*
@@ -4546,6 +4603,66 @@ export function createHost(options: HostOptions): Host {
            * object back would revert whatever another client set while this
            * one had the form open.
            */
+          /*
+           * A directory added to, taken from, or put in place of the session's set.
+           *
+           * The SDK takes its directories when the CLI starts and exposes no
+           * way to add one after, so this starts the backend again *resumed* -
+           * the same conversation, in a wider place - rather than refusing.
+           * Not while a turn is running: a CLI replaced mid-answer is an
+           * answer that stops halfway, and `-32004` is the code for asking a
+           * client to wait.
+           */
+          case 'session/workingDirectorySet':
+          case 'session/workingDirectoryRemoved':
+          case 'session/workingDirectoryReplaced': {
+            const owner = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
+            if (owner === undefined) {
+              no(`${channel} is not a session this host is running`);
+              break;
+            }
+            if (owner.agent.multipleDirectories !== true) {
+              no(`${owner.agent.provider} works in one directory per session`);
+              break;
+            }
+            const uri = session.uri;
+            if ((statusOf(uri) & Status.InProgress) !== 0) {
+              no('a working directory cannot change while a turn is running');
+              break;
+            }
+            const path = (value: unknown): string => String(value ?? '').replace(/^file:\/\//, '');
+            const held = owner.additional ?? [];
+            let beside = held;
+            if (type === 'session/workingDirectorySet') {
+              const one = path(action.directory);
+              if (one === '' || one === owner.workingDirectory || held.includes(one)) break;
+              beside = [...held, one];
+            }
+            else if (type === 'session/workingDirectoryRemoved') {
+              const one = path(action.directory);
+              // The first is the process root and the protocol says a client
+              // MUST NOT remove it. Said rather than silently ignored.
+              if (one === owner.workingDirectory) {
+                no('the first working directory is the one the agent runs in, and cannot be removed');
+                break;
+              }
+              if (!held.includes(one)) break;
+              beside = held.filter((other) => other !== one);
+            }
+            else {
+              // The primary slot, replaced atomically - which is the only way
+              // index 0 may move, and why this host advertises
+              // `primaryReplacement` beside `immutablePrimary`.
+              const one = path(action.directory);
+              if (one === '' || one === owner.workingDirectory) break;
+              owner.workingDirectory = one;
+            }
+            owner.additional = beside;
+            void restart(uri, tokensFor(owner.agent.provider), { additional: beside })
+              .then(() => { dispatch(uri, action, origin); })
+              .catch((error: unknown) => { no(error instanceof Error ? error.message : String(error)); });
+            break;
+          }
           case 'session/configChanged': {
             const config = (typeof action.config === 'object' && action.config !== null
               ? action.config

@@ -37,6 +37,14 @@ export interface SessionOptions {
   uri: string;
   /** The chat channel URI beneath it, `ahp-chat:/<id>`. */
   chatUri: string;
+  /**
+   * Directories beside the first the agent may also read and write.
+   *
+   * The first is `cwd` and is the process root; these are its peers. The
+   * protocol calls the whole set `workingDirectories` and fixes index 0 for
+   * the session's lifetime, which is what `immutablePrimary` means.
+   */
+  additional?: string[];
   /** The directory the agent works in. */
   cwd: string;
   /** Config values chosen at creation, by key. */
@@ -161,6 +169,7 @@ export interface Session {
    * somebody chose a directory for.
    */
   workingDirectories(): string[];
+
   /** The session channel's state, for a subscription snapshot. */
   sessionState(): Bag;
   /** The chat channel's state, for a subscription snapshot. */
