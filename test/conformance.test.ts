@@ -562,10 +562,12 @@ it('takes the session URI VS Code chose, and answers on it', async () => {
   const uri = 'claude:/57c93452-c939-4ebf-a18b-1a13711c749e';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-    snapshot: { state: { resource: string; defaultChat: string; provider: string } };
+    snapshot: { resource: string; state: { defaultChat: string; provider: string } };
   };
   // Echoed, not renamed: a client that named a channel subscribes to that one.
-  expect(opened.snapshot.state.resource).toBe(uri);
+  // On the snapshot, which is where the protocol puts it - `SessionState`
+  // declares no `resource` and `Snapshot` does.
+  expect(opened.snapshot.resource).toBe(uri);
   expect(opened.snapshot.state.provider).toBe('claude');
 
   // And the chat it announces is a channel that answers.

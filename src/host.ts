@@ -944,6 +944,12 @@ export function createHost(options: HostOptions): Host {
    * Undefined for a session this host is not running, which is not an error: a
    * row read from a transcript is in the catalogue and has no `Held`.
    */
+  /** The diff stat a catalogue row carries, which a session's own state does not. */
+  const changesOf = (uri: string): Bag => {
+    const dir = dirOf(uri);
+    const summary = dir === undefined ? undefined : options.changes?.summary(dir);
+    return summary?.files ? { changes: summary } : {};
+  };
   const summaryOf = (uri: string): Bag | undefined => {
     const held = sessions.get(uri);
     const lead = held && leadOf(held);
@@ -957,6 +963,9 @@ export function createHost(options: HostOptions): Host {
       createdAt: held.createdAt,
       modifiedAt: modifiedOf(held),
       workingDirectories: lead.workingDirectories(),
+      // A row's own field, and a row's alone: `SessionState` does not declare
+      // it, so it is added here rather than in `describes`.
+      ...changesOf(uri),
       ...describes(uri),
     };
   };
@@ -1367,7 +1376,10 @@ export function createHost(options: HostOptions): Host {
     return {
       project,
       ...(meta ? { _meta: meta } : {}),
-      ...(summary?.files ? { changes: summary } : {}),
+      // Not `changes`: `SessionSummary` declares it and `SessionState` does
+      // not, so it goes on the row rather than in both - which is the rule
+      // this helper states and had broken.
+
     };
   };
 
@@ -1611,6 +1623,7 @@ export function createHost(options: HostOptions): Host {
           createdAt: row.createdAt,
           modifiedAt: row.modifiedAt,
           workingDirectories: row.workingDirectories,
+          ...changesOf(resource),
           ...describes(resource),
         });
       }
@@ -1638,6 +1651,7 @@ export function createHost(options: HostOptions): Host {
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
         ...(started !== undefined ? { origin: started } : {}),
+        ...changesOf(uri),
         ...describes(uri),
       });
     }
@@ -2315,7 +2329,8 @@ export function createHost(options: HostOptions): Host {
         // nobody in it.
         activeClients: activeClientsOf(channel),
         status: statusOf(channel),
-        modifiedAt: modifiedOf(held),
+        // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
+        // does not, and the catalogue row is where a client reads it.
         defaultChat: held.defaultChat,
         chats: [...held.chats].map(([uri_, chat_]) => chatSummary(channel, uri_, chat_)),
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),

@@ -1344,7 +1344,8 @@ export function createSession(options: SessionOptions): Session {
     workingDirectories: () => [`file://${cwd}`],
 
     sessionState: () => ({
-      resource: uri,
+      // No `resource`: it is declared on `SessionSummary` and not on
+      // `SessionState`, and a client subscribed to this channel named it.
       provider: 'claude',
       title,
       status: status(),
