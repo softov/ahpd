@@ -2,8 +2,17 @@
 
 /** The harness-wide capabilities, used until a session reports its own. */
 export interface Offered {
-  /** Models a turn can run on. `id` is what the wire carries, `name` what a person reads. */
-  models: { id: string; name: string }[];
+  /**
+   * Models a turn can run on.
+   *
+   * `id` is what the wire carries and `name` what a person reads.
+   * `configSchema` is what the *model* can be told to do differently, as
+   * `SessionModelInfo.configSchema`: a client draws it as a form beside the
+   * model rather than as a session-wide control, which matters because
+   * different models take different options. A model that takes none omits
+   * it, and a client then draws no form for that one.
+   */
+  models: { id: string; name: string; configSchema?: Record<string, unknown> }[];
   /**
    * Skills, commands, subagents and MCP servers the harness offers here.
    *

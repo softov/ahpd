@@ -16,6 +16,41 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
+/**
+ * How hard *this* model can be told to think, as its own config schema.
+ *
+ * Per model and not per session, which is the whole point: the CLI reports a
+ * different `supportedEffortLevels` for each - some take all five, some take
+ * one, and some take none - so a single session-wide effort control offers
+ * levels the chosen model may not have, and accepts one it will then ignore.
+ * A model that supports none gets no schema and a client draws no control,
+ * which is the honest form of "this one does not think harder on request".
+ *
+ * `thinkingLevel` is the key, because that is the one the reference client's
+ * picker writes into `ModelSelection.config` for both of its providers.
+ */
+const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
+  if (efforts.length === 0) return {};
+  const said: Record<string, string> = {
+    low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Maximum',
+  };
+  return {
+    configSchema: {
+      type: 'object',
+      properties: {
+        thinkingLevel: {
+          type: 'string',
+          title: 'Thinking Level',
+          description: 'Controls how much reasoning effort Claude uses.',
+          enum: [...efforts],
+          enumLabels: efforts.map((one) => said[one] ?? one),
+          ...(efforts.includes('high') ? { default: 'high' } : {}),
+        },
+      },
+    },
+  };
+};
+
 export async function probe(cwd: string): Promise<Offered> {
   // A prompt that never yields. The query needs one to exist; it does not need
   // one to answer what it can do.
@@ -44,10 +79,14 @@ export async function probe(cwd: string): Promise<Offered> {
       ...(str(init.output_style) ? { outputStyle: str(init.output_style) as string } : {}),
       models: list(init.models)
         // `value`, not `id`.
-        .map((raw) => ({
-          id: str(bag(raw).value) ?? '',
-          name: str(bag(raw).displayName) ?? str(bag(raw).value) ?? '',
-        }))
+        .map((raw) => {
+          const model = bag(raw);
+          return {
+            id: str(model.value) ?? '',
+            name: str(model.displayName) ?? str(model.value) ?? '',
+            ...thinkingFor(list(model.supportedEffortLevels).filter((one): one is string => typeof one === 'string')),
+          };
+        })
         .filter((model) => model.id !== ''),
       commands: list(init.commands)
         .map((raw) => {

@@ -448,8 +448,8 @@ export function createHost(options: HostOptions): Host {
    * the root is told with `root/agentsChanged`.
    */
   interface Learned {
-    /** Models a turn can run on. */
-    models: { id: string; name: string }[];
+    /** Models a turn can run on, and what each can be told to do differently. */
+    models: { id: string; name: string; configSchema?: Record<string, unknown> }[];
     /** What a slash offers when no session of this backend is running. */
     commands: { name: string; description?: string; argumentHint?: string }[];
     /**
@@ -1502,7 +1502,15 @@ export function createHost(options: HostOptions): Host {
     provider: agent.provider,
     displayName: agent.displayName,
     ...(agent.description ? { description: agent.description } : {}),
-    models: about(agent.provider).models,
+    /*
+     * With the provider on each, which `SessionModelInfo` requires.
+     *
+     * The backend answers `{ id, name }` because a backend has one provider
+     * and naming it on every row would be the same word repeated; the wire
+     * type wants it on each model, and this is the only place that knows it.
+     * It was simply absent before, which is a required field never sent.
+     */
+    models: about(agent.provider).models.map((model) => ({ ...model, provider: agent.provider })),
     /*
      * What a client may send a token for.
      *

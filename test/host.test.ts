@@ -1003,16 +1003,51 @@ describe('what the harness offers', () => {
     const { client, peer: p } = await running();
 
     const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { agents: { models: { id: string; name: string }[] }[] } };
+      snapshot: { state: { agents: { models: { id: string; name: string; provider: string }[] }[] } };
     }).snapshot.state;
     // `value`, not `id`. Reading the wrong name costs every model there is
     // and leaves a picker that offers nothing - which is what it did.
-    expect(root.agents[0]?.models).toEqual([{ id: 'sonnet', name: 'Sonnet' }]);
+    // `provider` is required on `SessionModelInfo` and was simply absent: a
+    // backend answers `{ id, name }` because it has one provider, and this is
+    // the only place that knows which.
+    expect(root.agents[0]?.models).toEqual([{ id: 'sonnet', name: 'Sonnet', provider: 'claude' }]);
 
     // Not asserted here: `root/agentsChanged`. The boot probe learns the
     // models before any client has connected, so the change is dispatched to
     // nobody - and the snapshot above is how every client actually finds out.
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('gives each model its own thinking control, from what that model supports', async () => {
+    sdk.init = {
+      models: [
+        { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
+        { value: 'haiku', displayName: 'Haiku' },
+      ],
+      commands: [], agents: [],
+    };
+    const { client } = await running();
+    const models = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; configSchema?: { properties: Record<string, { enum: string[]; default?: string }> } }[] }[] } };
+    }).snapshot.state.agents[0]?.models ?? [];
+
+    /*
+     * Per model, which is the point.
+     *
+     * This host advertises one session-wide `effortLevel` with all five
+     * values, so a level the chosen model does not support is accepted and
+     * then does nothing. The CLI reports `supportedEffortLevels` per model -
+     * different models take different subsets - and `configSchema` is where
+     * the protocol says a client draws that, beside the model rather than as
+     * a generic row.
+     */
+    const sonnet = models.find((one) => one.id === 'sonnet');
+    expect(sonnet?.configSchema?.properties.thinkingLevel?.enum).toEqual(['low', 'medium', 'high']);
+    expect(sonnet?.configSchema?.properties.thinkingLevel?.default).toBe('high');
+
+    // And none for a model that supports none: a client then draws no
+    // control, which is the honest form of "this one does not think harder".
+    expect(models.find((one) => one.id === 'haiku')?.configSchema).toBeUndefined();
   });
 
   it('says what a harness offers on the root channel, before any session exists', async () => {
