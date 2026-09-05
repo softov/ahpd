@@ -22,7 +22,27 @@ export function gitBranches(): DirectoryFacts {
    * A host serving one repository with ninety-eight sessions in it would
    * otherwise ask git ninety-eight times for one answer.
    */
-  const branches = new Map<string, string>();
+  const facts = new Map<string, Record<string, unknown>>();
+
+  /** Run git in a directory and answer what it said, or nothing at all. */
+  const git = (dir: string, args: string[]): Promise<string | undefined> =>
+    new Promise((answer) => {
+      execFile('git', ['-C', dir, ...args], { timeout: 2000 }, (error, out) => {
+        answer(error ? undefined : out.toString().trim());
+      });
+    });
+
+  /**
+   * The owner and repository of a GitHub remote, if the remote is one.
+   *
+   * Both URL forms git writes: `git@github.com:owner/repo.git` and
+   * `https://github.com/owner/repo`. Anything else is a remote this says
+   * nothing about rather than one it guesses at.
+   */
+  const github = (url: string | undefined): { owner: string; repo: string } | undefined => {
+    const found = /github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/.exec(url ?? '');
+    return found ? { owner: found[1] as string, repo: found[2] as string } : undefined;
+  };
 
   /**
    * Ask git, and answer whether what it said differs from what was held.
@@ -33,36 +53,69 @@ export function gitBranches(): DirectoryFacts {
    * HEAD.
    */
   const refresh = async (dir: string): Promise<boolean> => {
-    const found = await new Promise<string | undefined>((answer) => {
-      execFile(
-        'git',
-        ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'],
-        { timeout: 2000 },
-        (error, out) => {
-          if (error) return answer(undefined);
-          const name = out.toString().trim();
-          answer(name === '' || name === 'HEAD' ? undefined : name);
-        },
-      );
-    });
-    const before = branches.get(dir);
-    if (before === found) return false;
-    if (found === undefined) branches.delete(dir);
-    else branches.set(dir, found);
+    const said = await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branchName = said === undefined || said === '' || said === 'HEAD' ? undefined : said;
+    if (branchName === undefined) {
+      const had = facts.has(dir);
+      facts.delete(dir);
+      return had;
+    }
+    /*
+     * The rest in two more calls, both cheap and both answering a question a
+     * client draws something from.
+     *
+     * `status -sb --porcelain` names the upstream and the ahead/behind counts
+     * on its first line and one file per line after it, so the count of
+     * uncommitted changes comes out of the same call. `remote get-url` is the
+     * only way to know whether this is a GitHub repository, which is what
+     * turns a client's pull-request affordances on.
+     */
+    const [status, origin] = await Promise.all([
+      git(dir, ['status', '-sb', '--porcelain']),
+      git(dir, ['remote', 'get-url', 'origin']),
+    ]);
+    const lines = (status ?? '').split('\n');
+    const head = lines[0] ?? '';
+    const upstream = /^## [^.]*\.\.\.(\S+)/.exec(head)?.[1];
+    const ahead = Number(/\[.*?ahead (\d+)/.exec(head)?.[1] ?? 0);
+    const behind = Number(/\[.*?behind (\d+)/.exec(head)?.[1] ?? 0);
+    const owner = github(origin);
+    const now: Record<string, unknown> = {
+      branchName,
+      ...(upstream !== undefined ? { upstreamBranchName: upstream } : {}),
+      incomingChanges: behind,
+      outgoingChanges: ahead,
+      uncommittedChanges: lines.slice(1).filter((one) => one.trim() !== '').length,
+      hasGitHubRemote: owner !== undefined,
+      ...(owner ? { githubOwner: owner.owner, githubRepo: owner.repo } : {}),
+    };
+    const before = facts.get(dir);
+    if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
+    facts.set(dir, now);
     return true;
   };
 
   return {
     /*
-     * `git` is the protocol's well-known key, and this writes it whole.
+     * `git` is the well-known key, and the field names are the reference host's.
+   *
+   * Not the protocol's: it declares no `_meta` keys at all. The names come
+   * from a capture of the other implementation - `branchName`,
+   * `upstreamBranchName`, `incomingChanges`, `outgoingChanges`,
+   * `uncommittedChanges`, `hasGitHubRemote`, `githubOwner`, `githubRepo` -
+   * because a client reads one spelling, and this host used to write `branch`
+   * where that client looks for `branchName` and so said nothing at all.
+   *
+   * Written whole, and correct only because this is the only producer of
+   * `_meta` here.
      *
      * Correct only because this is the only producer of `_meta` here:
      * `session/metaChanged` replaces the map entirely, so a host with two of
      * them would have to merge before dispatching rather than after.
      */
     meta: (dir) => {
-      const branch = branches.get(dir);
-      return branch === undefined ? undefined : { git: { branch } };
+      const held = facts.get(dir);
+      return held === undefined ? undefined : { git: { ...held } };
     },
     refresh,
   };
