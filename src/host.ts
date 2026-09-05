@@ -857,6 +857,36 @@ export function createHost(options: HostOptions): Host {
    * never with messages.
    */
   /**
+   * A resource that needs signing into, said as the protocol's own notification.
+   *
+   * `auth/required` is connection-level rather than a state action: a client
+   * reads it and pushes a token back with `authenticate`. Sent off the same
+   * state change that carries the requirement - an MCP server saying
+   * `authRequired` - so there is one source for the fact and no second thing
+   * to keep in step.
+   *
+   * Only to connections watching that session, because that is the channel
+   * the notification names and the only place the requirement is visible.
+   */
+  const asked = new Set<string>();
+  const asking = (channel: string, action: Record<string, unknown>): void => {
+    if (String(action.type ?? '') !== 'session/mcpServerStateChanged') return;
+    const state = (typeof action.state === 'object' && action.state !== null ? action.state : {}) as Bag;
+    if (state.kind !== 'authRequired') return;
+    const resource = (typeof state.resource === 'object' && state.resource !== null ? state.resource : {}) as Bag;
+    const named = typeof resource.resource === 'string' ? resource.resource : undefined;
+    // Once per resource: the state is re-read on every refresh, and a client
+    // asked to sign in on a loop is one that never finishes signing in.
+    if (named === undefined || asked.has(named)) return;
+    asked.add(named);
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) {
+        connection.peer.notify('auth/required', { channel, resource, reason: 'required' });
+      }
+    }
+  };
+
+  /**
    * Turns and tool calls, as OTLP spans and counters.
    *
    * Built from the actions this host already dispatches rather than from the
@@ -1004,6 +1034,7 @@ export function createHost(options: HostOptions): Host {
     // written twice. The live broadcast below is serialised in this same
     // tick, so it is the copy in the buffer that has to be frozen.
     telemetered(channel, action);
+    asking(channel, action);
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope);
@@ -3521,10 +3552,30 @@ export function createHost(options: HostOptions): Host {
         authenticate: async (params) => {
           const resource = String(params.resource ?? '');
           const token = String(params.token ?? '');
-          if (!advertised().has(resource)) {
+          /*
+           * A backend's own resource, or one of its MCP servers'.
+           *
+           * The second kind is advertised on a server's `authRequired` state
+           * rather than on the agent, and is just as much a resource this host
+           * named - the protocol's rule is that a client's `resource` matches
+           * one the server advertised, and both of these are.
+           */
+          const waiting = [...sessions.values()]
+            .flatMap((held) => [...held.chats.values()])
+            .filter((chat) => chat.awaiting?.().includes(resource) === true);
+          if (waiting.length === 0 && !advertised().has(resource)) {
             throw new RpcError(-32602, `${resource || 'That'} is not a resource this host advertises`);
           }
           if (token === '') throw new RpcError(-32602, 'A token cannot be empty');
+          /*
+           * Applied where it belongs, rather than only remembered.
+           *
+           * A token for an MCP server is that server's `Authorization` header
+           * and nothing else's; a token for a backend is a credential its next
+           * session starts with. The first takes effect now, on the sessions
+           * that were waiting for it.
+           */
+          for (const chat of waiting) void chat.authenticated?.(resource, token);
           connection.tokens.set(resource, token);
           log(`${connection.clientId || 'a client'} authenticated for ${resource}`);
           return {};

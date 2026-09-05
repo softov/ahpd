@@ -1,6 +1,7 @@
 import { within } from '../paths.js';
 import { catalogue } from '../catalog.js';
 import { probe } from '../probe.js';
+import { serversFor } from '../mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from '../session.js';
 import { turnsOf } from '../transcript.js';
 import type { Bag } from '../types/common.js';
@@ -310,6 +311,15 @@ export function claude(options: ClaudeOptions): Agent {
       uri: start.uri,
       chatUri: start.chatUri,
       cwd: workingDirectory(start.workingDirectory),
+      /*
+       * The MCP servers, declared by this host rather than found by the CLI.
+       *
+       * The same files the CLI reads - `.mcp.json` beside the project and
+       * `mcpServers` in `~/.claude.json` - handed to the SDK so they are
+       * *its* servers. That is what makes a token a client signed in with
+       * applicable: `setMcpServers` re-declares only what the SDK was given.
+       */
+      mcpServers: serversFor([workingDirectory(start.workingDirectory), ...(start.additional ?? [])]),
       // Each one checked the way the first is: a directory this host does not
       // serve is not one an agent may be pointed at, however it arrived.
       ...(start.additional && start.additional.length > 0

@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, Status } from './catalog.js';
+import { protectedResource, urlOf } from './mcp.js';
 import { tail } from './transcript.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
@@ -21,6 +22,15 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const EFFORT_LABELS: Record<typeof EFFORTS[number], string> = {
   low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max',
 };
+
+/**
+ * RFC 9728 metadata for a server that needs signing in.
+ *
+ * `resource` is the one field the protocol requires of it - the canonical
+ * identifier a client's `authenticate` must name - so it is the one this
+ * spells out; the rest is whatever the server published.
+ */
+export type Published = Bag & { resource: string };
 
 /** What the SDK will accept as a session id of our choosing. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -95,7 +105,7 @@ function resultText(content: unknown): string | undefined {
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = []): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>): Bag[] {
   const out: Bag[] = [];
 
   /*
@@ -224,17 +234,15 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * `stopped` are `{ kind }` and nothing else, and `error` needs a whole
      * `ErrorInfo` rather than the bare `message` this used to send.
      *
-     * **A server needing a sign-in is reported as an error, and that is the
-     * closest to the specification this host can get.**
-     * `authRequired` is what draws a client's sign-in, and its button ends in
-     * `authenticate` handing this host a token. There is nowhere to put one:
-     * `setMcpServers` re-declares only servers the SDK itself declared, and
-     * every server here came from the CLI's own settings - so a token would be
-     * accepted and dropped, and a person would have signed in to arrive back
-     * where they started. `startMcpServer` reaches `reconnectMcpServer`, which
-     * is the CLI running its own sign-in, and that is the way in this host
-     * actually has. See A-01-09.
+     * A server that needs signing in is `authRequired`, carrying the protected
+     * resource it published. Discovered rather than invented: the server's own
+     * URL is the canonical resource identifier the MCP authorization spec
+     * names, and `<url>/.well-known/oauth-protected-resource` is where the
+     * authorization server is announced. A stdio server has no URL and so no
+     * resource to describe, and stays an error - which is the honest answer
+     * for a thing a client cannot sign into over the network.
      */
+    const published = wanted?.get(name);
     const state: OnWire<McpServerState> = reported === 'connected' ? { kind: 'ready' }
       : reported === 'disabled' ? { kind: 'stopped' }
         : reported === 'failed'
@@ -243,13 +251,23 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
             error: { errorType: 'mcpServerFailed', message: said ?? 'The server did not start.' },
           }
           : reported === 'needs-auth'
-            ? {
-              kind: 'error',
-              error: {
-                errorType: 'mcpAuthRequired',
-                message: said ?? 'This server needs signing in, and it did not say where.',
-              },
-            }
+            ? (published !== undefined
+              ? {
+                kind: 'authRequired',
+                reason: 'required',
+                resource: published,
+                ...(Array.isArray(published.scopes_supported) && published.scopes_supported.length > 0
+                  ? { requiredScopes: published.scopes_supported.filter((one): one is string => typeof one === 'string') }
+                  : {}),
+                ...(said !== undefined ? { description: said } : {}),
+              }
+              : {
+                kind: 'error',
+                error: {
+                  errorType: 'mcpAuthRequired',
+                  message: said ?? 'This server needs signing in, and it did not say where.',
+                },
+              })
             : { kind: 'starting' };
     out.push({
       type: 'mcpServer',
@@ -439,6 +457,36 @@ export function createSession(options: SessionOptions): Session {
    * says and what the SDK enforces anyway.
    */
   let peers = [...(options.additional ?? [])];
+
+  /**
+   * The MCP servers this session declared, by name, as it declared them.
+   *
+   * Kept because re-declaring one means sending the whole set back: the SDK
+   * replaces its dynamic servers with what it is given, so a set rebuilt from
+   * one server would take the others away.
+   */
+  const declared: Record<string, Bag> = { ...(options.mcpServers ?? {}) };
+
+  /** What each server that needs signing in published about itself, by name. */
+  const wanted = new Map<string, Published>();
+
+  /**
+   * Ask each server that needs signing in where to sign in.
+   *
+   * Only the remote ones: a stdio server has no URL, so there is no protected
+   * resource to describe and it stays an error. Cached by name, because the
+   * status is re-read on every refresh and the metadata does not move.
+   */
+  const discover = async (servers: unknown[]): Promise<void> => {
+    await Promise.all(servers.map(async (raw) => {
+      const server = bag(raw);
+      const name = str(server.name);
+      if (name === undefined || str(server.status) !== 'needs-auth' || wanted.has(name)) return;
+      const url = urlOf(declared[name] ?? server.config);
+      if (url === undefined) return;
+      wanted.set(name, await protectedResource(url, name).catch(() => ({ resource: url, resource_name: name })) as Published);
+    }));
+  };
 
 
   /**
@@ -988,6 +1036,15 @@ export function createSession(options: SessionOptions): Session {
       // The peers of `cwd`, which the SDK takes at startup. The first entry is
       // the process root and is not one of these.
       ...(peers.length > 0 ? { additionalDirectories: [...peers] } : {}),
+      /*
+       * The MCP servers, declared here rather than found by the CLI.
+       *
+       * The CLI reads the same files either way; what changes is ownership. A
+       * server the SDK was *given* is one `setMcpServers` can re-declare, and
+       * that is the only way a token a client signed in with can be applied -
+       * `setMcpServers` does not touch servers that came from a settings file.
+       */
+      ...(Object.keys(declared).length > 0 ? { mcpServers: declared as never } : {}),
       includePartialMessages: true,
       /*
        * Over the daemon's own environment, never instead of it.
@@ -1170,13 +1227,14 @@ export function createSession(options: SessionOptions): Session {
    */
   const refreshMcp = async (): Promise<void> => {
     const found = await handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]);
+    await discover(found);
     for (const raw of found) {
       const server = bag(raw);
       const name = str(server.name);
       if (!name) continue;
       const id = `mcp:${name}`;
       const held = customizations.find((entry) => str(entry.id) === id);
-      const fresh = bag(customizationsOf({}, [server], [])[0]);
+      const fresh = bag(customizationsOf({}, [server], [], wanted)[0]);
       if (!held) {
         customizations.push(fresh);
         emit('session', { type: 'session/customizationUpdated', customization: fresh });
@@ -1248,7 +1306,8 @@ export function createSession(options: SessionOptions): Session {
     else if (asked === undefined && running !== undefined) {
       settings.outputStyle = running;
     }
-    customizations = customizationsOf(init, mcp, skills);
+    await discover(mcp);
+    customizations = customizationsOf(init, mcp, skills, wanted);
     if (customizations.length > 0) {
       emit('session', { type: 'session/customizationsChanged', customizations });
     }
@@ -1643,6 +1702,37 @@ export function createSession(options: SessionOptions): Session {
       await refreshMcp();
       return true;
     },
+
+    /*
+     * A token a client signed in with, put where the server will use it.
+     *
+     * The whole set is re-declared, not the one server: `setMcpServers`
+     * replaces the SDK's dynamic servers with what it is given, so sending one
+     * would take the others away. Then the server is asked to connect again,
+     * which is when the CLI tries the header.
+     */
+    authenticated: async (resource, token) => {
+      const named = [...wanted.entries()].find(([, published]) => published.resource === resource)?.[0];
+      if (named === undefined) return false;
+      const config = declared[named];
+      if (config === undefined) return false;
+      const headers = typeof config.headers === 'object' && config.headers !== null
+        ? config.headers as Record<string, string>
+        : {};
+      declared[named] = { ...config, headers: { ...headers, Authorization: `Bearer ${token}` } };
+      try {
+        await handle.setMcpServers(declared as never);
+        // Discovered again next time: a server that connects is no longer one
+        // anybody needs to sign into.
+        wanted.delete(named);
+        await handle.reconnectMcpServer(named);
+      }
+      catch { return false; }
+      await refreshMcp();
+      return true;
+    },
+
+    awaiting: () => [...wanted.values()].map((published) => published.resource),
 
     stopMcpServer: async (id) => {
       const server = serverNamed(id);

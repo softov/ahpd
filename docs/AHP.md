@@ -53,7 +53,7 @@ specification: nothing here is listed because AHP defines it.
 
 ## Server notifications
 
-**7 of the 8 declared.**
+**8 of the 8 declared.**
 
 | AHP | ahpd | Status | Notes |
 | --- | --- | :---: | --- |
@@ -61,7 +61,7 @@ specification: nothing here is listed because AHP defines it.
 | `otlp/exportLogs` | the host's own log | ✅ | `ahp-otlp://logs/{level}`, advertised at the handshake, carrying an OTLP/JSON `ExportLogsServiceRequest` verbatim - the same lines the daemon writes to stdout. Stateless: never replayed, and a subscriber gets only what happened after it arrived |
 | `otlp/exportTraces`, `otlp/exportMetrics` | turns and tool calls | ✅ | `ahp-otlp://traces` and `ahp-otlp://metrics`, both literal channels - the protocol defines template variables for `logs` alone. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, sent as each one ends and joined by `traceId`. The metrics are cumulative sums against the process start, so a collector arriving late reads totals rather than a difference. Both are built from the actions this host already dispatches, so a second backend gets them without knowing they exist |
 | `root/progress` | making a session | ✅ | Only when `createSession` carried a `progressToken`, and only to the client that sent it: the token is that request's. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree is `git worktree add` plus whatever the client asked to bring along, which on a large repository is seconds somebody otherwise waits through with nothing on screen |
-| `auth/required` | — | ➖ | What a host sends when a token it accepted has expired. This host does not verify a token, so it never learns that one has gone stale. Recognising it would mean guessing at the harness's error strings |
+| `auth/required` | an MCP server that needs signing in | ✅ | Sent off the same state change that carries the requirement - a server saying `authRequired` - to the connections watching that session, once per resource. A client reads it and pushes a token back with `authenticate`. Expiry of a token this host *accepted* is still not reported: nothing here verifies one, so it never learns that one has gone stale |
 
 ## State actions
 

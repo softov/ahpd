@@ -28,7 +28,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [ ] **1.4** `ahpc` grows a `--serve <dir>` flag so there is a client that
   publishes a resource to read.
 
-## 2. Server notifications — 8 of 9 sent
+## 2. Server notifications — 9 of 9 sent
 
 - [x] **2.1** `otlp/exportTraces` — one span per turn, child spans per tool
   call, on `ahp-otlp://traces`, in the same OTLP/JSON shape `exportLogs` uses.
@@ -36,7 +36,7 @@ correlates a question with its answer — and nothing is routed through it.
   and tool-call count, on `ahp-otlp://metrics`.
 - [x] **2.3** `root/progress` — a `progressToken` on the slow host-level work
   there now is: making a worktree, scanning a transcript, the boot probe.
-- [ ] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
+- [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
 ## 3. State actions — 75 of 96 emitted
@@ -60,7 +60,8 @@ correlates a question with its answer — and nothing is routed through it.
 - [ ] **3.4** `chat/workingDirectorySet` / `workingDirectoryRemoved` — needs
   4.3: a chat has no directory of its own until chats can differ.
 - [ ] **3.5** `chat/toolCallAuthRequired` / `toolCallAuthResolved` — mid-call
-  MCP authentication. Needs 4.4.
+  MCP authentication. The SDK surfaces no per-call auth moment; needs a way to
+  tell that a tool call is blocked on a server rather than on its own work.
 
 ### Session (4)
 - [ ] **3.6** `session/creationFailed` — created sessions fail inside
@@ -88,7 +89,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [ ] **4.3b** `chat/workingDirectorySet` / `Removed` and
   `ChatState.workingDirectories`. Each chat here is its own process, so a chat
   can hold a subset of the session's without a second mechanism.
-- [ ] **4.4** MCP servers that need signing in. Four parts:
+- [x] **4.4** MCP servers that need signing in. Four parts:
   read `.mcp.json` and the user, project and enterprise settings above it;
   pass every server to the SDK as its own so `setMcpServers` can re-declare
   one; emit `McpServerAuthRequiredState` with `resource` discovered from

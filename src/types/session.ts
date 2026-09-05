@@ -82,6 +82,15 @@ export interface SessionOptions {
    * and never the wire.
    */
   context?: string;
+
+  /**
+   * MCP servers this session declares, by name.
+   *
+   * Declared by the host rather than left to the backend's own discovery,
+   * because a server the SDK was given is one it can be told about again -
+   * which is what applying a token a client signed in with requires.
+   */
+  mcpServers?: Record<string, Bag>;
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
   /**
@@ -272,6 +281,27 @@ export interface Session {
   startMcpServer(id: string): Promise<boolean>;
   /** Stop one. */
   stopMcpServer(id: string): Promise<boolean>;
+
+  /**
+   * A token for one of this session's MCP servers, as the client signed in.
+   *
+   * Answers whether the server it names is one of this session's. The token
+   * becomes that server's `Authorization` header and the server is asked to
+   * connect again; nothing else in the session is told.
+   *
+   * Optional: a backend that cannot re-declare a server leaves it out, and the
+   * host then advertises no resource for one to be signed into.
+   */
+  authenticated?(resource: string, token: string): Promise<boolean>;
+
+  /**
+   * The OAuth resources this session's MCP servers need signing into.
+   *
+   * What `authenticate` is checked against: the protocol says a client's
+   * `resource` MUST match one the server advertised, and these are advertised
+   * on the servers' own `authRequired` states.
+   */
+  awaiting?(): string[];
 
   /** End the session and stop its agent. */
   close(): void;
