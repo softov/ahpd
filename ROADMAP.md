@@ -41,11 +41,16 @@ correlates a question with its answer — and nothing is routed through it.
 
 ## 3. State actions — 75 of 96 emitted
 
-### Terminals (4) — needs a PTY
+### Terminals (4)
 - [ ] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
-  `commandDetectionAvailable`. All four are shell integration and need a real
-  PTY with OSC 133 sequence parsing; `terminals.ts` spawns pipes today and
-  reports `isPty: false`. **Question 1.**
+  `commandDetectionAvailable`, plus `TerminalState.supportsCommandDetection`
+  and `isPty: true`. Shell integration: OSC 133 sequences parsed out of the
+  stream, and OSC 7 for the directory.
+- [ ] **3.1a** The pty binding is handed in, not imported: a
+  `pty?: (command, args, options) => PtyProcess` option on `shellTerminals()`,
+  so `node-pty` is the daemon's dependency and never the library's, and a host
+  on Bun or Deno passes its own. Without one the port keeps spawning pipes and
+  keeps saying `isPty: false`.
 
 ### Chat (6)
 - [ ] **3.2** `chat/toolCallDelta` — stream tool arguments as they arrive
@@ -72,17 +77,23 @@ correlates a question with its answer — and nothing is routed through it.
 
 ## 4. Fields and capabilities
 
-- [ ] **4.1** `SessionModelInfo.maxContextWindow`, `maxOutputTokens`,
-  `maxPromptTokens`, `supportsVision`, `policyState`. The SDK's `ModelInfo`
-  reports none of them. **Question 2.**
 - [ ] **4.2** `ChatSummary.interactivity` and `ChatState.steeringMessage`.
-- [ ] **4.3** `capabilities.multipleWorkingDirectories`, per-session and
-  per-chat directory sets. The SDK takes additional directories at startup;
-  what a *chat* can hold is the open half. **Question 3.**
-- [ ] **4.4** MCP servers that need signing in: `McpServerAuthRequiredState`
-  with a discovered `resource`, and a token from `authenticate` applied to the
-  server. `setMcpServers` re-declares only servers the SDK itself declared, so
-  this host has to own MCP configuration to apply one. **Question 4.**
+- [ ] **4.3** `capabilities.multipleWorkingDirectories: { immutablePrimary: true }`,
+  and `CreateSessionParams.workingDirectories` beyond the first passed to the
+  SDK as `additionalDirectories`. Index 0 is fixed for the session's lifetime,
+  which is what `immutablePrimary` means and what the SDK enforces anyway.
+- [ ] **4.3a** `session/workingDirectorySet` and `Removed` on a running
+  session. The SDK adds a root at runtime only when it resolves under `cwd` or
+  under one passed at launch; anything else is refused in the SDK's own words.
+- [ ] **4.3b** `chat/workingDirectorySet` / `Removed` and
+  `ChatState.workingDirectories`. Each chat here is its own process, so a chat
+  can hold a subset of the session's without a second mechanism.
+- [ ] **4.4** MCP servers that need signing in. Four parts:
+  read `.mcp.json` and the user, project and enterprise settings above it;
+  pass every server to the SDK as its own so `setMcpServers` can re-declare
+  one; emit `McpServerAuthRequiredState` with `resource` discovered from
+  `<url>/.well-known/oauth-protected-resource`; apply a token from
+  `authenticate` as that server's `Authorization` header.
 - [ ] **4.5** `serverTools` — tools this host contributes to every session.
 - [ ] **4.6** `InvokeChangesetOperationResult.followUp`.
 
@@ -98,23 +109,8 @@ correlates a question with its answer — and nothing is routed through it.
 
 ## Questions
 
-**Question 1 — a PTY.** Shell integration (3.1) needs one, and a PTY means a
-native dependency (`node-pty`) that has to build on every platform this daemon
-runs on. Take the dependency, or leave those four actions unserved and say so in
-`docs/AHP.md`?
-
-**Question 2 — where model limits come from.** The Claude SDK does not report a
-context window, an output cap or vision support. VS Code fills them from
-Copilot's model catalogue over HTTP. Options: query the Anthropic models API at
-boot, ship a static table keyed by model id, or leave the five fields absent.
-
-**Question 3 — how far multiple working directories go.** The session half is
-straightforward. The chat half means chats in one session running on different
-directory subsets, which is a second agent process per subset. Do chats need
-their own directories, or is per-session enough?
-
-**Question 4 — MCP ownership.** Applying a client's token to an MCP server means
-this host reading `.mcp.json` and the user, project and enterprise settings that
-sit above it, and passing every server to the SDK itself. That is re-implementing
-the CLI's own discovery. Do it, or serve `authRequired` without the token half so
-a client at least sees why a server is unreachable?
+**Question 3 — per-chat working directories.** The session half is settled
+(4.3). VS Code's three backends advertise only `immutablePrimary` and vary
+directories per *session*; nothing in its tree varies them per chat, though the
+protocol declares `chat/workingDirectory*` and `ChatState.workingDirectories`.
+Serve the chat half as well, or stop at the session?

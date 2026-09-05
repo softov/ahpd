@@ -158,6 +158,34 @@ Both are held in a map keyed by id, never in one slot: the CLI calls
 `canUseTool` per tool call, and an agent that fires two in parallel asks twice
 before either is answered.
 
+### What a model row says
+
+`SessionModelInfo` carries `id`, `provider`, `name` and a per-model
+`configSchema`. `configSchema` holds one property, `thinkingLevel`, built from
+that model's own `supportedEffortLevels` - some Claude models take all five
+efforts, some take one, some take none, and a model that takes none carries no
+schema, so a client draws no control for it. `thinkingLevel` is the key the
+reference client's picker writes into `ModelSelection.config`, and a turn that
+arrives with one sets the effort for that turn and the ones after it, because
+the CLI holds a single effort setting per query rather than one per turn - so
+`session/configChanged` goes out for the session-wide `effortLevel` at the same
+time, and the two controls never describe different futures. Where models carry
+their own schema the session-wide `effortLevel` key is not advertised at all:
+two controls reaching one setting is one too many.
+
+The other five declared fields - `maxContextWindow`, `maxOutputTokens`,
+`maxPromptTokens`, `supportsVision` and `policyState` - are absent, and are
+optional in the protocol. The Claude SDK's `ModelInfo` reports none of them: it
+has `supportsEffort`, `supportedEffortLevels`, `supportsAdaptiveThinking`,
+`supportsFastMode` and `supportsAutoMode`, and nothing about context size,
+output limits, vision or policy. VS Code's own host is in the same position on
+the same transport and sends the same subset; the limits appear only on its
+Copilot-routed projection, which reads them from a model catalogue over HTTP.
+Filling them here would mean a second source of facts about a model, and an
+invented number is worse than an absent field. A client reads an absent
+`supportsVision` as `false` and an absent `policyState` as "not disabled",
+which are the right answers.
+
 ### Chat URIs
 
 A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, and the
