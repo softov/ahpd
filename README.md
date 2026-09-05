@@ -159,7 +159,7 @@ Those arrive as **ports**, and each is optional and independent:
 ```ts
 import {
   createHost, listen, claude,
-  fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations,
+  fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools,
 } from 'ahpd';
 
 const host = createHost({
@@ -171,6 +171,7 @@ const host = createHost({
   changes: gitChanges(),                      // what the working tree has that HEAD does not
   directories: gitBranches(),                 // which branch each served directory is on
   automations: scheduledAutomations(),        // agents on a clock, with nobody connected
+  tools: hostTools(),                         // tools the host contributes to every session
 
   onEvent: (line) => process.stdout.write(`${line}\n`),
 });

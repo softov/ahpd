@@ -18,7 +18,7 @@
  */
 
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import type { AnnotationsAction, AnnotationsState, ChangesetFile, TerminalInfo } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ChangesetFile, TerminalInfo, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { join } from 'node:path';
@@ -30,9 +30,9 @@ import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetState } from './types/changes.js';
-import type { Connection, Host, HostOptions } from './types/host.js';
+import type { Connection, Host, HostOptions, HostTool } from './types/host.js';
 import type { Summary } from './types/catalog.js';
-import type { Agent } from './types/agent.js';
+import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
 import type { StartSession } from './types/automations.js';
@@ -1664,6 +1664,9 @@ export function createHost(options: HostOptions): Host {
     const session = agent.create({
       uri,
       chatUri,
+      // The host's own tools, bound to this session. A backend that cannot
+      // take tools ignores them; the session reports them either way.
+      ...(contributing.length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -2430,6 +2433,45 @@ export function createHost(options: HostOptions): Host {
       };
     });
   /**
+   * The tools this host contributes, which `setTools` replaces.
+   *
+   * The protocol's `serverTools`: reported on every session's state, offered
+   * to every backend that can take tools, and replaced whole - which is what
+   * `session/serverToolsChanged` means.
+   */
+  let contributing: HostTool[] = [...(options.tools ?? [])];
+  /** The definitions alone, which is the half that goes on the wire. */
+  const toolDefinitions = (): ToolDefinition[] => contributing.map((one) => one.definition);
+  /**
+   * The tools as one session runs them, with the host's own view bound in.
+   *
+   * A backend is handed something it can call and nothing else: which session
+   * asked, and what this host knows about the sessions and terminals beside
+   * it, are answered here because they are the host's to answer.
+   */
+  const boundTools = (uri: string, chatUri: string): BoundTool[] => contributing.map((one) => ({
+    definition: one.definition,
+    run: (input) => one.run(input, {
+      session: uri,
+      chat: chatUri,
+      sessions: () => [...sessions].map(([at, held]) => ({
+        uri: at,
+        provider: held.agent.provider,
+        title: held.chats.get(held.defaultChat)?.title() ?? at,
+        workingDirectories: [held.workingDirectory, ...(held.additional ?? [])]
+          .filter((one_): one_ is string => one_ !== undefined)
+          .map((one_) => `file://${one_}`),
+      })),
+      terminals: () => [...terminals.values()].map((held) => ({
+        uri: held.uri,
+        title: held.title(),
+        cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
+        running: held.exitCode() === undefined,
+      })),
+    }),
+  }));
+
+  /**
    * Host-wide configuration, which a connected client pushes.
    *
    * Not this host's own settings - those are argv and `config.json`, and a
@@ -2688,6 +2730,9 @@ export function createHost(options: HostOptions): Host {
         // themselves, which is a real answer: a session nobody has opened has
         // nobody in it.
         activeClients: activeClientsOf(channel),
+        // What this host contributes, which is nothing unless it was given
+        // any - and then the field is absent rather than an empty list.
+        ...(contributing.length > 0 ? { serverTools: toolDefinitions() } : {}),
         status: statusOf(channel),
         // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
         // does not, and the catalogue row is where a client reads it.
@@ -2756,6 +2801,7 @@ export function createHost(options: HostOptions): Host {
           ],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           activeClients: activeClientsOf(nameOf(id)),
+          ...(contributing.length > 0 ? { serverTools: toolDefinitions() } : {}),
           ...describes(nameOf(id)),
           ...changesetsOf(nameOf(id)),
           // What its backend offers, since nothing is running to say what this
@@ -2910,6 +2956,20 @@ export function createHost(options: HostOptions): Host {
   });
 
   return {
+    /*
+     * Replaced whole, and every running session told.
+     *
+     * `session/serverToolsChanged` has full-replacement semantics, so the
+     * action carries the new set rather than the difference. A session
+     * already running keeps offering the old set to its model until its
+     * process starts again - the tools are handed over at startup - and what
+     * moves immediately is what a client is told the session has.
+     */
+    setTools: (tools) => {
+      contributing = [...tools];
+      for (const uri of sessions.keys())
+        dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions() });
+    },
     connections: () => connections.size,
     accept(peer: Peer) {
       const connection = {

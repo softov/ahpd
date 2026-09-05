@@ -1,5 +1,6 @@
 /** The protocol server: channels, subscriptions and requests. */
 
+import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent } from './agent.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
@@ -197,8 +198,51 @@ export interface HostOptions {
    * definitions, runs them when asked, and holds no clock.
    */
   automations?: AutomationStore;
+  /**
+   * Tools this host contributes to every session it runs.
+   *
+   * The protocol's `serverTools`: tools that are the *host's* rather than a
+   * backend's or a client's, reported on `SessionState.serverTools` and given
+   * to the backend to offer the model. What they are is the host's to decide
+   * - `hostTools()` is the set that ships with this package - and a host that
+   * passes none contributes none, which is what an absent `serverTools` says.
+   */
+  tools?: HostTool[];
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
+}
+
+/**
+ * One tool the host contributes, and what running it does.
+ *
+ * `definition` is what a client draws and what the model is offered;
+ * `run` is called when the model calls it, with the arguments it passed and
+ * the chat it called from. Returning a string is the answer; throwing is a
+ * tool that failed, and the message reaches the model.
+ */
+export interface HostTool {
+  /** What the model is offered. `name` is the id it calls. */
+  definition: ToolDefinition;
+  /** What running it does. */
+  run(input: Record<string, unknown>, at: ToolCall): Promise<string> | string;
+}
+
+/**
+ * Where a host tool was called from, and what the host knows.
+ *
+ * The reason a tool is the host's rather than the backend's: an agent inside
+ * a session cannot see the sessions beside it or the terminals a person is
+ * watching, and the host can. A tool that wants neither ignores both.
+ */
+export interface ToolCall {
+  /** The session channel URI the call was made in. */
+  session: string;
+  /** The chat channel URI it was made from. */
+  chat: string;
+  /** Every session this host is running, including the calling one. */
+  sessions(): { uri: string; provider: string; title: string; workingDirectories: string[] }[];
+  /** Every terminal this host has open. */
+  terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
 }
 
 /** One connected client and what it is watching. */
@@ -265,4 +309,13 @@ export interface Host {
   };
   /** How many clients are currently connected. */
   connections(): number;
+  /**
+   * Replace the tools this host contributes.
+   *
+   * Full replacement, which is what `session/serverToolsChanged` means, and
+   * every running session is told. Sessions started after this get the new
+   * set; the ones already running get it on their next turn, because a
+   * backend is offered its tools when its process starts.
+   */
+  setTools(tools: HostTool[]): void;
 }

@@ -1,6 +1,7 @@
 /** One agent session: its lifecycle, its turns, and what it is waiting for. */
 
 import type { Bag } from './common.js';
+import type { BoundTool } from './agent.js';
 
 /**
  * Emits one state action on a session's channel.
@@ -91,6 +92,14 @@ export interface SessionOptions {
    * which is what applying a token a client signed in with requires.
    */
   mcpServers?: Record<string, Bag>;
+  /**
+   * Tools the host contributes to this session.
+   *
+   * Offered to the model as an MCP server that runs in this process, so a
+   * call is a function call rather than a subprocess. What they are is the
+   * host's business; this only runs them.
+   */
+  tools?: BoundTool[];
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
   /**

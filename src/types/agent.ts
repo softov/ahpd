@@ -4,7 +4,23 @@ import type { Turn } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { WireTurn } from './wire.js';
 import type { Emit, Session } from './session.js';
+import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
+
+/**
+ * A tool the host contributes, with the session it was contributed to
+ * already bound.
+ *
+ * The host's `HostTool` takes a `ToolCall` saying where it was called from;
+ * by the time a backend sees one that is answered, so what is left is a
+ * definition to offer the model and a function to call.
+ */
+export interface BoundTool {
+  /** What the model is offered. `name` is the id it calls. */
+  definition: ToolDefinition;
+  /** What running it does. */
+  run(input: Record<string, unknown>): Promise<string> | string;
+}
 
 /**
  * One session a backend already has, before the host has named it.
@@ -45,6 +61,14 @@ export interface Start {
   workingDirectory?: string;
   /** Directories beside it the agent may also work in. */
   additional?: string[];
+  /**
+   * Tools the host contributes to this session, for the backend to offer.
+   *
+   * The host's own, not this backend's: a backend that cannot take tools from
+   * anywhere ignores them, and the host still reports them on the session so
+   * a client knows they exist.
+   */
+  tools?: BoundTool[];
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */

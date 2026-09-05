@@ -39,7 +39,7 @@ correlates a question with its answer — and nothing is routed through it.
 - [x] **2.4** `auth/required` — needs 4.4 first: nothing here notices a token
   going stale until something verifies one.
 
-## 3. State actions — 87 of 96 emitted
+## 3. State actions — 88 of 96 emitted
 
 ### Terminals (4)
 - [x] **3.1** `terminal/cwdChanged`, `commandExecuted`, `commandFinished`,
@@ -69,7 +69,7 @@ correlates a question with its answer — and nothing is routed through it.
   where there is no request to fail.
 - [x] **3.7** `session/customizationRemoved` — send the removal rather than
   re-sending the whole list.
-- [ ] **3.8** `session/serverToolsChanged` — needs 4.5.
+- [x] **3.8** `session/serverToolsChanged` — needs 4.5.
 - [x] **3.9** `session/workingDirectoryReplaced` — needs 4.3.
 
 ### Automation runs (2)
@@ -95,7 +95,7 @@ correlates a question with its answer — and nothing is routed through it.
   one; emit `McpServerAuthRequiredState` with `resource` discovered from
   `<url>/.well-known/oauth-protected-resource`; apply a token from
   `authenticate` as that server's `Authorization` header.
-- [ ] **4.5** `serverTools` — tools this host contributes to every session.
+- [x] **4.5** `serverTools` — tools this host contributes to every session.
 - [x] **4.6** `InvokeChangesetOperationResult.followUp`.
 
 ## 5. Verification

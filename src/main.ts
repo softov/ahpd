@@ -11,6 +11,7 @@ import { fileResources } from './resources.js';
 import { shellTerminals } from './terminals.js';
 import type { SpawnPty } from './types/terminals.js';
 import { gitWorktrees } from './worktrees.js';
+import { hostTools } from './tools.js';
 import { listen } from './listen.js';
 
 /**
@@ -290,6 +291,14 @@ const host = createHost({
   directories: gitBranches(),
   changes: gitChanges(),
   worktrees: gitWorktrees(),
+  /*
+   * The host's own tools, offered to every session's model.
+   *
+   * What a session cannot see from inside itself: the sessions running beside
+   * it and the terminals the person has open. Both read-only, and both facts
+   * only the host has.
+   */
+  tools: hostTools(),
   /*
    * Automations, with a clock.
    *

@@ -325,6 +325,8 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.additional && start.additional.length > 0
         ? { additional: start.additional.map((one) => workingDirectory(one)) }
         : {}),
+      // The host's own tools, offered to the model beside this backend's.
+      ...(start.tools && start.tools.length > 0 ? { tools: start.tools } : {}),
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,

@@ -51,6 +51,9 @@ const sdk = vi.hoisted(() => {
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  // What the real one returns is opaque - a registered in-process server -
+  // so the fake keeps the definitions where a test can call one.
+  createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   listSessions: async () => sdk.sessions,
   getSessionMessages: async () => {
     sdk.reads += 1;
@@ -108,6 +111,7 @@ const { gitBranches } = await import('../src/git.js');
  */
 const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 const { claude } = await import('../src/agents/claude.js');
+const { hostTools } = await import('../src/tools.js');
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
 const ETX = String.fromCharCode(3);
@@ -3669,6 +3673,103 @@ describe('more than one directory', () => {
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
     expect(refused.some((one) => one.includes('is not a working directory of'))).toBe(true);
+  });
+});
+
+describe('tools the host contributes', () => {
+  const withTools = async (tools = hostTools()) => {
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0']));
+    const uri = 'ahp-session:/served';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    return { host, client, peer: p, uri };
+  };
+
+  it('reports them on the session, and says nothing when it has none', async () => {
+    const { client, uri } = await withTools();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { serverTools?: { name: string }[] } };
+    }).snapshot.state;
+    expect(state.serverTools?.map((one) => one.name)).toEqual(['ahp_sessions', 'ahp_terminals']);
+
+    // A host given none contributes none, and the field is absent rather than
+    // an empty list - which is the difference between "no tools" and "a host
+    // that has not said".
+    const { client: bare, uri: other } = await (async () => {
+      const host = serving('/home/softov');
+      const client_ = host.accept(peer());
+      await client_.handle(hello(['0.8.0']));
+      await client_.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
+      return { client: client_, uri: 'ahp-session:/bare' };
+    })();
+    const empty = (await bare.handle({ method: 'subscribe', params: { channel: other } }) as {
+      snapshot: { state: { serverTools?: unknown } };
+    }).snapshot.state;
+    expect(empty.serverTools).toBeUndefined();
+  });
+
+  it('hands them to the backend as a server it can call', async () => {
+    const { uri } = await withTools();
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    // Under a name of this host's, beside whatever the settings files declared.
+    expect(Object.keys(servers)).toContain('ahp');
+    const listing = servers.ahp?.tools.find((one) => one.name === 'ahp_sessions');
+    expect(listing?.description).toContain('other agent sessions');
+
+    // And calling one answers about this host, which is the whole reason a
+    // tool is the host's rather than the backend's.
+    const answered = await listing?.handler({});
+    expect(answered?.content[0]?.text).toContain('No other session is running');
+    const host = sessionQueries().length;
+    expect(host).toBeGreaterThan(0);
+    expect(uri).toBe('ahp-session:/served');
+  });
+
+  it('answers about the sessions beside the one that asked', async () => {
+    const { client } = await withTools();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/second', provider: 'claude' } });
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_sessions')?.handler({});
+    // The calling session is left out - it knows about itself - and the other
+    // one is named by the URI a client would subscribe to.
+    const text = said?.content[0]?.text ?? '';
+    expect(text).toContain('ahp-session:/served');
+    expect(text).not.toContain('ahp-session:/second');
+  });
+
+  it('replaces the set whole, and tells every running session', async () => {
+    const { host, client, peer: p, uri } = await withTools();
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    host.setTools([]);
+    const said = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string; tools?: unknown[] } })
+      .filter((one) => one.action?.type === 'session/serverToolsChanged');
+    expect(said).toHaveLength(1);
+    // Full replacement: the action carries the new set, not the difference.
+    expect(said[0]?.channel).toBe(uri);
+    expect(said[0]?.action?.tools).toEqual([]);
+  });
+
+  it('lists the terminals this host has open', async () => {
+    const { client } = await withTools();
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: 'ahp-terminal:/t1', cwd: 'file:///home/softov', command: 'true' },
+    });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/asks', provider: 'claude' } });
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
   });
 });
 

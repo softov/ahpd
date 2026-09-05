@@ -1,4 +1,5 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, Status } from './catalog.js';
 import { protectedResource, urlOf } from './mcp.js';
@@ -6,6 +7,7 @@ import { tail } from './transcript.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';
+import type { BoundTool } from './types/agent.js';
 import type { Chosen, Session, SessionOptions } from './types/session.js';
 
 /**
@@ -343,6 +345,65 @@ const listsOf = (value: unknown): { allow: string[]; deny: string[] } | undefine
   return { allow: names(held.allow), deny: names(held.deny) };
 };
 
+/**
+ * One property of a tool's input schema, as the zod the SDK asks for.
+ *
+ * `createSdkMcpServer` takes a zod raw shape and turns it back into JSON
+ * Schema for the model, so a definition written as JSON Schema - which is
+ * what the protocol declares - has to make the round trip. Only the shapes a
+ * tool argument is: everything else is a string, which is what an unschema'd
+ * argument would have been anyway.
+ */
+const shaped = (property: object): z.ZodTypeAny => {
+  const kind = str((property as Bag).type);
+  const of = (property as Bag).items;
+  if (kind === 'number' || kind === 'integer') return z.number();
+  if (kind === 'boolean') return z.boolean();
+  if (kind === 'array') return z.array(of === undefined ? z.string() : shaped(bag(of)));
+  return z.string();
+};
+
+/**
+ * The host's tools, as an in-process MCP server the CLI can call.
+ *
+ * In-process: `createSdkMcpServer` registers the handlers here rather than
+ * spawning anything, so a host tool is a function call. The result is handed
+ * back as text, because that is the one content shape every model reads and
+ * a host tool answering with anything richer would be answering in a shape
+ * this host cannot check.
+ */
+const contributed = (tools: BoundTool[]): unknown => createSdkMcpServer({
+  name: 'ahp',
+  version: '1.0.0',
+  tools: tools.map((one) => {
+    const schema = one.definition.inputSchema;
+    const shape: Record<string, z.ZodTypeAny> = {};
+    for (const [key, property] of Object.entries(schema?.properties ?? {})) {
+      const value = shaped(property);
+      shape[key] = (schema?.required ?? []).includes(key) ? value : value.optional();
+    }
+    return {
+      name: one.definition.name,
+      description: one.definition.description ?? one.definition.title ?? one.definition.name,
+      inputSchema: shape,
+      ...(one.definition.annotations ? { annotations: one.definition.annotations } : {}),
+      handler: async (input: Record<string, unknown>) => {
+        try {
+          return { content: [{ type: 'text' as const, text: await one.run(input) }] };
+        }
+        catch (error: unknown) {
+          // The message, not a throw: an MCP tool that rejects is a transport
+          // failure, and a tool that could not do the thing is an answer.
+          return {
+            content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+            isError: true,
+          };
+        }
+      },
+    };
+  }),
+}) as unknown;
+
 export function createSession(options: SessionOptions): Session {
   const { uri, chatUri, cwd, emit } = options;
 
@@ -474,6 +535,16 @@ export function createSession(options: SessionOptions): Session {
    * one server would take the others away.
    */
   const declared: Record<string, Bag> = { ...(options.mcpServers ?? {}) };
+  /*
+   * The host's own tools, as an MCP server the CLI does not have to find.
+   *
+   * `createSdkMcpServer` runs in this process rather than spawning anything,
+   * so a host tool is a function call and not a subprocess. Named `ahp`
+   * because that is what a client sees the tools attributed to. Declared once
+   * at construction so `setMcpServers` keeps it: that call replaces the whole
+   * set, and a set rebuilt without this would take the host's tools away.
+   */
+  if ((options.tools ?? []).length > 0) declared.ahp = contributed(options.tools ?? []) as Bag;
 
   /** What each server that needs signing in published about itself, by name. */
   const wanted = new Map<string, Published>();

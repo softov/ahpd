@@ -13,7 +13,8 @@ Four things go into a host, and only the first two are required:
 | --- | --- | --- |
 | `path` | the directory whose sessions this host serves | required |
 | `agents` | the backends it serves. `claude()` is one; anything satisfying `Agent` is another | required |
-| ports | `resources`, `terminals`, `changes`, `directories`, `automations` | opt-in |
+| ports | `resources`, `terminals`, `changes`, `directories`, `automations`, `worktrees` | opt-in |
+| `tools` | tools this host contributes to every session it runs | opt-in |
 | `onEvent` | one line per notable event, for a log | opt-in |
 
 ## The smallest host
@@ -145,6 +146,41 @@ turn ends, so a host with ninety-eight sessions in one repository asks git once.
 named time zone, definitions in `automations.json`, and one catch-up run for
 what was missed while the host was down. A store with no clock says so by
 leaving `nextRunAt` off.
+
+## The tools
+
+`tools` is not a port - nothing behind it is a command a client calls - but it
+is handed in the same way and for the same reason: what a host knows is the
+host's business.
+
+They are the protocol's `serverTools`: tools that are neither a backend's nor a
+client's. Each is a `ToolDefinition` the model is offered and a `run` that is
+called when the model calls it, with the arguments it passed and a view of the
+session it called from. They are reported on `SessionState.serverTools`, given
+to every backend that can take tools, and replaced whole with `host.setTools()`
+- which dispatches `session/serverToolsChanged` to every running session.
+
+`hostTools()` is the set that ships: `ahp_sessions` and `ahp_terminals`, both
+read-only, and both answering what an agent inside one session cannot see for
+itself - the sessions running beside it and the terminals a person is watching.
+
+```ts
+createHost({
+  path,
+  agents,
+  tools: [
+    ...hostTools(),
+    {
+      definition: {
+        name: 'deploy_status',
+        description: 'What is currently deployed',
+        inputSchema: { type: 'object', properties: { environment: { type: 'string' } } },
+      },
+      run: async (input) => ask(String(input.environment ?? 'production')),
+    },
+  ],
+});
+```
 
 ## The agents
 
