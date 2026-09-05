@@ -525,6 +525,17 @@ export function createHost(options: HostOptions): Host {
    */
   const heldAs = (uri: string): string => {
     if (sessions.has(uri) || owners.has(uri)) return uri;
+    /*
+     * Only a session URI is read for its id.
+     *
+     * A session is addressable under any scheme a client chooses, so the id
+     * inside it is the identity - but that is true of sessions and of nothing
+     * else. `ahp-terminal:/x` and a session whose id is `x` are two channels,
+     * and reading the id out of both made a terminal answer with the
+     * session's state. Every other `ahp-` channel this host serves is already
+     * its own name.
+     */
+    if (/^ahp-(?!session:)[a-z-]+:/.test(uri)) return uri;
     const named = nameOf(idOf(uri));
     return sessions.has(named) || owners.has(named) ? named : uri;
   };
@@ -1832,7 +1843,7 @@ export function createHost(options: HostOptions): Host {
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
       ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
       settings: { ...agent.defaults(), ...config },
-      schema: agent.schema,
+      schema: () => published(agent.schema()),
       // What the boot probe already learned: the commands behind a slash, the
       // skills, the subagents and the MCP servers. A session that answered
       // `[]` until its own agent replied was empty for the first several
@@ -2304,6 +2315,31 @@ export function createHost(options: HostOptions): Host {
       : undefined;
   };
 
+  /**
+   * A backend's config schema, as it goes on the wire.
+   *
+   * `scope` is this host's own: it says whether a key belongs to the session
+   * or to one chat inside it, which is what decides how far a
+   * `session/configChanged` reaches - and `ConfigPropertySchema` does not
+   * declare it. A field the protocol has no place for is one a client cannot
+   * read and a strict validator calls a defect, so it is read here and left
+   * off what is published. The same rule `HOSTS_OWN` applies to values.
+   */
+  const published = (schema: Bag): Bag => {
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : undefined) as Bag | undefined;
+    if (properties === undefined) return schema;
+    return {
+      ...schema,
+      properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
+        if (typeof value !== 'object' || value === null) return [key, value];
+        const { scope: _scope, ...rest } = value as Bag & { scope?: unknown };
+        return [key, rest];
+      })),
+    };
+  };
+
   /** What this host answered, as strings, for saying back on the session. */
   const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
     Object.entries(config)
@@ -2663,6 +2699,9 @@ export function createHost(options: HostOptions): Host {
    * One, so far. A key here is a promise that pushing it changes something.
    */
   const ROOT_CONFIG_SCHEMA = {
+    // `type` is required of a `ConfigSchema` and is always `object`. Left out,
+    // it was a schema a strict reader refuses and a lenient one guesses at.
+    type: 'object',
     properties: {
       defaultShell: {
         type: 'string',
@@ -2990,7 +3029,7 @@ export function createHost(options: HostOptions): Host {
           // controls at all on a browsed row - no permission mode, no effort -
           // which are the settings somebody wants *before* continuing one.
           config: {
-            schema: owner.schema(),
+            schema: published(owner.schema()),
             values: { ...owner.defaults(), ...(chosen.get(id) ?? {}) },
           },
         },
@@ -3499,7 +3538,10 @@ export function createHost(options: HostOptions): Host {
          * others would never learn.
          */
         fetchTurns: async (params) => {
-          const channel = String(params.channel ?? '');
+          // Under whatever spelling the client used: a chat may be addressed
+          // by a URI this host did not mint, and a page of turns asked for
+          // under that name is the same chat.
+          const channel = meantBy(String(params.channel ?? ''));
           const live = byChat.get(channel);
           const all = live ? live.chat.allTurns() : await past(idOf(sessionFor(channel)));
           if (!all)
@@ -3819,16 +3861,16 @@ export function createHost(options: HostOptions): Host {
          * and gets a URI back. `requestId` is echoed nowhere: the protocol has
          * it so a client can match its own request to the run it gets, and the
          * run URI in the result is that match.
+         *
+         * The origin is `{ kind: 'manual' }` and nothing else, because that is
+         * the whole of `AutomationManualRunOrigin` - it carries no room for
+         * who asked, and a run's origin goes on the wire in every catalogue
+         * row the automation appears in.
          */
         runAutomation: async (params) => {
           const store = need(options.automations, 'runAutomation');
           const automation = String(params.automation ?? '');
-          const requestId = String(params.requestId ?? '');
-          const run = await store.run(
-            automation,
-            { kind: 'manual', requestId, clientId: connection.clientId },
-            startForAutomation,
-          );
+          const run = await store.run(automation, { kind: 'manual' }, startForAutomation);
           if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
           return { resource: run.resource };
         },
@@ -4513,7 +4555,7 @@ export function createHost(options: HostOptions): Host {
             typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir,
             typeof answered.isolation === 'string' ? answered.isolation : undefined,
           );
-          const theirs = agent.schema();
+          const theirs = published(agent.schema());
           const properties = {
             ...(typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}),
             ...(typeof mine.schema.properties === 'object' && mine.schema.properties !== null ? mine.schema.properties : {}),
@@ -5328,7 +5370,12 @@ export function createHost(options: HostOptions): Host {
             });
             break;
           case 'chat/draftChanged':
-            session.setDraft(String(action.draft ?? ''));
+            // A `Message`, not a string: `ChatState.draft` is the message
+            // somebody is part-way through writing, model and all. Absent
+            // clears it, which is what the action says `undefined` means.
+            session.setDraft(typeof action.draft === 'object' && action.draft !== null
+              ? action.draft as Bag
+              : undefined);
             break;
           case 'chat/pendingMessageRemoved':
             session.unqueue(String(action.id ?? ''));

@@ -100,8 +100,8 @@ correlates a question with its answer — and nothing is routed through it.
 
 ## 5. Verification
 
-- [ ] **5.1** Run softov-18's schema validator (`ahpc`, `tools/`) over a fresh
+- [x] **5.1** Run softov-18's schema validator (`ahpc`, `tools/`) over a fresh
   capture in CI, with `additionalProperties: false`, so an undeclared field or
   a missing required one fails the build rather than a later audit.
-- [ ] **5.2** A capture of every command and every action, taken against a
+- [x] **5.2** A capture of every command and every action, taken against a
   running daemon, kept as the conformance fixture.

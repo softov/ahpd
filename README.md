@@ -287,8 +287,9 @@ ahpc --host ws://127.0.0.1:9201
 ## Development
 
 ```bash
-npm test        # ~252 tests, no socket and no network
+npm test        # ~425 tests, no socket and no network
 npm run typecheck
+npm run wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```
 
 The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
@@ -296,5 +297,7 @@ The host can be tested without opening a socket: `accept()` takes a peer and ret
 [`test/conformance.test.ts`](test/conformance.test.ts): it drives the host and then replays every action it emitted through the protocol package's **own reducers** - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote. A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.
 
 That checks the state a real AHP client would see rather than validating `ahpd` against snapshots produced by `ahpd` itself.
+
+[`test/wire.test.ts`](test/wire.test.ts) checks the other half: not whether a client can read what this host sends, but whether the protocol *declares* it. `tools/schema.mjs` generates a strict schema out of the package's own types - every object closed, which the shipped `state.schema.json` is not - and every frame goes through it, so an undeclared key or a missing required one fails the build. A reducer cannot see either, and neither can TypeScript: a conditional spread is not excess-property-checked, which is how three undeclared fields reached the wire from code typed against the package.
 
 The check that cannot be done here is driving it with a client that was not written against it. `ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree. [ROADMAP.md](ROADMAP.md) records what a VS Code drive checked, and the two bugs it found that were invisible from the source.

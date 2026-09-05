@@ -276,10 +276,20 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       id: `mcp:${name}`,
       name,
       uri: name,
-      // Off the CLI's own word rather than off the kind above, so a server
-      // that needs signing in stays switched *on* - it is enabled and
-      // unreachable, which is not the same as somebody having turned it off.
-      enabled: reported !== 'failed' && reported !== 'disabled',
+      /*
+       * `enablement`, not `enabled`.
+       *
+       * An MCP server is the one customization the protocol does not give a
+       * flat flag: it carries the decision per scope, most specific first,
+       * and a consumer reads `enablement[0].enabled`. This host decides at
+       * one scope - the session's - because that is where a CLI's answer
+       * about a server applies.
+       *
+       * Off the CLI's own word rather than off the kind above, so a server
+       * that needs signing in stays switched *on* - it is enabled and
+       * unreachable, which is not the same as somebody having turned it off.
+       */
+      enablement: [{ kind: 'session', enabled: reported !== 'failed' && reported !== 'disabled' }],
       state,
     });
   }
@@ -485,7 +495,7 @@ export function createSession(options: SessionOptions): Session {
    * only reason a draft is on the wire at all - a client that kept its own
    * would need nothing from a host for it.
    */
-  let draft = '';
+  let draft: Bag | undefined;
   let customizations: Bag[] = [...(options.seedCustomizations ?? [])];
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
@@ -1375,11 +1385,11 @@ export function createSession(options: SessionOptions): Session {
         continue;
       }
       const moved = JSON.stringify(held.state) !== JSON.stringify(fresh.state);
-      const switched = held.enabled !== fresh.enabled;
+      const switched = JSON.stringify(held.enablement) !== JSON.stringify(fresh.enablement);
       if (!moved && !switched)
         continue;
       held.state = fresh.state;
-      held.enabled = fresh.enabled;
+      held.enablement = fresh.enablement;
       // `mcpServerStateChanged` carries the state and nothing else, so a
       // server that came back on would arrive `ready` with the switch still
       // drawn off. The whole row when both moved, the narrow action when only
@@ -1684,7 +1694,7 @@ export function createSession(options: SessionOptions): Session {
       ...tail(turns),
       ...(active ? { activeTurn: active } : {}),
       ...(activity !== undefined ? { activity } : {}),
-      ...(draft !== '' ? { draft } : {}),
+      ...(draft !== undefined ? { draft } : {}),
       // Said rather than left to a default: `Full` is what a client assumes
       // when the field is absent, and assuming it is not the same as being
       // told. Every chat here is one somebody can type into.
@@ -2084,13 +2094,15 @@ export function createSession(options: SessionOptions): Session {
       startNext();
     },
 
-    setDraft: (text) => {
-      if (text === draft)
+    setDraft: (next) => {
+      if (JSON.stringify(next) === JSON.stringify(draft))
         return;
-      draft = text;
+      draft = next;
       // Not `touch()`: typing is not a change to the conversation, and a
       // catalogue that reordered itself on every keystroke would be unusable.
-      emit('chat', { type: 'chat/draftChanged', draft: text });
+      // The key is left off to clear it, which is what the action's
+      // `undefined` means and the only way JSON can say it.
+      emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
     },
 
     unqueue: (id) => {

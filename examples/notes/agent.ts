@@ -190,7 +190,7 @@ export function notes(options: NotesOptions): Agent {
     let closed = false;
     let activity: string | undefined;
     const queued: Bag[] = [];
-    let draft = '';
+    let draft: Bag | undefined;
     const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
     const where = start.workingDirectory ?? dir;
 
@@ -590,7 +590,7 @@ export function notes(options: NotesOptions): Agent {
         turns,
         ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
-        ...(draft !== '' ? { draft } : {}),
+        ...(draft !== undefined ? { draft } : {}),
         queuedMessages: [...queued],
       }),
 
@@ -631,10 +631,12 @@ export function notes(options: NotesOptions): Agent {
         touch();
       },
 
-      setDraft: (text) => {
-        if (text === draft) return;
-        draft = text;
-        start.emit('chat', { type: 'chat/draftChanged', draft: text });
+      setDraft: (next) => {
+        if (JSON.stringify(next) === JSON.stringify(draft)) return;
+        draft = next;
+        // The key is left off to clear it, which is what the action's
+        // `undefined` means and the only way JSON can say it.
+        start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
       },
 
       /**

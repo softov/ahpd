@@ -262,7 +262,7 @@ export interface Session {
    * Held by the session so two people on one chat see each other's - a client
    * that kept its own would need nothing from a host for this.
    */
-  setDraft(text: string): void;
+  setDraft(draft: Bag | undefined): void;
   /** Reorder what is waiting. Anything not named keeps its place behind what is. */
   reorder(order: string[]): void;
 

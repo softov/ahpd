@@ -102,7 +102,7 @@ export function echo(options: EchoOptions): Agent {
     /** Messages waiting for the running turn to end. The host's, not a client's. */
     const queued: Bag[] = [];
     /** What somebody is part-way through typing. */
-    let draft = '';
+    let draft: Bag | undefined;
     /** The backend's own id, which is not the URI the client chose. */
     const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
 
@@ -243,7 +243,7 @@ export function echo(options: EchoOptions): Agent {
         turns,
         ...(active ? { activeTurn: active } : {}),
         ...(activity !== undefined ? { activity } : {}),
-        ...(draft !== '' ? { draft } : {}),
+        ...(draft !== undefined ? { draft } : {}),
         queuedMessages: [...queued],
       }),
 
@@ -275,10 +275,12 @@ export function echo(options: EchoOptions): Agent {
       },
 
       // Held by the session, so two people on one chat see each other's.
-      setDraft: (text) => {
-        if (text === draft) return;
-        draft = text;
-        start.emit('chat', { type: 'chat/draftChanged', draft: text });
+      setDraft: (next) => {
+        if (JSON.stringify(next) === JSON.stringify(draft)) return;
+        draft = next;
+        // The key is left off to clear it, which is what the action's
+        // `undefined` means and the only way JSON can say it.
+        start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
       },
 
       unqueue: (id) => {
@@ -369,13 +371,33 @@ export function echo(options: EchoOptions): Agent {
     probe: async () => ({
       models: [],
       commands: [{ name: 'shout', description: 'Say the rest of this line loudly' }],
+      /*
+       * Inside a container, because a prompt is never a top-level entry.
+       *
+       * `Customization` - what `AgentInfo.customizations` and a session's own
+       * list are - is a plugin, a directory or an MCP server. A skill, a
+       * prompt, an agent, a rule and a hook are `ChildCustomization`s and live
+       * under one of those, so a bare `prompt` at the top is a shape no client
+       * can place.
+       */
       customizations: [{
-        type: 'prompt',
-        id: 'command:shout',
-        name: 'shout',
-        uri: 'shout',
+        type: 'directory',
+        id: 'directory:commands',
+        uri: `file://${options.path}/.echo/commands`,
+        name: 'commands',
+        contents: 'prompt',
         enabled: true,
-        description: 'Say the rest of this line loudly',
+        // Required of a directory: whether a client may write a new one into
+        // it. This example's is made up, so nothing may.
+        writable: false,
+        children: [{
+          type: 'prompt',
+          id: 'command:shout',
+          name: 'shout',
+          uri: `file://${options.path}/.echo/commands/shout.md`,
+          enabled: true,
+          description: 'Say the rest of this line loudly',
+        }],
       }],
     }),
 

@@ -1218,7 +1218,7 @@ describe('what the harness offers', () => {
       snapshot: {
         state: {
           customizations: {
-            id: string; enabled: boolean;
+            id: string; enablement?: { kind: string; enabled: boolean }[];
             state?: { kind: string; error?: { errorType?: string; message?: string } };
           }[];
         };
@@ -1232,7 +1232,7 @@ describe('what the harness offers', () => {
     // showing the row rather than hiding it. An `ErrorInfo` and not a bare
     // `message`, which is what `McpServerErrorState` actually requires.
     expect(byId.get('mcp:broken')?.state?.error?.message).toBe('spawn ENOENT');
-    expect(byId.get('mcp:broken')?.enabled).toBe(false);
+    expect(byId.get('mcp:broken')?.enablement?.[0]?.enabled).toBe(false);
     expect(byId.get('mcp:off')?.state?.kind).toBe('stopped');
 
     /*
@@ -1248,7 +1248,7 @@ describe('what the harness offers', () => {
     expect(byId.get('mcp:gmail')?.state?.error?.errorType).toBe('mcpAuthRequired');
     // Still switched on: it is enabled and unreachable, which is not the same
     // as somebody having turned it off.
-    expect(byId.get('mcp:gmail')?.enabled).toBe(true);
+    expect(byId.get('mcp:gmail')?.enablement?.[0]?.enabled).toBe(true);
   });
 
   it('tells the client that a slash is worth asking about', async () => {
@@ -2524,7 +2524,11 @@ describe('turning a customization on and off', () => {
     // Read back rather than assumed: a server told to stop can fail to, and
     // reporting what was *asked for* draws a row that is not true.
     const said = actions(p, uri).filter((e) => e.action.type === 'session/customizationUpdated').at(-1);
-    expect(said?.action.customization).toMatchObject({ id: 'mcp:desk', enabled: false, state: { kind: 'stopped' } });
+    expect(said?.action.customization).toMatchObject({
+      // `enablement`, not a flat flag: an MCP server is the one customization
+      // the protocol decides per scope.
+      id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' },
+    });
   });
 
   it('reconnects one that was not ready, because that is how signing in happens', async () => {
@@ -2960,21 +2964,25 @@ describe('two people on one chat', () => {
 
     a.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', action: { type: 'chat/draftChanged', draft: 'half a th' } },
+      params: {
+        channel: 'ahp-chat:/live',
+        action: { type: 'chat/draftChanged', draft: { text: 'half a th', origin: { kind: 'user' } } },
+      },
     });
     await settle();
     // The only reason a draft is on the wire at all: a client that kept its
     // own would need nothing from a host for it.
-    expect(actions(two, 'ahp-chat:/live').find((e) => e.action.type === 'chat/draftChanged')?.action.draft)
-      .toBe('half a th');
+    const typed = actions(two, 'ahp-chat:/live')
+      .find((e) => e.action.type === 'chat/draftChanged')?.action.draft as { text?: string } | undefined;
+    expect(typed?.text).toBe('half a th');
 
     // And somebody arriving later gets it from the snapshot.
     const three = host.accept(peer());
     await three.handle(hello(['0.8.0']));
     const opened = await three.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
-      snapshot: { state: { draft?: string } };
+      snapshot: { state: { draft?: { text?: string } } };
     };
-    expect(opened.snapshot.state.draft).toBe('half a th');
+    expect(opened.snapshot.state.draft?.text).toBe('half a th');
   });
 });
 

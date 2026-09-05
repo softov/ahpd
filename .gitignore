@@ -7,3 +7,6 @@ dist
 
 # Wire captures from scripts/tee.mjs.
 /ahp-*.jsonl
+
+# Generated from the protocol package by `npm run schema`.
+/tools/ahp.strict.schema.json

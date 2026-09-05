@@ -396,3 +396,28 @@ defect this repository has had was invisible that way - a bare `inputNeeded`
 where the action carries `request`, a tool result beside `chat/toolCallComplete`
 rather than in its `result`, a `chat/turnCancelled` with no `duration`. VS Code
 runs those reducers. So does `ahpc`.
+
+What a reducer cannot see is an *undeclared* field: it ignores what it does not
+know, and so does TypeScript - a conditional spread, `...(x ? { model } : {})`,
+is not excess-property-checked, which is how `SessionState.model`,
+`argumentHint` and a config property's `scope` each reached the wire from a
+codebase typed against the package.
+
+So [`test/wire.test.ts`](../test/wire.test.ts) closes the objects.
+[`tools/schema.mjs`](../tools/schema.mjs) generates a strict JSON Schema from
+the package's own declarations - `additionalProperties: false` everywhere,
+which the shipped `state.schema.json` has nowhere - and every frame the test
+produces goes through ajv against it. An undeclared key and a missing required
+one both fail the build, which is the only reason either is findable before a
+client trips over it.
+
+The frames are written out as
+[`test/fixtures/wire.jsonl`](../test/fixtures/wire.jsonl): a capture of the
+commands and actions above, with timestamps and generated ids replaced by
+stable ones so it can be diffed when something moves. The same check runs over
+a recording taken off a real daemon:
+
+```bash
+npm run schema                            # after a protocol bump
+npm run wire -- test/fixtures/wire.jsonl  # or a capture from scripts/tee.mjs
+```
