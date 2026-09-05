@@ -242,7 +242,6 @@ fail silently rather than loudly.
 | [docs/AGENT.md](docs/AGENT.md) | The `Agent` and `Session` contracts, for writing a backend |
 | [docs/AHP.md](docs/AHP.md) | Compatibility area by area, emitted actions, and the rules that fail silently |
 | [REFERENCE.md](REFERENCE.md) | The specification and the reference host, and what each has settled |
-| [ROADMAP.md](ROADMAP.md) | What is left, and the options for each |
 
 ## Layout
 
@@ -300,4 +299,4 @@ That checks the state a real AHP client would see rather than validating `ahpd` 
 
 [`test/wire.test.ts`](test/wire.test.ts) checks the other half: not whether a client can read what this host sends, but whether the protocol *declares* it. `tools/schema.mjs` generates a strict schema out of the package's own types - every object closed, which the shipped `state.schema.json` is not - and every frame goes through it, so an undeclared key or a missing required one fails the build. A reducer cannot see either, and neither can TypeScript: a conditional spread is not excess-property-checked, which is how three undeclared fields reached the wire from code typed against the package.
 
-The check that cannot be done here is driving it with a client that was not written against it. `ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree. [ROADMAP.md](ROADMAP.md) records what a VS Code drive checked, and the two bugs it found that were invisible from the source.
+The check that cannot be done here is driving it with a client that was not written against it. `ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree. A drive against VS Code found two bugs that were invisible from the source; both are in `git log`, and what they cost is written up in [docs/AHP.md](docs/AHP.md).
