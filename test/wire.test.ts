@@ -24,7 +24,10 @@ import type { Peer } from '../src/types/rpc.js';
  * The capture is written out as it goes, which is the conformance fixture:
  * one file holding what a client actually receives, checkable by hand with
  * `npm run wire -- test/fixtures/wire.jsonl` and diffable when something
- * moves. It is synthetic on purpose - the agent is mocked, the prompts are
+ * moves. It is an *output* and never an input - the assertion below runs on
+ * the frames this run just produced, not on the file - because a suite that
+ * validated its own committed recording would go green against a record of
+ * the bugs rather than against the code that fixed them. It is synthetic on purpose - the agent is mocked, the prompts are
  * `hello` - because a capture off a real daemon carries somebody's work.
  */
 
