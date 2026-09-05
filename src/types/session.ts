@@ -57,6 +57,23 @@ export interface SessionOptions {
   env?: Record<string, string>;
   /** An existing agent session to continue, rather than starting a new one. */
   resume?: string;
+  /**
+   * The prompt this session is resumed *at*, so the rest is left behind.
+   *
+   * A fork: the conversation continues from that turn as though the ones
+   * after it had not happened, under a new id of its own so the original is
+   * untouched. Meaningless without `resume`, which names what is being forked.
+   */
+  forkAt?: string;
+  /**
+   * Context the first turn carries without showing it.
+   *
+   * A side chat is started from a turn somewhere else and needs to know what
+   * that turn said, but the protocol is explicit that the source transcript is
+   * not copied into this chat's visible history - so this reaches the model
+   * and never the wire.
+   */
+  context?: string;
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
   /**
@@ -108,6 +125,20 @@ export interface Session {
    * disk and this session are one conversation.
    */
   agentId(): string | undefined;
+
+  /**
+   * The backend's own name for the prompt that began a turn, if it has one.
+   *
+   * What a fork is cut at. A turn has an id this host chose and the backend
+   * has an id of its own for the same prompt, and only the backend's means
+   * anything when it is asked to resume at one.
+   *
+   * Optional, and its absence is what makes forking unavailable: a backend
+   * that cannot name a prompt cannot be asked to continue from one, and the
+   * host advertises no `fork` capability for it rather than offering a control
+   * that fails when it is used.
+   */
+  forkPoint?(turnId: string): string | undefined;
   /** Skills, commands, subagents and MCP servers this session was given. */
   customizations(): Bag[];
   /** Every completed turn. Snapshots carry only the newest page of these. */

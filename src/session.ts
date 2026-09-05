@@ -984,6 +984,16 @@ export function createSession(options: SessionOptions): Session {
       // transcript of them and asked to infer the rest.
       ...(options.resume ? { resume: options.resume } : {}),
       /*
+       * A fork, which the SDK spells as a resume that does not keep the id.
+       *
+       * `resumeSessionAt` is the prompt to continue from and `forkSession`
+       * makes the continuation a session of its own, so the conversation this
+       * was cut from carries on untouched.
+       */
+      ...(options.resume && options.forkAt
+        ? { forkSession: true, resumeSessionAt: options.forkAt }
+        : {}),
+      /*
        * On disk under the name the client gave it.
        *
        * The SDK invents an id and writes the transcript under that, so a
@@ -1016,6 +1026,12 @@ export function createSession(options: SessionOptions): Session {
    * makes the queue empty as its turns start rather than needing a second
    * action to say so.
    */
+  /** Context for the first prompt only, which never reaches the wire. */
+  let carried = options.context;
+
+  /** The backend's id for the prompt that began each turn, by this host's turn id. */
+  const cuts = new Map<string, string>();
+
   const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string): void => {
     if (model !== undefined && model.id !== chosen) {
       chosen = model.id;
@@ -1062,7 +1078,17 @@ export function createSession(options: SessionOptions): Session {
     });
     if (title === 'New session' && text) retitle(text.slice(0, 60));
     doing('Thinking');
-    waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    /*
+     * What the model is given, which is not always what the transcript shows.
+     *
+     * A side chat is started from a turn somewhere else and has to know what
+     * that turn said, and the protocol is explicit that the source is *not*
+     * copied into this chat's visible history. So it rides on the first prompt
+     * and nowhere else: the wire message stays what the person typed.
+     */
+    const sent = carried === undefined ? text : `${carried}\n\n${text}`;
+    carried = undefined;
+    waiting.push({ type: 'user', message: { role: 'user', content: sent }, parent_tool_use_id: null });
     wake?.();
     wake = undefined;
     touch();
@@ -1243,7 +1269,16 @@ export function createSession(options: SessionOptions): Session {
 
         if (type === 'stream_event') { streamed(bag(message.event)); continue; }
         if (type === 'assistant') { assistant(bag(message.message)); continue; }
-        if (type === 'user') { results(bag(message.message)); continue; }
+        if (type === 'user') {
+          // The prompt's own id, which is what a fork is cut at. Recorded on
+          // the first echo of a turn and not after: later `user` frames in one
+          // turn are tool results, and cutting at one of those would resume
+          // halfway through work the agent had already started.
+          const said = str(message.uuid);
+          if (active && said !== undefined && !cuts.has(String(active.id))) cuts.set(String(active.id), said);
+          results(bag(message.message));
+          continue;
+        }
 
         if (type === 'result') {
           const turn = active;
@@ -1335,6 +1370,7 @@ export function createSession(options: SessionOptions): Session {
 
     models: () => offered,
     agentId: () => agentId,
+    forkPoint: (turnId) => cuts.get(turnId),
 
     customizations: () => customizations,
     allTurns: () => turns,

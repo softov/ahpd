@@ -3392,6 +3392,85 @@ describe('authenticating', () => {
   });
 });
 
+describe('a chat made out of another', () => {
+  it('forks at the turn it was told to, and brings the history through it', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    // The CLI echoes the prompt back under an id of its own, and that id is
+    // the only thing it can be asked to continue from.
+    await emit({ type: 'user', session_id: 'sdk-1', uuid: 'sdk-prompt-1', message: { role: 'user', content: 'hi' } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    await client.handle({
+      method: 'createChat',
+      params: {
+        channel: uri, chat: 'ahp-chat:/forked',
+        source: { kind: 'fork', chat: chatUri, turnId: 't1' },
+      },
+    });
+    const fresh = sessionQueries().at(-1);
+    expect(fresh?.options.forkSession).toBe(true);
+    expect(fresh?.options.resumeSessionAt).toBe('sdk-prompt-1');
+
+    // And the conversation through that turn is visible in the new chat: a
+    // fork that starts empty is a new chat, not a fork.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+  });
+
+  it('tells a side chat what the turn said, and keeps it out of the history', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'the weather' } } },
+    });
+    await settle();
+    await emit({ type: 'result', session_id: 'sdk-1', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    await client.handle({
+      method: 'createChat',
+      params: {
+        channel: uri, chat: 'ahp-chat:/side',
+        source: { kind: 'sideChat', chat: chatUri, turnId: 't1' },
+        initialMessage: { text: 'and tomorrow?' },
+      },
+    });
+    await settle();
+    /*
+     * The model is told both; the conversation shows one.
+     *
+     * The protocol is explicit that a side chat does not copy the source
+     * transcript into its visible history - so the context rides on the first
+     * prompt and nowhere else.
+     */
+    expect(sdk.said.at(-1)).toContain('the weather');
+    expect(sdk.said.at(-1)).toContain('and tomorrow?');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/side' } }) as {
+      snapshot: { state: { turns: unknown[]; activeTurn?: { message: { text: string } } } };
+    }).snapshot.state;
+    expect(state.turns).toEqual([]);
+    expect(state.activeTurn?.message.text).toBe('and tomorrow?');
+  });
+
+  it('refuses a source it does not know, and one from another session', async () => {
+    const { client, uri, chatUri } = await running();
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/bad', source: { kind: 'graft', chat: chatUri, turnId: 't1' } },
+    })).rejects.toThrow(/not a chat source/);
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/bad', source: { kind: 'fork', chat: 'ahp-chat:/elsewhere', turnId: 't1' } },
+    })).rejects.toThrow(/is not a chat in/);
+  });
+});
+
 describe('more than one chat in a session', () => {
   const second = 'ahp-chat:/other';
 
@@ -3400,8 +3479,15 @@ describe('more than one chat in a session', () => {
     const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { agents: { capabilities?: { multipleChats?: unknown } }[] } }[];
     };
-    // Without this a client MUST NOT call `createChat` at all.
-    expect(result.snapshots[0]?.state.agents[0]?.capabilities?.multipleChats).toEqual({});
+    /*
+     * Without this a client MUST NOT call `createChat` at all, and without the
+     * two flags in it a client MUST NOT ask for a chat made out of another.
+     * The backend declares those, because they are its: a fork continues one
+     * of its conversations from a turn and a side chat starts one that knows
+     * what a turn elsewhere said.
+     */
+    expect(result.snapshots[0]?.state.agents[0]?.capabilities?.multipleChats)
+      .toEqual({ fork: true, sideChat: true });
   });
 
   it('spreads a session-scoped key across every chat, and keeps a chat-scoped one where it was', async () => {

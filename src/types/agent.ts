@@ -51,6 +51,10 @@ export interface Start {
   emit: Emit;
   /** A session of this backend's to continue, rather than starting a new one. */
   resume?: string;
+  /** The prompt to resume *at*, so a fork leaves the turns after it behind. */
+  forkAt?: string;
+  /** Context the first turn carries to the backend without showing it. */
+  context?: string;
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
   /**
@@ -96,6 +100,17 @@ export interface Agent {
   displayName: string;
   /** One line about what this backend is. */
   description?: string;
+
+  /**
+   * What a second chat in one session can be made from.
+   *
+   * Multi-chat itself is the host's doing - a second chat is `create` called
+   * twice - but these two are the backend's: a fork continues a conversation
+   * from one of its turns, and a side chat starts a fresh one that knows what
+   * a turn elsewhere said. A backend that declares neither still gets several
+   * chats; it just cannot be asked to make one out of another.
+   */
+  chats?: { fork?: boolean; sideChat?: boolean };
 
   /**
    * OAuth protected resources this backend can be given a token for.

@@ -251,6 +251,10 @@ export function claude(options: ClaudeOptions): Agent {
   return {
     provider: options.provider ?? 'claude',
     displayName: 'Claude Code',
+    // Both, because the SDK resumes at a named prompt: `resumeSessionAt` with
+    // `forkSession` continues from a turn under a new id, and a side chat is
+    // an unresumed session handed what that turn said.
+    chats: { fork: true, sideChat: true },
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
@@ -308,6 +312,8 @@ export function claude(options: ClaudeOptions): Agent {
       emit: start.emit,
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.resume !== undefined ? { resume: start.resume } : {}),
+      ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
+      ...(start.context !== undefined ? { context: start.context } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),

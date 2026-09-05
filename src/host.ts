@@ -1444,7 +1444,7 @@ export function createHost(options: HostOptions): Host {
     uri: string,
     chatUri: string,
     config: Record<string, unknown>,
-    resuming?: { resume: string; seed: Bag[] },
+    resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; context?: string },
     workingDirectory?: string,
     credentials?: Record<string, string>,
   ): Session => {
@@ -1453,7 +1453,10 @@ export function createHost(options: HostOptions): Host {
       chatUri,
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
-      ...(resuming ? { resume: resuming.resume, seed: resuming.seed } : {}),
+      ...(resuming?.resume !== undefined ? { resume: resuming.resume } : {}),
+      ...(resuming?.seed !== undefined ? { seed: resuming.seed } : {}),
+      ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
+      ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
       settings: { ...agent.defaults(), ...config },
       schema: agent.schema,
       // What the boot probe already learned: the commands behind a slash, the
@@ -1588,7 +1591,10 @@ export function createHost(options: HostOptions): Host {
        * an empty object is the protocol's way of saying multi-chat without
        * them.
        */
-      multipleChats: {},
+      multipleChats: {
+        ...(agent.chats?.fork ? { fork: true } : {}),
+        ...(agent.chats?.sideChat ? { sideChat: true } : {}),
+      },
     },
   }));
   /**
@@ -3658,9 +3664,58 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32602, `${chatUri} is not a chat URI`);
           if (byChat.has(chatUri))
             throw new RpcError(-32003, `${chatUri} already exists`);
-          if (params.source !== undefined)
-            throw new RpcError(-32602, 'This host does not fork a chat from a turn');
-          const chat = spawn(held.agent, uri, chatUri, held.config, undefined, held.workingDirectory);
+          /*
+           * Made out of another chat, when a client asks for that.
+           *
+           * A fork copies the conversation through one turn and continues it,
+           * under an id of its own so the chat it came from is untouched. A
+           * side chat copies nothing and is *told* what that turn said - the
+           * protocol is explicit that the source transcript stays out of its
+           * visible history, so the context rides on its first prompt.
+           */
+          const source = (typeof params.source === 'object' && params.source !== null
+            ? params.source
+            : undefined) as { kind?: unknown; chat?: unknown; turnId?: unknown } | undefined;
+          let made: { resume?: string; seed?: Bag[]; forkAt?: string; context?: string } | undefined;
+          if (source !== undefined) {
+            const kind = String(source.kind ?? '');
+            // The kind first, because it decides whether the rest of the
+            // source means anything: an unknown one is a client asking for
+            // something this host has never heard of, and saying "no such
+            // turn" about it would send somebody looking at the turn.
+            if (kind !== 'fork' && kind !== 'sideChat')
+              throw new RpcError(-32602, `${kind} is not a chat source this host knows`);
+            const from = byChat.get(chatOf(String(source.chat ?? '')));
+            if (!from || from.uri !== uri)
+              throw new RpcError(-32602, `${String(source.chat ?? '')} is not a chat in ${uri}`);
+            const turnId = String(source.turnId ?? '');
+            const all = from.chat.allTurns();
+            const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
+            if (at < 0)
+              throw new RpcError(-32602, `${turnId} is not a turn in ${String(source.chat ?? '')}`);
+            if (kind === 'fork') {
+              if (held.agent.chats?.fork !== true)
+                throw new RpcError(-32602, `${held.agent.provider} cannot fork a chat from a turn`);
+              // The backend's own name for that prompt, which is the only one
+              // it can be asked to continue from.
+              const point = from.chat.forkPoint?.(turnId);
+              const started = from.chat.agentId();
+              if (point === undefined || started === undefined)
+                throw new RpcError(-32602, `${turnId} is not a turn this host can fork from`);
+              made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
+            }
+            else {
+              if (held.agent.chats?.sideChat !== true)
+                throw new RpcError(-32602, `${held.agent.provider} cannot start a side chat from a turn`);
+              const message = (all[at] as Bag | undefined)?.message;
+              const said = typeof message === 'object' && message !== null
+                ? (message as { text?: unknown }).text
+                : undefined;
+              made = { context: typeof said === 'string' ? said : '' };
+            }
+
+          }
+          const chat = spawn(held.agent, uri, chatUri, held.config, made, held.workingDirectory);
           log(`opened ${chatUri} in ${uri}`);
           // `summary`, not `chat`: the reducer reads `action.summary.resource`,
           // and a chat named any other way arrives as a TypeError inside it.
