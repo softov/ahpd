@@ -3764,9 +3764,22 @@ export function createHost(options: HostOptions): Host {
            * the same names would be advertising control of a directory it
            * does not choose.
            */
-          const asked = Array.isArray(params.workingDirectories)
+          /*
+           * `workingDirectory`, singular, because that is the field this
+           * command declares.
+           *
+           * `createSession` takes `workingDirectories` and this one does not,
+           * and reading the plural here meant the answer was always computed
+           * against the host's own first path instead of the folder the
+           * question was about - so a client asking about a repository was
+           * told what a non-repository offers, which is no isolation at all.
+           * The plural is still read after it, for a client that sends what
+           * the neighbouring command takes.
+           */
+          const one = typeof params.workingDirectory === 'string' ? params.workingDirectory : undefined;
+          const asked = one ?? (Array.isArray(params.workingDirectories)
             ? params.workingDirectories.find((entry) => typeof entry === 'string')
-            : undefined;
+            : undefined);
           const mine = await isolating(typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir);
           const theirs = agent.schema();
           const properties = {

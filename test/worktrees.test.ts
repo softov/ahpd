@@ -214,6 +214,27 @@ describe('a session with a working tree of its own', () => {
     expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
   });
 
+  it('answers about the folder the question named, not the host\'s own', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    /*
+     * `workingDirectory`, singular.
+     *
+     * That is the field `resolveSessionConfig` declares - `createSession`
+     * takes the plural and this command does not - and reading the plural
+     * meant every answer was computed against the host's first served path.
+     * VS Code sends the singular, its path is a repository and the host's root
+     * is not, so the isolation control was absent for exactly the folder that
+     * could have had one.
+     */
+    const answered = await client.handle({
+      method: 'resolveSessionConfig',
+      params: { channel: 'ahp-root://', provider: 'echo', workingDirectory: `file://${project(root)}` },
+    }) as { schema: { properties: Record<string, { enum?: string[] }> } };
+    expect(answered.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+    expect(answered.schema.properties.branch?.enum).toContain('main');
+  });
+
   it('moves a session nobody has spoken in yet into the tree it now asks for', async () => {
     const root = repository();
     const { client } = await joined(root);
