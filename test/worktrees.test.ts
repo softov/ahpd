@@ -153,6 +153,34 @@ describe('a session with a working tree of its own', () => {
     expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
   });
 
+  it('says on the session why its directory is where it is', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/readable';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    });
+    const config = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { schema: { properties: Record<string, { readOnly?: boolean }> }; values: Record<string, string> } } };
+    }).snapshot.state.config;
+    // The host's keys never reach the backend, and the session channel reports
+    // the backend's settings - so without this a worktree session said nothing
+    // anywhere about why its directory was where it was.
+    expect(config.values.isolation).toBe('worktree');
+    expect(config.values.branch).toBe('main');
+    // Drawn as a row and not a control: isolation cannot change on a running
+    // session, so a client offered a picker for it would be offering a move
+    // that moves an agent's files out from under a conversation.
+    expect(config.schema.properties.isolation?.readOnly).toBe(true);
+    // And the backend's own keys are still there beside them.
+    expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
+  });
+
   it('leaves the folder alone when nobody asked for a worktree', async () => {
     const root = repository();
     const { client } = await joined(root);

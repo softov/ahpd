@@ -682,6 +682,17 @@ export function createHost(options: HostOptions): Host {
    * deleting a project.
    */
   const worktrees = new Map<string, { repository: string; path: string }>();
+
+  /**
+   * The config keys this host answered for a session, by session URI.
+   *
+   * Kept because nothing else can say them back. `isolation` and its two
+   * companions are stripped before the backend is handed anything, and a
+   * session's channel reports the *backend's* settings - so a session created
+   * as a worktree said nothing anywhere about why its directory was where it
+   * was, and a client had to infer it from the path.
+   */
+  const decided = new Map<string, Record<string, string>>();
   /** The marks on a session, empty until somebody makes one. */
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
@@ -1710,6 +1721,47 @@ export function createHost(options: HostOptions): Host {
     };
   };
 
+  /**
+   * A session's config with this host's own answers folded in.
+   *
+   * The schema as well as the values: a client draws a control from the
+   * schema, so reporting `isolation: 'worktree'` against a schema that never
+   * mentions `isolation` is a value with nothing to draw it. Both halves are
+   * marked immutable by the schema they came from, so what a client draws is
+   * a row it can read and not a control it can move.
+   */
+  const mergedConfig = (theirs: unknown, mine: Record<string, string>): Bag => {
+    const held = (typeof theirs === 'object' && theirs !== null ? theirs : {}) as Bag;
+    const schema = (typeof held.schema === 'object' && held.schema !== null ? held.schema : {}) as Bag;
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Bag;
+    const values = (typeof held.values === 'object' && held.values !== null ? held.values : {}) as Bag;
+    return {
+      ...held,
+      schema: { ...schema, properties: { ...properties, ...hostSchema(mine) } },
+      values: { ...values, ...mine },
+    };
+  };
+
+  /**
+   * The read-only half of this host's schema, for a session that already exists.
+   *
+   * Not the same object `resolveSessionConfig` hands out: that one offers a
+   * choice, and this one reports one already made. `isolation` cannot change
+   * on a running session - an agent whose files moved out from under a
+   * conversation - so what a client is given here has no `enum` to pick from.
+   */
+  const hostSchema = (mine: Record<string, string>): Bag => Object.fromEntries(
+    Object.entries({
+      isolation: { title: 'Isolation', description: 'Where the agent makes changes' },
+      branch: { title: 'Branch', description: 'Base branch the worktree started from' },
+      worktreeIncludeFiles: { title: 'Files brought along', description: 'Patterns copied into the worktree' },
+    })
+      .filter(([key]) => mine[key] !== undefined && mine[key] !== '')
+      .map(([key, about]) => [key, { type: 'string', ...about, readOnly: true, sessionMutable: false }]),
+  );
+
   /** The host's own keys, which a backend has never heard of. */
   const HOSTS_OWN = ['isolation', 'branch', 'worktreeIncludeFiles'];
 
@@ -2078,8 +2130,14 @@ export function createHost(options: HostOptions): Host {
        * the list, which no single chat knows. `IsRead` and `IsArchived` are
        * this host's, and no chat has heard of them.
        */
+      const theirs = lead.sessionState();
+      const mine = decided.get(channel);
       const state = {
-        ...lead.sessionState(),
+        ...theirs,
+        // What this host answered, beside what the backend did. Its own keys
+        // never reached the backend, so this is the only place they can be
+        // read back from.
+        ...(mine === undefined ? {} : { config: mergedConfig(theirs.config, mine) }),
         ...describes(channel),
         ...changesetsOf(channel),
         // Required by the protocol and empty until somebody announces
@@ -2243,6 +2301,9 @@ export function createHost(options: HostOptions): Host {
     // backend's to read. An automation asking for isolation is the case this
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
+    decided.set(uri, Object.fromEntries(
+      Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key)),
+    ));
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -3278,6 +3339,9 @@ export function createHost(options: HostOptions): Host {
            * alternative is one running somewhere the person did not choose.
            */
           const running = await isolated(uri, config, where);
+          decided.set(uri, Object.fromEntries(
+            Object.entries(config).filter(([key]) => HOSTS_OWN.includes(key)),
+          ));
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
@@ -3435,6 +3499,7 @@ export function createHost(options: HostOptions): Host {
           // a daemon that runs for weeks would accumulate one of each per
           // session anybody ever opened.
           marks.delete(idOf(uri));
+          decided.delete(uri);
           for (const channel of [...shown.keys()]) {
             if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
           }

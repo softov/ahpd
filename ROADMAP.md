@@ -69,13 +69,15 @@ Every enum the package declares is `declare const enum` in its `.d.ts` while the
 
 **Suggestions.** (1) Report it upstream with the two-line reproduction, since every consumer using `verbatimModuleSyntax` hits it and most will conclude the enums are unusable rather than that the declaration is wrong. (2) Keep reading the declarations, which is what the vocabulary test does, and accept the parser as the cost of the workaround. (3) Copy the values into this repository and check against the copy — which is precisely the defect A-02-05 exists to stop, and is listed only to be refused.
 
-## A-01-16 — Three worktree keys, and no way to read the isolation back
+## A-01-16 — Three worktree keys a client seeds and this host does not take
 
-A-01-10 shipped with `isolation`, `branch` and `worktreeIncludeFiles`. The reference client declares three more host-owned keys this host does not advertise: `worktreeBranchPrefix` (a prefix the client forwards from the person's `git.branchPrefix`), `worktreeBranchTrack` (whether the new branch tracks its upstream) and `worktreeCreateNewBranch` (check out the chosen branch instead of making one). All three are `readOnly` in the reference and seeded by the client rather than picked, so their absence costs a preference rather than a capability.
+A-01-10 shipped with `isolation`, `branch` and `worktreeIncludeFiles`, and the half of this entry that was worth more is now closed too: a session created with `isolation: 'worktree'` reports it back on its own channel, read-only, beside the backend's settings — so a client can draw "isolated, on `agents/1a2b3c4d`" rather than inferring it from the path.
 
-**The half that is worth more.** A session created with `isolation: 'worktree'` reports the worktree as its `workingDirectories` and says nothing anywhere about *why* it is there. The host's own keys are stripped before the backend sees them and the backend's `settings()` is what the session channel reports, so `isolation` is unreadable once the session exists. A client that wants to draw "this session is isolated, on branch `agents/1a2b3c4d`" has to infer it from the path.
+What is left are three the reference client declares and this host does not advertise: `worktreeBranchPrefix` (a prefix the client forwards from the person's `git.branchPrefix`), `worktreeBranchTrack` (whether the new branch tracks its upstream) and `worktreeCreateNewBranch` (check out the chosen branch instead of making one). All three are `readOnly` in the reference and seeded by the client rather than picked, so their absence costs a preference and not a capability — and the last of them is the only one that changes behaviour, since this host always makes a branch.
 
-**Suggestions.** (1) Report the host's own config on the session channel beside the backend's, which is where a client already looks and needs no new field. (2) Take the three keys as well while doing it, since they arrive through the same merge. (3) Leave both: the path names the worktree and the branch names the session, which is enough to find either by hand.
+**What it costs today.** A person whose `git.branchPrefix` is `softov/` gets `agents/1a2b3c4d` rather than `softov/agents/1a2b3c4d`, and somebody who wanted the session to *continue* an existing branch cannot ask for it. Neither is a session that fails; both are a session that did something slightly other than what the person had configured elsewhere.
+
+**Suggestions.** (1) Take `worktreeCreateNewBranch` alone, since it is the one with behaviour behind it, and leave the two cosmetic ones until somebody notices. (2) Take all three, which is the same merge and the same strip as the first cut. (3) Leave them: a branch name is a name, and the daemon's is at least predictable.
 
 ## A-02-03 — Steering is refused for a reason that may no longer be true
 
