@@ -215,7 +215,14 @@ it('writes down a refusal that crossed a connection, without softening it', asyn
   await expect(reader.client.handle({
     method: 'resourceWrite',
     params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt', data: 'x', encoding: 'utf-8' },
-  })).rejects.toMatchObject({ code: -32009 });
+  })).rejects.toMatchObject({
+    code: -32009,
+    // And the sentence, not only the code. This host's claim is that a
+    // refusal comes back *as the owner sent it* - so the message is the half
+    // being promised, and a test that checked the code alone would pass on a
+    // host that rewrote every word of it.
+    message: 'This client published its directory read-only.',
+  });
 
   /*
    * And written down, because the asking client cannot attribute it.
