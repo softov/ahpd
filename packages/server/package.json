@@ -1,8 +1,8 @@
 {
   "name": "@ahpd/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "A server library for the Agent Host Protocol. No agent inside, you pass one in",
+  "description": "An Agent Host Protocol server on Node, Bun or Deno. Ships with a Claude backend",
   "keywords": [
     "ahp",
     "agent-host-protocol",
@@ -12,15 +12,14 @@
     "protocol",
     "json-rpc",
     "websocket",
-    "server",
-    "host",
-    "daemon"
+    "cli",
+    "command-line",
+    "daemon",
+    "claude",
+    "claude-code"
   ],
   "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "homepage": "https://github.com/softov/ahpd#readme",
   "repository": {
     "type": "git",
@@ -30,18 +29,11 @@
   "bugs": {
     "url": "https://github.com/softov/ahpd/issues"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "development": "./src/index.ts",
-      "default": "./dist/index.js"
-    }
+  "bin": {
+    "ahpd": "./dist/main.js"
   },
   "files": [
     "dist",
-    "src",
     "README.md"
   ],
   "engines": {
@@ -50,14 +42,12 @@
   "scripts": {
     "prepack": "tsc -p ."
   },
-  "optionalDependencies": {
-    "ws": "^8.18.0",
-    "node-pty": "^1.1.0-beta40"
-  },
-  "peerDependencies": {
+  "dependencies": {
+    "@ahpd/agent-claude": "workspace:^",
+    "@ahpd/sdk": "workspace:^",
     "@microsoft/agent-host-protocol": "^0.9.0"
   },
-  "devDependencies": {
-    "@microsoft/agent-host-protocol": "^0.9.0"
+  "publishConfig": {
+    "access": "public"
   }
 }

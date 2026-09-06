@@ -2,10 +2,10 @@ import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { createHost } from '../packages/server/src/host.js';
-import { fileResources, list, read, resolve, complete } from '../packages/server/src/resources.js';
+import { createHost } from '../packages/sdk/src/host.js';
+import { fileResources, list, read, resolve, complete } from '../packages/sdk/src/resources.js';
 import { echo } from '../examples/echo/agent.js';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * Watching a directory, against a real one.

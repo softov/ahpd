@@ -1,12 +1,12 @@
 import { listSessions } from '@anthropic-ai/claude-agent-sdk';
-import type { Listed } from '@ahpd/server';
+import type { Listed } from '@ahpd/sdk';
 
 /**
  * Claude's own sessions, as rows a host can list.
  *
  * Renames the SDK's session listing into `Listed`. The SDK is the authority on
  * which sessions exist; this module only maps the fields - which is why it is
- * here and not beside the URI helpers in `@ahpd/server`: a host serving some
+ * here and not beside the URI helpers in `@ahpd/sdk`: a host serving some
  * other harness has a different answer to the same question, and no reason to
  * load this one to find that out.
  */

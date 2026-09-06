@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { chatReducer, sessionReducer } from '@microsoft/agent-host-protocol';
-import { createHost } from '../packages/server/src/host.js';
+import { createHost } from '../packages/sdk/src/host.js';
 import { notes } from '../examples/notes/agent.js';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * The example with tools, driven as a client drives it.

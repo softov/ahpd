@@ -1,17 +1,17 @@
 # @ahpd/agent-claude
 
-The Claude backend for [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server).
+The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
 
 ## Install
 
 ```bash
-pnpm add @ahpd/agent-claude @ahpd/server @microsoft/agent-host-protocol
+pnpm add @ahpd/agent-claude @ahpd/sdk @microsoft/agent-host-protocol
 ```
 
 ## Use
 
 ```ts
-import { createHost, listen } from '@ahpd/server';
+import { createHost, listen } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const path = process.cwd();

@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '@ahpd/server';
+import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '@ahpd/sdk';
 import { notes } from './agent.js';
 
 /**

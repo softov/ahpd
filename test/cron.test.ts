@@ -1,5 +1,5 @@
 import { expect, it, describe } from 'vitest';
-import { parseCron, nextOccurrence } from '../packages/server/src/cron.js';
+import { parseCron, nextOccurrence } from '../packages/sdk/src/cron.js';
 
 /*
  * Five-field cron, as the protocol defines it.

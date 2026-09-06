@@ -4,7 +4,7 @@ import { join } from 'node:path';
 /**
  * Whether every package imports only what it declares.
  *
- * The architectural claim this repository makes is that `@ahpd/server` imports
+ * The architectural claim this repository makes is that `@ahpd/sdk` imports
  * nothing that runs an agent. That claim was untrue once - `catalogue` reached
  * for the Claude SDK's session listing from inside the host - and it compiled,
  * because a hoisted `node_modules` resolves anything installed anywhere in the

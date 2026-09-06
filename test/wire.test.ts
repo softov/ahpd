@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { checker, collapse, SCHEMA } from '../tools/wire.mjs';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * Everything this host sends, against everything the protocol declares.
@@ -82,13 +82,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../packages/server/src/host.js');
+const { createHost } = await import('../packages/sdk/src/host.js');
 const { claude } = await import('../packages/agent-claude/src/claude.js');
 const { echo } = await import('../examples/echo/agent.js');
-const { shellTerminals } = await import('../packages/server/src/terminals.js');
-const { fileResources } = await import('../packages/server/src/resources.js');
-const { memoryAutomations } = await import('../packages/server/src/automations.js');
-const { hostTools } = await import('../packages/server/src/tools.js');
+const { shellTerminals } = await import('../packages/sdk/src/terminals.js');
+const { fileResources } = await import('../packages/sdk/src/resources.js');
+const { memoryAutomations } = await import('../packages/sdk/src/automations.js');
+const { hostTools } = await import('../packages/sdk/src/tools.js');
 
 const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });

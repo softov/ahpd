@@ -4,7 +4,7 @@ import { automationsPath, configPath, loadConfig } from './config.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
-import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, scheduledAutomations, shellTerminals } from '@ahpd/server';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.

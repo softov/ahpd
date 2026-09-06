@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { SpawnPty } from '@ahpd/server';
+import type { SpawnPty } from '@ahpd/sdk';
 
 /**
  * By name at runtime, so the type checker is not asked for a module that may

@@ -1,7 +1,7 @@
 import * as protocol from '@microsoft/agent-host-protocol';
 import { describe, expect, it } from 'vitest';
-import { gitChanges } from '../packages/server/src/changes.js';
-import { fileResources } from '../packages/server/src/resources.js';
+import { gitChanges } from '../packages/sdk/src/changes.js';
+import { fileResources } from '../packages/sdk/src/resources.js';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -93,7 +93,7 @@ describe('the words this host writes', () => {
 
   it('reports a resource kind and an encoding the protocol declares', async () => {
     const store = fileResources();
-    const entries = await store.list(`file://${REPO}/packages/server/src`, [REPO]);
+    const entries = await store.list(`file://${REPO}/packages/sdk/src`, [REPO]);
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(words('ResourceType')).toContain(entry.type);

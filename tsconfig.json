@@ -4,7 +4,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@ahpd/server": ["packages/server/src/index.ts"],
+      "@ahpd/sdk": ["packages/sdk/src/index.ts"],
       "@ahpd/agent-claude": ["packages/agent-claude/src/index.ts"]
     }
   },

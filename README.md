@@ -9,8 +9,8 @@ An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) serve
 
 `ahpd` can be used in two ways:
 
-- **`ahpd`**: a process that serves the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions behind it.
-- **`@ahpd/server`**: the library it is built from, `createHost()` and the ports around it.
+- **`@ahpd/server`**: a process that serves the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions behind it. It installs the `ahpd` command.
+- **`@ahpd/sdk`**: the library it is built from, `createHost()` and the ports around it.
 
 ## Why
 
@@ -58,15 +58,15 @@ The clients on the left are interchangeable and none of them owns the session. `
 ```bash
 git clone https://github.com/softov/ahpd && cd ahpd
 pnpm install && pnpm build
-node packages/ahpd/dist/main.js --path /work/project
+node packages/server/dist/main.js --path /work/project
 ```
 
-The rest of this README writes `ahpd` for `node packages/ahpd/dist/main.js`.
+The rest of this README writes `ahpd` for `node packages/server/dist/main.js`.
 
 Once it is published this will be the shorter form, and every flag is the same:
 
 ```bash
-npm i -g ahpd
+npm i -g @ahpd/server
 ahpd --path /work/project
 ```
 
@@ -145,7 +145,7 @@ You provide the agents and, optionally, the things that touch the machine.
 The smallest host that works is three things: a backend, a host to serve it, and a socket to serve it on.
 
 ```ts
-import { createHost, listen } from '@ahpd/server';
+import { createHost, listen } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
@@ -163,7 +163,7 @@ What it does *not* serve is anything that touches the machine, because `createHo
 Those arrive as **ports**, and each is optional and independent:
 
 ```ts
-import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools } from '@ahpd/server';
+import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
@@ -194,7 +194,7 @@ Reading a file is `node:fs` on one runtime and something else on another; a term
 An agent is the thing that answers. It says what it is called, what a session of its kind can be configured with, which sessions it already has, and how to start one - and everything the protocol requires stays the host's.
 
 ```ts
-import { createHost, listen } from '@ahpd/server';
+import { createHost, listen } from '@ahpd/sdk';
 import { notes } from './agent.js';
 
 const host = createHost({ path, agents: [notes({ path })] });
@@ -249,7 +249,7 @@ fail silently rather than loudly.
 
 ## Layout
 
-Three packages in one repository, on pnpm. The boundary is real - `@ahpd/server`
+Three packages in one repository, on pnpm. The boundary is real - `@ahpd/sdk`
 imports nothing that runs an agent, and the check for that is that it compiles
 with nothing in its `node_modules` but the protocol package: no backend, no
 agent SDK, no zod. It did not, at first - `catalogue` reached for the SDK's
@@ -259,23 +259,23 @@ any package can import anything installed anywhere and it resolves; pnpm links
 only what a package declares, so an undeclared import fails where it is written
 rather than in somebody else's install.
 
-### `@ahpd/server` - the protocol, and the parts to build a host
+### `@ahpd/sdk` - the protocol, and the parts to build a host
 
 | | |
 | --- | --- |
-| [packages/server/src/types/](packages/server/src/types/)                 | Every shape, importing no runtime value. The contract. |
-| [packages/server/src/rpc.ts](packages/server/src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
-| [packages/server/src/listen.ts](packages/server/src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
-| [packages/server/src/host.ts](packages/server/src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
-| [packages/server/src/resources.ts](packages/server/src/resources.ts)     | The `resources` port: files, reads and writes. |
-| [packages/server/src/terminals.ts](packages/server/src/terminals.ts)     | The `terminals` port: a shell over pipes. |
-| [packages/server/src/changes.ts](packages/server/src/changes.ts)         | The `changes` port: a changeset out of git. |
-| [packages/server/src/git.ts](packages/server/src/git.ts)                 | The `directories` port: which branch a directory is on. |
-| [packages/server/src/automations.ts](packages/server/src/automations.ts) | The `automations` port, without a clock. |
-| [packages/server/src/scheduled.ts](packages/server/src/scheduled.ts)     | The same, with one. |
-| [packages/server/src/catalog.ts](packages/server/src/catalog.ts)         | How a session is named, and what its status bits are worth. |
-| [packages/server/src/paging.ts](packages/server/src/paging.ts)           | A long list of turns, served a page at a time. |
-| [packages/server/src/index.ts](packages/server/src/index.ts)             | The library entry point. |
+| [packages/sdk/src/types/](packages/sdk/src/types/)                 | Every shape, importing no runtime value. The contract. |
+| [packages/sdk/src/rpc.ts](packages/sdk/src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
+| [packages/sdk/src/listen.ts](packages/sdk/src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
+| [packages/sdk/src/host.ts](packages/sdk/src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
+| [packages/sdk/src/resources.ts](packages/sdk/src/resources.ts)     | The `resources` port: files, reads and writes. |
+| [packages/sdk/src/terminals.ts](packages/sdk/src/terminals.ts)     | The `terminals` port: a shell over pipes. |
+| [packages/sdk/src/changes.ts](packages/sdk/src/changes.ts)         | The `changes` port: a changeset out of git. |
+| [packages/sdk/src/git.ts](packages/sdk/src/git.ts)                 | The `directories` port: which branch a directory is on. |
+| [packages/sdk/src/automations.ts](packages/sdk/src/automations.ts) | The `automations` port, without a clock. |
+| [packages/sdk/src/scheduled.ts](packages/sdk/src/scheduled.ts)     | The same, with one. |
+| [packages/sdk/src/catalog.ts](packages/sdk/src/catalog.ts)         | How a session is named, and what its status bits are worth. |
+| [packages/sdk/src/paging.ts](packages/sdk/src/paging.ts)           | A long list of turns, served a page at a time. |
+| [packages/sdk/src/index.ts](packages/sdk/src/index.ts)             | The library entry point. |
 
 ### `@ahpd/agent-claude` - one backend
 
@@ -291,9 +291,9 @@ rather than in somebody else's install.
 
 | | |
 | --- | --- |
-| [packages/ahpd/src/main.ts](packages/ahpd/src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
-| [packages/ahpd/src/daemon.ts](packages/ahpd/src/daemon.ts) | Running detached, and finding the one that is. |
-| [packages/ahpd/src/config.ts](packages/ahpd/src/config.ts) | The config file, and where this tool keeps its things. |
+| [packages/server/src/main.ts](packages/server/src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
+| [packages/server/src/daemon.ts](packages/server/src/daemon.ts) | Running detached, and finding the one that is. |
+| [packages/server/src/config.ts](packages/server/src/config.ts) | The config file, and where this tool keeps its things. |
 
 Everything Claude is reached only through `Agent`. It used to be duplicated: `ahpc` had a `--claude` mode that reached the Agent SDK in-process, with its own translation of it. That is gone, and the client now depends on no agent SDK at all - two implementations of one translation meant two answers to every question, and the one nobody is looking at is the one that drifts. This is the only copy.
 

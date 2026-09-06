@@ -1,7 +1,7 @@
 /**
  * The Claude backend, as an `Agent` this host can be handed.
  *
- * One implementation of the contract `@ahpd/server` declares, and the only
+ * One implementation of the contract `@ahpd/sdk` declares, and the only
  * thing in either package that knows what the Claude harness is: it starts the
  * agent SDK, translates its message stream into the state actions the protocol
  * describes, and reads a transcript somebody else's session left on disk.

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPeer, receive, RpcClosed, RpcError, RpcTimeout } from '../packages/server/src/rpc.js';
-import type { Wire } from '../packages/server/src/types/rpc.js';
+import { createPeer, receive, RpcClosed, RpcError, RpcTimeout } from '../packages/sdk/src/rpc.js';
+import type { Wire } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * JSON-RPC framing, in both directions.

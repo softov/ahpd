@@ -14,15 +14,15 @@ with, which sessions it already has, and how to start one. Everything the
 protocol requires stays the host's, and nothing in the host knows what any agent
 is - `createHost` imports no backend at all.
 
-[packages/server/src/types/agent.ts](../packages/server/src/types/agent.ts) and
+[packages/sdk/src/types/agent.ts](../packages/sdk/src/types/agent.ts) and
 [packages/agent-claude/src/session.ts](../packages/agent-claude/src/session.ts) are the whole contract. Nothing
-in `packages/server/src/types/` imports a runtime value, so it can be read without loading any
+in `packages/sdk/src/types/` imports a runtime value, so it can be read without loading any
 of this.
 
 ## The smallest one
 
 ```ts
-import type { Agent, Bag, Session, Start } from '@ahpd/server';
+import type { Agent, Bag, Session, Start } from '@ahpd/sdk';
 
 export function shout(): Agent {
   return {

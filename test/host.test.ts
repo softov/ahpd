@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Peer } from '../packages/server/src/types/rpc.js';
-import { Status } from '../packages/server/src/catalog.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import { Status } from '../packages/sdk/src/catalog.js';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -116,10 +116,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../packages/server/src/host.js');
-const { fileResources, list, read, resolve, complete } = await import('../packages/server/src/resources.js');
-const { shellTerminals } = await import('../packages/server/src/terminals.js');
-const { gitBranches } = await import('../packages/server/src/git.js');
+const { createHost } = await import('../packages/sdk/src/host.js');
+const { fileResources, list, read, resolve, complete } = await import('../packages/sdk/src/resources.js');
+const { shellTerminals } = await import('../packages/sdk/src/terminals.js');
+const { gitBranches } = await import('../packages/sdk/src/git.js');
 /*
  * What the daemon hands its host, handed here too.
  *
@@ -129,7 +129,7 @@ const { gitBranches } = await import('../packages/server/src/git.js');
  */
 const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 const { claude } = await import('../packages/agent-claude/src/claude.js');
-const { hostTools } = await import('../packages/server/src/tools.js');
+const { hostTools } = await import('../packages/sdk/src/tools.js');
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
 const ETX = String.fromCharCode(3);
@@ -2978,7 +2978,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src` },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/sdk/src` },
     }) as { entries: { name: string; type: string }[] };
     expect(found.entries.map((e) => e.name)).toContain('host.ts');
     // A listing in whatever order the filesystem happened to return is one
@@ -2991,10 +2991,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceRead',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/ahpd/package.json` },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/package.json` },
     }) as { data: string; encoding: string };
     expect(found.encoding).toBe('utf-8');
-    expect(found.data).toContain('"name": "ahpd"');
+    expect(found.data).toContain('"name": "@ahpd/server"');
   });
 
   it('refuses a path it was not told to serve', async () => {
@@ -3008,10 +3008,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
   });
 
   it('refuses one that climbs out of a served directory', async () => {
-    const client = await opened(`${REPO}/packages/server/src`);
+    const client = await opened(`${REPO}/packages/sdk/src`);
     await expect(client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src/../../../../..` },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/sdk/src/../../../../..` },
     })).rejects.toMatchObject({ code: -32009 });
   });
 
@@ -3028,10 +3028,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceResolve',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src` },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/sdk/src` },
     }) as { type: string; uri: string };
     expect(found.type).toBe('directory');
-    expect(found.uri).toBe(`file://${REPO}/packages/server/src`);
+    expect(found.uri).toBe(`file://${REPO}/packages/sdk/src`);
   });
 
   it('will not write without a grant, and names the request that would give one', async () => {
@@ -3087,15 +3087,15 @@ describe('completing an at-sign', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     const found = await client.handle({
       method: 'completions',
-      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @packages/server/src/ho', offset: 30 },
+      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @packages/sdk/src/ho', offset: 30 },
     }) as { items: { insertText: string; rangeStart: number; attachment: { type: string; uri: string } }[] };
 
-    expect(found.items.map((i) => i.insertText)).toContain('@packages/server/src/host.ts');
+    expect(found.items.map((i) => i.insertText)).toContain('@packages/sdk/src/host.ts');
     // The whole `@…` is replaced, so completing does not leave two at-signs.
     expect(found.items[0]?.rangeStart).toBe(8);
     // A reference rather than the bytes: a completion that carried the file
     // would carry it per keystroke.
-    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/server/src/host.ts` });
+    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/sdk/src/host.ts` });
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
@@ -4907,7 +4907,7 @@ describe('the fields a client reads by name', () => {
   });
 
   it('advertises automations only where there are any', async () => {
-    const { memoryAutomations } = await import('../packages/server/src/automations.js');
+    const { memoryAutomations } = await import('../packages/sdk/src/automations.js');
     const without = await open().handle(hello(['0.9.0'])) as Record<string, unknown>;
     // Absence is what tells a client the host has no catalogue and no
     // automation commands, and a correct one will not go looking.

@@ -1,11 +1,17 @@
 # Running the daemon
 
-`ahpd` the daemon is `ahpd` the library with the Claude backend and every port
-wired in, plus argv, a configuration file and a pid file. [packages/ahpd/src/main.ts](../packages/ahpd/src/main.ts)
+`@ahpd/server` is `@ahpd/sdk` with the Claude backend and every port wired in,
+plus argv, a configuration file and a pid file. [packages/server/src/main.ts](../packages/server/src/main.ts)
 is the whole of it and is short enough to read.
 
-Not published to npm yet, so `ahpd` below means `node packages/ahpd/dist/main.js` after
-`pnpm install && pnpm build`.
+It installs the `ahpd` command:
+
+```bash
+npm i -g @ahpd/server
+```
+
+From a checkout instead, `ahpd` below means `node packages/server/dist/main.js`
+after `pnpm install && pnpm build`.
 
 ## Commands
 
@@ -126,15 +132,15 @@ without one.
 ## Runtimes
 
 ```bash
-node packages/ahpd/dist/main.js --port 9187 --path /work/project   # Node
-bun  packages/ahpd/dist/main.js --port 9187 --path /work/project   # Bun
-deno run -A packages/ahpd/dist/main.js --port 9187 --path /work    # Deno
+node packages/server/dist/main.js --port 9187 --path /work/project   # Node
+bun  packages/server/dist/main.js --port 9187 --path /work/project   # Bun
+deno run -A packages/server/dist/main.js --port 9187 --path /work    # Deno
 ```
 
 The runtime is detected at startup and named in the first line of output. Node
 needs the optional `ws` dependency, having no WebSocket server of its own; Bun
 and Deno use their built-in servers and need nothing.
-[packages/server/src/listen.ts](../packages/server/src/listen.ts) is the only file that knows which one it is on.
+[packages/sdk/src/listen.ts](../packages/sdk/src/listen.ts) is the only file that knows which one it is on.
 
 All three are run. Deno was proved on **2.9.6** against the built output,
 driving a whole session - handshake, catalogue, changeset, operations, the

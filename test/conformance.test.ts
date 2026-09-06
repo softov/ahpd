@@ -2,8 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import {
   changesetReducer, chatReducer, rootReducer, sessionReducer, terminalReducer,
 } from '@microsoft/agent-host-protocol';
-import type { ChangesetSource } from '../packages/server/src/types/changes.js';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { ChangesetSource } from '../packages/sdk/src/types/changes.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * Everything this host says, read by the client that will read it.
@@ -75,9 +75,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../packages/server/src/host.js');
+const { createHost } = await import('../packages/sdk/src/host.js');
 const { claude } = await import('../packages/agent-claude/src/claude.js');
-const { shellTerminals } = await import('../packages/server/src/terminals.js');
+const { shellTerminals } = await import('../packages/sdk/src/terminals.js');
 const { echo } = await import('../examples/echo/agent.js');
 
 function peer(): Peer & { notes: { method: string; params: unknown }[] } {

@@ -1,4 +1,4 @@
-import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '@ahpd/server';
+import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '@ahpd/sdk';
 import { echo } from './agent.js';
 
 /**

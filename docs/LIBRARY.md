@@ -2,7 +2,7 @@
 
 `createHost` is the protocol and nothing else: no agent logic, and nothing that
 touches the machine. It is the same function the daemon in
-[packages/ahpd/src/main.ts](../packages/ahpd/src/main.ts) calls.
+[packages/server/src/main.ts](../packages/server/src/main.ts) calls.
 
 This is the *host* half. Writing the backend that answers is
 [AGENT.md](AGENT.md).
@@ -20,7 +20,7 @@ Four things go into a host, and only the first two are required:
 ## The smallest host
 
 ```ts
-import { createHost, listen } from '@ahpd/server';
+import { createHost, listen } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
@@ -44,7 +44,7 @@ runs without a network.
 ## A complete host
 
 ```ts
-import { createHost, listen, fileResources, shellTerminals, gitChanges, gitBranches, scheduledAutomations } from '@ahpd/server';
+import { createHost, listen, fileResources, shellTerminals, gitChanges, gitBranches, scheduledAutomations } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const path = process.cwd();
@@ -106,7 +106,7 @@ store that resolves symlinks knows things about a path that the host does not.
 
 ### `terminals`
 
-`create(options)` returns a `Terminal`. [packages/server/src/terminals.ts](../packages/server/src/terminals.ts)
+`create(options)` returns a `Terminal`. [packages/sdk/src/terminals.ts](../packages/sdk/src/terminals.ts)
 is a subprocess over pipes, which is why it reports `isPty: false` - said rather
 than left to be discovered, because anything drawing itself with cursor movement
 will not look right.
@@ -188,7 +188,7 @@ each with a `provider` no other has. The first is what a client gets when it
 names none.
 
 ```ts
-import { createHost } from '@ahpd/server';
+import { createHost } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 import { notes } from './my-agent.js';
 
@@ -207,7 +207,7 @@ wrong screen rather than an error. [examples/echo](../examples/echo) and
 ## What else is exported
 
 ```ts
-// @ahpd/server - the protocol, the ports, and everything that is not a backend
+// @ahpd/sdk - the protocol, the ports, and everything that is not a backend
 import {
   createHost, ROOT,                       // the host, and the root channel URI
   listen,                                 // a socket, on Node, Bun or Deno
@@ -220,7 +220,7 @@ import {
   uriFor, idFor, idOf, Status,            // how a session is named, and its status bits
   tail, older, PAGE,                      // paging a long list of turns
   within,                                 // whether a path is under a served root
-} from '@ahpd/server';
+} from '@ahpd/sdk';
 
 // @ahpd/agent-claude - one backend, and nothing the host needs to know about
 import {
@@ -232,4 +232,4 @@ import {
 } from '@ahpd/agent-claude';
 ```
 
-Every type is exported too, from `packages/server/src/types/`.
+Every type is exported too, from `packages/sdk/src/types/`.

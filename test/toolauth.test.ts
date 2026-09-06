@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * A tool call that stopped because nobody has signed in.
@@ -76,7 +76,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../packages/server/src/host.js');
+const { createHost } = await import('../packages/sdk/src/host.js');
 const { claude } = await import('../packages/agent-claude/src/claude.js');
 
 const settle = async (times = 10): Promise<void> => {

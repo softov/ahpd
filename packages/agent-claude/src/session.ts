@@ -3,8 +3,8 @@ import { z } from 'zod';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
-import { Status, idOf, tail } from '@ahpd/server';
-import type { Bag, BoundTool, Chosen, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/server';
+import { Status, idOf, tail } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
 
 /**
  * The effort levels this backend has, weakest first.

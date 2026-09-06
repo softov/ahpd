@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { listen } from '../packages/server/src/listen.js';
-import type { Listener } from '../packages/server/src/types/listen.js';
+import { listen } from '../packages/sdk/src/listen.js';
+import type { Listener } from '../packages/sdk/src/types/listen.js';
 
 /*
  * The connection token, over a real socket.

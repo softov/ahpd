@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
-import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/server';
+import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/sdk';
 
 /**
  * A backend with tools, and the two ways one stops to ask.

@@ -2,12 +2,12 @@ import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, describe } from 'vitest';
-import { createHost } from '../packages/server/src/host.js';
+import { createHost } from '../packages/sdk/src/host.js';
 import { echo } from '../examples/echo/agent.js';
-import { scheduledAutomations } from '../packages/server/src/scheduled.js';
-import type { Peer } from '../packages/server/src/types/rpc.js';
-import type { AutomationStore } from '../packages/server/src/types/automations.js';
-import type { Bag } from '../packages/server/src/types/common.js';
+import { scheduledAutomations } from '../packages/sdk/src/scheduled.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import type { AutomationStore } from '../packages/sdk/src/types/automations.js';
+import type { Bag } from '../packages/sdk/src/types/common.js';
 
 /*
  * The half `memoryAutomations` deliberately does not have: a clock, and a file

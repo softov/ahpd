@@ -12,11 +12,11 @@
     "url": "git+https://github.com/softov/ahpd.git"
   },
   "scripts": {
-    "build": "tsc -p packages/server && tsc -p packages/agent-claude && tsc -p packages/ahpd",
-    "start": "node packages/ahpd/dist/main.js",
-    "start:heap": "node --heapsnapshot-near-heap-limit=1 --max-old-space-size=4096 packages/ahpd/dist/main.js",
-    "dev": "node --watch --conditions development --import ./scripts/dev.mjs packages/ahpd/src/main.ts",
-    "dev:bun": "bun --watch --conditions development packages/ahpd/src/main.ts",
+    "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/server",
+    "start": "node packages/server/dist/main.js",
+    "start:heap": "node --heapsnapshot-near-heap-limit=1 --max-old-space-size=4096 packages/server/dist/main.js",
+    "dev": "node --watch --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts",
+    "dev:bun": "bun --watch --conditions development packages/server/src/main.ts",
     "echo": "node --watch --conditions development --import ./scripts/dev.mjs examples/echo/main.ts",
     "echo:bun": "bun --watch --conditions development examples/echo/main.ts",
     "notes": "node --watch --conditions development --import ./scripts/dev.mjs examples/notes/main.ts",
@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "@ahpd/agent-claude": "workspace:*",
-    "@ahpd/server": "workspace:*",
+    "@ahpd/sdk": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "^0.3.250",
     "@microsoft/agent-host-protocol": "^0.9.0",
     "@types/node": "^22.10.2",

@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
-import { createHost } from '../packages/server/src/host.js';
+import { createHost } from '../packages/sdk/src/host.js';
 import { echo } from '../examples/echo/agent.js';
-import type { Peer } from '../packages/server/src/types/rpc.js';
+import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
  * The host's own log, as a channel.
