@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { automationsPath, configPath, loadConfig } from './config.js';
+import { automationsPath, configPath, loadConfig, sessionsPath } from './config.js';
 import { version } from './version.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
-import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, memoryAutomations, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -55,6 +55,15 @@ interface Options {
    * client is the `nextRunAt` the memory one does not report.
    */
   automations: 'file' | 'memory';
+  /**
+   * Where the flags and configuration this host adds on top of a backend go.
+   *
+   * `file` keeps them beside the configuration, so a restart still knows which
+   * sessions were archived and which had been read. `memory` holds them for as
+   * long as the process runs, which returns every archived session to the
+   * catalogue on a restart - for every client at once, since these are shared.
+   */
+  sessions: 'file' | 'memory';
   help: boolean;
   /** Say the version and stop. */
   version: boolean;
@@ -85,12 +94,16 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 configuration and fires their schedules;
                                 memory keeps them until this process ends and
                                 fires nothing.
+  --sessions <where>            Where the read and archived bits and a
+                                session's settings go. file, the default,
+                                keeps them beside the configuration; memory
+                                forgets them when this process ends.
   --version, -v                 What version this is
   --help, -h                    This
 
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
-connectionTokenFile, withoutConnectionToken, automations. A flag beats the file, because a
+connectionTokenFile, withoutConnectionToken, automations, sessions. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
@@ -106,6 +119,7 @@ function parse(argv: string[]): Options {
     host: '127.0.0.1',
     paths: [],
     automations: 'file',
+    sessions: 'file',
     open: false,
     help: false,
     version: false,
@@ -128,6 +142,12 @@ function parse(argv: string[]): Options {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
         else stop(`--automations takes file or memory, not ${said}.`);
+        break;
+      }
+      case '--sessions': {
+        const said = String(argv[++i]);
+        if (said === 'file' || said === 'memory') options.sessions = said;
+        else stop(`--sessions takes file or memory, not ${said}.`);
         break;
       }
       case '--help': case '-h': options.help = true; break;
@@ -157,6 +177,9 @@ function parse(argv: string[]): Options {
   if (!options.open && file.withoutConnectionToken === true) options.open = true;
   if (!argv.includes('--automations') && (file.automations === 'file' || file.automations === 'memory')) {
     options.automations = file.automations;
+  }
+  if (!argv.includes('--sessions') && (file.sessions === 'file' || file.sessions === 'memory')) {
+    options.sessions = file.sessions;
   }
 
   if (options.paths.length === 0) options.paths.push(process.cwd());
@@ -331,6 +354,20 @@ const host = createHost({
    * not told which it was given - a host embedded in something that already
    * schedules passes a third of its own.
    */
+  /*
+   * What this host adds on top of a backend, kept between restarts.
+   *
+   * The bits every client shares and the settings a session runs under. A
+   * daemon is exactly the case the port was written for: it is restarted for
+   * an upgrade, and without this every archived session comes back into the
+   * catalogue and every read one is unread, for everybody, with nothing said.
+   */
+  sessions: options.sessions === 'memory'
+    ? memorySessions()
+    : fileSessions({
+      file: sessionsPath(),
+      onProblem: (message) => process.stdout.write(`${message}\n`),
+    }),
   automations: memory
     ? memoryAutomations()
     : scheduledAutomations({

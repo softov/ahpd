@@ -26,6 +26,7 @@ import { within } from './paths.js';
 import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
+import { memorySessions } from './sessions.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
@@ -416,7 +417,7 @@ export function createHost(options: HostOptions): Host {
    * `clientId` rather than by connection, because that is what the protocol
    * keys it by - a client that reconnects is the same client.
       *
-   * By the id inside a session's URI, like `flags` and `chosen`: a client
+   * By the id inside a session's URI, as the session store is: a client
    * announces itself on the way in, which can be before this host has listed
    * anything and so before it knows the name it will publish that session
    * under.
@@ -442,8 +443,18 @@ export function createHost(options: HostOptions): Host {
    * The client flags, and unlike the in-process host these genuinely belong
    * here: a flag one client sets is a flag every other client has to see, and
    * that is exactly what having a host buys.
+   *
+   * The store also holds the configuration chosen for a session that has no
+   * agent running: a row read from its transcript is configurable before it is
+   * resumed, and most of what the schema offers is fixed when the query is
+   * built, so a session resumed without those answers is one that can never be
+   * given them.
+   *
+   * Held by the store rather than in maps here, so a host given one that
+   * writes them down still has them after a restart. The default forgets,
+   * which is what an embedded host wants; see `SessionStore`.
    */
-  const flags = new Map<string, number>();
+  const kept = options.sessions ?? memorySessions();
   /**
    * A live session: one or more chats, and what they all run on.
    *
@@ -649,19 +660,6 @@ export function createHost(options: HostOptions): Host {
    */
   const known = new Set<string>();
   /**
-   * Config chosen for a session that has no agent running.
-   *
-   * A row read from its transcript is configurable before it is resumed, and
-   * this is where the answers wait. Most of what the schema offers is fixed
-   * when the query is built, so a session resumed without them is one that can
-   * never be given them - which made "plan only" unofferable on exactly the
-   * sessions somebody is deciding whether to continue.
-   *
-   * By the id, for the reason `flags` is: settings arrive before a listing has
-   * said what this host will call the session.
-   */
-  const chosen = new Map<string, Record<string, unknown>>();
-  /**
    * What one backend turned out to offer.
    *
    * Advertised on the *root* channel, but only a live backend can enumerate
@@ -800,7 +798,7 @@ export function createHost(options: HostOptions): Host {
   const statusOf = (uri: string): number => {
     const held = sessions.get(uri);
     if (!held)
-      return Status.Idle | (flags.get(idOf(uri)) ?? 0);
+      return Status.Idle | kept.flags(idOf(uri));
     /*
      * The default chat's activity, promoted by any other chat that needs
      * something.
@@ -816,7 +814,7 @@ export function createHost(options: HostOptions): Host {
       if (its === Status.InputNeeded) activity = Status.InputNeeded;
       else if (its === Status.Error && activity !== Status.InputNeeded) activity = Status.Error;
     }
-    return activity | (flags.get(idOf(uri)) ?? 0);
+    return activity | kept.flags(idOf(uri));
   };
   /** The most recent change across a session's chats. */
   const modifiedOf = (held: Held): string => [...held.chats.values()]
@@ -2137,7 +2135,7 @@ export function createHost(options: HostOptions): Host {
           title: row.title,
           // Nothing this host started is running yet, so activity is idle and
           // the only bits set are the client's own.
-          status: Status.Idle | (flags.get(row.id) ?? 0),
+          status: Status.Idle | kept.flags(row.id),
           createdAt: row.createdAt,
           modifiedAt: row.modifiedAt,
           workingDirectories: row.workingDirectories,
@@ -3151,7 +3149,7 @@ export function createHost(options: HostOptions): Host {
           resource: channel,
           provider: owner.provider,
           title,
-          status: Status.Idle | (flags.get(id) ?? 0),
+          status: Status.Idle | kept.flags(id),
           lifecycle: 'ready',
           defaultChat: chatUriFor(nameOf(id)),
           // A whole `ChatSummary`, and not a name and a URI: a client reads a
@@ -3179,7 +3177,7 @@ export function createHost(options: HostOptions): Host {
           // which are the settings somebody wants *before* continuing one.
           config: {
             schema: published(owner.schema()),
-            values: { ...owner.defaults(), ...(chosen.get(id) ?? {}) },
+            values: { ...owner.defaults(), ...(kept.config(id) ?? {}) },
           },
         },
         fromSeq: serverSeq,
@@ -4669,12 +4667,14 @@ export function createHost(options: HostOptions): Host {
           if (from !== undefined) options.automations?.unlink?.(from.run, uri);
           origins.delete(uri);
           presence.delete(idOf(uri));
-          // And what was kept *about* it. Both of these are keyed by a session
+          // And what was kept *about* it. All of these are keyed by a session
           // that no longer exists, so anything left here is held for nobody -
           // a daemon that runs for weeks would accumulate one of each per
-          // session anybody ever opened.
+          // session anybody ever opened, and a store that writes them down
+          // would keep them for ever.
           marks.delete(idOf(uri));
           decided.delete(uri);
+          kept.forget(idOf(uri));
           offered.delete(uri);
           for (const channel of [...shown.keys()]) {
             if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
@@ -5067,11 +5067,11 @@ export function createHost(options: HostOptions): Host {
           const on = type === 'session/isReadChanged'
             ? action.isRead === true
             : action.isArchived === true;
-          const before = flags.get(idOf(uri)) ?? 0;
+          const before = kept.flags(idOf(uri));
           const after = on ? before | bit : before & ~bit;
           if (after === before)
             return;
-          flags.set(idOf(uri), after);
+          kept.setFlags(idOf(uri), after);
           // Every client watching, and the catalogue: a flag one client sets
           // is a flag the others have to see, which is what having a host
           // for this buys over each client keeping its own.
@@ -5137,9 +5137,9 @@ export function createHost(options: HostOptions): Host {
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
-          const kept = { ...chosen.get(idOf(uri)) };
-          for (const [key, value] of Object.entries(config)) kept[key] = String(value);
-          chosen.set(idOf(uri), kept);
+          const values = { ...kept.config(idOf(uri)) };
+          for (const [key, value] of Object.entries(config)) values[key] = String(value);
+          kept.setConfig(idOf(uri), values);
           dispatch(uri, action);
           return;
         }
@@ -5181,7 +5181,7 @@ export function createHost(options: HostOptions): Host {
             // a conversation whose second half cannot see the files its
             // first half was about.
             const ran = wheres.get(named)?.[0]?.replace(/^file:\/\//, '');
-            const session = spawn(owner, named, chatUriFor(named), chosen.get(id) ?? {}, { resume: id, seed }, ran);
+            const session = spawn(owner, named, chatUriFor(named), kept.config(id) ?? {}, { resume: id, seed }, ran);
             log(`resumed ${named}`);
             dispatch(named, { type: 'session/ready' });
             summaryMoved(named);

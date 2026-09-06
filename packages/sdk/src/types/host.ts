@@ -7,6 +7,7 @@ import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { AutomationStore } from './automations.js';
+import type { SessionStore } from './sessions.js';
 import type { Peer, Request } from './rpc.js';
 
 /**
@@ -198,6 +199,15 @@ export interface HostOptions {
    * definitions, runs them when asked, and holds no clock.
    */
   automations?: AutomationStore;
+  /**
+   * Where the flags and configuration this host adds on top of a backend go.
+   *
+   * `memorySessions()` is the default and forgets them when the process ends,
+   * which is right for a host embedded in something that outlives no restart
+   * of its own. A daemon wants `fileSessions()`, or a restart silently
+   * un-archives every session and marks every read one unread for everybody.
+   */
+  sessions?: SessionStore;
   /**
    * Tools this host contributes to every session it runs.
    *

@@ -315,9 +315,9 @@ that reduced one would apply the very change this host declined to make.
 
 | | |
 | --- | --- |
-| read and archived do not survive one | `IsRead` and `IsArchived` are this host's rather than a backend's, are shared by every client, and are held in memory. A restart returns every archived session to the catalogue and marks every read one unread, for everybody, with nothing said about it |
-| so do the settings chosen for a session | the configuration values in force are held the same way and go the same way, back to each agent's defaults |
-| the sessions themselves come back | they are read from the backend's own transcripts, so what a restart loses is only what this host added on top of them. A store for that is a port this host does not yet have, the way `automations` is one it does |
+| read and archived survive one, if the host was given a store that keeps them | `IsRead` and `IsArchived` are this host's rather than a backend's and are shared by every client, so where they go is a `SessionStore`. `memorySessions()` is the default and forgets them; `fileSessions()` writes them down. `@ahpd/server` chooses with `--sessions file\|memory` and defaults to the file |
+| so do the settings chosen for a session | the configuration values in force are kept the same way, in the same store, and come back with it |
+| the sessions themselves come back either way | they are read from the backend's own transcripts, so what a store decides is only whether what this host added on top of them comes back too |
 
 ### Turns
 

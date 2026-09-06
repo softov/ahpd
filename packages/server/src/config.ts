@@ -25,6 +25,11 @@ export interface Config {
    * definitions for the life of the process and fires nothing.
    */
   automations?: 'file' | 'memory';
+  /**
+   * Where the read and archived bits and a session's settings are kept: `file`
+   * beside this configuration, or `memory` until the process ends.
+   */
+  sessions?: 'file' | 'memory';
 }
 
 /**
@@ -71,6 +76,16 @@ export const daemonLog = (): string => join(configDir(), 'daemon.log');
  * and the ordering somebody put there.
  */
 export const automationsPath = (): string => join(configDir(), 'automations.json');
+
+/**
+ * Where what this host adds on top of a backend is kept.
+ *
+ * The `IsRead` and `IsArchived` bits every client shares, and the settings a
+ * session is running under. Beside the automations for the same reason: this
+ * one is written whenever somebody archives a row, and `config.json` is a file
+ * a person edits.
+ */
+export const sessionsPath = (): string => join(configDir(), 'sessions.json');
 
 /** Make sure the directory is there, so a write into it can succeed. */
 export const ensureConfigDir = (): void => { mkdirSync(configDir(), { recursive: true }); };

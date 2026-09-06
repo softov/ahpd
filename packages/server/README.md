@@ -59,6 +59,7 @@ ahpd config                 print the config file path and its contents
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Use this config file instead of the default |
 | `--automations <where>` | `file`, the default, keeps them beside the config and fires their schedules. `memory` keeps them until the process ends and fires nothing |
+| `--sessions <where>` | Where the read and archived bits and a session's settings go. `file`, the default, keeps them beside the config. `memory` forgets them when the process ends |
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
 
