@@ -1,6 +1,6 @@
 # What is left
 
-Not a backlog of everything imaginable. Three pieces of work that are decided, and a short list of things found by review that are worth doing but are nobody's emergency.
+Open scopes only. A row comes out when the work lands, and git keeps what was here before.
 
 ## Decided
 
@@ -12,17 +12,15 @@ The shape is the one `automations` already has: a port with a memory implementat
 
 ### An MCP server
 
-`@ahpd/server` speaking MCP, so an agent somewhere else can list sessions, send a turn and read a transcript as tools. Not the MCP that `@ahpd/agent-claude` already speaks, which is servers offered *to* a session; this is the other direction, the daemon as a server.
+An MCP server so an agent somewhere else can list sessions, send a turn and read a transcript as tools. Not the MCP that `@ahpd/agent-claude` already speaks, which is servers offered *to* a session; this is the other direction, a host driven as a server.
 
-Open questions: stdio or HTTP or both, whether it drives a running daemon over AHP or embeds a host, and which tools are worth exposing before the surface grows past what anyone can hold.
+It lives in `ahpc` rather than here, and no new package: MCP is a client of a host, `ahpc` already is one, and its `HostConnection` is the backend the tools call. One table of declarations behind three surfaces - stdio for a client that owns the process, streamable HTTP for a shared one, and a plain HTTP API for anything that is not an MCP client.
 
 ### Publish the badges
 
 `@ahpd/sdk`, `@ahpd/agent-claude` and `@ahpd/server` are on npm at 0.2.0. The version badges and the CI badge are worth adding once the repository is public.
 
-## Found by review, worth doing
-
-A review on 6 September 2026 found nine defects across this repository and `ahpc`. All nine are fixed and each has a test. What follows is what that review suggested rather than found, kept because the review file itself is not part of this repository.
+## Worth doing
 
 | | |
 | --- | --- |
@@ -31,3 +29,5 @@ A review on 6 September 2026 found nine defects across this repository and `ahpc
 ## Deliberate duplication
 
 `resourceWrite` is symmetrical, so `ahpd` and `ahpc` each implement the whole of it: the same flags, the same order of preconditions, the same append and insert arithmetic. `ahpc` does not depend on `@ahpd/sdk` and is not going to. Both copies carry a comment naming the other. A defect in one is a defect in both, and fixing only one is the failure mode to watch for.
+
+One place where they have already drifted, pinned by a test in `ahpc`'s `publish.test.ts`: writing to a path whose final component is a symbolic link. `writable` here resolves only the parent, so `O_NOFOLLOW` refuses the write. `ahpc` resolves the whole path, so a link whose destination is still published is written *through*. Reading follows links at both ends and that is not in question - only which of the two the write half should be.
