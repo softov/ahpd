@@ -1251,6 +1251,38 @@ describe('what the harness offers', () => {
     expect(byId.get('mcp:gmail')?.enablement?.[0]?.enabled).toBe(true);
   });
 
+  it('offers a live session\'s own commands, which live inside its containers', async () => {
+    sdk.init = {
+      models: [],
+      commands: [
+        { name: 'compact', description: 'Compact the conversation' },
+        { name: 'writing', description: 'How to write' },
+      ],
+      agents: [],
+    };
+    // In both lists, so it is a skill a person may invoke. One the CLI loaded
+    // and did *not* put behind a slash is the agent's own, and stays out.
+    sdk.skills.push({ name: 'writing', description: 'How to write' });
+    sdk.skills.push({ name: 'internal', description: 'The agent\'s own' });
+    const { client, chatUri } = await running();
+    await settle(8);
+
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: chatUri, kind: 'userMessage', text: '/', offset: 1 },
+    }) as { items: { insertText: string }[] };
+    /*
+     * A prompt and a skill are `children` of a directory, never top-level.
+     *
+     * A filter that looked only at the top level found nothing every time and
+     * fell back to the backend-wide list - which answered correctly and by
+     * accident, and would have handed two sessions in one directory the same
+     * commands however differently they were configured.
+     */
+    expect(found.items.map((one) => one.insertText).sort()).toEqual(['/compact', '/writing']);
+    expect(found.items.map((one) => one.insertText)).not.toContain('/internal');
+  });
+
   it('tells the client that a slash is worth asking about', async () => {
     const client = open();
     const result = await client.handle(hello(['0.8.0'])) as { completionTriggerCharacters: string[] };

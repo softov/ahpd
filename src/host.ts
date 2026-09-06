@@ -3711,7 +3711,21 @@ export function createHost(options: HostOptions): Host {
             ?? (sessions.get(asked_) ? leadOf(sessions.get(asked_) as Held) : undefined);
           // A live session's own list wins: two sessions in one directory can
           // be handed different things.
-          const own = (session?.customizations() ?? [])
+          /*
+           * Inside the containers, because that is where a leaf lives.
+           *
+           * A top-level customization is a plugin or a directory and a skill
+           * or a prompt is one of its `children` - so a filter that looked
+           * only at the top level found nothing, every time, and this fell
+           * back to the backend-wide list on every keystroke. Which answered
+           * correctly and by accident: the whole point of `own` is that two
+           * sessions in one directory can be handed different things.
+           */
+          const leaves = (session?.customizations() ?? []).flatMap((entry) => {
+            const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
+            return children.length > 0 ? children : [entry];
+          });
+          const own = leaves
             // Skills as well as prompts, and not the ones the CLI keeps for
             // the agent: offering one it will refuse is worse than not
             // offering it.

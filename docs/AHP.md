@@ -140,6 +140,10 @@ are not served are all `chat/*`, all client-dispatchable, and each is refused in
 its own words rather than as unserved - a client that sent one learns why
 nothing happened.
 
+Three of the four are **not implemented**; one is genuinely inapplicable. The
+rows say which, because "the backend has no such moment" and "nobody has
+written it" read the same in a refusal and are not the same fact.
+
 **Origin** is the protocol's own `IS_CLIENT_DISPATCHABLE`: `client` is one a
 client may originate, `host` is one only this host may say, and `both` is a
 client action this host also emits on its own account. A host-only action
@@ -200,8 +204,8 @@ which is a different complaint from an action nobody has served.
 | `chat/toolCallReady` | host | ✅ | Closes a streaming call with the parsed input. `confirmed: not-needed` unless `canUseTool` actually asked - without it the reducer draws every call in the transcript as a question nobody put. |
 | `chat/toolCallConfirmed` | both | ✅ | A client answering; and this host saying what was answered, for the other clients watching. |
 | `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. |
-| `chat/toolCallResultConfirmed` | client | 🚫 | Refused: it belongs to a call completed with `requiresResultConfirmation`, and no call this host builds sets one. The confirmation here happens before the tool runs, not after. |
-| `chat/toolCallContentChanged` | client | 🚫 | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor, so no client has the standing to write into one. |
+| `chat/toolCallResultConfirmed` | client | 🚫 | Refused, and this is the one of the four that is genuinely inapplicable rather than unwritten: it belongs to a call completed with `requiresResultConfirmation`, the SDK's only approval moment is `canUseTool` *before* a tool runs, and there is no after-the-fact gate to reflect. A host could invent a policy of its own here; that would be this host asking a question the backend never asked. |
+| `chat/toolCallContentChanged` | client | 🚫 | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor - and that is because **client-provided tools are not implemented**: this host never routes a call to a client, so `SessionActiveClient.tools` is published and never drawn on. Serving this action means serving that feature first. |
 | `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
 | `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
 | `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
@@ -218,9 +222,9 @@ which is a different complaint from an action nobody has served.
 | `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
 | `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. |
 | `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
-| `chat/inputAnswerChanged` | client | 🚫 | Refused: this host keeps no `inputRequest` part to hold a draft answer on - the question lives on `session.inputNeeded` and is answered whole. |
+| `chat/inputAnswerChanged` | client | 🚧 | Refused today, and **not implemented** rather than inapplicable: the question lives on `session.inputNeeded` and is answered whole, so there is no part holding a per-question draft. Holding one is the same shape as `chat/draftChanged`, which this host does hold - so two people answering one elicitation would see each other typing, which is the whole point of the action. |
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
-| `chat/truncated` | client | 🚫 | Refused: the harness compacts its own context and says nothing about it, and every one of those turns is still in the transcript. Dropping them here would be this host claiming a thing it did not do. |
+| `chat/truncated` | client | 🚧 | Refused today, and the refusal is the honest half: this is **not implemented**, not inapplicable. The action drops the turns after a named one so a client can re-send an edited message - the edit-and-resend flow - and it has nothing to do with the harness compacting its own context, which is what an earlier version of this row wrongly said it was. The machinery is here: `cuts` already maps a turn id to the SDK prompt uuid, and `forkSession` / `resumeSessionAt` already continue a conversation from one. |
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. |
 
 ### `terminal/*` — 11 of 11 🧩
