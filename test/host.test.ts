@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../packages/server/src/types/rpc.js';
 import { Status } from '../packages/server/src/catalog.js';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * This checkout, as an absolute path.
+ *
+ * The tests below read real files out of this repository, so the path has to
+ * be found rather than written down: a literal one passes on the machine it
+ * was written on and fails on every other, CI included.
+ */
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 /*
  * The host, without a socket.
@@ -2958,7 +2968,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     ...machine(),
   }).accept(peer());
 
-  const opened = async (base = '/github/ahpd') => {
+  const opened = async (base = REPO) => {
     const client = at(base);
     await client.handle(hello(['0.8.0']));
     return client;
@@ -2968,7 +2978,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src` },
     }) as { entries: { name: string; type: string }[] };
     expect(found.entries.map((e) => e.name)).toContain('host.ts');
     // A listing in whatever order the filesystem happened to return is one
@@ -2981,7 +2991,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceRead',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/ahpd/package.json' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/ahpd/package.json` },
     }) as { data: string; encoding: string };
     expect(found.encoding).toBe('utf-8');
     expect(found.data).toContain('"name": "ahpd"');
@@ -2998,10 +3008,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
   });
 
   it('refuses one that climbs out of a served directory', async () => {
-    const client = await opened('/github/ahpd/packages/server/src');
+    const client = await opened(`${REPO}/packages/server/src`);
     await expect(client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src/../../../../..' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src/../../../../..` },
     })).rejects.toMatchObject({ code: -32009 });
   });
 
@@ -3010,7 +3020,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     // The two are different answers and a client acts differently on each.
     await expect(client.handle({
       method: 'resourceRead',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/nothing-here.txt' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/nothing-here.txt` },
     })).rejects.toMatchObject({ code: -32008 });
   });
 
@@ -3018,10 +3028,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceResolve',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/server/src` },
     }) as { type: string; uri: string };
     expect(found.type).toBe('directory');
-    expect(found.uri).toBe('file:///github/ahpd/packages/server/src');
+    expect(found.uri).toBe(`file://${REPO}/packages/server/src`);
   });
 
   it('will not write without a grant, and names the request that would give one', async () => {
@@ -3030,10 +3040,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     // the request would be a dead end - the client has nothing to send next.
     await expect(client.handle({
       method: 'resourceWrite',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', data: 'x', encoding: 'utf-8' },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/x`, data: 'x', encoding: 'utf-8' },
     })).rejects.toMatchObject({
       code: -32009,
-      data: { request: { channel: 'ahp-root://', uri: 'file:///github/ahpd/x', write: true } },
+      data: { request: { channel: 'ahp-root://', uri: `file://${REPO}/x`, write: true } },
     });
   });
 
@@ -3043,24 +3053,24 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     // client that gets `-32009` instead would go and ask for a grant it could
     // never use.
     const host = createHost({
-      path: '/github/ahpd',
-      agents: [claude({ paths: ['/github/ahpd'] })],
+      path: REPO,
+      agents: [claude({ paths: [REPO] })],
       resources: { list, read, resolve, complete },
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     await client.handle({
       method: 'resourceRequest',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd', write: true },
+      params: { channel: 'ahp-root://', uri: `file://${REPO}`, write: true },
     });
     for (const method of ['resourceWrite', 'resourceDelete', 'resourceMkdir', 'resourceMove', 'resourceCopy']) {
       await expect(client.handle({
         method,
         params: {
           channel: 'ahp-root://',
-          uri: 'file:///github/ahpd/x',
-          source: 'file:///github/ahpd/x',
-          destination: 'file:///github/ahpd/y',
+          uri: `file://${REPO}/x`,
+          source: `file://${REPO}/x`,
+          destination: `file://${REPO}/y`,
           data: '',
           encoding: 'utf-8',
         },
@@ -3071,7 +3081,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
 
 describe('completing an at-sign', () => {
   it('offers paths under the session\'s own directory', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
+    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
@@ -3085,11 +3095,11 @@ describe('completing an at-sign', () => {
     expect(found.items[0]?.rangeStart).toBe(8);
     // A reference rather than the bytes: a completion that carried the file
     // would carry it per keystroke.
-    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: 'file:///github/ahpd/packages/server/src/host.ts' });
+    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/server/src/host.ts` });
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
+    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     const found = await client.handle({
@@ -3100,7 +3110,7 @@ describe('completing an at-sign', () => {
   });
 
   it('leaves a slash command alone, because the two cannot both match', async () => {
-    const host = createHost({ path: '/github/ahpd', agents: [claude({ paths: ['/github/ahpd'] })], ...machine() });
+    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
     const found = await client.handle({

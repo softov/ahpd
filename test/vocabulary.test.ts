@@ -2,6 +2,16 @@ import * as protocol from '@microsoft/agent-host-protocol';
 import { describe, expect, it } from 'vitest';
 import { gitChanges } from '../packages/server/src/changes.js';
 import { fileResources } from '../packages/server/src/resources.js';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * This checkout, as an absolute path.
+ *
+ * The tests below read real files out of this repository, so the path has to
+ * be found rather than written down: a literal one passes on the machine it
+ * was written on and fails on every other, CI included.
+ */
+const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 /*
  * The *words* inside a payload, which nothing else here checks.
@@ -59,8 +69,8 @@ describe('the words this host writes', () => {
   it('reports a changeset status the protocol declares', async () => {
     const source = gitChanges();
     // This repository itself: a real one, in whatever state it happens to be.
-    await source.refresh?.('/github/ahpd');
-    const state = await source.state('/github/ahpd', 'ahp-session:/x', 'uncommitted');
+    await source.refresh?.(REPO);
+    const state = await source.state(REPO, 'ahp-session:/x', 'uncommitted');
     // `undefined` is a real answer for a directory with nothing to report and
     // is not what is under test here; a *word* is.
     if (state === undefined) return;
@@ -69,12 +79,12 @@ describe('the words this host writes', () => {
 
   it('names its changeset scopes in the protocol\'s words', () => {
     const source = gitChanges();
-    for (const scope of source.scopes('/github/ahpd', 'ahp-session:/x')) {
+    for (const scope of source.scopes(REPO, 'ahp-session:/x')) {
       // `changeKind` is deliberately not checked: the protocol declares it a
       // bare `string`, so there is no vocabulary to be wrong about.
       expect(typeof scope.changeKind).toBe('string');
     }
-    for (const operation of source.operations?.('/github/ahpd', 'ahp-session:/x', 'uncommitted') ?? []) {
+    for (const operation of source.operations?.(REPO, 'ahp-session:/x', 'uncommitted') ?? []) {
       for (const scope of operation.scopes) {
         expect(words('ChangesetOperationScope')).toContain(scope);
       }
@@ -83,12 +93,12 @@ describe('the words this host writes', () => {
 
   it('reports a resource kind and an encoding the protocol declares', async () => {
     const store = fileResources();
-    const entries = await store.list('file:///github/ahpd/packages/server/src', ['/github/ahpd']);
+    const entries = await store.list(`file://${REPO}/packages/server/src`, [REPO]);
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(words('ResourceType')).toContain(entry.type);
     }
-    const read = await store.read('file:///github/ahpd/package.json', ['/github/ahpd']);
+    const read = await store.read(`file://${REPO}/package.json`, [REPO]);
     expect(words('ContentEncoding')).toContain(read.encoding);
   });
 });
