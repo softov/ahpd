@@ -686,6 +686,6 @@ stable ones so it can be diffed when something moves. The same check runs over
 a recording taken off a real daemon:
 
 ```bash
-npm run schema                            # after a protocol bump
-npm run wire -- test/fixtures/wire.jsonl  # or a capture from scripts/tee.mjs
+pnpm schema                            # after a protocol bump
+pnpm wire -- test/fixtures/wire.jsonl  # or a capture from scripts/tee.mjs
 ```

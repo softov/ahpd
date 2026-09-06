@@ -9,9 +9,9 @@ runs something else. This is the something else: a backend that answers by
 saying it back, with no model and no subprocess behind it.
 
 ```bash
-npm install
-npm run echo -- --port 9200      # from source, restarts on save
-npm run echo:bun -- --port 9200  # the same, on Bun
+pnpm install
+pnpm echo -- --port 9200      # from source, restarts on save
+pnpm echo:bun -- --port 9200  # the same, on Bun
 
 # then, from anywhere
 ahpc --host ws://127.0.0.1:9200

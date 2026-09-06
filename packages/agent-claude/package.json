@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-claude",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "description": "The Claude backend for @ahpd/server: one Agent, and the transcripts it left behind",
   "main": "./dist/index.js",
@@ -12,12 +12,23 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "src", "README.md"],
-  "engines": { "node": ">=22" },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
-    "@ahpd/server": "0.0.1",
+    "@ahpd/server": "workspace:^",
     "@anthropic-ai/claude-agent-sdk": "^0.3.250",
-    "@microsoft/agent-host-protocol": "^0.9.0",
     "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@microsoft/agent-host-protocol": "^0.9.0"
+  },
+  "devDependencies": {
+    "@microsoft/agent-host-protocol": "^0.9.0"
   }
 }

@@ -196,8 +196,8 @@ Both are complete, both run, and `createHost` cannot tell either from `claude()`
 | [examples/notes](../examples/notes) | The same with tools: one that runs without asking, one that waits to be allowed, and a question that is not about a tool. Its README is the rules for asking |
 
 ```bash
-npm run echo  -- --port 9200
-npm run notes -- --port 9201
+pnpm echo  -- --port 9200
+pnpm notes -- --port 9201
 ahpc --host ws://127.0.0.1:9201
 ```
 

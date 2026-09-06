@@ -5,7 +5,7 @@ wired in, plus argv, a configuration file and a pid file. [packages/ahpd/src/mai
 is the whole of it and is short enough to read.
 
 Not published to npm yet, so `ahpd` below means `node packages/ahpd/dist/main.js` after
-`npm install && npm run build`.
+`pnpm install && pnpm build`.
 
 ## Commands
 
@@ -145,12 +145,12 @@ does, and Deno reads that literally.
 ## While you are changing it
 
 ```bash
-npm run dev          # node
-npm run dev:bun      # bun
-npm run echo         # the same pair, for examples/echo
-npm run echo:bun
-npm run notes        # and for examples/notes
-npm run notes:bun
+pnpm dev          # node
+pnpm dev:bun      # bun
+pnpm echo         # the same pair, for examples/echo
+pnpm echo:bun
+pnpm notes        # and for examples/notes
+pnpm notes:bun
 ```
 
 All six run the TypeScript source, restart on save, compile nothing and install

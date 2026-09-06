@@ -52,7 +52,7 @@ The clients on the left are interchangeable and none of them owns the session. `
 
 ```bash
 git clone https://github.com/softov/ahpd && cd ahpd
-npm install && npm run build
+pnpm install && pnpm build
 node packages/ahpd/dist/main.js --path /work/project
 ```
 
@@ -245,11 +245,15 @@ fail silently rather than loudly.
 
 ## Layout
 
-Three packages in one repository. The boundary is real - `@ahpd/server` imports
-nothing that runs an agent, and the check for that is that it compiles with both
-`@ahpd/agent-claude` and the Claude agent SDK uninstalled. It did not, at first:
-`catalogue` reached for the SDK's session listing from inside the host, and the
-split is what made that visible.
+Three packages in one repository, on pnpm. The boundary is real - `@ahpd/server`
+imports nothing that runs an agent, and the check for that is that it compiles
+with nothing in its `node_modules` but the protocol package: no backend, no
+agent SDK, no zod. It did not, at first - `catalogue` reached for the SDK's
+session listing from inside the host - and pnpm is why that is now hard to
+reintroduce. npm hoists every dependency in the workspace to one directory, so
+any package can import anything installed anywhere and it resolves; pnpm links
+only what a package declares, so an undeclared import fails where it is written
+rather than in somebody else's install.
 
 ### `@ahpd/server` — the protocol, and the parts to build a host
 
@@ -300,17 +304,17 @@ Two agents and a client, each complete and each running. The two agents have a R
 | [softov/ahpc](https://github.com/softov/ahpc) | An Agent Host Protocol chat and CLI client, depending on no agent SDK at all |
 
 ```bash
-npm run echo  -- --port 9200
-npm run notes -- --port 9201
+pnpm echo  -- --port 9200
+pnpm notes -- --port 9201
 ahpc --host ws://127.0.0.1:9201
 ```
 
 ## Development
 
 ```bash
-npm test        # ~425 tests, no socket and no network
-npm run typecheck
-npm run wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
+pnpm test        # ~450 tests, no socket and no network
+pnpm typecheck
+pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```
 
 The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.

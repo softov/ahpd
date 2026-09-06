@@ -1,0 +1,13 @@
+packages:
+  - 'packages/*'
+
+allowBuilds:
+  esbuild: set this to true or false
+  node-pty: set this to true or false
+
+# Native and prebuilt-fetching packages, which pnpm will not run install scripts
+# for unless they are named here. `node-pty` is optional - the terminals port
+# falls back to pipes without it - and esbuild is vitest's bundler.
+onlyBuiltDependencies:
+  - esbuild
+  - node-pty

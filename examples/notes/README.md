@@ -14,9 +14,9 @@ that does - and when you leave out which note you meant, it asks a question
 that is not about a tool at all.
 
 ```bash
-npm install
-npm run notes -- --port 9201      # from source, restarts on save
-npm run notes:bun -- --port 9201  # the same, on Bun
+pnpm install
+pnpm notes -- --port 9201      # from source, restarts on save
+pnpm notes:bun -- --port 9201  # the same, on Bun
 
 # then, from anywhere
 ahpc --host ws://127.0.0.1:9201
