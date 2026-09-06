@@ -2,9 +2,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { automationsPath, configPath, loadConfig } from './config.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
+import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
 import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, scheduledAutomations, shellTerminals } from '@ahpd/server';
-import type { SpawnPty } from '@ahpd/server';
 
 /**
  * The daemon.
@@ -48,7 +48,7 @@ interface Options {
   help: boolean;
 }
 
-const USAGE = `ahpd - an Agent Host Protocol host that runs Claude Code
+const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 
   ahpd [options]              run it here, in this terminal
   ahpd start [options]        run it in the background and let go of it
@@ -242,27 +242,6 @@ if (options.help) {
 }
 
 const { token, from } = secret(options);
-
-/**
- * A pseudoterminal binding, if this machine has one built.
- *
- * `node-pty` is native code and an optional dependency: with it, shells run
- * under a real terminal and the shell's own OSC 133 marks turn into command
- * boundaries; without it they run on pipes and the state says `isPty: false`,
- * which is what the protocol has that flag for. Imported here rather than in
- * the library, so `ahpd` as a package stays loadable under any runtime.
- */
-const pty = async (): Promise<{ pty?: SpawnPty }> => {
-  try {
-    // By name at runtime, so the type checker is not asked for a module that
-    // may not be installed - which is the whole point of it being optional.
-    const found = await import(/* @vite-ignore */ 'node-pty' as string) as { spawn?: unknown };
-    return typeof found.spawn === 'function' ? { pty: found.spawn as SpawnPty } : {};
-  }
-  catch {
-    return {};
-  }
-};
 
 const host = createHost({
   path: options.paths[0] as string,
