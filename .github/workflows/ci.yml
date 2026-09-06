@@ -54,7 +54,19 @@ jobs:
           echo '--- schema'
           node tools/schema.mjs
           echo '--- vitest'
+          (
+            while true; do
+              echo "[mem] $(free -m | awk '/Mem:/{print $3" used, "$7" avail"}') procs=$(ps -e --no-headers | wc -l)"
+              ps -eo rss=,comm= --sort=-rss | head -4 | sed 's/^/[top] /'
+              sleep 2
+            done
+          ) &
+          SAMPLER=$!
+          set +e
           timeout 300 pnpm exec vitest run --reporter=verbose --maxWorkers=2 --testTimeout=20000 --hookTimeout=20000 --teardownTimeout=20000
+          RC=$?
+          kill $SAMPLER 2>/dev/null
+          exit $RC
         env:
           # A V8 heap error names the test that grew; the OS killing the process
           # for the same reason says only "Killed".
