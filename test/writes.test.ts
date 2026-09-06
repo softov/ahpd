@@ -133,6 +133,22 @@ it('refuses a write against an etag that has moved on', async () => {
   expect(text('e.txt')).toBe('second');
 });
 
+it('identifies links when resolving without following them', async () => {
+  const held = await client();
+  mkdirSync(join(root, 'target-directory'));
+  writeFileSync(join(root, 'target-file.txt'), 'target');
+  symlinkSync('target-file.txt', join(root, 'file-link'));
+  symlinkSync('target-directory', join(root, 'directory-link'));
+  symlinkSync('missing-target', join(root, 'dangling-link'));
+
+  for (const name of ['file-link', 'directory-link', 'dangling-link']) {
+    const found = await held.handle({ method: 'resourceResolve', params: {
+      channel: 'ahp-root://', uri: `file://${root}/${name}`, followSymlinks: false,
+    } });
+    expect(found).toMatchObject({ type: 'symlink' });
+  }
+});
+
 it('will not be written through a symlink pointing out of the served set', async () => {
   const held = await client();
   // The hole a textual path check leaves: the target does not exist, so

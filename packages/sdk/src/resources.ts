@@ -150,7 +150,10 @@ export async function list(uri: string, roots: string[]): Promise<Entry[]> {
 export async function resolve(uri: string, roots: string[], followSymlinks = true): Promise<Metadata> {
   const path = await allowed(uri, roots);
   const asked = followSymlinks ? path : pathOf(uri);
-  const found = await stat(asked, { bigint: false }).catch(() => {
+  // `stat` describes the destination.  A caller that explicitly declined to
+  // follow links asked about the directory entry itself, for which `lstat` is
+  // the corresponding operation.
+  const found = await (followSymlinks ? stat : lstat)(asked, { bigint: false }).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
   });
   return {
