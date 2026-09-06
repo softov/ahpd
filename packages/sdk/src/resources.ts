@@ -1,6 +1,7 @@
 import { constants, watch as watchPath } from 'node:fs';
 import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RpcError } from './rpc.js';
 import { within } from './paths.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write } from './types/resources.js';
@@ -29,12 +30,14 @@ const CONFLICT = -32011;
 
 /** `file:///a/b` and `/a/b` both mean the same path here. */
 export const pathOf = (uri: string): string => {
-  const bare = uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
-  return decodeURIComponent(bare);
+  if (!uri.startsWith('file:')) return uri;
+  if (!uri.startsWith('file:/')) throw new RpcError(REFUSED, `${uri} is not an absolute path`);
+  try { return fileURLToPath(uri); }
+  catch { throw new RpcError(-32602, `${uri} is not a local file URI`); }
 };
 
 /** A path, back as the URI a client sends and receives. */
-export const uriOf = (path: string): string => `file://${path}`;
+export const uriOf = (path: string): string => pathToFileURL(path).href;
 
 /** Whether `path` is `root` or is under it. */
 /**

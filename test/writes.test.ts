@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../packages/sdk/src/host.js';
-import { fileResources } from '../packages/sdk/src/resources.js';
+import { fileResources, pathOf, uriOf } from '../packages/sdk/src/resources.js';
 import { echo } from '../examples/echo/agent.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
@@ -266,4 +266,35 @@ it('refuses final file links for writes and copies, including dangling ones', as
   }
   expect(readFileSync(target, 'utf8')).toBe('outside');
   expect(existsSync(join(outside, 'absent.txt'))).toBe(false);
+});
+
+it('round-trips file names without decoding a literal percent sign', async () => {
+  const held = await client();
+  const names = ['literal%20name.txt', 'literal name.txt', 'percent%.txt', 'hash#.txt', 'query?.txt', 'ação.txt'];
+  for (const name of names) {
+    const path = join(root, name);
+    expect(pathOf(path)).toBe(path);
+    expect(pathOf(uriOf(path))).toBe(path);
+    await held.handle({ method: 'resourceWrite', params: {
+      channel: 'ahp-root://', uri: uriOf(path), data: name, encoding: 'utf-8',
+    } });
+  }
+  for (const name of names) {
+    const path = join(root, name);
+    expect(readFileSync(path, 'utf8')).toBe(name);
+    const resolved = await held.handle({ method: 'resourceResolve', params: {
+      channel: 'ahp-root://', uri: uriOf(path),
+    } }) as { uri: string };
+    expect(pathOf(resolved.uri)).toBe(path);
+    expect(await held.handle({ method: 'resourceRead', params: {
+      channel: 'ahp-root://', uri: resolved.uri,
+    } })).toMatchObject({ data: name });
+  }
+});
+
+it('refuses malformed or remote file URIs without treating them as local paths', () => {
+  for (const uri of ['file:///bad%ZZ', 'file://another-host/tmp/file']) {
+    expect(() => pathOf(uri)).toThrowError(/not a local file URI/);
+  }
+  expect(pathOf('file://localhost/tmp/local')).toBe('/tmp/local');
 });
