@@ -10,6 +10,11 @@ export interface Running {
   url: string;
   paths: string[];
   startedAt: string;
+  /**
+   * Where automations are kept and whether their schedules fire, in the
+   * daemon's own words. Absent from a record an older daemon wrote.
+   */
+  automations?: string;
 }
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
@@ -124,6 +129,7 @@ export async function start(argv: string[], self: string): Promise<Running> {
   // It announced where it was listening, so it started; this is for the type
   // rather than for the case, and `0` must never reach the record.
   if (child.pid === undefined) throw new Error('it started but has no process id');
+  const automations = /^automations (.+)$/m.exec(announced)?.[1]?.trim();
   const record: Running = {
     pid: child.pid,
     url,
@@ -133,6 +139,7 @@ export async function start(argv: string[], self: string): Promise<Running> {
     paths: (/sessions in (.+)/.exec(announced)?.[1] ?? '')
       .trim().split(',').map((one) => one.trim()).filter((one) => one !== ''),
     startedAt: new Date().toISOString(),
+    ...(automations !== undefined ? { automations } : {}),
   };
   writeFileSync(daemonPath(), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;

@@ -225,6 +225,7 @@ if (verb !== undefined) {
     try {
       const begun = await start(rest, process.argv[1] as string);
       process.stdout.write(`ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`);
+      if (begun.automations !== undefined) process.stdout.write(`automations ${begun.automations}\n`);
       process.exit(0);
     }
     catch (error) {
@@ -242,6 +243,9 @@ if (verb !== undefined) {
     if (!found) { process.stdout.write('None running.\n'); process.exit(1); }
     process.stdout.write(`ahpd on ${found.url} (pid ${String(found.pid)}), started ${found.startedAt}\n`);
     if (found.paths.length > 0) process.stdout.write(`sessions in ${found.paths.join(', ')}\n`);
+    // Absent from a record written by an older daemon, which is the one case
+    // where saying nothing is better than guessing which store it was given.
+    if (found.automations !== undefined) process.stdout.write(`automations ${found.automations}\n`);
     process.exit(0);
   }
   if (verb === 'config') {
@@ -265,6 +269,16 @@ if (options.help) {
 }
 
 const { token, from } = secret(options);
+
+/*
+ * Whether a clock is running, decided once and then said out loud.
+ *
+ * Both stores take a schedule trigger and only one of them ever fires it, and
+ * what tells a client which it got is a `nextRunAt` that is simply absent.
+ * That is too quiet for somebody who has just written a schedule, so the
+ * startup line says it in words and `ahpd status` repeats it.
+ */
+const memory = options.automations === 'memory';
 
 const host = createHost({
   path: options.paths[0] as string,
@@ -307,7 +321,7 @@ const host = createHost({
    * not told which it was given - a host embedded in something that already
    * schedules passes a third of its own.
    */
-  automations: options.automations === 'memory'
+  automations: memory
     ? memoryAutomations()
     : scheduledAutomations({
       // Beside the configuration, which is this daemon's decision to make and
@@ -342,6 +356,9 @@ const listener = await listen(
 
 process.stdout.write(
   `ahpd on ws://${listener.host}:${listener.port} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
+  // Its own line rather than the end of the one above, which `daemon.ts`
+  // reads the session directories off with a regular expression.
+  + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`,

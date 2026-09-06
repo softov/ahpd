@@ -27,7 +27,6 @@ A review on 6 September 2026 found nine defects across this repository and `ahpc
 | | |
 | --- | --- |
 | a scenario runner | The seams already allow a real host and a real client to run against each other over an in-memory transport with no model and no socket. Built as a reusable harness that can pause a handshake, drop a connection, reattach and compare each reader against host state, it would cover the interleavings that unit tests do not. This is the idea with the most behind it: written once by hand, it is what found the late-reader bug in `ahpc` |
-| say whether schedules fire | `--automations memory` accepts a schedule trigger and never fires it. What tells a client is the absent `nextRunAt`, which is subtle for somebody configuring one. Saying it in the startup line and in `ahpd status` costs almost nothing |
 | assert effects, not codes | Several boundary tests assert the error code and not what actually happened. That is how two refusal messages regressed to raw errno text without a test noticing. A refusal is worth asserting by its words and by the file being unchanged |
 
 ## Deliberate duplication
