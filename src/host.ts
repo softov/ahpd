@@ -1350,6 +1350,16 @@ export function createHost(options: HostOptions): Host {
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
     dispatch(uri, { type: 'session/activeClientRemoved', clientId });
+    /*
+     * And the tools it was providing, which leave with it.
+     *
+     * Both halves matter. The model is offered a smaller list from here on -
+     * a tool whose client has gone is one every call to would fail - and any
+     * call already out with that client is failed now rather than left as a
+     * turn waiting on a promise nothing can settle.
+     */
+    for (const chat of sessions.get(uri)?.chats.values() ?? []) chat.clientGone?.(clientId);
+    retool(uri);
   };
 
   /**
@@ -1889,7 +1899,7 @@ export function createHost(options: HostOptions): Host {
     uri: string,
     chatUri: string,
     config: Record<string, unknown>,
-    resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; context?: string },
+    resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; rewindAt?: string; context?: string },
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
@@ -1897,15 +1907,24 @@ export function createHost(options: HostOptions): Host {
     const session = agent.create({
       uri,
       chatUri,
-      // The host's own tools, bound to this session. A backend that cannot
-      // take tools ignores them; the session reports them either way.
-      ...(contributing.length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
+      /*
+       * The tools bound to this session: this host's own, and whatever the
+       * clients already in it provide.
+       *
+       * Asked of `boundTools` rather than of `contributing`, because a host
+       * that contributes none of its own still has a client's to pass on -
+       * and a session created by a client that announced its tools in the same
+       * breath would otherwise have been offered nothing until the next
+       * announcement moved the list.
+       */
+      ...(boundTools(uri, chatUri).length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
       ...(resuming?.resume !== undefined ? { resume: resuming.resume } : {}),
       ...(resuming?.seed !== undefined ? { seed: resuming.seed } : {}),
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
+      ...(resuming?.rewindAt !== undefined ? { rewindAt: resuming.rewindAt } : {}),
       ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
       settings: { ...agent.defaults(), ...config },
       schema: () => published(agent.schema()),
@@ -2719,9 +2738,57 @@ export function createHost(options: HostOptions): Host {
    * asked, and what this host knows about the sessions and terminals beside
    * it, are answered here because they are the host's to answer.
    */
-  const boundTools = (uri: string, chatUri: string): BoundTool[] => contributing.map((one) => ({
+  /**
+   * The tools the clients in a session provide, as tools to offer the model.
+   *
+   * `SessionActiveClient.tools` is what a client announces it can run, and the
+   * protocol makes that client responsible for executing the call and saying
+   * what it did. So these carry an owner and no implementation: the backend
+   * offers them, reports the call against the client that provides it, and
+   * waits.
+   *
+   * Named `<clientId>__<name>`, because two clients in one session may both
+   * provide `openFile` and the model is offered one list. Anything without a
+   * usable name or schema is dropped rather than offered as a tool the model
+   * will fail to call.
+   */
+  const clientTools = (uri: string): BoundTool[] => activeClientsOf(uri).flatMap((client) => {
+    const clientId = String(client.clientId ?? '');
+    if (clientId === '') return [];
+    return (Array.isArray(client.tools) ? client.tools : []).flatMap((entry) => {
+      const definition = (typeof entry === 'object' && entry !== null ? entry : {}) as Bag;
+      const name = typeof definition.name === 'string' ? definition.name : '';
+      if (!/^[A-Za-z0-9_-]+$/.test(name)) return [];
+      return [{
+        definition: {
+          ...definition as unknown as BoundTool['definition'],
+          name: `${clientId}__${name}`,
+        },
+        owner: clientId,
+      }];
+    });
+  });
+
+  /**
+   * Tell a session's chats what they may offer, after the clients moved.
+   *
+   * Every chat, because the clients are the session's rather than one chat's -
+   * somebody with two conversations open in one session contributes the same
+   * tools to both. A backend that cannot take tools at all answers false and
+   * is left alone; there is nothing to report to a client either way, because
+   * what it announced is already on the session state.
+   */
+  const retool = (uri: string): void => {
+    const held = sessions.get(uri);
+    if (!held) return;
+    for (const [chatUri, chat] of held.chats) {
+      void chat.setTools?.(boundTools(uri, chatUri)).catch(() => {});
+    }
+  };
+
+  const boundTools = (uri: string, chatUri: string): BoundTool[] => [...clientTools(uri), ...contributing.map((one): BoundTool => ({
     definition: one.definition,
-    run: (input) => one.run(input, {
+    run: (input: Record<string, unknown>) => one.run(input, {
       session: uri,
       chat: chatUri,
       sessions: () => [...sessions].map(([at, held]) => ({
@@ -2752,7 +2819,7 @@ export function createHost(options: HostOptions): Host {
         return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
       },
     }),
-  }));
+  }))];
 
   /**
    * Host-wide configuration, which a connected client pushes.
@@ -4400,6 +4467,7 @@ export function createHost(options: HostOptions): Host {
             presence.set(idOf(uri), here);
             here.set(clientId, activeClient);
             dispatch(uri, { type: 'session/activeClientSet', activeClient });
+            retool(uri);
           }
           return {};
         },
@@ -4984,6 +5052,11 @@ export function createHost(options: HostOptions): Host {
           // able to go.
           held.set(clientId, activeClient);
           dispatch(channel, { type, activeClient });
+          // What it says it can run is a change to what the model is offered,
+          // which is the whole point of the field: announced and never read,
+          // `tools` was a list this host published back at the client that
+          // sent it.
+          retool(channel);
           return;
         }
 
@@ -5553,33 +5626,109 @@ export function createHost(options: HostOptions): Host {
             break;
           }
           /*
-           * "Drop the turns before this one", which is not what happened.
+           * Drop the turns after a named one, and mean it.
            *
-           * A client sends this after the harness compacts, reading the
-           * compaction as a truncation. It is not: every one of those turns
-           * is still in the transcript and still readable, and what was
-           * compacted is the model's context rather than the conversation. A
-           * host that honoured it would delete from every client's screen a
-           * history it can still serve - so it is refused, and the running
-           * turn carries a `systemNotification` saying what really happened.
+           * This is edit-and-resend: a client truncates to the turn before
+           * the message somebody wants to change, then starts a new turn with
+           * the edited text. So the agent has to forget the dropped turns as
+           * well - a host that only cleared its own screen would leave the
+           * conversation carrying on from a history nobody can see any more,
+           * and the next answer would be about the message that was edited
+           * away.
+           *
+           * Forgetting them means the CLI is started again, resumed at the
+           * last thing the kept turn did. The turns up to there are handed
+           * over as the seed, so the chat keeps its history across the
+           * restart, and the session id is kept - see `rewindAt` - so a later
+           * resume reaches the truncated conversation rather than the one
+           * this dropped.
            */
-          case 'chat/truncated':
-            no('The harness compacted its context; the turns are still here');
+          case 'chat/truncated': {
+            const turnId = typeof action.turnId === 'string' ? action.turnId : undefined;
+            /*
+             * Every turn, which this host cannot ask for.
+             *
+             * The action's `turnId` is optional and its absence means "clear
+             * the whole conversation" - which as a rewind is a cut at a point
+             * before the first prompt, and there is no such entry to name.
+             * Refused rather than served as an emptied screen in front of an
+             * agent that remembers all of it.
+             */
+            if (turnId === undefined) {
+              no('This host can drop the turns after one, but not a conversation entire');
+              break;
+            }
+            const all = session.allTurns();
+            const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
+            if (at < 0) {
+              no(`${turnId} is not a completed turn in ${session.chatUri}`);
+              break;
+            }
+            // The backend's own name for the end of that turn. Absent for a
+            // turn this process did not watch run - one read back off a
+            // transcript - and a rewind to a point the backend cannot be told
+            // is the half of this that would silently not happen.
+            const point = session.endPoint?.(turnId);
+            const started = session.agentId();
+            const owner = sessions.get(session.uri);
+            if (point === undefined || started === undefined || owner === undefined) {
+              no(`${turnId} is not a turn this host can rewind to`);
+              break;
+            }
+            /*
+             * Said before the restart, not after.
+             *
+             * A client applies this by dropping the turns after `turnId`; the
+             * session that comes up behind it opens with exactly those turns.
+             * In the other order a client would take a full snapshot and then
+             * be told to cut it, which is the same end state reached by
+             * showing somebody the turns they asked to be rid of.
+             */
+            dispatch(session.chatUri, action);
+            session.close();
+            // So the next thing the new session says about itself is reported
+            // rather than compared against what the old one last said.
+            described.delete(session.chatUri);
+            spawn(
+              owner.agent,
+              session.uri,
+              session.chatUri,
+              owner.config,
+              { resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] },
+              owner.workingDirectory,
+              undefined,
+              beside.get(session.chatUri) ?? owner.additional,
+            );
+            log(`truncated ${session.chatUri} to ${turnId}`);
             break;
+          }
           /*
-           * Somebody else's half-typed answer.
+           * Somebody's half-typed answer, kept for whoever else is looking.
            *
-           * The protocol has clients sync drafts with this, and the draft
-           * belongs to the `inputRequest` response part it names. This host
-           * holds no such part: a question goes out as `chat/inputRequested`
-           * and lives on `session.inputNeeded`, which is what a client that
-           * arrives late reads. There is nowhere here to keep a draft, so
-           * relaying one would be this host asserting a state it does not
-           * have.
+           * The same argument as `chat/draftChanged`: two people on one chat
+           * are answering one question, and an answer each client kept to
+           * itself would need no host at all. What it is kept *on* is the
+           * request this host is already holding open - the protocol calls
+           * the result the request's synced answer state, and says a
+           * `chat/inputCompleted` may carry no answers because this is where
+           * they are.
            */
-          case 'chat/inputAnswerChanged':
-            no('This host keeps no draft answer: the question is on the session, not in a part');
+          case 'chat/inputAnswerChanged': {
+            if (!session.setAnswer) {
+              no('This backend keeps no draft answers');
+              break;
+            }
+            const requestId = String(action.requestId ?? '');
+            const questionId = String(action.questionId ?? '');
+            // Absent clears that question's draft, which is what the action
+            // says `undefined` means and the only way JSON can say it.
+            const answer = typeof action.answer === 'object' && action.answer !== null
+              ? action.answer as Bag
+              : undefined;
+            if (!session.setAnswer(requestId, questionId, answer))
+              no(`${requestId} is not a question this chat is waiting on`);
             break;
+          }
           /*
            * Approving a tool call's *result*, which nothing here ever asks for.
            *
@@ -5592,19 +5741,75 @@ export function createHost(options: HostOptions): Host {
             no('No tool call here asks for its result to be confirmed');
             break;
           /*
+           * What a client's own tool did, said by the client that ran it.
+           *
+           * The protocol makes the client named in the call's contributor
+           * responsible for executing it and dispatching the result, so this
+           * is the other half of offering a client's tools to the model at
+           * all: the agent is blocked on this call, and this is what unblocks
+           * it.
+           *
+           * Nothing is echoed from here. The result goes back to the harness,
+           * the harness writes the tool result, and the session reports the
+           * completion to every client from that - the same path every other
+           * tool call takes. Relaying it here as well would draw the row
+           * finished twice, once from a client's word and once from what
+           * actually happened.
+           */
+          case 'chat/toolCallComplete': {
+            const toolCallId = String(action.toolCallId ?? '');
+            const clientId = connection.clientId || 'anonymous';
+            const result = (typeof action.result === 'object' && action.result !== null
+              ? action.result
+              : {}) as Bag;
+            if (!session.completeToolCall) {
+              no('This backend runs no tools on a client\'s behalf');
+              break;
+            }
+            // `ToolCallResult.content` is MCP's content blocks; what reaches a
+            // model through this host is text, so text is what is read out of
+            // them. An error carries its message instead, which is the only
+            // thing a failed call actually says.
+            const ok = result.success !== false;
+            const text = (Array.isArray(result.content) ? result.content : [])
+              .map((block) => (typeof block === 'object' && block !== null ? block as Bag : {}))
+              .filter((block) => typeof block.text === 'string')
+              .map((block) => String(block.text))
+              .join('\n');
+            const wrong = typeof result.error === 'object' && result.error !== null
+              ? String((result.error as Bag).message ?? '')
+              : '';
+            if (!session.completeToolCall(toolCallId, clientId, {
+              text: ok ? text : (wrong || text || 'The tool failed'),
+              ok,
+            })) no(`${toolCallId} is not a call ${clientId} is running here`);
+            break;
+          }
+          /*
            * Streaming into a call while it runs, which is a *contributor's* to
            * do.
            *
            * The protocol has the owning client dispatch this for a tool the
            * client itself provides - the call carries a `ToolCallContributor`
-           * with that client's id, and a server should refuse anyone else. No
-           * call here carries one: every tool this host reports is the
-           * backend's own, run by the harness, so there is no call a client
-           * has the standing to write into.
+           * with that client's id, and a server should refuse anyone else.
+           * Relayed rather than reduced: what a tool is printing as it runs is
+           * the running client's to say, and this host holds none of it.
            */
-          case 'chat/toolCallContentChanged':
-            no('Every tool call here is the agent\'s, and its content is the agent\'s to change');
+          case 'chat/toolCallContentChanged': {
+            const toolCallId = String(action.toolCallId ?? '');
+            const clientId = connection.clientId || 'anonymous';
+            const owner = session.toolCallOwner?.(toolCallId);
+            if (owner === undefined) {
+              no(`${toolCallId} is not a call a client is running here`);
+              break;
+            }
+            if (owner !== clientId) {
+              no(`${toolCallId} is ${owner}'s call, and its content is ${owner}'s to change`);
+              break;
+            }
+            dispatch(session.chatUri, action);
             break;
+          }
           default:
             no(`${type} is not served yet`);
         }

@@ -18,8 +18,20 @@ import type { Offered } from './probe.js';
 export interface BoundTool {
   /** What the model is offered. `name` is the id it calls. */
   definition: ToolDefinition;
-  /** What running it does. */
-  run(input: Record<string, unknown>): Promise<string> | string;
+  /**
+   * What running it does. Absent for a tool a client runs - see `owner`.
+   */
+  run?(input: Record<string, unknown>): Promise<string> | string;
+  /**
+   * The client that runs this one, when it is a client's rather than the host's.
+   *
+   * A client announces what it provides on `SessionActiveClient.tools`, and
+   * the protocol makes that client responsible for executing the call and
+   * dispatching its result. So there is nothing to run here: the backend
+   * offers the tool to the model, reports the call against that client, and
+   * waits for it to say what happened.
+   */
+  owner?: string;
 }
 
 /**
@@ -79,6 +91,14 @@ export interface Start {
   resume?: string;
   /** The prompt to resume *at*, so a fork leaves the turns after it behind. */
   forkAt?: string;
+  /**
+   * The chain entry to resume *at*, keeping the id the session already had.
+   *
+   * A truncation rather than a fork: the turns after that point are dropped
+   * and the conversation carries on as itself, which is what `chat/truncated`
+   * asks for.
+   */
+  rewindAt?: string;
   /** Context the first turn carries to the backend without showing it. */
   context?: string;
   /** Turns already known, so a resumed session does not open empty. */

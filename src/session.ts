@@ -68,6 +68,16 @@ interface PendingInput {
   questions?: unknown[];
   /** Question id to the question text the SDK keys answers by. */
   asked: Map<string, string>;
+  /**
+   * What somebody has typed so far, by question id.
+   *
+   * The protocol calls this the request's synced answer state: a client
+   * dispatches `chat/inputAnswerChanged` per question as it is filled in, and
+   * `chat/inputCompleted` may arrive with no answers at all because these are
+   * the answers. Held here rather than in a client so the other people in the
+   * session see the form being filled in.
+   */
+  answers: Map<string, Bag>;
   settle(result: { behavior: 'allow'; updatedInput: Bag } | { behavior: 'deny'; message: string }): void;
 }
 
@@ -382,7 +392,11 @@ const shaped = (property: object): z.ZodTypeAny => {
  * a host tool answering with anything richer would be answering in a shape
  * this host cannot check.
  */
-const contributed = (tools: BoundTool[]): unknown => createSdkMcpServer({
+const contributed = (
+  tools: BoundTool[],
+  /** Hand a call to the client that provides it, and wait for what it says. */
+  byClient: (tool: BoundTool, input: Bag) => Promise<{ text: string; ok: boolean }>,
+): unknown => createSdkMcpServer({
   name: 'ahp',
   version: '1.0.0',
   tools: tools.map((one) => {
@@ -398,8 +412,24 @@ const contributed = (tools: BoundTool[]): unknown => createSdkMcpServer({
       inputSchema: shape,
       ...(one.definition.annotations ? { annotations: one.definition.annotations } : {}),
       handler: async (input: Record<string, unknown>) => {
+        /*
+         * Somebody else's tool, run where it lives.
+         *
+         * A client that announced this one is the only thing that can run it -
+         * it is the editor's own command, or a plugin's - so the call goes out
+         * against that client and this waits. The wait is what makes the model
+         * see a tool at all: an MCP handler that returned before the answer
+         * came back would be answering on the client's behalf.
+         */
+        if (one.owner !== undefined) {
+          const answer = await byClient(one, input);
+          return {
+            content: [{ type: 'text' as const, text: answer.text }],
+            ...(answer.ok ? {} : { isError: true }),
+          };
+        }
         try {
-          return { content: [{ type: 'text' as const, text: await one.run(input) }] };
+          return { content: [{ type: 'text' as const, text: await one.run?.(input) ?? '' }] };
         }
         catch (error: unknown) {
           // The message, not a throw: an MCP tool that rejects is a transport
@@ -519,6 +549,80 @@ export function createSession(options: SessionOptions): Session {
    * blocked on a sign-in tellable from one blocked on its own work.
    */
   const serverOf = (toolName: string): string | undefined => /^mcp__(.+?)__/.exec(toolName)?.[1];
+
+  /*
+   * The tools on offer, which is not a fixed list.
+   *
+   * The host's own are settled when the session is built; a client's arrive
+   * when it announces itself and go when it leaves. So this is held rather
+   * than read from `options` once, and `setTools` re-declares the server the
+   * model reaches them through.
+   */
+  let offering: BoundTool[] = [...(options.tools ?? [])];
+  /** The full name the CLI calls a contributed tool by. */
+  const called = (name: string): string => `mcp__ahp__${name}`;
+  /** Which client provides a tool, by the name the CLI calls it. */
+  const providedBy = (toolName: string): string | undefined =>
+    offering.find((one) => called(one.definition.name) === toolName)?.owner;
+
+  /*
+   * Joining the call the model made to the handler that has to answer it.
+   *
+   * The two arrive separately and neither carries the other's name: the
+   * assistant frame opens the call under the CLI's id, and the in-process MCP
+   * handler is invoked with the input and nothing else - the SDK surfaces a
+   * `toolUseID` to `canUseTool` and to hooks, and not to a tool. So they are
+   * matched here, by tool name and then by the input itself, which tells two
+   * concurrent calls of one tool apart. Whichever arrives first waits for the
+   * other.
+   */
+  const unclaimed = new Map<string, { id: string; input: string }[]>();
+  const expecting = new Map<string, ((id: string) => void)[]>();
+
+  const opening = (toolName: string, id: string, input: Bag): void => {
+    const waiting = expecting.get(toolName) ?? [];
+    const first = waiting.shift();
+    expecting.set(toolName, waiting);
+    if (first) { first(id); return; }
+    unclaimed.set(toolName, [...(unclaimed.get(toolName) ?? []), { id, input: JSON.stringify(input) }]);
+  };
+
+  const claim = (toolName: string, input: Bag): Promise<string> => {
+    const open = unclaimed.get(toolName) ?? [];
+    const written = JSON.stringify(input);
+    const at = open.findIndex((one) => one.input === written);
+    const took = at >= 0 ? open.splice(at, 1)[0] : open.shift();
+    unclaimed.set(toolName, open);
+    if (took !== undefined) return Promise.resolve(took.id);
+    return new Promise((resolve) => {
+      expecting.set(toolName, [...(expecting.get(toolName) ?? []), resolve]);
+    });
+  };
+
+  /**
+   * Calls a client is running for this session, by call id.
+   *
+   * Held for the same reason `pending` is: the thing that has to settle them
+   * arrives later and from somewhere else, and anything that ends the turn has
+   * to settle them itself or the CLI waits for ever on a promise nobody owns.
+   */
+  const byClient = new Map<string, { owner: string; settle: (answer: { text: string; ok: boolean }) => void }>();
+
+  /** Every outstanding client call, answered the same way and forgotten. */
+  const releaseCalls = (why: string, whose?: string): void => {
+    for (const [id, held] of [...byClient.entries()]) {
+      if (whose !== undefined && held.owner !== whose) continue;
+      byClient.delete(id);
+      held.settle({ text: why, ok: false });
+    }
+  };
+
+  const ranByClient = async (tool: BoundTool, input: Bag): Promise<{ text: string; ok: boolean }> => {
+    const id = await claim(called(tool.definition.name), input);
+    const owner = tool.owner ?? '';
+    doing(`Waiting on ${owner}: ${tool.definition.title ?? tool.definition.name}`);
+    return await new Promise((settle) => { byClient.set(id, { owner, settle }); });
+  };
   /**
    * Tool calls running against an MCP server, by call id.
    *
@@ -572,7 +676,7 @@ export function createSession(options: SessionOptions): Session {
    * at construction so `setMcpServers` keeps it: that call replaces the whole
    * set, and a set rebuilt without this would take the host's tools away.
    */
-  if ((options.tools ?? []).length > 0) declared.ahp = contributed(options.tools ?? []) as Bag;
+  if (offering.length > 0) declared.ahp = contributed(offering, ranByClient) as Bag;
 
   /** What each server that needs signing in published about itself, by name. */
   const wanted = new Map<string, Published>();
@@ -936,9 +1040,22 @@ export function createSession(options: SessionOptions): Session {
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
         const from = serverOf(name);
-        const contributor = from === undefined
-          ? undefined
-          : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        /*
+         * Whose tool this is, which decides who has to run it.
+         *
+         * A client's own beats the server it is offered through: the tools a
+         * client provides are carried to the model on this host's in-process
+         * server, so by name they all look like `mcp__ahp__*` - and reporting
+         * one as this host's contribution would tell every client that the
+         * call is nobody's to answer, including the one whose call it is.
+         */
+        const own = providedBy(name);
+        if (own !== undefined) opening(name, id, bag(block.input));
+        const contributor = own !== undefined
+          ? { kind: 'client' as const, clientId: own }
+          : from === undefined
+            ? undefined
+            : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
         // Running against somebody else's server, and so a call that can end
         // up waiting on a sign-in rather than on its own work.
         if (from !== undefined) onServer.set(id, { server: from, turnId: str(turn.id) ?? '', blocked: false });
@@ -1159,7 +1276,7 @@ export function createSession(options: SessionOptions): Session {
         const request = { id, message: str(raw.header) ?? 'The agent has a question', questions };
         // `chat` is required on every input request and was never sent.
         const entry: Bag = { id, chat: chatUri, kind: 'chatInput', request };
-        pending.set(id, { id, entry, questions: list(raw.questions), asked, settle });
+        pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle });
         emit('chat', { type: 'chat/inputRequested', turnId: turn.id, request });
         inputNeededSet(entry);
         touch();
@@ -1218,6 +1335,7 @@ export function createSession(options: SessionOptions): Session {
         id,
         entry,
         asked: new Map(),
+        answers: new Map(),
         settle: (result) => settle(result.behavior === 'allow'
           ? { behavior: 'allow', updatedInput: raw }
           : result),
@@ -1285,6 +1403,17 @@ export function createSession(options: SessionOptions): Session {
         ? { forkSession: true, resumeSessionAt: options.forkAt }
         : {}),
       /*
+       * A rewind, which is the same resume without the new id.
+       *
+       * `chat/truncated` drops the turns after a named one and carries on in
+       * the conversation it dropped them from - so the id has to survive it,
+       * or every later resume would reach the transcript that still has them.
+       * That is the whole difference from a fork, and it is one word.
+       */
+      ...(options.resume && options.rewindAt && !options.forkAt
+        ? { resumeSessionAt: options.rewindAt }
+        : {}),
+      /*
        * On disk under the name the client gave it.
        *
        * The SDK invents an id and writes the transcript under that, so a
@@ -1322,6 +1451,17 @@ export function createSession(options: SessionOptions): Session {
 
   /** The backend's id for the prompt that began each turn, by this host's turn id. */
   const cuts = new Map<string, string>();
+
+  /**
+   * The backend's id for the *last* thing in each turn, by this host's turn id.
+   *
+   * Where a rewind that keeps the turn has to cut. The SDK's rule for
+   * `resumeSessionAt` is the kept turn's last chain entry, whatever it is -
+   * cutting at the prompt instead keeps the question and drops the answer to
+   * it, which is a turn a client can still see and the agent no longer
+   * remembers giving.
+   */
+  const ends = new Map<string, string>();
 
   const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string): void => {
     if (model !== undefined && model.id !== chosen) {
@@ -1587,7 +1727,7 @@ export function createSession(options: SessionOptions): Session {
          * The harness compacted its context.
          *
          * Deliberately *not* `chat/truncated`: that means "drop the turns
-         * before this one", and every one of them is still in the transcript
+         * after this one", and every one of them is still in the transcript
          * and still readable. What was compacted is the model's context, not
          * the conversation, and a host that conflated the two would delete
          * from every client's screen a history it can still serve.
@@ -1612,6 +1752,20 @@ export function createSession(options: SessionOptions): Session {
             });
           }
           continue;
+        }
+
+        /*
+         * How far this turn has got, in the backend's own names for things.
+         *
+         * `user` and `assistant` are the frames that become entries in the
+         * transcript chain; a `stream_event` is a piece of one that is not
+         * written down separately, and a `result` closes a turn without being
+         * part of it. So the last of these two seen while a turn is active is
+         * that turn's last chain entry, which is where a rewind cuts.
+         */
+        if (active !== undefined && (type === 'user' || type === 'assistant')) {
+          const entry = str(message.uuid);
+          if (entry !== undefined) ends.set(String(active.id), entry);
         }
 
         if (type === 'stream_event') { streamed(bag(message.event)); continue; }
@@ -1719,6 +1873,7 @@ export function createSession(options: SessionOptions): Session {
     models: () => offered,
     agentId: () => agentId,
     forkPoint: (turnId) => cuts.get(turnId),
+    endPoint: (turnId) => ends.get(turnId),
 
     customizations: () => customizations,
     allTurns: () => turns,
@@ -2274,6 +2429,9 @@ export function createSession(options: SessionOptions): Session {
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
         inputNeededRemoved(one.id);
       }
+      // And the calls a client is running for us, for the same reason: a
+      // promise settled by somebody else is one a stopped turn still waits on.
+      releaseCalls('The turn was stopped');
       void handle.interrupt().catch(() => {});
       const turn = active;
       if (turn) {
@@ -2327,6 +2485,94 @@ export function createSession(options: SessionOptions): Session {
     },
 
     /**
+     * The tools on offer, replaced whole.
+     *
+     * Whole because that is what the SDK takes: `setMcpServers` replaces the
+     * set it is given, so a server rebuilt from one tool would take the others
+     * away. Called when a client announces what it provides or stops being
+     * active, which is the only thing that moves this list after a session is
+     * built.
+     */
+    setTools: async (next) => {
+      const before = offering.map((one) => `${one.definition.name} ${one.owner ?? ''}`).join('\n');
+      const after = next.map((one) => `${one.definition.name} ${one.owner ?? ''}`).join('\n');
+      if (before === after) return true;
+      offering = [...next];
+      if (offering.length > 0) declared.ahp = contributed(offering, ranByClient) as Bag;
+      else delete declared.ahp;
+      try { await handle.setMcpServers(declared as never); }
+      catch { return false; }
+      return true;
+    },
+
+    toolCallOwner: (toolCallId) => byClient.get(toolCallId)?.owner,
+
+    /**
+     * What a client says its own tool did.
+     *
+     * Only from the client the call was reported against: the protocol makes
+     * that one responsible for the call, and a result from anybody else is a
+     * client answering for work it did not do. Answered `false` either way -
+     * for a call nobody is waiting on and for a client that does not own it -
+     * because both are a client out of step, and the caller says which.
+     *
+     * Nothing is emitted here. The answer goes back to the CLI, the CLI writes
+     * the tool result, and `results` reports the completion to everybody from
+     * that - which is the same path every other tool call takes. A completion
+     * announced here as well would be the same row finished twice.
+     */
+    completeToolCall: (toolCallId, clientId, result) => {
+      const held = byClient.get(toolCallId);
+      if (!held || held.owner !== clientId) return false;
+      byClient.delete(toolCallId);
+      held.settle(result);
+      return true;
+    },
+
+    clientGone: (clientId) => {
+      // A tool call whose client has gone is a turn waiting on a promise
+      // nothing will settle. The agent is told it failed, which is true, and
+      // is left to decide what to do about it.
+      releaseCalls('The client that provides this tool is no longer here', clientId);
+    },
+
+    /**
+     * One question of a request, part-way answered.
+     *
+     * The same thing `setDraft` is for a message: held here so that two people
+     * looking at one elicitation see the form being filled in rather than each
+     * filling in their own. Kept on the request itself as well as emitted,
+     * because a client that arrives while the question is open reads
+     * `session.inputNeeded` and would otherwise see an empty form somebody has
+     * already answered.
+     *
+     * False when the request is not one this session is waiting on, which is
+     * the caller's to report - answering a question nobody asked is a client
+     * out of step, not a no-op.
+     */
+    setAnswer: (requestId, questionId, answer) => {
+      const held = pending.get(requestId);
+      // Only a question has answers. A tool confirmation is the other kind of
+      // pending input and is answered by approving it, so a draft answer to
+      // one names a field it does not have.
+      if (!held || held.entry.kind !== 'chatInput') return false;
+      if (answer === undefined) held.answers.delete(questionId);
+      else held.answers.set(questionId, answer);
+      const request = bag(held.entry.request);
+      if (held.answers.size > 0) request.answers = Object.fromEntries(held.answers);
+      else delete request.answers;
+      // Not `touch()`: typing is not a change to the conversation, and a
+      // catalogue that reordered itself on every keystroke would be unusable.
+      emit('chat', {
+        type: 'chat/inputAnswerChanged',
+        requestId,
+        questionId,
+        ...(answer !== undefined ? { answer } : {}),
+      });
+      return true;
+    },
+
+    /**
      * Answer the question, in the shape the tool wants it back.
      *
      * Keyed by each question's own *text* and valued by the option's own
@@ -2345,13 +2591,35 @@ export function createSession(options: SessionOptions): Session {
         return;
       }
       const said: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(answers)) {
+      /*
+       * What was typed, under what was sent.
+       *
+       * The protocol has `chat/inputCompleted` use the request's synced answer
+       * state *plus* whatever the completion carries, and the completion is
+       * allowed to carry nothing at all - a client that has been syncing each
+       * answer as it went has already said everything. Reading only the action
+       * threw that away and submitted an empty form.
+       */
+      const whole = { ...Object.fromEntries(held.answers), ...answers };
+      for (const [key, value] of Object.entries(whole)) {
         const question = held.asked.get(key);
         if (!question) continue;
         const answer = bag(value);
-        // Freeform is the person's own words as the value, not the word they
-        // typed it under - the tool reads the value as the answer itself.
-        said[question] = answer.value ?? value;
+        /*
+         * Two levels in, which is where the protocol puts it.
+         *
+         * `ChatInputAnswer` is `{ state, value }` and that value is itself
+         * `{ kind, value }` - so an answer synced through
+         * `chat/inputAnswerChanged`, which is protocol-shaped, holds the word
+         * the tool wants one level below where a completion's own `answers`
+         * carried it. Read at one level a selection arrived as the object
+         * around it, and the tool was handed a shape it cannot read.
+         *
+         * Freeform is the person's own words as the value, not the word they
+         * typed it under - the tool reads the value as the answer itself.
+         */
+        const inner = bag(answer.value);
+        said[question] = inner.value ?? answer.value ?? value;
       }
       held.settle({ behavior: 'allow', updatedInput: { questions: held.questions ?? [], answers: said } });
       touch();
@@ -2364,6 +2632,7 @@ export function createSession(options: SessionOptions): Session {
         pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The session was disposed' });
       }
+      releaseCalls('The session was disposed');
       handle.close();
     },
   };

@@ -139,16 +139,15 @@ handed them again as if it had not.
 
 ## State actions
 
-**92 of the 96 declared, across nine channels**, one row each. The four that
-are not served are all `chat/*`, all client-dispatchable, and each is refused in
-its own words rather than as unserved - a client that sent one learns why
-nothing happened.
+**95 of the 96 declared, across nine channels**, one row each. The one that is
+not served is `chat/toolCallResultConfirmed`, and it is refused in its own words
+rather than as unserved - a client that sends it learns why nothing happened.
 
-Three of the four are `➖`, **not written**; one is `🚫`, a question this
-backend never asks. The rows say which, because "the backend has no such
-moment" and "nobody has done the work" read the same in a refusal and are not
-the same fact - and the first of the two was written up here as the second
-until somebody asked.
+It is `🚫` rather than `➖`: a question this backend never asks, not work nobody
+has done. The distinction is worth keeping, because "the backend has no such
+moment" and "nobody has got round to it" read the same in a refusal and are not
+the same fact - and this one was written up here as the second until somebody
+asked.
 
 **Origin** is the protocol's own `IS_CLIENT_DISPATCHABLE`: `client` is one a
 client may originate, `host` is one only this host may say, and `both` is a
@@ -198,7 +197,7 @@ which is a different complaint from an action nobody has served.
 | `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
 | `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
 
-### `chat/*` — 26 of 30
+### `chat/*` — 29 of 30
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -209,9 +208,9 @@ which is a different complaint from an action nobody has served.
 | `chat/toolCallDelta` | host | ✅ | Appends the arguments' JSON to `partialInput` as it arrives, so a row is drawn while the call is still being written rather than after. |
 | `chat/toolCallReady` | host | ✅ | Closes a streaming call with the parsed input. `confirmed: not-needed` unless `canUseTool` actually asked - without it the reducer draws every call in the transcript as a question nobody put. |
 | `chat/toolCallConfirmed` | both | ✅ | A client answering; and this host saying what was answered, for the other clients watching. |
-| `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. |
-| `chat/toolCallResultConfirmed` | client | 🚫 | Refused, and this is the one of the four that is genuinely inapplicable rather than unwritten: it belongs to a call completed with `requiresResultConfirmation`, the SDK's only approval moment is `canUseTool` *before* a tool runs, and there is no after-the-fact gate to reflect. A host could invent a policy of its own here; that would be this host asking a question the backend never asked. |
-| `chat/toolCallContentChanged` | client | ➖ | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor - and that is because **client-provided tools are not implemented**: this host never routes a call to a client, so `SessionActiveClient.tools` is published and never drawn on. Serving this action means serving that feature first. |
+| `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. From a client too, for a tool that client provides: that is what unblocks the agent, and only the client the call was reported against may send one. Nothing is echoed from it - the result goes back to the harness, the harness writes the tool result, and the completion everybody sees comes off that, the same path every other call takes. |
+| `chat/toolCallResultConfirmed` | client | 🚫 | Refused, and genuinely inapplicable rather than unwritten: it belongs to a call completed with `requiresResultConfirmation`, the SDK's only approval moment is `canUseTool` *before* a tool runs, and there is no after-the-fact gate to reflect. A host could invent a policy of its own here; that would be this host asking a question the backend never asked. |
+| `chat/toolCallContentChanged` | client | ✅ | Streaming into a call while it runs, which is the *contributor's* to do. Relayed rather than reduced: what a tool prints as it runs is the running client's to say and this host holds none of it. Refused from anyone but the client named in the call's `ToolCallClientContributor`, and for a call no client is running - a call of the agent's own has no contributor to be. |
 | `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
 | `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
 | `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
@@ -228,9 +227,9 @@ which is a different complaint from an action nobody has served.
 | `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
 | `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. |
 | `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
-| `chat/inputAnswerChanged` | client | ➖ | Refused today, and **not implemented** rather than inapplicable: the question lives on `session.inputNeeded` and is answered whole, so there is no part holding a per-question draft. Holding one is the same shape as `chat/draftChanged`, which this host does hold - so two people answering one elicitation would see each other typing, which is the whole point of the action. |
+| `chat/inputAnswerChanged` | client | ✅ | One question of an open request, as somebody types the answer. Held on the request this host already keeps open and echoed to everyone watching the chat, for the reason `chat/draftChanged` is: two people answering one elicitation are answering one form. Kept on the request rather than beside it, so a client that arrives mid-question reads what is already filled in from `session.inputNeeded` - and so `chat/inputCompleted` carrying no answers of its own is completed with what was synced, which the protocol says is where they are. |
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
-| `chat/truncated` | client | ➖ | Refused today, and the refusal is the honest half: this is **not implemented**, not inapplicable. The action drops the turns after a named one so a client can re-send an edited message - the edit-and-resend flow - and it has nothing to do with the harness compacting its own context, which is what an earlier version of this row wrongly said it was. The machinery is here: `cuts` already maps a turn id to the SDK prompt uuid, and `forkSession` / `resumeSessionAt` already continue a conversation from one. Compaction *is* handled and is a different thing: the harness announces it as `compact_boundary`, and this host turns it into a `systemNotification` response part saying how many tokens went where - the turns it compacted are all still in the transcript, so dropping them would be untrue. |
+| `chat/truncated` | client | ✅ | Drops the turns after a named one - the edit-and-resend flow, and nothing to do with the harness compacting its own context. Served as a rewind, because dropping them from the screen alone would leave the agent answering the message that was edited away: the CLI is started again resumed at the kept turn's *last* chain entry, the turns up to there are handed over as the seed, and the session id is kept so a later resume reaches the truncated conversation rather than the one this dropped. Two things it will not do. A turn read back off a transcript has no rewind point - the backend's names for what it did are recorded only while this process watches it run - and truncating to one is refused rather than half-done. And the action's `turnId` is optional, meaning "clear everything", which as a rewind is a cut before the first prompt and names no entry at all; that form is refused too. Compaction *is* handled and is a different thing: the harness announces it as `compact_boundary`, and this host turns it into a `systemNotification` response part saying how many tokens went where - the turns it compacted are all still in the transcript, so dropping them would be untrue. |
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. |
 
 ### `terminal/*` — 11 of 11 🧩
@@ -332,6 +331,42 @@ that reduced one would apply the very change this host declined to make.
 | the result is one object | `chat/toolCallComplete` carries `result: { success, pastTenseMessage, content?, error? }`. A client's reducer spreads `action.result` over the call and reads nothing else, so a `content` beside it is dropped without a word |
 | a failed tool is `completed` | `ToolCallStatus` has no `failed`. What went wrong is `result.success` and `result.error` |
 | the id is the agent's | `canUseTool` asks under the agent's own `toolUseID`. A confirmation with an id of the host's making is a second row for one call, answered under a name no client was given |
+
+### A client's tools are the client's to run
+
+A client announces what it can run on `SessionActiveClient.tools`, and the
+protocol makes that client responsible for executing the call and dispatching
+its result. Three things about serving that are not obvious from the types.
+
+**They ride this host's own MCP server.** The harness reaches a contributed
+tool through `createSdkMcpServer`, so a client's tools and this host's arrive at
+the model in one in-process server named `ahp`. By name they are all
+`mcp__ahp__*`, which means the server they came through cannot say whose they
+are - so the call's `contributor` is a `ToolCallClientContributor` looked up
+from the announcement rather than the `ToolCallMcpContributor` the name implies.
+A client's own beats the server it is offered through, or every client would be
+told the call is nobody's to answer, including the one whose call it is.
+
+**A client's are named `<clientId>__<name>`.** Two clients in one session may
+both provide `openFile` and the model is offered one list.
+
+**Joining the call to the handler is this host's problem.** They arrive
+separately and neither carries the other's name: the assistant frame opens the
+call under the harness's id, and the in-process handler is invoked with the
+input and nothing else - the SDK surfaces a `toolUseID` to `canUseTool` and to
+hooks, and *not* to a tool. So the two are matched by tool name and then by the
+input itself, which is what tells two concurrent calls of one tool apart.
+
+**Nothing is echoed on completion.** A client's `chat/toolCallComplete` is what
+unblocks the agent; the result then goes back to the harness, the harness writes
+the tool result, and the completion every client sees comes off that - the same
+path every other tool call takes. Relaying the client's own would draw the row
+finished twice, once from a client's word and once from what happened.
+
+**A client that leaves fails its calls.** Outstanding calls are answered as
+failed rather than left open: the agent is waiting on a promise nothing can
+settle any more, and a turn that hangs for ever is worse than a tool that says
+it could not run.
 
 ### Being asked
 
@@ -582,6 +617,37 @@ on the daemon's own credentials.
 
 This is not the same as the [connection token](DAEMON.md#who-may-connect),
 which is about who may reach the host at all.
+
+## Three things in the package that do not hold
+
+Not this host's behaviour - the protocol package's own, found by writing against
+it. Recorded here because each one is silent: nothing errors, and what you get
+instead is a menu that draws empty, a type no JSON satisfies, or a message that
+grows a prefix every time it is passed on.
+
+**`ActionEnvelope.origin` cannot be satisfied by JSON.** It is declared
+`readonly origin: ActionOrigin | undefined` - a *required* property whose type
+includes `undefined`. JSON has no `undefined`: omit the key and the interface is
+not satisfied, send `null` and it is the wrong type. Every action a host
+originates has no origin, so this is the common case rather than an edge, and
+every host writing TypeScript against the package works around it in the same
+place. `origin?: ActionOrigin` says the same thing and is satisfiable.
+
+**A completion has to say that it is a command, and nothing declares that.**
+`SimpleMessageAttachment` has no notion of a slash command, so the reference
+client reads one out of the attachment's `_meta`: a bag carrying `command` is a
+slash command, one carrying `uri` is a skill, and one carrying neither is
+dropped without a word. `_meta` is a legitimate escape hatch - it is declared on
+`MessageAttachmentBase` - but the convention is not written down anywhere a host
+would find it, and the failure is silent. See [a slash command is a
+message](#a-slash-command-is-a-message) for what this host answers with.
+
+**`RpcError` does not survive a round trip through the package's own client.**
+Its constructor puts the code into the message - `RPC error ${code}: ${message}`
+- and the client, re-serialising an error thrown from a server-request handler,
+writes that decorated message back onto the wire beside the code it already
+carries. Code and data survive; the message gains a prefix per hop, so an error
+relayed twice reads `RPC error -32602: RPC error -32602: …`.
 
 ## How this is checked
 

@@ -220,10 +220,10 @@ method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 par
 | Changesets | `changes` port | 🧩 | The git implementation serves all four scopes and the working-tree operations |
 | Automations | `automations` port | 🧩 | `ahpd` adds scheduled execution: cron in a named time zone, running with nobody connected |
 | Authentication | connection token, plus agent credentials | 🔀 | A pushed token is held per connection; Claude otherwise inherits the daemon's own credentials |
-| Logs | `otlp/exportLogs` | 🚧 | Logs only. Tracing and metrics are not emitted |
+| Telemetry | `otlp/exportLogs`, `otlp/exportTraces`, `otlp/exportMetrics` | ✅ | The lines the daemon writes to stdout; a turn as a server span with every tool call a child of it; and cumulative counters against the process start |
 | Annotations | — | ➖ | No producer currently |
 
-Method by method that is **31 of the 32 declared commands** and **64 of the 96
+Method by method that is **31 of the 32 declared commands** and **95 of the 96
 state actions**. The rest is `-32601`, said rather than quietly answered: a host
 that returns an empty success to a method it lacks leaves the client waiting for
 state that is never coming, which reads as a hang rather than as a missing

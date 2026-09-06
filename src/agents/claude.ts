@@ -333,6 +333,7 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.resume !== undefined ? { resume: start.resume } : {}),
       ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
+      ...(start.rewindAt !== undefined ? { rewindAt: start.rewindAt } : {}),
       ...(start.context !== undefined ? { context: start.context } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),

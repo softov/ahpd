@@ -75,6 +75,18 @@ export interface SessionOptions {
    */
   forkAt?: string;
   /**
+   * The chain entry this session is resumed *at*, keeping it and everything
+   * before it.
+   *
+   * A rewind rather than a fork: the conversation carries on under the id it
+   * already had, with the turns after that point dropped. What
+   * `chat/truncated` asks for, and the id is the difference - a fork leaves
+   * the original for somebody else to find, a truncation means there is
+   * nothing left to find. Meaningless without `resume`, and ignored beside
+   * `forkAt`, which asks for the other thing.
+   */
+  rewindAt?: string;
+  /**
    * Context the first turn carries without showing it.
    *
    * A side chat is started from a turn somewhere else and needs to know what
@@ -165,6 +177,20 @@ export interface Session {
    * that fails when it is used.
    */
   forkPoint?(turnId: string): string | undefined;
+  /**
+   * The backend's own name for the *last* thing a turn did, if it has one.
+   *
+   * Where a rewind cuts. `forkPoint` names the prompt a turn began with and
+   * `endPoint` names the last entry it left behind, and the two are different
+   * questions: a fork re-asks the turn, a truncation keeps it whole and drops
+   * what came after.
+   *
+   * Optional and, like `forkPoint`, only ever answered for a turn this process
+   * watched run: the backend's names for a turn read back off a transcript are
+   * not recorded, so a session resumed from disk can be truncated no further
+   * back than its own first turn.
+   */
+  endPoint?(turnId: string): string | undefined;
   /** Skills, commands, subagents and MCP servers this session was given. */
   customizations(): Bag[];
   /** Every completed turn. Snapshots carry only the newest page of these. */
@@ -268,8 +294,68 @@ export interface Session {
 
   /** Answer a tool call the agent is waiting on. */
   confirm(toolCallId: string, approved: boolean): void;
+
+  /**
+   * Replace the tools this session offers the model.
+   *
+   * The host's own are fixed at creation; a client's come and go with the
+   * client, which is what this is for. Replaces rather than merges, because
+   * a tool taken away has to be able to go.
+   *
+   * False when the backend could not re-declare them - a session whose agent
+   * has gone, or one whose backend cannot change its tools once it is running.
+   *
+   * Optional. A backend that leaves it out is one this host offers no
+   * client-provided tools through, and it says so rather than accepting an
+   * announcement it will not act on.
+   */
+  setTools?(tools: BoundTool[]): Promise<boolean>;
+  /**
+   * The client running a tool call, for a call that is one client's to run.
+   *
+   * Nothing for a call the agent is running itself, which is what makes this
+   * the check for whether a client may write into one: the protocol says a
+   * host should refuse `chat/toolCallContentChanged` from anybody but the
+   * call's own contributor.
+   */
+  toolCallOwner?(toolCallId: string): string | undefined;
+  /**
+   * What a client says one of its own tool calls did.
+   *
+   * False when no call by that id is waiting, or when it is waiting on a
+   * different client - both are a client out of step rather than a no-op, and
+   * the host refuses rather than dropping it.
+   */
+  completeToolCall?(
+    toolCallId: string,
+    clientId: string,
+    result: { text: string; ok: boolean },
+  ): boolean;
+  /**
+   * A client that was running tool calls here has gone.
+   *
+   * Its outstanding calls are failed rather than left open: the agent is
+   * waiting on a promise that nothing can settle any more, and a turn that
+   * hangs for ever is worse than a tool that says it could not run.
+   */
+  clientGone?(clientId: string): void;
   /** Answer a question the agent asked, keyed by question id. */
   answer(requestId: string, accepted: boolean, answers: Bag): void;
+  /**
+   * One question of an open request, as somebody types the answer.
+   *
+   * The protocol calls the result the request's synced answer state, and it is
+   * what a `chat/inputCompleted` carrying no answers of its own is completed
+   * with. Held by the session for the same reason a draft message is: two
+   * people on one chat are answering one form.
+   *
+   * False when nothing here is waiting on that request, or when what is
+   * waiting is a tool confirmation rather than a question.
+   *
+   * Optional. A backend that keeps no drafts leaves it out, and the host
+   * refuses the action with that as the reason.
+   */
+  setAnswer?(requestId: string, questionId: string, answer: Bag | undefined): boolean;
 
   /**
    * Take one config value, or say why not.

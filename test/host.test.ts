@@ -34,6 +34,8 @@ const sdk = vi.hoisted(() => {
     interrupted: 0,
     mcpToggled: [] as { name: string; enabled: boolean }[],
     mcpReconnected: [] as string[],
+    /** Every set of MCP servers re-declared on a running session, in order. */
+    mcpDeclared: [] as Record<string, unknown>[],
     canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
     /**
      * Every CLI the host started, in order.
@@ -86,6 +88,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       applyFlagSettings: async (settings: { effortLevel?: string | null }) => { sdk.effortsSet.push(settings.effortLevel); },
       toggleMcpServer: async (name: string, enabled: boolean) => { sdk.mcpToggled.push({ name, enabled }); },
       reconnectMcpServer: async (name: string) => { sdk.mcpReconnected.push(name); },
+      // Replaces the set, which is what the real one does - so the options a
+      // test reads back are what the session is actually offering now.
+      setMcpServers: async (servers: Record<string, unknown>) => {
+        fake.options.mcpServers = servers;
+        sdk.mcpDeclared.push(servers);
+      },
       // The control protocol: answers without a turn having happened, which
       // is the whole reason capabilities are read from here.
       initializationResult: async () => sdk.init,
@@ -162,6 +170,7 @@ beforeEach(() => {
   sdk.interrupted = 0;
   sdk.mcpToggled.length = 0;
   sdk.mcpReconnected.length = 0;
+  sdk.mcpDeclared.length = 0;
   sdk.canUseTool = undefined;
 });
 
@@ -442,17 +451,19 @@ describe('what it will not pretend', () => {
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
-    // Four refusals that used to read `is not served yet`, which is true and
-    // tells a client nothing it can act on.
-    expect(why({ type: 'chat/truncated', turnId: 't1' })).toContain('compacted');
-    expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: 'x' }))
-      .toContain('no draft answer');
+    // Refusals that used to read `is not served yet`, which is true and tells
+    // a client nothing it can act on. Two of these are now served, so what
+    // they refuse is the particular thing asked for rather than the action:
+    // a turn that is not there, and a question nobody is waiting on.
+    expect(why({ type: 'chat/truncated', turnId: 't1' })).toContain('not a completed turn');
+    expect(why({ type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: {} }))
+      .toContain('not a question this chat is waiting on');
     expect(why({ type: 'chat/toolCallResultConfirmed', toolCallId: 'c1' }))
       .toContain('result to be confirmed');
     // Not the same complaint: this one is a *contributor's* to send, for a
-    // tool the client itself provides, and no call here carries a contributor.
+    // tool the client itself provides, and no call by that name is one.
     expect(why({ type: 'chat/toolCallContentChanged', toolCallId: 'c1' }))
-      .toContain('the agent\'s to change');
+      .toContain('not a call a client is running here');
     expect(chatUri).toBeTruthy();
   });
 
@@ -954,6 +965,128 @@ describe('driving a turn', () => {
       behavior: 'allow',
       updatedInput: { questions, answers: { 'Which database?': 'SQLite' } },
     });
+  });
+
+  it('syncs a half-typed answer, and completes with what was typed', async () => {
+    const { client, peer: p, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+
+    const questions = [{
+      question: 'Which database?',
+      options: [{ label: 'Postgres' }, { label: 'SQLite' }],
+      multiSelect: false,
+    }];
+    const decision = sdk.canUseTool?.('AskUserQuestion', { questions });
+    await settle();
+    const request = actions(p).find((e) => e.action.type === 'chat/inputRequested')
+      ?.action.request as { id: string };
+
+    const answer = { state: 'draft', value: { kind: 'selected', value: 'SQLite' } };
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer },
+      },
+    });
+    await settle();
+    // Said back, because the point of an answer being on the wire at all is
+    // that the other people looking at the question see it being filled in.
+    const synced = actions(p).filter((e) => e.action.type === 'chat/inputAnswerChanged');
+    expect(synced).toHaveLength(1);
+    expect(synced[0]?.action).toMatchObject({ requestId: request.id, questionId: 'q1', answer });
+
+    // And on the request itself, which is what a client arriving now reads:
+    // an empty form in front of somebody else's filled-in one is the state
+    // this host would otherwise be serving.
+    const open = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { inputNeeded?: { request?: { answers?: unknown } }[] } };
+    }).snapshot.state;
+    expect(open.inputNeeded?.[0]?.request?.answers).toEqual({ q1: answer });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/inputCompleted', requestId: request.id, response: 'accept' },
+      },
+    });
+    /*
+     * Completed with nothing of its own, and answered anyway.
+     *
+     * The protocol has `chat/inputCompleted` use the request's synced answer
+     * state plus whatever the completion carries - so a client that has been
+     * syncing each answer as it went has already said everything, and reading
+     * only the action submitted an empty form to a tool that then stalled.
+     */
+    expect(await decision).toEqual({
+      behavior: 'allow',
+      updatedInput: { questions, answers: { 'Which database?': 'SQLite' } },
+    });
+  });
+
+  it('clears one answer draft without touching the others', async () => {
+    const { client, peer: p, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    const questions = [
+      { question: 'Which database?', options: [{ label: 'SQLite' }] },
+      { question: 'Which port?', options: [{ label: '5432' }] },
+    ];
+    void sdk.canUseTool?.('AskUserQuestion', { questions });
+    await settle();
+    const request = actions(p).find((e) => e.action.type === 'chat/inputRequested')
+      ?.action.request as { id: string };
+
+    const said = (questionId: string, answer?: unknown) => {
+      client.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: uri,
+          action: {
+            type: 'chat/inputAnswerChanged',
+            requestId: request.id,
+            questionId,
+            ...(answer !== undefined ? { answer } : {}),
+          },
+        },
+      });
+    };
+    said('q1', { state: 'draft', value: { kind: 'selected', value: 'SQLite' } });
+    said('q2', { state: 'draft', value: { kind: 'selected', value: '5432' } });
+    // No `answer` is the action's way of saying this one is cleared, which is
+    // the only way JSON has of saying `undefined`.
+    said('q2');
+    await settle();
+
+    const open = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { inputNeeded?: { request?: { answers?: Record<string, unknown> } }[] } };
+    }).snapshot.state;
+    expect(Object.keys(open.inputNeeded?.[0]?.request?.answers ?? {})).toEqual(['q1']);
+  });
+
+  it('refuses an answer to a question nothing is waiting on', async () => {
+    const { client, peer: p, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: uri,
+        action: { type: 'chat/inputAnswerChanged', requestId: 'nobody', questionId: 'q1', answer: {} },
+      },
+    });
+    await settle();
+    // Refused rather than dropped: a client typing into a question this host
+    // is not holding open is one whose screen is out of step, and it can only
+    // find that out by being told.
+    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('not a question this chat is waiting on');
   });
 
   it('settles the blocked promise when the turn is cancelled', async () => {
@@ -3038,7 +3171,7 @@ describe('a compacted context', () => {
       .find((held) => held.kind === 'systemNotification');
     expect(part?.content).toBe('Context compacted automatically: 120000 tokens to 30000.');
 
-    // Not `chat/truncated`. That means "drop the turns before this one", and
+    // Not `chat/truncated`. That means "drop the turns after this one", and
     // every one of them is still in the transcript and still readable - what
     // was compacted is the model's context, not the conversation.
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(false);
@@ -3842,6 +3975,263 @@ describe('tools the host contributes', () => {
   });
 });
 
+describe('tools a client contributes', () => {
+  const OPEN_FILE = {
+    name: 'openFile',
+    description: 'Open a file in the editor',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  };
+
+  /** A running session with one client that says it can run `openFile`. */
+  async function providing(tools: unknown[] = [OPEN_FILE]) {
+    const held = await running();
+    held.client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: held.uri,
+        action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools } },
+      },
+    });
+    await settle();
+    return held;
+  }
+
+  /** The tools the session is offering the model right now. */
+  const offered = () => (sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+    tools: {
+      name: string; description: string;
+      handler: (input: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+    }[];
+  }> | undefined)?.ahp?.tools ?? [];
+
+  it('offers what a client announced to the model, under a name of its own', async () => {
+    await providing();
+    // Re-declared on the running session rather than only at creation: a
+    // client announces what it provides when it opens the session, which is
+    // after the agent has started.
+    expect(sdk.mcpDeclared).toHaveLength(1);
+    // Named for the client as well as the tool. Two clients in one session may
+    // both provide `openFile`, and the model is offered one list.
+    const one = offered().find((tool) => tool.name === 'probe__openFile');
+    expect(one?.description).toBe('Open a file in the editor');
+  });
+
+  it('reports the call against the client that provides it, and waits for it', async () => {
+    const { client, peer: p, uri, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{
+          type: 'tool_use', id: 'call-1',
+          name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' },
+        }],
+      },
+    });
+
+    /*
+     * A client contributor, not this host's MCP server.
+     *
+     * The tools a client provides ride this host's own in-process server, so
+     * by name they all look like `mcp__ahp__*` - and reporting one as this
+     * host's contribution would tell every client that the call is nobody's
+     * to answer, including the one whose call it is.
+     */
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
+
+    // The model's call reaches the client as a promise that does not settle
+    // until the client says what happened.
+    const call = offered().find((tool) => tool.name === 'probe__openFile');
+    let done = false;
+    const answering = call?.handler({ path: '/a.txt' }).then((answer) => { done = true; return answer; });
+    await settle();
+    expect(done).toBe(false);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: {
+          type: 'chat/toolCallComplete',
+          toolCallId: 'call-1',
+          result: { success: true, pastTenseMessage: 'Opened it', content: [{ type: 'text', text: 'opened /a.txt' }] },
+        },
+      },
+    });
+    expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
+    expect(uri).toBeTruthy();
+  });
+
+  it('says a failed call failed, in the words the client used', async () => {
+    const { client, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/gone' } }],
+      },
+    });
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/gone' });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: {
+          type: 'chat/toolCallComplete',
+          toolCallId: 'call-1',
+          result: { success: false, pastTenseMessage: 'Could not open it', error: { message: 'no such file' } },
+        },
+      },
+    });
+    // An MCP tool that rejects is a transport failure; one that could not do
+    // the thing is an answer, and the model reads the reason.
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toBe('no such file');
+  });
+
+  it('refuses a result from a client whose call it is not', async () => {
+    const { host, client, chatUri } = await providing();
+    const theirs = peer();
+    const other = host.accept(theirs);
+    await other.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: 'someone-else', protocolVersions: ['0.9.0'] },
+    });
+    await other.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    other.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true } },
+      },
+    });
+    await settle();
+    // A result from anybody else is a client answering for work it did not do.
+    const refused = actions(theirs).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('is not a call someone-else is running here');
+
+    // And the same for writing into the call while it runs, which the protocol
+    // says is the contributor's alone.
+    other.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/toolCallContentChanged', toolCallId: 'call-1', content: [] },
+      },
+    });
+    await settle();
+    expect(actions(theirs).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason)
+      .toContain('is probe\'s call');
+  });
+
+  it('relays what the owning client writes into its own call', async () => {
+    const { host, client, chatUri } = await providing();
+    const watching = peer();
+    const other = host.accept(watching);
+    await other.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: 'watcher', protocolVersions: ['0.9.0'] },
+    });
+    await other.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 4,
+        action: {
+          type: 'chat/toolCallContentChanged',
+          toolCallId: 'call-1',
+          content: [{ type: 'text', text: 'reading…' }],
+        },
+      },
+    });
+    await settle();
+    // Passed through rather than reduced: what a tool is printing as it runs
+    // is the running client's to say, and this host holds none of it.
+    const said = actions(watching, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged');
+    expect(said?.action.toolCallId).toBe('call-1');
+    expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
+  });
+
+  it('fails the calls of a client that goes, rather than leaving the turn hanging', async () => {
+    const { client, uri, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    // Unsubscribing is one of the three ways the protocol says a client stops
+    // being active in a session.
+    client.handle({ method: 'unsubscribe', params: { channel: uri } });
+    await settle();
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toContain('no longer here');
+
+    // And the tool goes with the client: one whose provider has left is one
+    // every call to would fail.
+    expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
+  });
+});
+
 describe('telling a client how far along something is', () => {
   it('reports progress against the token the request carried, and stops at the total', async () => {
     const { client, peer: p } = await running();
@@ -3918,6 +4308,156 @@ describe('what a chat says about itself', () => {
       .toBeGreaterThan(said.indexOf('chat/pendingMessageSet'));
   });
 
+});
+
+describe('dropping the turns after one', () => {
+  /** Two finished turns, with the backend's own names for what they did. */
+  async function twice() {
+    const running_ = await running();
+    const { client, chatUri } = running_;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    await emit({ type: 'user', session_id: 'sdk-1', uuid: 'prompt-1', message: { role: 'user', content: 'first' } });
+    await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+    });
+    await settle();
+    await emit({ type: 'user', session_id: 'sdk-1', uuid: 'prompt-2', message: { role: 'user', content: 'second' } });
+    await emit({ type: 'assistant', uuid: 'reply-2', message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    return running_;
+  }
+
+  it('rewinds the agent to the end of the turn it keeps, under the same id', async () => {
+    const { client, chatUri } = await twice();
+    const before = sessionQueries().length;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+
+    // A CLI that still remembered the dropped turn would answer the edited
+    // message with the one it replaced still in front of it.
+    expect(sessionQueries().length).toBe(before + 1);
+    const fresh = sessionQueries().at(-1);
+    expect(fresh?.options.resume).toBe('sdk-1');
+    // The kept turn's *last* entry, not the prompt it began with: cutting at
+    // the prompt keeps the question and drops the answer to it.
+    expect(fresh?.options.resumeSessionAt).toBe('reply-1');
+    // And not a fork. A truncation carries on in the conversation it dropped
+    // the turns from, so the id has to survive it - a new one would leave
+    // every later resume reaching the transcript that still has them.
+    expect(fresh?.options.forkSession).toBeUndefined();
+
+    // The history through that turn is still here: a truncation that emptied
+    // the chat is not what the action asks for.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+  });
+
+  it('says so before it restarts, so nobody is shown what they asked to be rid of', async () => {
+    const { client, peer: p, chatUri } = await twice();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 3, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+    const said = actions(p, chatUri).map((e) => e.action.type);
+    expect(said).toContain('chat/truncated');
+    // Carrying the origin of the client that asked, like every other action a
+    // client dispatches: one applying it optimistically has to be able to
+    // recognise its own.
+    const truncated = actions(p, chatUri).find((e) => e.action.type === 'chat/truncated');
+    expect(truncated?.origin).toEqual({ clientId: 'probe', clientSeq: 3 });
+  });
+
+  it('refuses a turn it has no rewind point for, rather than clearing the screen alone', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    // Finished without the CLI ever naming what it did - which is every turn
+    // read back off a transcript rather than watched running.
+    await emit({ type: 'result', session_id: 'sdk-1', subtype: 'success', is_error: false, duration_ms: 1 });
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('not a turn this host can rewind to');
+    // And nothing moved: the turn is still there and the CLI was not restarted.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+    expect(uri).toBeTruthy();
+  });
+
+  it('drops the turn that is running, and comes back idle', async () => {
+    const { client, peer: p, chatUri } = await twice();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', message: { text: 'third' } } },
+    });
+    await settle();
+    const before = actions(p, chatUri).length;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+
+    /*
+     * Silently, which the action says in as many words.
+     *
+     * Nothing about the dropped turn is reported as an ending: `chat/truncated`
+     * is said first and every client has already taken that turn off its
+     * screen, so a completion or a cancellation behind it would be an ending
+     * for something nobody is holding.
+     */
+    const after = actions(p, chatUri).slice(before).map((e) => e.action.type);
+    expect(after).toContain('chat/truncated');
+    expect(after).not.toContain('chat/error');
+    expect(after).not.toContain('chat/turnComplete');
+
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[]; activeTurn?: unknown } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+    expect(state.activeTurn).toBeUndefined();
+  });
+
+  it('will not empty a conversation entire, and says why', async () => {
+    const { client, peer: p, chatUri } = await twice();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/truncated' } },
+    });
+    await settle();
+    /*
+     * `turnId` is optional and its absence means "clear everything", which as
+     * a rewind is a cut at a point before the first prompt - and there is no
+     * such entry for the backend to be pointed at. Refused rather than served
+     * as an emptied screen in front of an agent that remembers all of it.
+     */
+    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('not a conversation entire');
+  });
 });
 
 describe('a chat made out of another', () => {
@@ -4437,9 +4977,10 @@ describe('the fields a client reads by name', () => {
     // Which dispatch it answers, so the client knows what to put back.
     expect(refused[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
     expect(refused[0]?.action.type).toBe('chat/truncated');
-    // The reason names what actually happened rather than the type again: the
-    // harness compacted its context, which is not the turns being dropped.
-    expect((refused[0] as { rejectionReason?: string }).rejectionReason).toContain('compacted');
+    // The reason names what actually happened rather than the type again:
+    // this chat has no turn by that name, so there is nothing to truncate to.
+    expect((refused[0] as { rejectionReason?: string }).rejectionReason)
+      .toContain('not a completed turn');
     // No state moved, so the sequence did not either: the refusal carries the
     // number this host is still at rather than claiming a place in the stream.
     expect(refused[0]?.serverSeq).toBe(at);
