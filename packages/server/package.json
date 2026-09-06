@@ -2,7 +2,7 @@
   "name": "@ahpd/server",
   "version": "0.1.0",
   "type": "module",
-  "description": "An Agent Host Protocol host, and the parts to build your own. No backend inside",
+  "description": "A server library for the Agent Host Protocol. No agent inside, you pass one in",
   "keywords": [
     "ahp",
     "agent-host-protocol",
