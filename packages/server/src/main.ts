@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { automationsPath, configPath, loadConfig } from './config.js';
+import { version } from './version.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
@@ -55,6 +56,8 @@ interface Options {
    */
   automations: 'file' | 'memory';
   help: boolean;
+  /** Say the version and stop. */
+  version: boolean;
 }
 
 const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
@@ -82,6 +85,7 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 configuration and fires their schedules;
                                 memory keeps them until this process ends and
                                 fires nothing.
+  --version, -v                 What version this is
   --help, -h                    This
 
 Every option above can be a key in the configuration file instead, spelled the
@@ -104,6 +108,7 @@ function parse(argv: string[]): Options {
     automations: 'file',
     open: false,
     help: false,
+    version: false,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -126,6 +131,7 @@ function parse(argv: string[]): Options {
         break;
       }
       case '--help': case '-h': options.help = true; break;
+      case '--version': case '-v': options.version = true; break;
       default:
         if (argv[i]?.startsWith('-')) {
           process.stderr.write(`Unknown option ${argv[i]}. Try --help.\n`);
@@ -263,6 +269,10 @@ if (verb !== undefined) {
 }
 
 const options = parse(argv);
+if (options.version) {
+  process.stdout.write(`${version()}\n`);
+  process.exit(0);
+}
 if (options.help) {
   process.stdout.write(USAGE);
   process.exit(0);
