@@ -18,7 +18,7 @@ It lives in `ahpc` rather than here, and no new package: MCP is a client of a ho
 
 ### Publish the badges
 
-`@ahpd/sdk`, `@ahpd/agent-claude` and `@ahpd/server` are on npm at 0.2.0. The version badges and the CI badge are worth adding once the repository is public.
+`@ahpd/sdk`, `@ahpd/agent-claude` and `@ahpd/server` are on npm. The version badges and the CI badge are worth adding now the repository is public.
 
 ## Deliberate duplication
 

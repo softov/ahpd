@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "A server library for the Agent Host Protocol. No agent inside, you pass one in",
   "keywords": [
