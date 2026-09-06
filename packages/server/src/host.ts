@@ -2706,21 +2706,22 @@ export function createHost(options: HostOptions): Host {
     });
   };
   /** Every terminal, as the root channel lists them. */
-  const terminalInfo = (): (OnWire<TerminalInfo> & { exitCode?: number })[] =>
-    [...terminals.values()].map((held) => {
-      // Read once so it narrows: `exactOptionalPropertyTypes` will not take a
-      // `number | undefined` for a `number?`.
-      const code = held.exitCode();
-      return {
-        resource: held.uri,
-        title: held.title(),
-        claim: held.claim(),
-        // Required in 0.9.0's `TerminalInfo`, and read by everything older as
-        // the flat field beside it. See the terminal's own state for why both.
-        lifecycle: held.lifecycle(),
-        ...(code !== undefined ? { exitCode: code } : {}),
-      };
-    });
+  const terminalInfo = (): OnWire<TerminalInfo>[] =>
+    [...terminals.values()].map((held) => ({
+      resource: held.uri,
+      title: held.title(),
+      claim: held.claim(),
+      /*
+       * The exit code is in here, and only here.
+       *
+       * `TerminalInfo` declares these four keys and nothing else; the code
+       * belongs to `TerminalExitedLifecycleState`, which this returns once the
+       * process has gone. A flat one beside it is a key the protocol does not
+       * have, and it only appeared on the wire when a terminal happened to
+       * exit before the list was taken.
+       */
+      lifecycle: held.lifecycle(),
+    }));
   /**
    * The tools this host contributes, which `setTools` replaces.
    *
