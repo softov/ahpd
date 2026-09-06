@@ -38,7 +38,17 @@ jobs:
 
       - run: pnpm typecheck
 
-      - run: pnpm test
+      # Bounded and verbose. This suite has hung on the runner while passing
+      # everywhere else, and a job that is cancelled rather than failed leaves
+      # no readable log, so the step has to end by itself and say where it got
+      # to. The schema generator runs separately from the tests, so a hang in
+      # one is not mistaken for the other.
+      - name: Tests
+        run: |
+          echo '--- schema'
+          node tools/schema.mjs
+          echo '--- vitest'
+          timeout 300 pnpm exec vitest run --reporter=verbose --testTimeout=20000 --hookTimeout=20000 --teardownTimeout=20000
 
       # Last, because it is the slowest and the only one that writes anything.
       - run: pnpm build
