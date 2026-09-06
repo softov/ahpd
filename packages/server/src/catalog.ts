@@ -1,11 +1,9 @@
-import { listSessions } from '@anthropic-ai/claude-agent-sdk';
-import type { Listed } from './types/agent.js';
-
 /**
- * The agent's sessions, as rows a host can list.
+ * How a session is named, and what its status bits are worth.
  *
- * Renames the SDK's session listing into `Listed`. The SDK is the authority
- * on which sessions exist; this module only maps the fields.
+ * URIs and numbers, and nothing that knows what a session *is*: the listing
+ * itself belongs to whichever backend wrote the sessions down, because only
+ * that one can say which exist. See `catalogue` in `@ahpd/agent-claude`.
  */
 
 /**
@@ -53,21 +51,3 @@ export const idOf = (uri: string): string => {
 };
 /** The same, and the name it goes by where a session rather than a chat is meant. */
 export const idFor = idOf;
-
-/**
- * What this backend is a catalogue *of*.
- *
- * `dir`, not `cwd` - the option that scopes a listing to one project is spelled
- * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
- * spelling answers with every session on the machine and looks like it worked.
- */
-export async function catalogue(dir: string): Promise<Listed[]> {
-  const found = await listSessions({ dir });
-  return found.map((info) => ({
-    id: info.sessionId,
-    title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
-    createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
-    modifiedAt: new Date(info.lastModified).toISOString(),
-    workingDirectories: [`file://${info.cwd ?? dir}`],
-  }));
-}

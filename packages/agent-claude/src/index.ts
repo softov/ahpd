@@ -11,6 +11,7 @@
  * a list, and cannot tell one from another.
  */
 
+export { catalogue } from './catalog.js';
 export { claude } from './claude.js';
 export type { ClaudeOptions } from './claude.js';
 export { createSession, EFFORTS, EFFORT_LABELS } from './session.js';

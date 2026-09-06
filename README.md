@@ -246,8 +246,10 @@ fail silently rather than loudly.
 ## Layout
 
 Three packages in one repository. The boundary is real - `@ahpd/server` imports
-nothing that runs an agent, and the check for that is that it compiles without
-`@ahpd/agent-claude` installed.
+nothing that runs an agent, and the check for that is that it compiles with both
+`@ahpd/agent-claude` and the Claude agent SDK uninstalled. It did not, at first:
+`catalogue` reached for the SDK's session listing from inside the host, and the
+split is what made that visible.
 
 ### `@ahpd/server` — the protocol, and the parts to build a host
 
@@ -263,7 +265,7 @@ nothing that runs an agent, and the check for that is that it compiles without
 | [packages/server/src/git.ts](packages/server/src/git.ts)                 | The `directories` port: which branch a directory is on. |
 | [packages/server/src/automations.ts](packages/server/src/automations.ts) | The `automations` port, without a clock. |
 | [packages/server/src/scheduled.ts](packages/server/src/scheduled.ts)     | The same, with one. |
-| [packages/server/src/catalog.ts](packages/server/src/catalog.ts)         | A backend's sessions, as rows a host can list. |
+| [packages/server/src/catalog.ts](packages/server/src/catalog.ts)         | How a session is named, and what its status bits are worth. |
 | [packages/server/src/paging.ts](packages/server/src/paging.ts)           | A long list of turns, served a page at a time. |
 | [packages/server/src/index.ts](packages/server/src/index.ts)             | The library entry point. |
 
@@ -272,6 +274,7 @@ nothing that runs an agent, and the check for that is that it compiles without
 | | |
 | --- | --- |
 | [packages/agent-claude/src/claude.ts](packages/agent-claude/src/claude.ts)         | The `Agent`: what this harness is and how to start one. |
+| [packages/agent-claude/src/catalog.ts](packages/agent-claude/src/catalog.ts)       | Claude's own sessions, as rows a host can list. |
 | [packages/agent-claude/src/session.ts](packages/agent-claude/src/session.ts)       | One live Claude session, reduced into its channels' state. |
 | [packages/agent-claude/src/transcript.ts](packages/agent-claude/src/transcript.ts) | A past Claude session read as turns. |
 | [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |

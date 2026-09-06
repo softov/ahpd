@@ -2,7 +2,8 @@ import { probe } from './probe.js';
 import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf } from './transcript.js';
-import { catalogue, within } from '@ahpd/server';
+import { catalogue } from './catalog.js';
+import { within } from '@ahpd/server';
 import type { Agent, Bag, Start } from '@ahpd/server';
 
 /**

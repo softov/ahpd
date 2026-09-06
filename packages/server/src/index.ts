@@ -34,7 +34,7 @@ export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
 export type { ScheduledOptions } from './scheduled.js';
-export { catalogue, uriFor, idFor, idOf, Status } from './catalog.js';
+export { uriFor, idFor, idOf, Status } from './catalog.js';
 export { tail, older, PAGE } from './paging.js';
 
 export type * from './types/index.js';
