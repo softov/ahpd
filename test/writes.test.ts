@@ -114,6 +114,16 @@ it('refuses to create over something, when asked to', async () => {
   expect(text('there.txt')).toBe('y');
 });
 
+it('lets exactly one concurrent createOnly write create a path', async () => {
+  const held = await client();
+  const results = await Promise.allSettled(Array.from({ length: 8 }, (_, number) =>
+    put(held, 'new.txt', { data: String(number), createOnly: true })));
+  expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+  for (const result of results.filter((result) => result.status === 'rejected')) {
+    expect((result.reason as { code: number }).code).toBe(-32010);
+  }
+});
+
 it('refuses a write against an etag that has moved on', async () => {
   const held = await client();
   writeFileSync(join(root, 'e.txt'), 'first');
@@ -131,6 +141,20 @@ it('refuses a write against an etag that has moved on', async () => {
   const stale = await refused(put(held, 'e.txt', { data: 'third', ifMatch: found.etag }));
   expect(stale.code).toBe(-32011);
   expect(text('e.txt')).toBe('second');
+});
+
+it('lets exactly one concurrent matching etag write update a file', async () => {
+  const held = await client();
+  writeFileSync(join(root, 'shared.txt'), 'before');
+  const { etag } = await held.handle({ method: 'resourceResolve', params: {
+    channel: 'ahp-root://', uri: `file://${root}/shared.txt`,
+  } }) as { etag: string };
+  const results = await Promise.allSettled(Array.from({ length: 8 }, (_, number) =>
+    put(held, 'shared.txt', { data: String(number), ifMatch: etag })));
+  expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+  for (const result of results.filter((result) => result.status === 'rejected')) {
+    expect((result.reason as { code: number }).code).toBe(-32011);
+  }
 });
 
 it('identifies links when resolving without following them', async () => {

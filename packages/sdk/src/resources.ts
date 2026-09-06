@@ -127,6 +127,11 @@ export async function writable(uri: string, roots: string[]): Promise<string> {
 /** The validator `resourceWrite`'s `ifMatch` compares against. */
 const tagOf = (size: number, mtimeMs: number): string => `W/"${size.toString(16)}-${Math.trunc(mtimeMs).toString(16)}"`;
 
+// A compare-and-write has no filesystem primitive on the platforms this host
+// supports.  Keep requests from this host in order for each opened path, so a
+// second `ifMatch` sees the first request's completed write.
+const writes = new Map<string, Promise<void>>();
+
 /** One directory's entries, names only. */
 export async function list(uri: string, roots: string[]): Promise<Entry[]> {
   const path = await allowed(uri, roots);
@@ -235,34 +240,49 @@ export async function complete(typed: string, base: string, roots: string[], lim
  */
 export async function write(uri: string, roots: string[], content: Write): Promise<void> {
   const path = await writable(uri, roots);
-  const incoming = Buffer.from(content.data, content.encoding === 'base64' ? 'base64' : 'utf8');
+  const before = writes.get(path) ?? Promise.resolve();
+  const operation = before.catch(() => {}).then(() => writeAt(path, uri, content));
+  writes.set(path, operation);
+  try { await operation; }
+  finally {
+    if (writes.get(path) === operation) writes.delete(path);
+  }
+}
 
-  const found = await lstat(path).catch(() => undefined);
-  if (found?.isSymbolicLink()) throw new RpcError(REFUSED, `${uri} is a symbolic link`);
-  if (found?.isDirectory()) throw new RpcError(REFUSED, `${uri} is a directory`);
-  if (content.createOnly === true && found !== undefined) {
-    throw new RpcError(ALREADY, `${uri} already exists`);
-  }
-  if (content.ifMatch !== undefined) {
-    // A file that is gone cannot match, and one that is there must. Both are
-    // the same failure from the client's side: what it read is not what is
-    // there now.
-    const now = found === undefined ? undefined : tagOf(found.size, found.mtimeMs);
-    if (now !== content.ifMatch) {
-      throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
-    }
-  }
+async function writeAt(path: string, uri: string, content: Write): Promise<void> {
+  const incoming = Buffer.from(content.data, content.encoding === 'base64' ? 'base64' : 'utf8');
+  const mode = content.mode ?? 'truncate';
+  const at = content.position ?? 0;
 
   // Keep the opened file through the read and write. A final link swapped in
   // after the checks must never redirect either operation outside the root.
-  const file = await open(path, ((content.mode === undefined || content.mode === 'truncate') && (content.position ?? 0) === 0
-    ? constants.O_WRONLY : constants.O_RDWR) | constants.O_CREAT | constants.O_NOFOLLOW).catch((error: NodeJS.ErrnoException) => {
+  // `O_EXCL` makes createOnly an operation the filesystem decides, rather than
+  // a check that can become stale before open.
+  let flags = (mode === 'truncate' && at === 0 ? constants.O_WRONLY : constants.O_RDWR) | constants.O_NOFOLLOW;
+  if (content.ifMatch === undefined) flags |= constants.O_CREAT;
+  if (content.createOnly === true && content.ifMatch === undefined) flags |= constants.O_EXCL;
+  const file = await open(path, flags).catch((error: NodeJS.ErrnoException) => {
+    if (content.createOnly === true && error.code === 'EEXIST') {
+      throw new RpcError(ALREADY, `${uri} already exists`);
+    }
+    if (content.ifMatch !== undefined && error.code === 'ENOENT') {
+      throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
+    }
     if (error.code === 'ENOENT') throw new RpcError(NOT_FOUND, `No directory for ${uri}`);
     throw new RpcError(REFUSED, `Could not write ${uri}: ${error.message}`);
   });
   try {
-    const mode = content.mode ?? 'truncate';
-    const at = content.position ?? 0;
+    const found = await file.stat();
+    if (found.isDirectory()) throw new RpcError(REFUSED, `${uri} is a directory`);
+    // `O_EXCL` above is the successful createOnly case.  The only createOnly
+    // request that reaches here without it also supplied ifMatch, so it opened
+    // an existing file and cannot be a create.
+    if (content.createOnly === true && content.ifMatch !== undefined) {
+      throw new RpcError(ALREADY, `${uri} already exists`);
+    }
+    if (content.ifMatch !== undefined && tagOf(found.size, found.mtimeMs) !== content.ifMatch) {
+      throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
+    }
     // Only read the existing bytes where a mode actually keeps some. A truncate
     // from zero - the ordinary save - reads nothing.
     const held = mode === 'truncate' && at === 0
