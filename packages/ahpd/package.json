@@ -2,7 +2,7 @@
   "name": "ahpd",
   "version": "0.1.0",
   "type": "module",
-  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, on Node, Bun or Deno",
+  "description": "An Agent Host Protocol server on Node, Bun or Deno. Ships with a Claude backend",
   "keywords": [
     "ahp",
     "agent-host-protocol",
@@ -38,6 +38,9 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
   },
   "dependencies": {
     "@ahpd/agent-claude": "workspace:^",

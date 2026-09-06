@@ -2,7 +2,7 @@
   "name": "@ahpd/server",
   "version": "0.1.0",
   "type": "module",
-  "description": "An Agent Host Protocol host, and the parts to build your own - no backend inside",
+  "description": "An Agent Host Protocol host, and the parts to build your own. No backend inside",
   "keywords": [
     "ahp",
     "agent-host-protocol",
@@ -43,6 +43,9 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
   },
   "optionalDependencies": {
     "ws": "^8.18.0",
