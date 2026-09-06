@@ -278,7 +278,8 @@ async function writeAt(path: string, uri: string, content: Write): Promise<void>
     if (content.ifMatch !== undefined && error.code === 'ENOENT') {
       throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
     }
-    if (error.code === 'ENOENT') throw new RpcError(NOT_FOUND, `No directory for ${uri}`);
+    if (error.code === 'ENOENT')
+      throw new RpcError(NOT_FOUND, `No directory at ${uriOf(dirname(path))} to write ${uri} into`);
     /*
      * The two refusals the flags above produce, said in the host's own words.
      *

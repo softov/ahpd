@@ -108,6 +108,8 @@ it('refuses to create over something, when asked to', async () => {
   writeFileSync(join(root, 'there.txt'), 'x');
   const denied = await refused(put(held, 'there.txt', { data: 'y', createOnly: true }));
   expect(denied.code).toBe(-32010);
+  expect(denied.message).toContain('already exists');
+  expect(denied.message).not.toContain('EEXIST');
   expect(text('there.txt')).toBe('x');
   // And without the flag it is an ordinary overwrite.
   await put(held, 'there.txt', { data: 'y' });
@@ -122,6 +124,10 @@ it('lets exactly one concurrent createOnly write create a path', async () => {
   for (const result of results.filter((result) => result.status === 'rejected')) {
     expect((result.reason as { code: number }).code).toBe(-32010);
   }
+  // The count is not the property: eight writers each wrote a different digit,
+  // so a file holding one of them whole is what says the seven that were
+  // refused wrote nothing at all.
+  expect(['0', '1', '2', '3', '4', '5', '6', '7']).toContain(text('new.txt'));
 });
 
 it('refuses a write against an etag that has moved on', async () => {
@@ -155,6 +161,9 @@ it('lets exactly one concurrent matching etag write update a file', async () => 
   for (const result of results.filter((result) => result.status === 'rejected')) {
     expect((result.reason as { code: number }).code).toBe(-32011);
   }
+  // As above: one digit, whole. A lost update would leave the file holding
+  // 'before' or a mixture of two writers.
+  expect(['0', '1', '2', '3', '4', '5', '6', '7']).toContain(text('shared.txt'));
 });
 
 it('identifies links when resolving without following them', async () => {
@@ -181,13 +190,21 @@ it('will not be written through a symlink pointing out of the served set', async
   symlinkSync(outside, join(root, 'link'));
   const denied = await refused(put(held, 'link/escaped.txt', { data: 'no' }));
   expect(denied.code).toBe(-32009);
+  expect(denied.message).not.toMatch(/^E[A-Z]+/);
   expect(existsSync(join(outside, 'escaped.txt'))).toBe(false);
+  expect(existsSync(join(root, 'link/escaped.txt'))).toBe(false);
 });
 
 it('says which directory is missing rather than which file', async () => {
   const held = await client();
   const gone = await refused(put(held, 'nowhere/deep/a.txt', { data: 'x' }));
   expect(gone.code).toBe(-32008);
+  // What the name of this test promises. The code alone was the same whether
+  // the message named the directory that is missing or the file that was
+  // never going to be reached.
+  expect(gone.message).toContain(`${root}/nowhere/deep`);
+  expect(gone.message).not.toContain('ENOENT');
+  expect(existsSync(join(root, 'nowhere'))).toBe(false);
 });
 
 it('removes a file, and will not remove a directory unless told twice', async () => {
@@ -263,12 +280,14 @@ it('moves and copies, and refuses a destination outside the served set', async (
     },
   }));
   expect(over.code).toBe(-32010);
+  expect(text('copy.txt')).toBe('carried');
 });
 
 it('needs a grant, and one on a directory covers what is under it', async () => {
   const held = await client(false);
   const denied = await refused(put(held, 'deep/a.txt', { data: 'x' }));
   expect(denied.code).toBe(-32009);
+  expect(existsSync(join(root, 'deep'))).toBe(false);
 
   // One request, not one per file. An editor saves the file it has open, and
   // a round trip per save would make the negotiation the slow part.
@@ -290,6 +309,7 @@ it('does not let a grant on one directory reach a sibling whose name starts the 
   await put(held, 'brb/ok.txt', { data: 'x' });
   // Prefix on a separator, never on the string.
   expect((await refused(put(held, 'brb_framework/no.txt', { data: 'x' }))).code).toBe(-32009);
+  expect(existsSync(join(root, 'brb_framework/no.txt'))).toBe(false);
 });
 
 it('refuses final file links for writes and copies, including dangling ones', async () => {
