@@ -239,6 +239,16 @@ export async function complete(typed: string, base: string, roots: string[], lim
  * `insert` at all.
  */
 export async function write(uri: string, roots: string[], content: Write): Promise<void> {
+  /*
+   * `ahpc` carries a second copy of everything below, in its `publish.ts`.
+   *
+   * `resourceWrite` is symmetrical - a host asks a client for one exactly as a
+   * client asks a host - so both ends need the same flags, the same order of
+   * preconditions and the same append and insert arithmetic. The client does
+   * not depend on this package and is not going to, so the copy is deliberate.
+   * What is not deliberate is fixing one and not the other: everything here
+   * was wrong in both at once, and was corrected in both at once.
+   */
   const path = await writable(uri, roots);
   const before = writes.get(path) ?? Promise.resolve();
   const operation = before.catch(() => {}).then(() => writeAt(path, uri, content));
@@ -269,19 +279,33 @@ async function writeAt(path: string, uri: string, content: Write): Promise<void>
       throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
     }
     if (error.code === 'ENOENT') throw new RpcError(NOT_FOUND, `No directory for ${uri}`);
+    /*
+     * The two refusals the flags above produce, said in the host's own words.
+     *
+     * `O_NOFOLLOW` answers a final symbolic link with `ELOOP`, and opening a
+     * directory for writing answers `EISDIR`. Both are this host declining,
+     * not the filesystem failing, so neither should reach a client as an
+     * errno: the client asked to write something that cannot be written, and
+     * the reason is the useful part.
+     */
+    if (error.code === 'ELOOP') throw new RpcError(REFUSED, `${uri} is a symbolic link`);
+    if (error.code === 'EISDIR') throw new RpcError(REFUSED, `${uri} is a directory`);
     throw new RpcError(REFUSED, `Could not write ${uri}: ${error.message}`);
   });
   try {
-    const found = await file.stat();
-    if (found.isDirectory()) throw new RpcError(REFUSED, `${uri} is a directory`);
-    // `O_EXCL` above is the successful createOnly case.  The only createOnly
+    // `O_EXCL` above is the successful createOnly case. The only createOnly
     // request that reaches here without it also supplied ifMatch, so it opened
     // an existing file and cannot be a create.
     if (content.createOnly === true && content.ifMatch !== undefined) {
       throw new RpcError(ALREADY, `${uri} already exists`);
     }
-    if (content.ifMatch !== undefined && tagOf(found.size, found.mtimeMs) !== content.ifMatch) {
-      throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
+    if (content.ifMatch !== undefined) {
+      // Off the open descriptor, so what is compared is the file about to be
+      // written rather than whatever the name pointed at a moment ago.
+      const found = await file.stat();
+      if (tagOf(found.size, found.mtimeMs) !== content.ifMatch) {
+        throw new RpcError(CONFLICT, `${uri} has changed since ${content.ifMatch}`);
+      }
     }
     // Only read the existing bytes where a mode actually keeps some. A truncate
     // from zero - the ordinary save - reads nothing.

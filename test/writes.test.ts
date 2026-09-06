@@ -338,3 +338,26 @@ it('refuses malformed or remote file URIs without treating them as local paths',
   }
   expect(pathOf('file://localhost/tmp/local')).toBe('/tmp/local');
 });
+
+it('says why a directory or a link cannot be written, rather than reporting an errno', async () => {
+  /*
+   * The refusals are the flags' doing - `O_NOFOLLOW` answers `ELOOP` and a
+   * directory opened for writing answers `EISDIR` - and both used to reach the
+   * client as the raw error. The code alone passed either way, which is how it
+   * went unnoticed, so this asserts the words.
+   */
+  const held = await client();
+  mkdirSync(join(root, 'adir'));
+  writeFileSync(join(outside, 'target.txt'), 'outside');
+  symlinkSync(join(outside, 'target.txt'), join(root, 'alink.txt'));
+
+  const directory = await refused(put(held, 'adir', { data: 'x' }));
+  expect(directory.code).toBe(-32009);
+  expect(directory.message).toContain('is a directory');
+  expect(directory.message).not.toContain('EISDIR');
+
+  const link = await refused(put(held, 'alink.txt', { data: 'x' }));
+  expect(link.code).toBe(-32009);
+  expect(link.message).toContain('is a symbolic link');
+  expect(link.message).not.toContain('ELOOP');
+});
