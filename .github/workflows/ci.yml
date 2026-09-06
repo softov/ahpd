@@ -13,6 +13,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A hung test should fail the run rather than sit on a runner for six hours,
+    # which is the default. The whole job takes about two minutes.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
