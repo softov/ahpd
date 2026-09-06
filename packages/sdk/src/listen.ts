@@ -34,7 +34,10 @@ interface Bound {
  */
 const presented = (url: string | undefined, authorization: string | null): string | undefined => {
   const query = /[?&]tkn=([^&]*)/.exec(url ?? '');
-  if (query) return decodeURIComponent(query[1] ?? '');
+  if (query) {
+    try { return decodeURIComponent(query[1] ?? ''); }
+    catch { return undefined; } // A bad escape refuses the handshake, not the process.
+  }
   const bearer = /^Bearer\s+(.+)$/i.exec(authorization ?? '');
   return bearer?.[1];
 };

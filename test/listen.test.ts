@@ -55,3 +55,12 @@ it('reports the port the OS chose', async () => {
   expect(running.port).toBeGreaterThan(0);
   expect(running.host).toBe('127.0.0.1');
 });
+
+it('refuses malformed tokens and keeps serving the next connection', async () => {
+  running = await listen({ port: 0, token: 'sesame' }, nothing);
+  const url = `ws://127.0.0.1:${running.port}`;
+  for (const token of ['%ZZ', '%', '%E0%A4']) {
+    expect(await knock(`${url}/?tkn=${token}`)).toContain('401');
+  }
+  expect(await knock(`${url}/?tkn=sesame`)).toBe('open');
+});
