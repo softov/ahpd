@@ -25,12 +25,16 @@ thing rather than about a group it was counted in.
 | ✅ | implemented as specified |
 | 🧩 | arrives through a host port, so it depends on what the host was given |
 | 🚧 | partial - the Notes say which half |
-| 🚫 | deliberately unsupported, with a reason |
+| ➖ | declared and **not written** - the Notes say what it would take |
+| 🚫 | deliberately unsupported, because there is nothing here to reflect |
 
-Two markers this document used to carry are gone because nothing is in either
-state any more: `➖`, for something unimplemented with nothing decided, and
+The last two are the distinction worth keeping. Both reach a client as a
+refusal, and a refusal cannot tell them apart - so the row does. `➖` is work
+nobody has done; `🚫` is a question this backend never asks, where serving the
+action would mean this host inventing the moment rather than reporting one.
+
 `🔀`, for something implemented differently from the obvious reading without
-saying so. Where this host diverges now it says where, in the row.
+saying so, is gone: where this host diverges it now says where, in the row.
 
 ## Commands
 
@@ -67,7 +71,7 @@ wrong constant into a connection that never opens.
 | `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
 | `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
-| `completions` | ✅ | `/` against the session's own commands, falling back to the harness-wide list, and `@` against the files this host serves. |
+| `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. |
 | `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. See [Authentication](#authentication). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
@@ -140,9 +144,11 @@ are not served are all `chat/*`, all client-dispatchable, and each is refused in
 its own words rather than as unserved - a client that sent one learns why
 nothing happened.
 
-Three of the four are **not implemented**; one is genuinely inapplicable. The
-rows say which, because "the backend has no such moment" and "nobody has
-written it" read the same in a refusal and are not the same fact.
+Three of the four are `➖`, **not written**; one is `🚫`, a question this
+backend never asks. The rows say which, because "the backend has no such
+moment" and "nobody has done the work" read the same in a refusal and are not
+the same fact - and the first of the two was written up here as the second
+until somebody asked.
 
 **Origin** is the protocol's own `IS_CLIENT_DISPATCHABLE`: `client` is one a
 client may originate, `host` is one only this host may say, and `both` is a
@@ -205,7 +211,7 @@ which is a different complaint from an action nobody has served.
 | `chat/toolCallConfirmed` | both | ✅ | A client answering; and this host saying what was answered, for the other clients watching. |
 | `chat/toolCallComplete` | both | ✅ | The result as one object. A tool that failed is `completed` with `result.success: false` - `ToolCallStatus` has no `failed`. |
 | `chat/toolCallResultConfirmed` | client | 🚫 | Refused, and this is the one of the four that is genuinely inapplicable rather than unwritten: it belongs to a call completed with `requiresResultConfirmation`, the SDK's only approval moment is `canUseTool` *before* a tool runs, and there is no after-the-fact gate to reflect. A host could invent a policy of its own here; that would be this host asking a question the backend never asked. |
-| `chat/toolCallContentChanged` | client | 🚫 | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor - and that is because **client-provided tools are not implemented**: this host never routes a call to a client, so `SessionActiveClient.tools` is published and never drawn on. Serving this action means serving that feature first. |
+| `chat/toolCallContentChanged` | client | ➖ | Refused: a *contributor's* to send, for a tool the client itself provides. Every call here is the backend's own and carries no client contributor - and that is because **client-provided tools are not implemented**: this host never routes a call to a client, so `SessionActiveClient.tools` is published and never drawn on. Serving this action means serving that feature first. |
 | `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
 | `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
 | `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
@@ -222,9 +228,9 @@ which is a different complaint from an action nobody has served.
 | `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
 | `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. |
 | `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
-| `chat/inputAnswerChanged` | client | 🚧 | Refused today, and **not implemented** rather than inapplicable: the question lives on `session.inputNeeded` and is answered whole, so there is no part holding a per-question draft. Holding one is the same shape as `chat/draftChanged`, which this host does hold - so two people answering one elicitation would see each other typing, which is the whole point of the action. |
+| `chat/inputAnswerChanged` | client | ➖ | Refused today, and **not implemented** rather than inapplicable: the question lives on `session.inputNeeded` and is answered whole, so there is no part holding a per-question draft. Holding one is the same shape as `chat/draftChanged`, which this host does hold - so two people answering one elicitation would see each other typing, which is the whole point of the action. |
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
-| `chat/truncated` | client | 🚧 | Refused today, and the refusal is the honest half: this is **not implemented**, not inapplicable. The action drops the turns after a named one so a client can re-send an edited message - the edit-and-resend flow - and it has nothing to do with the harness compacting its own context, which is what an earlier version of this row wrongly said it was. The machinery is here: `cuts` already maps a turn id to the SDK prompt uuid, and `forkSession` / `resumeSessionAt` already continue a conversation from one. |
+| `chat/truncated` | client | ➖ | Refused today, and the refusal is the honest half: this is **not implemented**, not inapplicable. The action drops the turns after a named one so a client can re-send an edited message - the edit-and-resend flow - and it has nothing to do with the harness compacting its own context, which is what an earlier version of this row wrongly said it was. The machinery is here: `cuts` already maps a turn id to the SDK prompt uuid, and `forkSession` / `resumeSessionAt` already continue a conversation from one. |
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. |
 
 ### `terminal/*` — 11 of 11 🧩
@@ -438,6 +444,23 @@ transcript under that, so while this daemon ran it answered to both names and
 the moment it restarted the client's own URI was dead - `No agent for session`,
 about a session that was still there. Only where the client named a UUID, which
 is what the backend will take.
+
+### A slash command is a message
+
+The commands a client offers behind `/` are the CLI's own - `compact`,
+`autocompact`, `clear`, `context`, `model` and the rest, fifty-odd of them,
+reported at the handshake in `initializationResult().commands` and carried onto
+the session as `prompt` and `skill` customizations.
+
+Running one needs nothing special: the text goes to the backend as an ordinary
+turn, and the CLI recognises the slash and runs it *locally* - the answer comes
+back as an assistant message with `num_turns: 0`, no model call. So a host does
+not implement `/compact`; it stays out of the way of it.
+
+Which is why the menu is built from `customizations` rather than from a list
+this host keeps. Two sessions in one directory can be handed different
+commands, and a skill discovered while the agent works in a subdirectory
+appears in one of them and not the other.
 
 ### Customizations are containers
 
