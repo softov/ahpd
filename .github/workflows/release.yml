@@ -1,0 +1,119 @@
+name: Release
+
+# A pushed tag is the whole gesture: `git tag v0.4.0 && git push --tags`.
+# The three packages move together, so one tag releases all of them.
+on:
+  push:
+    tags: ['v*']
+  # For rehearsing the whole thing without publishing anything.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and check, but do not publish
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # What lets npm trade a GitHub OIDC token for a publish. Without it the
+      # publish falls back to looking for a token that is not there.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          # Trusted publishing needs 22.14 or later, and this is the version
+          # the tests are written against.
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The tag is a claim about what is in the manifests, and these three
+      # versions move together. A tag that disagrees with any of them publishes
+      # a version nobody asked for, so it is checked before anything is built.
+      - name: The tag says what every package says
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -eu
+          tagged=${GITHUB_REF_NAME#v}
+          for package in sdk agent-claude server; do
+            found=$(node -p "require('./packages/$package/package.json').version")
+            if [ "$tagged" != "$found" ]; then
+              echo "The tag says $tagged and packages/$package says $found."
+              exit 1
+            fi
+          done
+          echo "Releasing $tagged."
+
+      # The same checks CI runs. A release is the one build where a green tick
+      # somewhere else is not good enough.
+      - run: pnpm boundary
+      - run: pnpm typecheck
+      - run: timeout 600 pnpm test
+      - run: pnpm build
+
+      # Packed by pnpm and not by npm, because these three depend on each other
+      # with `workspace:^` and only pnpm rewrites that to a real range on the
+      # way out. An `npm pack` tarball carries the literal `workspace:^`, which
+      # installs here and is broken for everybody else - it looks fine right up
+      # until somebody else runs `npm i`.
+      - name: Pack
+        run: pnpm -r exec pnpm pack --pack-destination ${{ runner.temp }}
+
+      # Read out of each tarball rather than grepped over it: a .tgz is gzipped,
+      # so a grep for `workspace:` over the file finds nothing whatever is in it.
+      - name: The tarballs carry real version ranges
+        run: |
+          set -eu
+          for tarball in ${{ runner.temp }}/*.tgz; do
+            echo "$tarball"
+            manifest=$(tar -xzOf "$tarball" package/package.json)
+            if printf '%s' "$manifest" | grep -q 'workspace:'; then
+              echo "$tarball still has workspace: in its manifest. It must not be published."
+              printf '%s' "$manifest" | grep 'workspace:'
+              exit 1
+            fi
+            printf '%s' "$manifest" | node -e "
+              const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+              const deps = Object.entries(d.dependencies ?? {}).filter(([n]) => n.startsWith('@ahpd/'));
+              console.log(deps.length === 0 ? '  no sibling dependencies' : deps.map(([n, v]) => '  ' + n + ' ' + v).join('\\n'));
+            "
+          done
+
+      # Published by npm, because trusted publishing is npm's own feature and
+      # pnpm's support for it has broken before. In dependency order, so a
+      # dependant is never on the registry pointing at a version that is not
+      # there yet.
+      #
+      # `--provenance` attaches a signed attestation tying each tarball to this
+      # commit and this workflow, which npm shows on the package page. For a
+      # human approval step before a version goes live, change `npm publish` to
+      # `npm stage publish` and approve it on npmjs.com.
+      - name: Publish
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          set -eu
+          for package in sdk agent-claude server; do
+            name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
+            version=$(node -p "require('./packages/$package/package.json').version")
+            npm publish "${{ runner.temp }}/$name-$version.tgz" --provenance --access public
+          done
+
+      - name: What would have been published
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          set -eu
+          for package in sdk agent-claude server; do
+            name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
+            version=$(node -p "require('./packages/$package/package.json').version")
+            npm publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public
+          done
