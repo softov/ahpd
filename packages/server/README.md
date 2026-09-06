@@ -1,5 +1,11 @@
 # @ahpd/server
 
+[![npm](https://img.shields.io/npm/v/%40ahpd%2Fserver)](https://www.npmjs.com/package/@ahpd/server)
+[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+![license MIT](https://img.shields.io/badge/license-MIT-blue)
+![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
+![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
+
 [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) is a ready-to-run [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server. It installs the `ahpd` command.
 
 It runs agent sessions and serves them over a WebSocket, so several clients can watch and drive the same session at once.

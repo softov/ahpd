@@ -1,5 +1,11 @@
 # @ahpd/agent-claude
 
+[![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
+[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+![license MIT](https://img.shields.io/badge/license-MIT-blue)
+![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
+![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
+
 The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
 
 ## Install

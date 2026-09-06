@@ -16,10 +16,6 @@ An MCP server so an agent somewhere else can list sessions, send a turn and read
 
 It lives in `ahpc` rather than here, and no new package: MCP is a client of a host, `ahpc` already is one, and its `HostConnection` is the backend the tools call. One table of declarations behind three surfaces - stdio for a client that owns the process, streamable HTTP for a shared one, and a plain HTTP API for anything that is not an MCP client.
 
-### Publish the badges
-
-`@ahpd/sdk`, `@ahpd/agent-claude` and `@ahpd/server` are on npm. The version badges and the CI badge are worth adding now the repository is public.
-
 ## Deliberate duplication
 
 `resourceWrite` is symmetrical, so `ahpd` and `ahpc` each implement the whole of it: the same flags, the same order of preconditions, the same append and insert arithmetic. `ahpc` does not depend on `@ahpd/sdk` and is not going to. Both copies carry a comment naming the other. A defect in one is a defect in both, and fixing only one is the failure mode to watch for.

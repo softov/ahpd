@@ -1,5 +1,9 @@
 # ahpd
 
+[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+[![@ahpd/server](https://img.shields.io/npm/v/%40ahpd%2Fserver?label=%40ahpd%2Fserver)](https://www.npmjs.com/package/@ahpd/server)
+[![@ahpd/sdk](https://img.shields.io/npm/v/%40ahpd%2Fsdk?label=%40ahpd%2Fsdk)](https://www.npmjs.com/package/@ahpd/sdk)
+[![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
