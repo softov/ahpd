@@ -231,3 +231,25 @@ it('writes down a refusal that crossed a connection, without softening it', asyn
   expect(wrote).toContain('virtual://plugin/a.txt');
   expect(wrote).toContain('-32009');
 });
+
+it('says a client URI is nobody\'s here when the client that published it has gone', async () => {
+  const served = host();
+  const reader = await joined(served, 'editor');
+  /*
+   * Routed nowhere, and then told as what it is.
+   *
+   * `ownerOf` finds no connected client, so this falls through to the host's
+   * own store - which serves a filesystem and used to answer
+   * `virtual://plugin/a.txt is not an absolute path`, sending whoever read it
+   * to look at their path. The URI is not a path this host got wrong; it is
+   * one somebody else was meant to answer.
+   */
+  await expect(reader.client.handle({
+    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt' },
+  })).rejects.toThrow(/no connected client publishes it/);
+
+  // And a `file:` URI that really is a bad path still says so.
+  await expect(reader.client.handle({
+    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'file:relative/x' },
+  })).rejects.toThrow(/not an absolute path/);
+});

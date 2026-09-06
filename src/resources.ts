@@ -38,6 +38,25 @@ export const uriOf = (path: string): string => `file://${path}`;
 
 /** Whether `path` is `root` or is under it. */
 /**
+ * Why this store cannot answer for a URI, in the terms of what it is.
+ *
+ * This one serves a filesystem, so anything that is not a `file:` URI is not
+ * a path it got wrong - it is a URI somebody else was meant to answer. A
+ * client publishes its own under `<scheme>://<clientId>/`, and a request for
+ * one whose client has hung up arrives here having been routed nowhere. Told
+ * as what it is, because `virtual://ahpc-6ec6cf49/hello.txt is not an
+ * absolute path` sends whoever reads it looking at their path.
+ */
+const why = (uri: string): string => {
+  const scheme = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];
+  if (scheme !== undefined && scheme !== 'file') {
+    return `${uri} is not this host's to read: nothing here serves ${scheme}:,`
+      + ' and no connected client publishes it';
+  }
+  return `${uri} is not an absolute path`;
+};
+
+/**
  * The real path, if the client may see it.
  *
  * Resolved *before* the check, not after: `served/link` pointing at `/etc`
@@ -47,7 +66,7 @@ export const uriOf = (path: string): string => `file://${path}`;
 export async function allowed(uri: string, roots: string[]): Promise<string> {
   const asked = pathOf(uri);
   if (!isAbsolute(asked)) {
-    throw new RpcError(REFUSED, `${uri} is not an absolute path`);
+    throw new RpcError(REFUSED, why(uri));
   }
   let real = asked;
   try {
@@ -78,7 +97,7 @@ export async function allowed(uri: string, roots: string[]): Promise<string> {
  */
 export async function writable(uri: string, roots: string[]): Promise<string> {
   const asked = pathOf(uri);
-  if (!isAbsolute(asked)) throw new RpcError(REFUSED, `${uri} is not an absolute path`);
+  if (!isAbsolute(asked)) throw new RpcError(REFUSED, why(uri));
   /** The nearest ancestor that exists, and how far up it was. */
   let up = dirname(asked);
   const climbed: string[] = [];
