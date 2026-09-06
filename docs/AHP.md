@@ -71,7 +71,7 @@ wrong constant into a connection that never opens.
 | `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
 | `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
-| `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. |
+| `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message). |
 | `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. See [Authentication](#authentication). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
@@ -461,6 +461,29 @@ Which is why the menu is built from `customizations` rather than from a list
 this host keeps. Two sessions in one directory can be handed different
 commands, and a skill discovered while the agent works in a subdirectory
 appears in one of them and not the other.
+
+**A completion has to say that it is a command.** `SimpleMessageAttachment`
+carries a `label` and a `modelRepresentation` and has no notion of a slash
+command, so the reference client reads one out of the attachment's `_meta`: a
+bag carrying `command` is a slash command, one carrying `uri` is a skill, and
+one carrying neither is **dropped without a word**. So every item this host
+answers with carries
+
+```jsonc
+"_meta": {
+  "command": "compact",            // the name, without the slash
+  "description": "…",              // the second column in the menu
+  "argumentHint": "<file>"         // ghost text after an accepted item
+}
+```
+
+This is the protocol's own escape hatch rather than an invented field -
+`_meta` is declared on `MessageAttachmentBase` - but it is a convention, not a
+declaration, and a host that does not know it is one whose menu comes back
+full and draws empty. Which is exactly what this host did: fifty-four items
+answered, every one discarded on arrival, and nothing anywhere reporting an
+error. The client's own reader notes that `argumentHint` may be promoted to a
+first-class attachment field later; until then the bag is the contract.
 
 ### Customizations are containers
 

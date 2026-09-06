@@ -3785,6 +3785,25 @@ export function createHost(options: HostOptions): Host {
                 type: 'simple',
                 label: `/${command.name}`,
                 ...(command.description ? { modelRepresentation: command.description } : {}),
+                /*
+                 * What makes it a *command* rather than a line of text.
+                 *
+                 * The protocol declares `SimpleMessageAttachment` with a label
+                 * and no notion of a slash command, so the reference client
+                 * reads one out of `_meta`: a bag carrying `command` is a
+                 * slash command, one carrying `uri` is a skill, and a bag
+                 * carrying neither is dropped without a word. That is the
+                 * whole reason a menu can come back full and draw empty -
+                 * every item was answered and none was a command.
+                 *
+                 * `description` is the second column and `argumentHint` is
+                 * the ghost text after an accepted one.
+                 */
+                _meta: {
+                  command: command.name,
+                  ...(command.description ? { description: command.description } : {}),
+                  ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+                },
               },
             })),
           };

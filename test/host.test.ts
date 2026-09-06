@@ -1270,7 +1270,7 @@ describe('what the harness offers', () => {
     const found = await client.handle({
       method: 'completions',
       params: { channel: chatUri, kind: 'userMessage', text: '/', offset: 1 },
-    }) as { items: { insertText: string }[] };
+    }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
     /*
      * A prompt and a skill are `children` of a directory, never top-level.
      *
