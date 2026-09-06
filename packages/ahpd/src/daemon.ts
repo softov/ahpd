@@ -14,6 +14,10 @@ export interface Running {
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
 const alive = (pid: number): boolean => {
+  // `0` and the negatives are not processes: to `kill` they mean process
+  // *groups*, and pid 0 is the caller's own - which would report any record
+  // holding one as running, and then signal this process rather than it.
+  if (pid <= 0) return false;
   try {
     // Signal 0 checks for existence without asking the process to do anything.
     process.kill(pid, 0);
@@ -110,13 +114,18 @@ export async function start(argv: string[], self: string): Promise<Running> {
     };
     look();
   }).catch((error: unknown) => {
-    try { process.kill(child.pid ?? 0, 'SIGKILL'); }
-    catch { /* already gone */ }
+    if (child.pid !== undefined) {
+      try { process.kill(child.pid, 'SIGKILL'); }
+      catch { /* already gone */ }
+    }
     throw error;
   });
 
+  // It announced where it was listening, so it started; this is for the type
+  // rather than for the case, and `0` must never reach the record.
+  if (child.pid === undefined) throw new Error('it started but has no process id');
   const record: Running = {
-    pid: child.pid ?? 0,
+    pid: child.pid,
     url,
     // Off its own announcement rather than off the command line: the
     // directories may have come from the configuration file, and a record

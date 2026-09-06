@@ -9,8 +9,8 @@ An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) serve
 
 `ahpd` can be used in two ways:
 
-- **daemon**: `ahpd`, a process that serves AHP over a WebSocket, running agent sessions behind it.
-- **library**: `createHost` and the ports around it used to build `ahpd`.
+- **`ahpd`**: a process that serves the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions behind it.
+- **`@ahpd/server`**: the library it is built from, `createHost()` and the ports around it.
 
 ## Why
 

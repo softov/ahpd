@@ -103,3 +103,21 @@ describe('a shell under a pseudoterminal', () => {
     terminal.close();
   });
 });
+
+it('signals nothing when the shell never started, rather than its own process group', () => {
+  /*
+   * `close` used to reach `process.kill(-(child?.pid ?? 0), 'SIGKILL')`. A
+   * spawn that failed leaves no pid, so that is `kill(0)` - every process in
+   * the caller's group, which is the host, the tests, and the shell that
+   * started them. It reads as the process being killed from outside.
+   */
+  const store = shellTerminals({});
+  const terminal = store.create({
+    uri: 'ahp-terminal:/gone',
+    cwd: '/tmp',
+    shell: '/nonexistent/shell',
+    claim: { kind: 'user' },
+    emit: () => {},
+  } as never);
+  expect(() => { terminal.close(); }).not.toThrow();
+});

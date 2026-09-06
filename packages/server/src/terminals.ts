@@ -260,9 +260,20 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
       if (at !== -1) {
         const rest = data.slice(0, at) + data.slice(at + 1);
         if (rest !== '' && child?.stdin.writable) child.stdin.write(rest);
-        try { process.kill(-(child?.pid ?? 0), 'SIGINT'); }
-        // The group is gone, which is the outcome asked for.
-        catch { /* nothing left to interrupt */ }
+        /*
+         * The group, named by the child's own pid, and only when there is one.
+         *
+         * A spawn that failed leaves no pid, and `0` is not a safe stand-in:
+         * to `kill` it means every process in *this* process group, so a
+         * terminal whose shell never started would signal the host and
+         * whatever started the host.
+         */
+        const group = child?.pid;
+        if (group !== undefined) {
+          try { process.kill(-group, 'SIGINT'); }
+          // The group is gone, which is the outcome asked for.
+          catch { /* nothing left to interrupt */ }
+        }
         return;
       }
       if (child?.stdin.writable) child.stdin.write(data);
@@ -303,7 +314,13 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
       }
       child?.stdin.end();
       // The group, not the shell: detached, its children outlive it otherwise.
-      try { process.kill(-(child?.pid ?? 0), 'SIGKILL'); }
+      // Only when there is a pid to name it - see the interrupt above.
+      const group = child?.pid;
+      if (group === undefined) {
+        child?.kill();
+        return;
+      }
+      try { process.kill(-group, 'SIGKILL'); }
       catch { child?.kill(); }
     },
   };
