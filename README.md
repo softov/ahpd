@@ -220,7 +220,7 @@ method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 par
 | Automations | `automations` port | 🧩 | `ahpd` adds scheduled execution: cron in a named time zone, running with nobody connected |
 | Authentication | connection token, plus agent credentials | 🔀 | A pushed token is held per connection; Claude otherwise inherits the daemon's own credentials |
 | Telemetry | `otlp/exportLogs`, `otlp/exportTraces`, `otlp/exportMetrics` | ✅ | The lines the daemon writes to stdout; a turn as a server span with every tool call a child of it; and cumulative counters against the process start |
-| Annotations | — | ➖ | No producer currently |
+| Annotations | - | ➖ | No producer currently |
 
 Method by method that is **31 of the 32 declared commands** and **95 of the 96
 state actions**. The rest is `-32601`, said rather than quietly answered: a host
@@ -254,7 +254,7 @@ any package can import anything installed anywhere and it resolves; pnpm links
 only what a package declares, so an undeclared import fails where it is written
 rather than in somebody else's install.
 
-### `@ahpd/server` — the protocol, and the parts to build a host
+### `@ahpd/server` - the protocol, and the parts to build a host
 
 | | |
 | --- | --- |
@@ -272,7 +272,7 @@ rather than in somebody else's install.
 | [packages/server/src/paging.ts](packages/server/src/paging.ts)           | A long list of turns, served a page at a time. |
 | [packages/server/src/index.ts](packages/server/src/index.ts)             | The library entry point. |
 
-### `@ahpd/agent-claude` — one backend
+### `@ahpd/agent-claude` - one backend
 
 | | |
 | --- | --- |
@@ -282,7 +282,7 @@ rather than in somebody else's install.
 | [packages/agent-claude/src/transcript.ts](packages/agent-claude/src/transcript.ts) | A past Claude session read as turns. |
 | [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |
 
-### `ahpd` — the daemon
+### `ahpd` - the daemon
 
 | | |
 | --- | --- |
