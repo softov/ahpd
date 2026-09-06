@@ -89,31 +89,43 @@ jobs:
             "
           done
 
-      # Published by npm, because trusted publishing is npm's own feature and
-      # pnpm's support for it has broken before. In dependency order, so a
-      # dependant is never on the registry pointing at a version that is not
-      # there yet.
+      # Staged by npm, not published, and by npm rather than pnpm because
+      # trusted publishing is npm's own feature and pnpm's support for it has
+      # broken before. Nothing is installable until somebody approves it on the
+      # package page - npm's own recommendation, and the right gate for the one
+      # action here that cannot be undone.
+      #
+      # In dependency order, because that is the order they have to be approved
+      # in: a dependant must never be installable while the version it names is
+      # still sitting unapproved.
       #
       # `--provenance` attaches a signed attestation tying each tarball to this
-      # commit and this workflow, which npm shows on the package page. For a
-      # human approval step before a version goes live, change `npm publish` to
-      # `npm stage publish` and approve it on npmjs.com.
-      - name: Publish
+      # commit and this workflow, which npm shows on the package page.
+      - name: Stage the release
         if: ${{ inputs.dry_run != true }}
         run: |
           set -eu
           for package in sdk agent-claude server; do
             name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
             version=$(node -p "require('./packages/$package/package.json').version")
-            npm publish "${{ runner.temp }}/$name-$version.tgz" --provenance --access public
+            npm stage publish "${{ runner.temp }}/$name-$version.tgz" --provenance --access public
           done
 
-      - name: What would have been published
+      - name: Say what is waiting
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          echo "Staged. Approve these in order, sdk first:"
+          echo "  https://www.npmjs.com/package/@ahpd/sdk"
+          echo "  https://www.npmjs.com/package/@ahpd/agent-claude"
+          echo "  https://www.npmjs.com/package/@ahpd/server"
+          echo "The approve button stays disabled until npm has finished scanning."
+
+      - name: What would have been staged
         if: ${{ inputs.dry_run == true }}
         run: |
           set -eu
           for package in sdk agent-claude server; do
             name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
             version=$(node -p "require('./packages/$package/package.json').version")
-            npm publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public
+            npm stage publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public
           done
