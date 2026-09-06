@@ -1,5 +1,5 @@
-import { watch as watchPath } from 'node:fs';
-import { copyFile, cp, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants, watch as watchPath } from 'node:fs';
+import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { RpcError } from './rpc.js';
 import { within } from './paths.js';
@@ -231,7 +231,8 @@ export async function write(uri: string, roots: string[], content: Write): Promi
   const path = await writable(uri, roots);
   const incoming = Buffer.from(content.data, content.encoding === 'base64' ? 'base64' : 'utf8');
 
-  const found = await stat(path).catch(() => undefined);
+  const found = await lstat(path).catch(() => undefined);
+  if (found?.isSymbolicLink()) throw new RpcError(REFUSED, `${uri} is a symbolic link`);
   if (found?.isDirectory()) throw new RpcError(REFUSED, `${uri} is a directory`);
   if (content.createOnly === true && found !== undefined) {
     throw new RpcError(ALREADY, `${uri} already exists`);
@@ -246,38 +247,51 @@ export async function write(uri: string, roots: string[], content: Write): Promi
     }
   }
 
-  const mode = content.mode ?? 'truncate';
-  const at = content.position ?? 0;
-  // Only read the existing bytes where a mode actually keeps some. A truncate
-  // from zero - the ordinary save - reads nothing.
-  const held = mode === 'truncate' && at === 0
-    ? Buffer.alloc(0)
-    : await readFile(path).catch(() => Buffer.alloc(0));
-
-  let out: Buffer;
-  if (mode === 'append') {
-    // Backwards from EOF, and clamped: a position past the start of the file
-    // is a client asking to insert before the beginning.
-    const cut = Math.max(0, held.length - Math.max(0, at));
-    out = Buffer.concat([held.subarray(0, cut), incoming, held.subarray(cut)]);
-  }
-  else if (mode === 'insert') {
-    const cut = Math.min(Math.max(0, at), held.length);
-    out = Buffer.concat([held.subarray(0, cut), incoming, held.subarray(cut)]);
-  }
-  else {
-    // Truncate: everything from `position` on is replaced, so what survives is
-    // the head. A short file padded out to `position` would be inventing
-    // bytes, so the head is however much of it there is.
-    const cut = Math.min(Math.max(0, at), held.length);
-    out = Buffer.concat([held.subarray(0, cut), incoming]);
-  }
-  await writeFile(path, out).catch((error: NodeJS.ErrnoException) => {
-    // A missing parent is the protocol's `NotFound`, said about the directory
-    // rather than about the file the client asked to create.
+  // Keep the opened file through the read and write. A final link swapped in
+  // after the checks must never redirect either operation outside the root.
+  const file = await open(path, ((content.mode === undefined || content.mode === 'truncate') && (content.position ?? 0) === 0
+    ? constants.O_WRONLY : constants.O_RDWR) | constants.O_CREAT | constants.O_NOFOLLOW).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') throw new RpcError(NOT_FOUND, `No directory for ${uri}`);
     throw new RpcError(REFUSED, `Could not write ${uri}: ${error.message}`);
   });
+  try {
+    const mode = content.mode ?? 'truncate';
+    const at = content.position ?? 0;
+    // Only read the existing bytes where a mode actually keeps some. A truncate
+    // from zero - the ordinary save - reads nothing.
+    const held = mode === 'truncate' && at === 0
+      ? Buffer.alloc(0)
+      : await file.readFile();
+
+    let out: Buffer;
+    if (mode === 'append') {
+      // Backwards from EOF, and clamped: a position past the start of the file
+      // is a client asking to insert before the beginning.
+      const cut = Math.max(0, held.length - Math.max(0, at));
+      out = Buffer.concat([held.subarray(0, cut), incoming, held.subarray(cut)]);
+    }
+    else if (mode === 'insert') {
+      const cut = Math.min(Math.max(0, at), held.length);
+      out = Buffer.concat([held.subarray(0, cut), incoming, held.subarray(cut)]);
+    }
+    else {
+      // Truncate: everything from `position` on is replaced, so what survives is
+      // the head. A short file padded out to `position` would be inventing
+      // bytes, so the head is however much of it there is.
+      const cut = Math.min(Math.max(0, at), held.length);
+      out = Buffer.concat([held.subarray(0, cut), incoming]);
+    }
+    let offset = 0;
+    while (offset < out.length) {
+      const { bytesWritten } = await file.write(out, offset, out.length - offset, offset);
+      if (bytesWritten === 0) throw new RpcError(REFUSED, `Could not finish writing ${uri}`);
+      offset += bytesWritten;
+    }
+    await file.truncate(out.length);
+  } catch (error) {
+    if (error instanceof RpcError) throw error;
+    throw new RpcError(REFUSED, `Could not write ${uri}: ${String(error)}`);
+  } finally { await file.close(); }
 }
 
 /**
@@ -328,6 +342,9 @@ async function pair(source: string, destination: string, roots: string[], failIf
   await stat(from).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${source}`);
   });
+  if (await lstat(to).then((found) => found.isSymbolicLink(), () => false)) {
+    throw new RpcError(REFUSED, `${destination} is a symbolic link`);
+  }
   if (failIfExists && await stat(to).then(() => true, () => false)) {
     throw new RpcError(ALREADY, `${destination} already exists`);
   }
@@ -346,11 +363,10 @@ export async function move(source: string, destination: string, roots: string[],
 export async function copy(source: string, destination: string, roots: string[], failIfExists = false): Promise<void> {
   const { from, to } = await pair(source, destination, roots, failIfExists);
   const found = await stat(from);
-  // A directory copy is a tree walk and a file copy is one syscall. `cp` does
-  // both, but only `copyFile` reports the ordinary case honestly.
+  // Files use the same guarded open as resourceWrite; directories need a tree walk.
   const run = found.isDirectory()
     ? cp(from, to, { recursive: true, force: !failIfExists, errorOnExist: failIfExists })
-    : copyFile(from, to);
+    : readFile(from).then((bytes) => write(uriOf(to), roots, { data: bytes.toString('base64'), encoding: 'base64' }));
   await run.catch((error: NodeJS.ErrnoException) => {
     throw new RpcError(REFUSED, `Could not copy ${source}: ${error.message}`);
   });

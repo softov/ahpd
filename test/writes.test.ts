@@ -251,3 +251,19 @@ it('does not let a grant on one directory reach a sibling whose name starts the 
   // Prefix on a separator, never on the string.
   expect((await refused(put(held, 'brb_framework/no.txt', { data: 'x' }))).code).toBe(-32009);
 });
+
+it('refuses final file links for writes and copies, including dangling ones', async () => {
+  const held = await client();
+  const target = join(outside, 'target.txt');
+  writeFileSync(target, 'outside');
+  writeFileSync(join(root, 'source.txt'), 'source');
+  for (const [name, to] of [['final.txt', target], ['dangling.txt', join(outside, 'absent.txt')]] as const) {
+    symlinkSync(to, join(root, name));
+    expect((await refused(put(held, name, { data: 'changed' }))).code).toBe(-32009);
+    expect((await refused(held.handle({ method: 'resourceCopy', params: {
+      channel: 'ahp-root://', source: `file://${root}/source.txt`, destination: `file://${root}/${name}`,
+    } }))).code).toBe(-32009);
+  }
+  expect(readFileSync(target, 'utf8')).toBe('outside');
+  expect(existsSync(join(outside, 'absent.txt'))).toBe(false);
+});
