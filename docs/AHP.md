@@ -311,6 +311,14 @@ that reduced one would apply the very change this host declined to make.
 
 ## Behaviour worth knowing
 
+### Restarts
+
+| | |
+| --- | --- |
+| read and archived do not survive one | `IsRead` and `IsArchived` are this host's rather than a backend's, are shared by every client, and are held in memory. A restart returns every archived session to the catalogue and marks every read one unread, for everybody, with nothing said about it |
+| so do the settings chosen for a session | the configuration values in force are held the same way and go the same way, back to each agent's defaults |
+| the sessions themselves come back | they are read from the backend's own transcripts, so what a restart loses is only what this host added on top of them. A store for that is a port this host does not yet have, the way `automations` is one it does |
+
 ### Turns
 
 | | |
