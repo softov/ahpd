@@ -320,7 +320,8 @@ it('refuses a key its schema marks immutable, without the backend being asked', 
   await settle();
   expect(echoed()).toBe(before);
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  expect(why.rejectionReason).toContain('fixed when the session is created');
+  // Naming the key, which containment could not tell had been named.
+  expect(why.rejectionReason).toBe('tone is fixed when the session is created');
 });
 
 it('takes one its schema marks mutable, and says so in the backend\'s words when the value is wrong', async () => {
@@ -342,5 +343,13 @@ it('takes one its schema marks mutable, and says so in the backend\'s words when
   // the value was the problem, and saying "no such key" about a bad value
   // would tell a client to stop drawing a control that works.
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  expect(why.rejectionReason).toContain('sometimes');
+  /*
+   * The whole sentence, because the weak half was the assertion.
+   *
+   * `toContain('sometimes')` matched the value the test itself supplied, so
+   * it passed on any message that echoed the bad input back - including one
+   * that never named the key or said what the valid answers were, which is
+   * the entire thing this test exists to check.
+   */
+  expect(why.rejectionReason).toBe('ask is one of writes, always or never - not sometimes');
 });

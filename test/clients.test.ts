@@ -225,11 +225,12 @@ it('writes down a refusal that crossed a connection, without softening it', asyn
    * log is the only place the method, the URI, the client that refused and
    * the code are visible together.
    */
-  const wrote = said.find((line) => line.includes('refused'));
-  expect(wrote).toContain('plugin');
-  expect(wrote).toContain('resourceWrite');
-  expect(wrote).toContain('virtual://plugin/a.txt');
-  expect(wrote).toContain('-32009');
+  // The whole line, not four substrings of it. The claim is that these four
+  // facts are in one place and readable together, and four containment checks
+  // pass just as happily on four separate lines in any order.
+  expect(said.find((line) => line.includes('refused')))
+    .toBe('plugin refused resourceWrite for virtual://plugin/a.txt (-32009):'
+      + ' This client published its directory read-only.');
 });
 
 it('says a client URI is nobody\'s here when the client that published it has gone', async () => {
