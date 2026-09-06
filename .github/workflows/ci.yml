@@ -52,3 +52,32 @@ jobs:
       # something has packed it: `ahpd` ships no `src`, the libraries do.
       - name: Pack each package
         run: pnpm -r exec pnpm pack --pack-destination ${{ runner.temp }}
+
+  # `resourceWrite` is symmetrical, so this host implements the whole of it and
+  # so does `ahpc`. `test/fixtures/resource-write.json` is the same file in both
+  # repositories and each runs it against its own implementation - which catches
+  # a behavioural divergence, but not a case added on one side and never copied
+  # to the other. This is what catches that.
+  fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The write fixture matches ahpc's copy
+        run: |
+          set -u
+          url=https://raw.githubusercontent.com/softov/ahpc/main/test/fixtures/resource-write.json
+          code=$(curl -sS -o "$RUNNER_TEMP/theirs.json" -w '%{http_code}' "$url")
+          if [ "$code" = "404" ]; then
+            # Not landed over there yet. Said rather than failed, because the
+            # two repositories are pushed one at a time and a red build for the
+            # gap between them would be a build nobody could make green.
+            echo "ahpc's main has no copy of this fixture yet. Nothing to compare."
+            exit 0
+          fi
+          if [ "$code" != "200" ]; then
+            echo "Could not read ahpc's copy: HTTP $code"
+            exit 1
+          fi
+          diff -u "$RUNNER_TEMP/theirs.json" test/fixtures/resource-write.json && echo "The two copies are identical."
