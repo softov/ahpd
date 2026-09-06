@@ -43,12 +43,22 @@ jobs:
       # no readable log, so the step has to end by itself and say where it got
       # to. The schema generator runs separately from the tests, so a hang in
       # one is not mistaken for the other.
+      - name: What this machine has
+        run: |
+          nproc
+          free -m
+          df -h .
+
       - name: Tests
         run: |
           echo '--- schema'
           node tools/schema.mjs
           echo '--- vitest'
-          timeout 300 pnpm exec vitest run --reporter=verbose --testTimeout=20000 --hookTimeout=20000 --teardownTimeout=20000
+          timeout 300 pnpm exec vitest run --reporter=verbose --maxWorkers=2 --testTimeout=20000 --hookTimeout=20000 --teardownTimeout=20000
+        env:
+          # A V8 heap error names the test that grew; the OS killing the process
+          # for the same reason says only "Killed".
+          NODE_OPTIONS: --max-old-space-size=2048
 
       # Last, because it is the slowest and the only one that writes anything.
       - run: pnpm build
