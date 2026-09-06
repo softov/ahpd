@@ -3,6 +3,30 @@
   "version": "0.1.0",
   "type": "module",
   "description": "An Agent Host Protocol host, and the parts to build your own - no backend inside",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "protocol",
+    "json-rpc",
+    "websocket",
+    "server",
+    "host",
+    "daemon"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

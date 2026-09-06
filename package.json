@@ -5,6 +5,12 @@
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "description": "An Agent Host Protocol daemon that runs Claude Code sessions, on Node, Bun or Deno - and the parts to build your own",
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git"
+  },
   "scripts": {
     "build": "tsc -p packages/server && tsc -p packages/agent-claude && tsc -p packages/ahpd",
     "start": "node packages/ahpd/dist/main.js",
@@ -16,6 +22,7 @@
     "notes": "node --watch --conditions development --import ./scripts/dev.mjs examples/notes/main.ts",
     "notes:bun": "bun --watch --conditions development examples/notes/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "boundary": "node scripts/boundary.mjs",
     "test": "node tools/schema.mjs && vitest run",
     "schema": "node tools/schema.mjs",
     "wire": "node tools/validate.mjs"

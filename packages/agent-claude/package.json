@@ -3,6 +3,32 @@
   "version": "0.1.0",
   "type": "module",
   "description": "The Claude backend for @ahpd/server: one Agent, and the transcripts it left behind",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "protocol",
+    "json-rpc",
+    "websocket",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "backend",
+    "adapter"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/agent-claude"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

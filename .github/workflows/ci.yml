@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per branch. A push over a push is a run nobody is waiting for.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The `engines` field, and the version the tests are written against.
+          node-version: 22
+          cache: pnpm
+
+      # Frozen, so a lockfile that does not match package.json fails here
+      # rather than resolving to something nobody wrote down.
+      - run: pnpm install --frozen-lockfile
+
+      # Before the tests: the boundary is the claim these packages make, and a
+      # host that imports a backend is worth failing for even when it passes.
+      - name: The packages import only what they declare
+        run: pnpm boundary
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      # Last, because it is the slowest and the only one that writes anything.
+      - run: pnpm build
+
+      # What would actually be published, which is not what `files` says until
+      # something has packed it: `ahpd` ships no `src`, the libraries do.
+      - name: Pack each package
+        run: pnpm -r exec pnpm pack --pack-destination ${{ runner.temp }}

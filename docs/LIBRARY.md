@@ -20,7 +20,8 @@ Four things go into a host, and only the first two are required:
 ## The smallest host
 
 ```ts
-import { createHost, listen, claude } from 'ahpd';
+import { createHost, listen } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
   path: process.cwd(),
@@ -43,10 +44,8 @@ runs without a network.
 ## A complete host
 
 ```ts
-import {
-  createHost, listen, claude,
-  fileResources, shellTerminals, gitChanges, gitBranches, scheduledAutomations,
-} from 'ahpd';
+import { createHost, listen, fileResources, shellTerminals, gitChanges, gitBranches, scheduledAutomations } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
 
 const path = process.cwd();
 
@@ -57,7 +56,7 @@ const host = createHost({
   terminals: shellTerminals(),
   changes: gitChanges(),
   directories: gitBranches(),
-  automations: scheduledAutomations(),
+  automations: scheduledAutomations({ file: 'automations.json' }),
   onEvent: (line) => process.stdout.write(`${line}\n`),
 });
 
@@ -76,7 +75,7 @@ would fail part-way through instead.
 | `terminals` | how a shell is opened | no terminal can be created | `shellTerminals()` |
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
 | `directories` | facts about a served directory - the branch it is on | sessions carry their project and nothing more | `gitBranches()` |
-| `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `scheduledAutomations()`, or `memoryAutomations()` without the clock |
+| `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `scheduledAutomations({ file })`, or `memoryAutomations()` without the clock |
 
 ### `resources`
 
@@ -142,7 +141,7 @@ turn ends, so a host with ninety-eight sessions in one repository asks git once.
 ### `automations`
 
 `memoryAutomations()` holds definitions and runs them when asked.
-`scheduledAutomations()` is the same store with a clock: a five-field cron in a
+`scheduledAutomations({ file })` is the same store with a clock: a five-field cron in a
 named time zone, definitions in `automations.json`, and one catch-up run for
 what was missed while the host was down. A store with no clock says so by
 leaving `nextRunAt` off.
@@ -189,7 +188,8 @@ each with a `provider` no other has. The first is what a client gets when it
 names none.
 
 ```ts
-import { createHost, claude } from 'ahpd';
+import { createHost } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
 import { notes } from './my-agent.js';
 
 createHost({ path, agents: [claude({ paths: [path] }), notes({ path })] });
@@ -207,18 +207,29 @@ wrong screen rather than an error. [examples/echo](../examples/echo) and
 ## What else is exported
 
 ```ts
+// @ahpd/server - the protocol, the ports, and everything that is not a backend
 import {
-  createHost, ROOT,            // the host, and the root channel URI
-  listen,                      // a socket, on Node, Bun or Deno
-  createPeer, receive, RpcError,
+  createHost, ROOT,                       // the host, and the root channel URI
+  listen,                                 // a socket, on Node, Bun or Deno
+  createPeer, receive, RpcError,          // JSON-RPC, holding no socket
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
-  claude, createSession,       // the Claude backend, and one session of it
-  fileResources, shellTerminals, gitChanges, gitBranches,
-  memoryAutomations, scheduledAutomations,
-  catalogue, uriFor, idFor, idOf, Status,   // Claude's sessions as rows
-  turnsOf, tail, older, PAGE,               // transcript paging
-  probe,                                    // one CLI at startup
-} from 'ahpd';
+  fileResources, shellTerminals,          // the resources and terminals ports
+  gitChanges, gitBranches, gitWorktrees,  // the git-backed ports
+  memoryAutomations, scheduledAutomations,// automations, without a clock and with
+  hostTools,                              // the tools this package contributes
+  uriFor, idFor, idOf, Status,            // how a session is named, and its status bits
+  tail, older, PAGE,                      // paging a long list of turns
+  within,                                 // whether a path is under a served root
+} from '@ahpd/server';
+
+// @ahpd/agent-claude - one backend, and nothing the host needs to know about
+import {
+  claude,        // the `Agent` to register
+  createSession, // one live session of it
+  catalogue,     // Claude's own sessions, as rows a host can list
+  turnsOf,       // a past session read out of its transcript
+  probe,         // one CLI at startup, to learn what it offers
+} from '@ahpd/agent-claude';
 ```
 
 Every type is exported too, from `packages/server/src/types/`.

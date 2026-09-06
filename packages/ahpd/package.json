@@ -3,6 +3,32 @@
   "version": "0.1.0",
   "type": "module",
   "description": "An Agent Host Protocol daemon that runs Claude Code sessions, on Node, Bun or Deno",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "protocol",
+    "json-rpc",
+    "websocket",
+    "cli",
+    "command-line",
+    "daemon",
+    "claude",
+    "claude-code"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/ahpd"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
   "bin": {
     "ahpd": "./dist/main.js"
   },

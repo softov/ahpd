@@ -22,7 +22,7 @@ of this.
 ## The smallest one
 
 ```ts
-import type { Agent, Bag, Session, Start } from 'ahpd';
+import type { Agent, Bag, Session, Start } from '@ahpd/server';
 
 export function shout(): Agent {
   return {

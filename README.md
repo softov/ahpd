@@ -43,7 +43,7 @@ The clients on the left are interchangeable and none of them owns the session. `
 - Run agent sessions on one machine and drive them from another, from more than one client at a time, with the turn surviving the client that started it.
 - Point **VS Code** at it (`chat.remoteAgentHosts`) or any other AHP client; [`ahpc`](https://github.com/softov/ahpc) is the terminal one used here.
 - Read and write files, open a shell, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
-- Run an agent on a clock, with nobody connected: `scheduledAutomations()` is a cron in a named time zone that starts sessions by itself.
+- Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
 - Serve a backend that is not Claude, on the same host, with none of the protocol re-implemented.
 
 ## Install and run the daemon
@@ -140,7 +140,8 @@ You provide the agents and, optionally, the things that touch the machine.
 The smallest host that works is three things: a backend, a host to serve it, and a socket to serve it on.
 
 ```ts
-import { createHost, listen, claude } from 'ahpd';
+import { createHost, listen } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
   path: process.cwd(),
@@ -157,10 +158,8 @@ What it does *not* serve is anything that touches the machine, because `createHo
 Those arrive as **ports**, and each is optional and independent:
 
 ```ts
-import {
-  createHost, listen, claude,
-  fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools,
-} from 'ahpd';
+import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
   path: process.cwd(),
@@ -170,7 +169,7 @@ const host = createHost({
   terminals: shellTerminals(),                // a shell, as a terminal channel
   changes: gitChanges(),                      // what the working tree has that HEAD does not
   directories: gitBranches(),                 // which branch each served directory is on
-  automations: scheduledAutomations(),        // agents on a clock, with nobody connected
+  automations: scheduledAutomations({ file: 'automations.json' }),        // agents on a clock, with nobody connected
   tools: hostTools(),                         // tools the host contributes to every session
 
   onEvent: (line) => process.stdout.write(`${line}\n`),
@@ -190,7 +189,7 @@ Reading a file is `node:fs` on one runtime and something else on another; a term
 An agent is the thing that answers. It says what it is called, what a session of its kind can be configured with, which sessions it already has, and how to start one - and everything the protocol requires stays the host's.
 
 ```ts
-import { createHost, listen } from 'ahpd';
+import { createHost, listen } from '@ahpd/server';
 import { notes } from './agent.js';
 
 const host = createHost({ path, agents: [notes({ path })] });
