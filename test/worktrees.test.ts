@@ -3,10 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createHost } from '../src/host.js';
+import { createHost } from '../packages/server/src/host.js';
 import { echo } from '../examples/echo/agent.js';
-import { gitWorktrees, worktreesOf } from '../src/worktrees.js';
-import type { Peer } from '../src/types/rpc.js';
+import { gitWorktrees, worktreesOf } from '../packages/server/src/worktrees.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
 
 /*
  * A working tree of a session's own.

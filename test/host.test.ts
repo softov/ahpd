@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Peer } from '../src/types/rpc.js';
-import { Status } from '../src/catalog.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
+import { Status } from '../packages/server/src/catalog.js';
 
 /*
  * The host, without a socket.
@@ -106,10 +106,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../src/host.js');
-const { fileResources, list, read, resolve, complete } = await import('../src/resources.js');
-const { shellTerminals } = await import('../src/terminals.js');
-const { gitBranches } = await import('../src/git.js');
+const { createHost } = await import('../packages/server/src/host.js');
+const { fileResources, list, read, resolve, complete } = await import('../packages/server/src/resources.js');
+const { shellTerminals } = await import('../packages/server/src/terminals.js');
+const { gitBranches } = await import('../packages/server/src/git.js');
 /*
  * What the daemon hands its host, handed here too.
  *
@@ -118,8 +118,8 @@ const { gitBranches } = await import('../src/git.js');
  * protocol and owns neither.
  */
 const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
-const { claude } = await import('../src/agents/claude.js');
-const { hostTools } = await import('../src/tools.js');
+const { claude } = await import('../packages/agent-claude/src/claude.js');
+const { hostTools } = await import('../packages/server/src/tools.js');
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
 const ETX = String.fromCharCode(3);
@@ -2968,7 +2968,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src' },
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src' },
     }) as { entries: { name: string; type: string }[] };
     expect(found.entries.map((e) => e.name)).toContain('host.ts');
     // A listing in whatever order the filesystem happened to return is one
@@ -2981,7 +2981,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceRead',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/package.json' },
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/ahpd/package.json' },
     }) as { data: string; encoding: string };
     expect(found.encoding).toBe('utf-8');
     expect(found.data).toContain('"name": "ahpd"');
@@ -2998,10 +2998,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
   });
 
   it('refuses one that climbs out of a served directory', async () => {
-    const client = await opened('/github/ahpd/src');
+    const client = await opened('/github/ahpd/packages/server/src');
     await expect(client.handle({
       method: 'resourceList',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src/../../..' },
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src/../../../../..' },
     })).rejects.toMatchObject({ code: -32009 });
   });
 
@@ -3018,10 +3018,10 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     const client = await opened();
     const found = await client.handle({
       method: 'resourceResolve',
-      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/src' },
+      params: { channel: 'ahp-root://', uri: 'file:///github/ahpd/packages/server/src' },
     }) as { type: string; uri: string };
     expect(found.type).toBe('directory');
-    expect(found.uri).toBe('file:///github/ahpd/src');
+    expect(found.uri).toBe('file:///github/ahpd/packages/server/src');
   });
 
   it('will not write without a grant, and names the request that would give one', async () => {
@@ -3077,15 +3077,15 @@ describe('completing an at-sign', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     const found = await client.handle({
       method: 'completions',
-      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @src/ho', offset: 15 },
+      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @packages/server/src/ho', offset: 30 },
     }) as { items: { insertText: string; rangeStart: number; attachment: { type: string; uri: string } }[] };
 
-    expect(found.items.map((i) => i.insertText)).toContain('@src/host.ts');
+    expect(found.items.map((i) => i.insertText)).toContain('@packages/server/src/host.ts');
     // The whole `@…` is replaced, so completing does not leave two at-signs.
     expect(found.items[0]?.rangeStart).toBe(8);
     // A reference rather than the bytes: a completion that carried the file
     // would carry it per keystroke.
-    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: 'file:///github/ahpd/src/host.ts' });
+    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: 'file:///github/ahpd/packages/server/src/host.ts' });
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
@@ -3094,9 +3094,9 @@ describe('completing an at-sign', () => {
     await client.handle(hello(['0.8.0']));
     const found = await client.handle({
       method: 'completions',
-      params: { channel: 'ahp-root://', kind: 'userMessage', text: '@sr', offset: 3 },
+      params: { channel: 'ahp-root://', kind: 'userMessage', text: '@pack', offset: 5 },
     }) as { items: { insertText: string }[] };
-    expect(found.items.map((i) => i.insertText)).toContain('@src/');
+    expect(found.items.map((i) => i.insertText)).toContain('@packages/');
   });
 
   it('leaves a slash command alone, because the two cannot both match', async () => {
@@ -4897,7 +4897,7 @@ describe('the fields a client reads by name', () => {
   });
 
   it('advertises automations only where there are any', async () => {
-    const { memoryAutomations } = await import('../src/automations.js');
+    const { memoryAutomations } = await import('../packages/server/src/automations.js');
     const without = await open().handle(hello(['0.9.0'])) as Record<string, unknown>;
     // Absence is what tells a client the host has no catalogue and no
     // automation commands, and a correct one will not go looking.

@@ -1,5 +1,5 @@
 import type { Turn } from '@microsoft/agent-host-protocol';
-import type { Agent, Bag, Listed, Session, Start, WireTurn } from '../../src/index.js';
+import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/server';
 
 /**
  * A backend that answers by saying it back, and nothing else.

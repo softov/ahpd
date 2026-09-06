@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { gitBranches } from '../src/git.js';
+import { gitBranches } from '../packages/server/src/git.js';
 
 /*
  * What a client reads about a repository, in the words it reads them in.

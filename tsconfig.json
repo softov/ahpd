@@ -1,17 +1,12 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "es2023",
-    "lib": ["es2023"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true,
-    "declaration": true,
-    "outDir": "dist",
-    "rootDir": ".",
-    "skipLibCheck": true,
-    "verbatimModuleSyntax": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ahpd/server": ["packages/server/src/index.ts"],
+      "@ahpd/agent-claude": ["packages/agent-claude/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
 }

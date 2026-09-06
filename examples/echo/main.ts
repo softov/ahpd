@@ -1,4 +1,4 @@
-import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '../../src/index.js';
+import { createHost, fileResources, gitBranches, gitChanges, listen, shellTerminals } from '@ahpd/server';
 import { echo } from './agent.js';
 
 /**

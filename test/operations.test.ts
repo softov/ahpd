@@ -1,9 +1,9 @@
 import { expect, it } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
-import { createHost } from '../src/host.js';
+import { createHost } from '../packages/server/src/host.js';
 import { echo } from '../examples/echo/agent.js';
-import type { ChangesetOperation, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
-import type { Peer } from '../src/types/rpc.js';
+import type { ChangesetOperation, ChangesetOperationRequest, ChangesetSource } from '../packages/server/src/types/changes.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
 
 /*
  * Operations on a changeset, driven the way a client drives them.

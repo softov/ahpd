@@ -2,8 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import {
   changesetReducer, chatReducer, rootReducer, sessionReducer, terminalReducer,
 } from '@microsoft/agent-host-protocol';
-import type { ChangesetSource } from '../src/types/changes.js';
-import type { Peer } from '../src/types/rpc.js';
+import type { ChangesetSource } from '../packages/server/src/types/changes.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
 
 /*
  * Everything this host says, read by the client that will read it.
@@ -75,9 +75,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../src/host.js');
-const { claude } = await import('../src/agents/claude.js');
-const { shellTerminals } = await import('../src/terminals.js');
+const { createHost } = await import('../packages/server/src/host.js');
+const { claude } = await import('../packages/agent-claude/src/claude.js');
+const { shellTerminals } = await import('../packages/server/src/terminals.js');
 const { echo } = await import('../examples/echo/agent.js');
 
 function peer(): Peer & { notes: { method: string; params: unknown }[] } {
@@ -646,7 +646,7 @@ it('still refuses something that is not a URI at all', async () => {
  * mapping happens on the way in; this used to answer `autoApprove is not a
  * config key this backend takes` and leave the session where it was.
  */
-const { permissionFor } = await import('../src/session.js');
+const { permissionFor } = await import('../packages/agent-claude/src/session.js');
 
 it('advertises the five modes the CLI has, under the name it has them', async () => {
   const { client } = await running();

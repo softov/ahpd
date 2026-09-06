@@ -1,11 +1,9 @@
-import { within } from '../paths.js';
-import { catalogue } from '../catalog.js';
-import { probe } from '../probe.js';
-import { serversFor } from '../mcp.js';
-import { createSession, EFFORT_LABELS, EFFORTS } from '../session.js';
-import { turnsOf } from '../transcript.js';
-import type { Bag } from '../types/common.js';
-import type { Agent, Start } from '../types/agent.js';
+import { probe } from './probe.js';
+import { serversFor } from './mcp.js';
+import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
+import { turnsOf } from './transcript.js';
+import { catalogue, within } from '@ahpd/server';
+import type { Agent, Bag, Start } from '@ahpd/server';
 
 /**
  * The resource a token for this backend is for.

@@ -2,7 +2,7 @@
 
 `createHost` is the protocol and nothing else: no agent logic, and nothing that
 touches the machine. It is the same function the daemon in
-[src/main.ts](../src/main.ts) calls.
+[packages/ahpd/src/main.ts](../packages/ahpd/src/main.ts) calls.
 
 This is the *host* half. Writing the backend that answers is
 [AGENT.md](AGENT.md).
@@ -107,7 +107,7 @@ store that resolves symlinks knows things about a path that the host does not.
 
 ### `terminals`
 
-`create(options)` returns a `Terminal`. [src/terminals.ts](../src/terminals.ts)
+`create(options)` returns a `Terminal`. [packages/server/src/terminals.ts](../packages/server/src/terminals.ts)
 is a subprocess over pipes, which is why it reports `isPty: false` - said rather
 than left to be discovered, because anything drawing itself with cursor movement
 will not look right.
@@ -221,4 +221,4 @@ import {
 } from 'ahpd';
 ```
 
-Every type is exported too, from `src/types/`.
+Every type is exported too, from `packages/server/src/types/`.

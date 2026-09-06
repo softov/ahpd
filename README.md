@@ -53,10 +53,10 @@ The clients on the left are interchangeable and none of them owns the session. `
 ```bash
 git clone https://github.com/softov/ahpd && cd ahpd
 npm install && npm run build
-node dist/src/main.js --path /work/project
+node packages/ahpd/dist/main.js --path /work/project
 ```
 
-The rest of this README writes `ahpd` for `node dist/src/main.js`.
+The rest of this README writes `ahpd` for `node packages/ahpd/dist/main.js`.
 
 Once it is published this will be the shorter form, and every flag is the same:
 
@@ -245,27 +245,46 @@ fail silently rather than loudly.
 
 ## Layout
 
+Three packages in one repository. The boundary is real - `@ahpd/server` imports
+nothing that runs an agent, and the check for that is that it compiles without
+`@ahpd/agent-claude` installed.
+
+### `@ahpd/server` — the protocol, and the parts to build a host
+
 | | |
 | --- | --- |
-| [src/types/](src/types/)                | Every shape, importing no runtime value. The contract. |
-| [src/rpc.ts](src/rpc.ts)                | JSON-RPC framing. Holds no socket. |
-| [src/listen.ts](src/listen.ts)          | Accepts connections on Node, Bun or Deno. |
-| [src/host.ts](src/host.ts)              | Channels, subscriptions, requests and state actions. Imports no backend. |
-| [src/resources.ts](src/resources.ts)    | The `resources` port: files, reads and writes. |
-| [src/terminals.ts](src/terminals.ts)    | The `terminals` port: a shell over pipes.
-| [src/changes.ts](src/changes.ts)        | The `changes` port: a changeset out of git. |
-| [src/git.ts](src/git.ts)                | The `directories` port: which branch a directory is on. |
-| [src/automations.ts](src/automations.ts)| The `automations` port, without a clock. |
-| [src/scheduled.ts](src/scheduled.ts)    | The same, with one. |
-| [src/agents/](src/agents/)              | Backends. `claude.ts` is the one that ships. |
-| [src/session.ts](src/session.ts)        | One live Claude session, reduced into its channels' state. |
-| [src/catalog.ts](src/catalog.ts)        | Claude's sessions, as rows a host can list. |
-| [src/transcript.ts](src/transcript.ts)  | A past Claude session read as turns, and the paging helpers. |
-| [src/probe.ts](src/probe.ts)            | One CLI at startup, to learn what Claude offers. |
-| [src/main.ts](src/main.ts)              | The daemon: argv, the filesystem and stdout. |
-| [src/index.ts](src/index.ts)            | The library entry point. |
+| [packages/server/src/types/](packages/server/src/types/)                 | Every shape, importing no runtime value. The contract. |
+| [packages/server/src/rpc.ts](packages/server/src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
+| [packages/server/src/listen.ts](packages/server/src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
+| [packages/server/src/host.ts](packages/server/src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
+| [packages/server/src/resources.ts](packages/server/src/resources.ts)     | The `resources` port: files, reads and writes. |
+| [packages/server/src/terminals.ts](packages/server/src/terminals.ts)     | The `terminals` port: a shell over pipes. |
+| [packages/server/src/changes.ts](packages/server/src/changes.ts)         | The `changes` port: a changeset out of git. |
+| [packages/server/src/git.ts](packages/server/src/git.ts)                 | The `directories` port: which branch a directory is on. |
+| [packages/server/src/automations.ts](packages/server/src/automations.ts) | The `automations` port, without a clock. |
+| [packages/server/src/scheduled.ts](packages/server/src/scheduled.ts)     | The same, with one. |
+| [packages/server/src/catalog.ts](packages/server/src/catalog.ts)         | A backend's sessions, as rows a host can list. |
+| [packages/server/src/paging.ts](packages/server/src/paging.ts)           | A long list of turns, served a page at a time. |
+| [packages/server/src/index.ts](packages/server/src/index.ts)             | The library entry point. |
 
-Everything below `src/host.ts` is Claude's, reached only through `Agent`. It used to be duplicated: `ahpc` had a `--claude` mode that reached the Agent SDK in-process, with its own translation of it. That is gone, and the client now depends on no agent SDK at all - two implementations of one translation meant two answers to every question, and the one nobody is looking at is the one that drifts. This is the only copy.
+### `@ahpd/agent-claude` — one backend
+
+| | |
+| --- | --- |
+| [packages/agent-claude/src/claude.ts](packages/agent-claude/src/claude.ts)         | The `Agent`: what this harness is and how to start one. |
+| [packages/agent-claude/src/session.ts](packages/agent-claude/src/session.ts)       | One live Claude session, reduced into its channels' state. |
+| [packages/agent-claude/src/transcript.ts](packages/agent-claude/src/transcript.ts) | A past Claude session read as turns. |
+| [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |
+
+### `ahpd` — the daemon
+
+| | |
+| --- | --- |
+| [packages/ahpd/src/main.ts](packages/ahpd/src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
+| [packages/ahpd/src/daemon.ts](packages/ahpd/src/daemon.ts) | Running detached, and finding the one that is. |
+| [packages/ahpd/src/config.ts](packages/ahpd/src/config.ts) | The config file, and where this tool keeps its things. |
+
+Everything Claude is reached only through `Agent`. It used to be duplicated: `ahpc` had a `--claude` mode that reached the Agent SDK in-process, with its own translation of it. That is gone, and the client now depends on no agent SDK at all - two implementations of one translation meant two answers to every question, and the one nobody is looking at is the one that drifts. This is the only copy.
 
 ## Examples
 

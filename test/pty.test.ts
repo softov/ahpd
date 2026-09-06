@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { shellTerminals } from '../src/terminals.js';
-import type { Pty, SpawnPty } from '../src/types/terminals.js';
+import { shellTerminals } from '../packages/server/src/terminals.js';
+import type { Pty, SpawnPty } from '../packages/server/src/types/terminals.js';
 
 /*
  * A shell that says where it is and what it ran.

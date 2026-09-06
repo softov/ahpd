@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import type { Peer } from '../src/types/rpc.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
 
 /*
  * A tool call that stopped because nobody has signed in.
@@ -33,7 +33,7 @@ const sdk = vi.hoisted(() => {
 
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
-vi.mock('../src/mcp.js', () => ({
+vi.mock('../packages/agent-claude/src/mcp.js', () => ({
   // One remote server, so there is a URL to discover a resource at.
   serversFor: () => ({ desk: { type: 'http', url: 'https://desk.example/mcp' } }),
   urlOf: (config: { url?: string }) => config.url,
@@ -76,8 +76,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 
-const { createHost } = await import('../src/host.js');
-const { claude } = await import('../src/agents/claude.js');
+const { createHost } = await import('../packages/server/src/host.js');
+const { claude } = await import('../packages/agent-claude/src/claude.js');
 
 const settle = async (times = 10): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });

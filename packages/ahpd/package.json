@@ -1,0 +1,13 @@
+{
+  "name": "ahpd",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "An Agent Host Protocol daemon that runs Claude Code sessions, on Node, Bun or Deno",
+  "bin": { "ahpd": "./dist/main.js" },
+  "files": ["dist", "src", "README.md"],
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@ahpd/agent-claude": "0.0.1",
+    "@ahpd/server": "0.0.1"
+  }
+}

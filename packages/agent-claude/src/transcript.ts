@@ -1,7 +1,6 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
-import type { OnWire, WireTurn } from './types/wire.js';
-import type { Bag } from './types/common.js';
+import type { Bag, OnWire, WireTurn } from '@ahpd/server';
 
 /**
  * Reads a session that already happened, as turns.

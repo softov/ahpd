@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
-import { createHost } from '../src/host.js';
-import { memoryAutomations } from '../src/automations.js';
+import { createHost } from '../packages/server/src/host.js';
+import { memoryAutomations } from '../packages/server/src/automations.js';
 import { echo } from '../examples/echo/agent.js';
-import type { Peer } from '../src/types/rpc.js';
+import type { Peer } from '../packages/server/src/types/rpc.js';
 
 /*
  * Automations, on a host that holds no clock.

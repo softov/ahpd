@@ -1,7 +1,7 @@
 import * as protocol from '@microsoft/agent-host-protocol';
 import { describe, expect, it } from 'vitest';
-import { gitChanges } from '../src/changes.js';
-import { fileResources } from '../src/resources.js';
+import { gitChanges } from '../packages/server/src/changes.js';
+import { fileResources } from '../packages/server/src/resources.js';
 
 /*
  * The *words* inside a payload, which nothing else here checks.
@@ -83,7 +83,7 @@ describe('the words this host writes', () => {
 
   it('reports a resource kind and an encoding the protocol declares', async () => {
     const store = fileResources();
-    const entries = await store.list('file:///github/ahpd/src', ['/github/ahpd']);
+    const entries = await store.list('file:///github/ahpd/packages/server/src', ['/github/ahpd']);
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(words('ResourceType')).toContain(entry.type);

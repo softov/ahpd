@@ -1,7 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { customizationsOf, EFFORT_LABELS, EFFORTS } from './session.js';
-import type { Bag } from './types/common.js';
-import type { Offered } from './types/probe.js';
+import type { Bag, Offered } from '@ahpd/server';
 
 /**
  * Reads what the agent backend offers, once, without creating a session.

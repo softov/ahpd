@@ -3,15 +3,21 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { memoryAutomations } from './automations.js';
-import { automationsPath } from './config.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationStore } from './types/automations.js';
 import type { Bag } from './types/common.js';
 
 /** How this store is built, and what a test replaces. */
 export interface ScheduledOptions {
-  /** Where definitions are kept. Defaults to the file beside the configuration. */
-  file?: string;
+  /**
+   * Where definitions are kept.
+   *
+   * Named by the caller rather than defaulted to somewhere under a home
+   * directory: this is a library, and a library that decides on its own where
+   * to write in somebody's home is one that has made a decision for the
+   * program using it. The daemon passes the file beside its configuration.
+   */
+  file: string;
   /** The clock. A test supplies its own so a schedule can be reached without waiting for it. */
   now?(): Date;
   /**
@@ -71,9 +77,9 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
  * that are not there. What is worth keeping across a restart is what somebody
  * wrote down, which is the definition and when it next fires.
  */
-export function scheduledAutomations(options: ScheduledOptions = {}): AutomationStore {
+export function scheduledAutomations(options: ScheduledOptions): AutomationStore {
   const inner = memoryAutomations();
-  const file = options.file ?? automationsPath();
+  const file = options.file;
   const now = options.now ?? ((): Date => new Date());
   const arm = options.timer ?? ((fire, ms): { cancel(): void } => {
     const held = setTimeout(fire, ms);

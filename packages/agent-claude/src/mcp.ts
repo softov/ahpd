@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Bag } from './types/common.js';
+import type { Bag } from '@ahpd/server';
 
 /**
  * Every MCP server configured for a directory, by name.

@@ -1,0 +1,24 @@
+{
+  "name": "@ahpd/server",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "An Agent Host Protocol host, and the parts to build your own - no backend inside",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src", "README.md"],
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@microsoft/agent-host-protocol": "^0.9.0"
+  },
+  "optionalDependencies": {
+    "ws": "^8.18.0",
+    "node-pty": "^1.1.0-beta40"
+  }
+}

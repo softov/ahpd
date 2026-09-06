@@ -1,14 +1,10 @@
 import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
-import { idOf, Status } from './catalog.js';
 import { protectedResource, urlOf } from './mcp.js';
-import { tail } from './paging.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
-import type { OnWire, WireTurn } from './types/wire.js';
-import type { Bag } from './types/common.js';
-import type { BoundTool } from './types/agent.js';
-import type { Chosen, Session, SessionOptions } from './types/session.js';
+import { Status, idOf, tail } from '@ahpd/server';
+import type { Bag, BoundTool, Chosen, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/server';
 
 /**
  * The effort levels this backend has, weakest first.

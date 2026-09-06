@@ -1,18 +1,10 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { configPath, loadConfig } from './config.js';
+import { automationsPath, configPath, loadConfig } from './config.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
-import { claude } from './agents/claude.js';
-import { createHost } from './host.js';
-import { gitBranches } from './git.js';
-import { gitChanges } from './changes.js';
-import { scheduledAutomations } from './scheduled.js';
-import { fileResources } from './resources.js';
-import { shellTerminals } from './terminals.js';
-import type { SpawnPty } from './types/terminals.js';
-import { gitWorktrees } from './worktrees.js';
-import { hostTools } from './tools.js';
-import { listen } from './listen.js';
+import { claude } from '@ahpd/agent-claude';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, scheduledAutomations, shellTerminals } from '@ahpd/server';
+import type { SpawnPty } from '@ahpd/server';
 
 /**
  * The daemon.
@@ -312,6 +304,9 @@ const host = createHost({
    * instead, and one that should fire nothing passes `memoryAutomations()`.
    */
   automations: scheduledAutomations({
+    // Beside the configuration, which is this daemon's decision to make and
+    // not the store's - see `ScheduledOptions.file`.
+    file: automationsPath(),
     onProblem: (message) => process.stdout.write(`${message}\n`),
   }),
   /*
