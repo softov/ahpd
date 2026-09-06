@@ -38,39 +38,12 @@ jobs:
 
       - run: pnpm typecheck
 
-      # Bounded and verbose. This suite has hung on the runner while passing
-      # everywhere else, and a job that is cancelled rather than failed leaves
-      # no readable log, so the step has to end by itself and say where it got
-      # to. The schema generator runs separately from the tests, so a hang in
-      # one is not mistaken for the other.
-      - name: What this machine has
-        run: |
-          nproc
-          free -m
-          df -h .
-
+      # Bounded, because a job that runs into the runner's own timeout is
+      # cancelled rather than failed, and a cancelled job leaves no readable
+      # log at all - which is how a shell test killing this process group came
+      # to look like a hang for an afternoon.
       - name: Tests
-        run: |
-          echo '--- schema'
-          node tools/schema.mjs
-          echo '--- vitest'
-          (
-            while true; do
-              echo "[mem] $(free -m | awk '/Mem:/{print $3" used, "$7" avail"}') procs=$(ps -e --no-headers | wc -l)"
-              ps -eo rss=,comm= --sort=-rss | head -4 | sed 's/^/[top] /'
-              sleep 2
-            done
-          ) &
-          SAMPLER=$!
-          set +e
-          timeout 300 pnpm exec vitest run --reporter=verbose --maxWorkers=2 --testTimeout=20000 --hookTimeout=20000 --teardownTimeout=20000
-          RC=$?
-          kill $SAMPLER 2>/dev/null
-          exit $RC
-        env:
-          # A V8 heap error names the test that grew; the OS killing the process
-          # for the same reason says only "Killed".
-          NODE_OPTIONS: --max-old-space-size=2048
+        run: timeout 300 pnpm test
 
       # Last, because it is the slowest and the only one that writes anything.
       - run: pnpm build
