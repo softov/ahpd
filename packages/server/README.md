@@ -52,6 +52,7 @@ ahpd config                 print the config file path and its contents
 | `--connection-token-file <p>` | Require the secret in this file. Writes a new one if the file is missing |
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Use this config file instead of the default |
+| `--automations <where>` | `file`, the default, keeps them beside the config and fires their schedules. `memory` keeps them until the process ends and fires nothing |
 | `--help`, `-h` | |
 
 Every flag also has a key in `config.json` under `$XDG_CONFIG_HOME/ahpd`, spelled the same way without the dashes. A flag beats the file. Run `ahpd config` to see the path and the current values.

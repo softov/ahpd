@@ -41,7 +41,23 @@ anything has been let go of.
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Read this instead of the file below |
+| `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--help`, `-h` | |
+
+### `--automations`, and what memory costs
+
+`file` is the default: definitions are written to `automations.json` beside the
+configuration, come back on a restart, and a clock fires the ones with a
+schedule. It is the mode a daemon wants, because being running at nine in the
+morning is the only way a schedule fires with nobody connected.
+
+`memory` holds definitions for as long as the process does and fires nothing.
+A client may still write, patch, list and run one by hand; what it will not get
+is a `nextRunAt`, which is the honest form of "this host will not fire that".
+
+Both are the same `AutomationStore`, so the host is not told which it was
+given. Runs are in memory either way: a run names the sessions it started, and
+those went when the process did.
 
 ### `--path`, and why a client cannot name its own
 

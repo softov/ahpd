@@ -18,6 +18,13 @@ export interface Config {
   connectionTokenFile?: string;
   /** Accept any connection, with no secret at all. */
   withoutConnectionToken?: boolean;
+  /**
+   * Where automations are kept: `file` beside this configuration, or `memory`.
+   *
+   * `file` is the default and is the one with a clock in it. `memory` holds
+   * definitions for the life of the process and fires nothing.
+   */
+  automations?: 'file' | 'memory';
 }
 
 /**

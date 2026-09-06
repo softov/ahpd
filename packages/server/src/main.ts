@@ -4,7 +4,7 @@ import { automationsPath, configPath, loadConfig } from './config.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
-import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, memoryAutomations, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -45,6 +45,15 @@ interface Options {
   open: boolean;
   /** Read this configuration instead of the one XDG names. */
   configFile?: string;
+  /**
+   * Where automations are kept, and whether a clock fires them.
+   *
+   * `file` is a store that survives a restart and runs a schedule; `memory`
+   * is one that holds definitions for as long as the process does and fires
+   * nothing. Both accept a schedule trigger - what says the difference to a
+   * client is the `nextRunAt` the memory one does not report.
+   */
+  automations: 'file' | 'memory';
   help: boolean;
 }
 
@@ -69,11 +78,15 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   --without-connection-token    Accept any connection. Only when the port is
                                 already reachable by nobody else.
   --config-file <p>             Read this instead of the file below.
+  --automations <where>         file, the default, keeps them beside the
+                                configuration and fires their schedules;
+                                memory keeps them until this process ends and
+                                fires nothing.
   --help, -h                    This
 
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
-connectionTokenFile, withoutConnectionToken. A flag beats the file, because a
+connectionTokenFile, withoutConnectionToken, automations. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
@@ -88,6 +101,7 @@ function parse(argv: string[]): Options {
     port: 9187,
     host: '127.0.0.1',
     paths: [],
+    automations: 'file',
     open: false,
     help: false,
   };
@@ -105,6 +119,12 @@ function parse(argv: string[]): Options {
       case '--connection-token-file': options.tokenFile = String(argv[++i]); break;
       case '--without-connection-token': options.open = true; break;
       case '--config-file': options.configFile = String(argv[++i]); break;
+      case '--automations': {
+        const said = String(argv[++i]);
+        if (said === 'file' || said === 'memory') options.automations = said;
+        else stop(`--automations takes file or memory, not ${said}.`);
+        break;
+      }
       case '--help': case '-h': options.help = true; break;
       default:
         if (argv[i]?.startsWith('-')) {
@@ -129,6 +149,9 @@ function parse(argv: string[]): Options {
   if (options.token === undefined && typeof file.connectionToken === 'string') options.token = file.connectionToken;
   if (options.tokenFile === undefined && typeof file.connectionTokenFile === 'string') options.tokenFile = file.connectionTokenFile;
   if (!options.open && file.withoutConnectionToken === true) options.open = true;
+  if (!argv.includes('--automations') && (file.automations === 'file' || file.automations === 'memory')) {
+    options.automations = file.automations;
+  }
 
   if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;
@@ -271,7 +294,7 @@ const host = createHost({
    */
   tools: hostTools(),
   /*
-   * Automations, with a clock.
+   * Automations, with a clock unless asked otherwise.
    *
    * A daemon is the case the port was written for: it is already running at
    * nine in the morning, which is the only way an automation fires with
@@ -279,15 +302,19 @@ const host = createHost({
    * come back on a restart; the runs do not, because they name sessions that
    * went when the process did.
    *
-   * A host embedded in something that already schedules passes its own store
-   * instead, and one that should fire nothing passes `memoryAutomations()`.
+   * `--automations memory` is the same store without either half: nothing is
+   * written and nothing fires. Both are an `AutomationStore`, so the host is
+   * not told which it was given - a host embedded in something that already
+   * schedules passes a third of its own.
    */
-  automations: scheduledAutomations({
-    // Beside the configuration, which is this daemon's decision to make and
-    // not the store's - see `ScheduledOptions.file`.
-    file: automationsPath(),
-    onProblem: (message) => process.stdout.write(`${message}\n`),
-  }),
+  automations: options.automations === 'memory'
+    ? memoryAutomations()
+    : scheduledAutomations({
+      // Beside the configuration, which is this daemon's decision to make and
+      // not the store's - see `ScheduledOptions.file`.
+      file: automationsPath(),
+      onProblem: (message) => process.stdout.write(`${message}\n`),
+    }),
   /*
    * When, as well as what.
    *
