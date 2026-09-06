@@ -15,7 +15,11 @@ import { expect, it } from 'vitest';
  * A build has none of these limits. This is only about the loop.
  */
 
+/** Skipped: a dependency's types and our own build are not what runs unbuilt. */
+const NOT_OURS = new Set(['node_modules', 'dist']);
+
 const sources = (dir: string): string[] => readdirSync(dir).flatMap((entry) => {
+  if (NOT_OURS.has(entry)) return [];
   const path = join(dir, entry);
   if (statSync(path).isDirectory()) return sources(path);
   return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
@@ -29,7 +33,7 @@ const emits: { what: string; found: RegExp }[] = [
 ];
 
 it('has no TypeScript that emits code, so a stripping runtime can run it', () => {
-  const offenders = [...sources('src'), ...sources('examples')].flatMap((path) => {
+  const offenders = [...sources('packages'), ...sources('examples')].flatMap((path) => {
     const text = readFileSync(path, 'utf8');
     return emits
       .filter((kind) => kind.found.test(text))
