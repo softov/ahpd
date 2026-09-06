@@ -1,10 +1,10 @@
 # ahpd
 
-An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) host that runs Claude Code sessions - and the library parts to build a host yourself.
+An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself. It ships with a Claude backend, which is the only one so far.
 
 `ahpd` can be used in two ways:
 
-- **daemon**: `ahpd`, a process that serves AHP over a WebSocket and runs Claude Code sessions behind it.
+- **daemon**: `ahpd`, a process that serves AHP over a WebSocket, running agent sessions behind it.
 - **library**: `createHost` and the ports around it used to build `ahpd`.
 
 ## Why

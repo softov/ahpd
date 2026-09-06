@@ -1,69 +1,135 @@
 # ahpd
 
-An [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) daemon that runs Claude Code sessions. One host, one set of directories, one port - speaking AHP over a WebSocket, so an editor, a terminal client and a script can all be in the same conversation at once.
+[`ahpd`](https://www.npmjs.com/package/ahpd) is a ready-to-run [@microsoft/agent-host-protocol](https://github.com/microsoft/agent-host-protocol) server implementation.
+
+It runs agent sessions and serves them over a WebSocket, so several clients can watch and drive the same session at once.
+
+It uses [@ahpd/server](https://www.npmjs.com/package/@ahpd/server) as the host and currently ships with a Claude agent backend, which is the only one so far.
+
+- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is the Claude backend.
+
+Backends are registered at startup, so adding another does not change the server.
+
+To serve a different agent, you can write your own server with [@ahpd/server](https://www.npmjs.com/package/@ahpd/server). Create an implementation of the `Agent` interface and pass it to `createHost`.
+
+## Install
 
 ```bash
 npm i -g ahpd
 ahpd --path /work/project
 ```
 
-Runs on Node, Bun or Deno.
+Or run it without installing:
+
+```bash
+npx ahpd --path /work/project
+```
+
+It listens on `ws://127.0.0.1:9187`. Run it with no arguments to serve the directory you are in.
+
+Needs Node 22 or later. Also runs on Bun and Deno.
 
 ## Commands
 
 ```
-ahpd [options]              run it here, in this terminal
-ahpd start [options]        run it in the background and let go of it
-ahpd stop                   stop the one running in the background
-ahpd status                 say whether one is, and where
-ahpd config                 say where the configuration is, and what it says
+ahpd [options]              run it in this terminal
+ahpd start [options]        run it in the background
+ahpd stop                   stop the background one
+ahpd status                 say whether one is running, and where
+ahpd config                 print the config file path and its contents
 ```
 
-`start` re-runs this same program detached, records itself beside the configuration, and writes what it says to a log - a background process with no output leaves nothing to read when it misbehaves.
+`start` re-runs the same program detached. It writes its output to `daemon.log` and records the pid and URL in `daemon.json`, both next to the config, which is where `status` reads from and how you find out what happened after the fact.
 
 ## Options
 
 | flag | |
 | --- | --- |
-| `--port <n>` | Default `9187`. `0` picks a free one |
-| `--host <addr>` | Default `127.0.0.1`. `0.0.0.0` accepts from other machines and needs a token |
-| `--path <dir>` | A directory this host serves. Repeatable. Default: where it started |
+| `--port <n>` | Default `9187`. Use `0` for a free port |
+| `--host <addr>` | Default `127.0.0.1`. Use `0.0.0.0` to accept remote connections, which requires a token |
+| `--path <dir>` | A directory to serve. Repeatable. Defaults to the working directory |
 | `--connection-token <secret>` | Require this secret on every connection |
-| `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
+| `--connection-token-file <p>` | Require the secret in this file. Writes a new one if the file is missing |
 | `--without-connection-token` | Accept any connection |
-| `--config-file <p>` | Read this instead of the default |
+| `--config-file <p>` | Use this config file instead of the default |
 | `--help`, `-h` | |
 
-Every flag has a key in `config.json` under `$XDG_CONFIG_HOME/ahpd`, and `ahpd config` says where that is and what it currently says.
+Every flag also has a key in `config.json` under `$XDG_CONFIG_HOME/ahpd`, spelled the same way without the dashes. A flag beats the file. Run `ahpd config` to see the path and the current values.
+
+## Directories
+
+`--path` is repeatable:
+
+```bash
+ahpd --path ~/src/project-a --path ~/src/project-b
+```
+
+The first is the default, and it is what a client gets when it names no directory. A directory that was not named is refused rather than served, so one daemon serves exactly the paths you gave it.
+
+## Remote connections
+
+It binds to loopback and needs no token there. Binding anywhere else does:
+
+```bash
+ahpd --host 0.0.0.0 --connection-token <secret>
+```
+
+Or keep the secret in a file, which is written with a fresh one if it is not there yet:
+
+```bash
+ahpd --host 0.0.0.0 --connection-token-file ~/.config/ahpd/token
+```
+
+Clients present it as `?tkn=<secret>` on the URL or as an `Authorization: Bearer <secret>` header.
+
+`--without-connection-token` binds without one. Only do that when something else is already keeping the port to yourself.
 
 ## What it serves
 
-Sessions and the turns in them, tool calls and their confirmation, the agent's own questions, files a client may read and write, a shell as a terminal channel, what the working tree has that HEAD does not, agents on a cron with nobody connected, and telemetry as OTLP.
+Sessions, chats and turns with streaming responses, tool calls and approvals, questions from the agent, file reads and writes, a shell as a terminal channel, git branches and changesets, sessions in their own worktree, scheduled automations, and OTLP telemetry.
 
-Past sessions are reconstructed from Claude's transcripts, so a client can browse and read a conversation without starting anything; the agent process begins when somebody sends a turn.
+The Claude backend adds what Claude has: models and effort, permission modes, skills and slash commands, MCP servers, and OAuth sign-in.
+
+With the Claude backend, past sessions are read from Claude's transcript files. Opening one does not start anything. The agent process starts when you send a turn.
 
 ## Connecting
 
-Any AHP client. [`ahpc`](https://github.com/softov/ahpc) is a chat and CLI client for it:
+Any AHP client works. [`ahpc`](https://github.com/softov/ahpc) is one:
 
 ```bash
 ahpc --host ws://127.0.0.1:9187
 ```
 
-## Built out of
+## Packages
 
-| | |
-| --- | --- |
-| [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) | the protocol and the ports, with no backend inside |
-| [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) | the Claude backend, as one `Agent` |
+`ahpd` is a thin wrapper over two libraries:
 
-This package is those two, argv, and a socket. If you want a host of your own shape, take `@ahpd/server` and skip this.
+- [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) is the protocol and the ports. It has no backend in it.
+- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is the Claude backend.
+
+The daemon is those two and a socket:
+
+```ts
+import { createHost, listen } from '@ahpd/server';
+import { claude } from '@ahpd/agent-claude';
+
+const host = createHost({ path, agents: [claude({ paths: [path] })] });
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
+
+If you want a host of a different shape, build it from `@ahpd/server` and skip this package. To serve a different agent, write an `Agent` and add it to `agents`. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md) | The CLI, the configuration file, connection tokens, Node/Bun/Deno |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Compatibility area by area, and every action it emits |
+| [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md) | The CLI, config file, connection tokens, and Node/Bun/Deno |
+| [LIBRARY.md](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md) | Building a host with `@ahpd/server` |
+| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | Writing another agent backend |
+| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Protocol coverage, and every action it emits |
+| [agent-host-protocol](https://github.com/microsoft/agent-host-protocol) | The protocol itself, and its [documentation](https://microsoft.github.io/agent-host-protocol/) |
 
-MIT © Luiz Fernando Softov
+## License
+
+MIT © Softov
+

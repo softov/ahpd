@@ -1,14 +1,20 @@
 # @ahpd/server
 
-An [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) host, and the parts to build your own. **There is no backend in here** - that is the point of it being its own package.
+A server library for the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol).
+
+It has no agent in it. You pass one in when you create the host.
+
+## Install
 
 ```bash
 pnpm add @ahpd/server @microsoft/agent-host-protocol
 ```
 
-The protocol package is a peer dependency: this one uses runtime values from it, and one copy in the tree is what keeps a host and its clients agreeing on what a version is.
+The protocol package is a peer dependency. This package uses runtime values from it, so there should only be one copy in the dependency tree.
 
-## The smallest host that works
+## Use
+
+A small host using the Claude backend looks like this:
 
 ```ts
 import { createHost, listen } from '@ahpd/server';
@@ -23,45 +29,101 @@ const listener = await listen({ port: 9187 }, (peer) => host.accept(peer));
 console.log(`on ws://${listener.host}:${listener.port} (${listener.runtime})`);
 ```
 
-That already serves version negotiation, snapshots, subscriptions, sequence numbers, transcript paging, completions, queued messages, shared drafts, read and archived flags, several chats per session, and the whole of a turn.
+`createHost()` creates the AHP host.
 
-`accept(peer)` is the seam: it takes something that can `send`, `notify` and `close`, and answers with a handler. `listen` is one implementation of a peer, over a WebSocket, on Node, Bun or Deno - a test is another, which is why this package's whole suite runs with no network.
+`listen()` is the WebSocket listener included for Node, Bun and Deno. The host itself is not tied to WebSockets.
 
-## What goes into a host
+Once a client is connected, the host takes care of version negotiation, snapshots, subscriptions, sequence numbers, transcript paging, completions, queued messages, shared drafts, read and archived flags, multiple chats per session, and turns.
 
-Two things are required and the rest is opt-in. Anything you leave out is a **real answer**: the host refuses the commands it cannot serve rather than answering them emptily, because a client left waiting for state that is never coming reads as a hang and not as a missing feature.
+`accept(peer)` takes anything that can `send`, `notify` and `close`, and returns a handler. `listen` is a WebSocket implementation for Node, Bun and Deno. Tests supply their own, which is why the test suite runs without a network.
 
-| | |
+## Options
+
+`path` and `agents` are required. The rest are optional. If you leave one out, the host returns an error for the commands it cannot serve instead of an empty result.
+
+
+```ts
+import { 
+  createHost, 
+  fileResources, 
+  shellTerminals, 
+  gitChanges, 
+  gitBranches, 
+  gitWorktrees, 
+  hostTools, 
+  scheduledAutomations,
+} from '@ahpd/server'; 
+
+const host = createHost({ 
+  path, 
+  agents, 
+  resources: fileResources(), 
+  terminals: shellTerminals(), 
+  changes: gitChanges(), 
+  directories: gitBranches(), 
+  worktrees: gitWorktrees(), 
+  tools: hostTools(), 
+  automations: scheduledAutomations({ file: './automations.json', }),
+});
+
+```
+
+| option | |
 | --- | --- |
 | `path` | the directory whose sessions this host serves |
-| `agents` | the backends it serves - anything satisfying `Agent` |
-| `resources` | files a client may read and write, and `@` completion - `fileResources()` |
-| `terminals` | a shell, as a terminal channel - `shellTerminals()` |
-| `changes` | what the working tree has that HEAD does not - `gitChanges()` |
-| `directories` | which branch each served directory is on - `gitBranches()` |
-| `automations` | agents on a trigger - `memoryAutomations()`, or `scheduledAutomations({ file })` with a clock |
-| `worktrees` | a session in a worktree of its own - `gitWorktrees()` |
-| `tools` | tools the host contributes to every session - `hostTools()` |
-| `onEvent` | one line per notable event, for a log |
+| `agents` | the backends to serve, as `Agent` implementations |
+| `resources` | file reads, writes, and `@` completion. Use `fileResources()` |
+| `terminals` | a shell as a terminal channel. Use `shellTerminals()` |
+| `changes` | uncommitted changes as a changeset. Use `gitChanges()` |
+| `directories` | the current branch of each served directory. Use `gitBranches()` |
+| `automations` | triggered agents. Use `memoryAutomations()`, or `scheduledAutomations({ file })` for cron |
+| `worktrees` | sessions in their own git worktree. Use `gitWorktrees()` |
+| `tools` | tools the host adds to every session. Use `hostTools()` |
+| `onEvent` | called with one line per notable event, for logging |
 
-Nothing here reaches for the machine on its own. `fileResources` reads files, `shellTerminals` spawns shells and `gitBranches` spawns `git`, and all three are *passed in* - so the protocol imports no runtime, and a host without one of them is a host that says so.
+None of these are imported by the host itself. `fileResources` reads files, `shellTerminals` spawns shells, and `gitBranches` runs `git`, and you pass them in.
 
 ## Writing a backend
 
-`Agent` is five required members - `provider`, `displayName`, `schema`, `defaults`, `create` - and `createHost` cannot tell one agent from another, so your own and [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) register the same way and can be served side by side.
+`Agent` has five required members: `provider`, `displayName`, `schema`, `defaults` and `create`.
 
-[docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) is the contract; [examples/echo](https://github.com/softov/ahpd/tree/main/examples/echo) is a complete backend in about two hundred lines with no model behind it.
+```ts
+import type { Agent, Session, Start } from '@ahpd/server';
+
+export function parrot(): Agent {
+  return {
+    provider: 'parrot',
+    displayName: 'Parrot',
+    schema: () => ({ properties: {} }),
+    defaults: () => ({}),
+    create: (start: Start): Session => converse(start),
+  };
+}
+```
+
+`provider` is the id a client names in `createSession`. It has to be unique among the agents one host was given.
+
+`schema()` says what a session of this kind can be configured with, and `defaults()` says where those keys start. Both can be empty.
+
+`create()` returns the session. The session holds the state of the session and chat channels, and calls `start.emit('chat', ...)` as things happen.
+
+Pass it to the host like any other backend: `createHost({ path, agents: [parrot()] })`. Your backend and [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) register identically and can run side by side.
+
+See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) for the contract, and [examples/echo](https://github.com/softov/ahpd/tree/main/examples/echo) for a working backend in about two hundred lines.
 
 ## Types
 
-Every shape is exported, and nothing under `types/` imports a runtime value - so the contract can be read without loading any of this.
+All types are exported. Nothing under `types/` imports a runtime value, so you can read the contract without loading the implementation.
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [LIBRARY.md](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md) | `createHost` and the ports, in full |
+| [LIBRARY.md](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md) | `createHost` and the ports in full |
 | [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | The `Agent` and `Session` contracts |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Compatibility action by action, and the rules that fail silently |
+| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Protocol coverage action by action |
 
-MIT © Luiz Fernando Softov
+## License
+
+MIT © Softov
+
