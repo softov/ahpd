@@ -20,12 +20,6 @@ It lives in `ahpc` rather than here, and no new package: MCP is a client of a ho
 
 `@ahpd/sdk`, `@ahpd/agent-claude` and `@ahpd/server` are on npm at 0.2.0. The version badges and the CI badge are worth adding once the repository is public.
 
-## Worth doing
-
-| | |
-| --- | --- |
-| a scenario runner | The seams already allow a real host and a real client to run against each other over an in-memory transport with no model and no socket. Built as a reusable harness that can pause a handshake, drop a connection, reattach and compare each reader against host state, it would cover the interleavings that unit tests do not. This is the idea with the most behind it: written once by hand, it is what found the late-reader bug in `ahpc` |
-
 ## Deliberate duplication
 
 `resourceWrite` is symmetrical, so `ahpd` and `ahpc` each implement the whole of it: the same flags, the same order of preconditions, the same append and insert arithmetic. `ahpc` does not depend on `@ahpd/sdk` and is not going to. Both copies carry a comment naming the other. A defect in one is a defect in both, and fixing only one is the failure mode to watch for.
