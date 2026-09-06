@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, Status } from './catalog.js';
 import { protectedResource, urlOf } from './mcp.js';
-import { tail } from './transcript.js';
+import { tail } from './paging.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import type { Bag } from './types/common.js';

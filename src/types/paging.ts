@@ -1,4 +1,4 @@
-/** Reading a session's history off disk, a page at a time. */
+/** Serving a long list of turns a page at a time, walking backwards. */
 
 import type { Bag } from './common.js';
 

@@ -40,7 +40,8 @@ export { claude } from './agents/claude.js';
 export type { ClaudeOptions } from './agents/claude.js';
 export { createSession } from './session.js';
 export { catalogue, uriFor, idFor, idOf, Status } from './catalog.js';
-export { turnsOf, tail, older, PAGE } from './transcript.js';
+export { turnsOf } from './transcript.js';
+export { tail, older, PAGE } from './paging.js';
 export { probe } from './probe.js';
 
 export type * from './types/index.js';

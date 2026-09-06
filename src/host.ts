@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { within } from './paths.js';
 import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
-import { tail, older } from './transcript.js';
+import { tail, older } from './paging.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
