@@ -4193,6 +4193,7 @@ describe('tools the host contributes', () => {
     expect(state.serverTools?.map((one) => one.name)).toEqual([
       'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
       'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
       'ahp_resource', 'ahp_terminals',
     ]);
 
@@ -6155,5 +6156,74 @@ describe('what GitHub knows about the branch', () => {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     }).snapshot.state;
     expect(again._meta?.github).toEqual({ owner: 'softov', repo: 'ahpd' });
+  });
+});
+
+describe('what a session recorded', () => {
+  /*
+   * Artifacts and references, on the session and its row under
+   * `agentHost/sessionArtifacts`, which is where the reference window draws
+   * its pills from; kept by the store, so a restart keeps them; and taken off
+   * by the window's own request, `vscode/removeSessionArtifact`.
+   */
+  const KEY = 'agentHost/sessionArtifacts';
+  const withTools = async () => {
+    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools() });
+    const p = peer();
+    const client = host.accept(p);
+    const said = await client.handle(hello(['0.9.0'])) as { _meta?: Record<string, unknown> };
+    const uri = 'ahp-session:/recorded';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    return { client, peer: p, uri, said };
+  };
+  const add = (index: number, label: string, link: string) => toolsOf(index)['add_artifact_or_reference']?.handler({ items: [{ type: 'website', label, isArtifact: false, link }] });
+  const toolsOf = (index: number) => Object.fromEntries(
+    ((sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).ahp?.tools ?? [])
+      .map((one) => [one.name, one]),
+  );
+
+  it('tells the model when to record one, in the reference host\'s words, through the system prompt', async () => {
+    await withTools();
+    const prompt = sessionQueries().at(-1)?.options.systemPrompt as { type: string; preset: string; append: string; snapshot: boolean } | undefined;
+    expect(prompt?.type).toBe('preset');
+    expect(prompt?.preset).toBe('claude_code');
+    expect(prompt?.snapshot).toBe(true);
+    expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
+  });
+
+  it('publishes them on the session and its row, and says the change as the whole map', async () => {
+    const { client, peer: p, uri } = await withTools();
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: /);
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as Record<string, unknown> | undefined;
+    const held = meta?.[KEY] as { id: string; label: string }[] | undefined;
+    expect(held?.map((one) => one.label)).toEqual(['Docs']);
+    const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
+    expect(((row?.params as { changes: { _meta?: Record<string, unknown> } }).changes._meta)?.[KEY]).toEqual(held);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { _meta?: Record<string, unknown> } } }).snapshot.state;
+    expect(state._meta?.[KEY]).toEqual(held);
+  });
+
+  it('takes one off at the window\'s request, which initialize said it may make', async () => {
+    const { client, peer: p, uri, said } = await withTools();
+    expect(said._meta?.['vscode.removeSessionArtifact']).toBe(true);
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await add(-1, 'Docs', 'https://example.com/docs');
+    await add(-1, 'Issue', 'https://example.com/issues/1');
+    const held = ((actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1)?.action._meta as Record<string, unknown>)[KEY]) as { id: string; label: string }[];
+    expect(held).toHaveLength(2);
+    await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: held[0]?.id } });
+    const left = ((actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1)?.action._meta as Record<string, unknown>)[KEY]) as { label: string }[];
+    expect(left.map((one) => one.label)).toEqual(['Issue']);
+    // The last one gone takes the key with it, the way the reference host drops an empty slot.
+    await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: held[1]?.id } });
+    const meta = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1)?.action._meta as Record<string, unknown> | undefined;
+    expect(meta?.[KEY]).toBeUndefined();
+    // Nothing to do is nothing said: no action for an id nobody has.
+    const before = actions(p, uri).length;
+    await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'nobody' } });
+    expect(actions(p, uri).length).toBe(before);
   });
 });

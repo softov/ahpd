@@ -128,8 +128,9 @@ asking".
 client directly, and `ahp_resource` (see [state actions](#state-actions),
 `serverTools`) is how a session's agent reaches one. The rest of what an agent
 gets from this host is the reference host's own set - `list_sessions`,
-`send_message`, `create_session` and the others in `sessiontools.ts` - under
-the same names and schemas, so a skill written for VS Code's host runs here.
+`send_message`, `create_session` and the others in `sessiontools.ts`, and the
+artifact three in `artifacttools.ts` - under the same names and schemas, so a
+skill written for VS Code's host runs here.
 
 ## Server notifications
 
@@ -603,6 +604,7 @@ anybody had approved it - `ToolCallState` requires both.
 | read and archived | kept per session and told to every client, including for rows no agent is running for |
 | project and branch | `project` on every row from the path alone, and `_meta.git` beside it when the host was given `gitBranches()` - `branchName`, `upstreamBranchName`, the ahead and behind counts, `uncommittedChanges`, and `baseBranchName` for a worktree |
 | pull request | `_meta.github` when the host was given `githubPullRequests()`: `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
+| what the agent recorded | `_meta['agentHost/sessionArtifacts']` on the session and its row: the artifacts and references the agent recorded with the reference host's `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references`, offered under those names with its schemas and answers, and kept by the session store across a restart. The window draws them as pills beside the input, and takes one off with its own request, `vscode/removeSessionArtifact`, which `initialize` says it may make under `_meta['vscode.removeSessionArtifact']`. The reference host's instruction for when to record one goes into the agent's system prompt, since the CLI's prompt takes an `append` |
 | when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
 
 ### Changesets

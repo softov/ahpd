@@ -184,7 +184,13 @@ to every backend that can take tools, and replaced whole with `host.setTools()`
 against VS Code's host calls them here unchanged; and two of this host's own,
 `ahp_resource` and `ahp_terminals`, both read-only, answering what an agent
 inside one session cannot see for itself - a client's published resource and
-the terminals a person is watching. `sessionTools()` is the nine on their own.
+the terminals a person is watching; and the reference host's three artifact
+tools (`add_artifact_or_reference`, `remove_artifact_or_reference`,
+`list_artifacts_and_references`), which write the session's
+`_meta['agentHost/sessionArtifacts']` through the session store. `sessionTools()`
+and `artifactTools()` are each set on their own. A tool may carry an
+`instruction`, which a backend that can add to its system prompt adds while
+the tool is offered; the artifact tools carry the reference host's.
 
 ```ts
 createHost({

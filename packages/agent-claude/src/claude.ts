@@ -326,6 +326,7 @@ export function claude(options: ClaudeOptions): Agent {
         : {}),
       // The host's own tools, offered to the model beside this backend's.
       ...(start.tools && start.tools.length > 0 ? { tools: start.tools } : {}),
+      ...(start.instructions && start.instructions.length > 0 ? { instructions: start.instructions } : {}),
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,

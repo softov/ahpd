@@ -31,6 +31,7 @@ export { fileResources } from './resources.js';
 export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools.js';
 export { sessionTools } from './sessiontools.js';
+export { artifactTools, ARTIFACTS_META } from './artifacttools.js';
 export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
 export { githubPullRequests } from './github.js';
 export { memoryAutomations } from './automations.js';

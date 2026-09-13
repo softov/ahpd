@@ -247,6 +247,15 @@ export interface HostTool {
   definition: ToolDefinition;
   /** What running it does. */
   run(input: Record<string, unknown>, at: ToolCall): Promise<string> | string;
+  /**
+   * What to tell the model about when to call it, beyond the description.
+   *
+   * Added to the agent's instructions while the tool is offered, the way the
+   * reference host adds its artifact instruction to a session's first turn:
+   * a description says what a tool does, and this says when a tool that
+   * nothing asks for is worth calling on the model's own initiative.
+   */
+  instruction?: string;
 }
 
 /**
@@ -332,6 +341,16 @@ export interface ToolCall {
    * the host then continues the conversation there with a notice turn.
    */
   setWorkspace(directory: string, isolation: boolean): void;
+  /**
+   * What the calling session recorded as worth coming back to.
+   *
+   * The reference host's artifacts and references, held on the session and
+   * published on its `_meta` under `agentHost/sessionArtifacts`; the store
+   * keeps them across a restart. Whole and in the order recorded.
+   */
+  artifacts(): Bag[];
+  /** Replace them, and tell every client watching the session. */
+  setArtifacts(list: Bag[]): void;
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
   /**

@@ -81,6 +81,14 @@ export interface Start {
    * a client knows they exist.
    */
   tools?: BoundTool[];
+  /**
+   * What the host wants the model told, beside the backend's own prompt.
+   *
+   * One entry per host tool that carries an instruction. A backend that can
+   * add to its system prompt adds these; one that cannot offers the tools on
+   * their descriptions alone.
+   */
+  instructions?: string[];
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */

@@ -27,6 +27,7 @@ import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
+import { ARTIFACTS_META } from './artifacttools.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
@@ -1909,8 +1910,27 @@ export function createHost(options: HostOptions): Host {
       ? { ...meta, git: { ...git, baseBranchName: base } }
       : meta;
     const github = githubFacts.get(dir);
-    if (told === undefined && github === undefined) return undefined;
-    return { ...told, ...(github ? { github } : {}) };
+    const artifacts = kept.artifacts(idOf(uri));
+    if (told === undefined && github === undefined && artifacts === undefined) return undefined;
+    return {
+      ...told,
+      ...(github ? { github } : {}),
+      // The session's own, beside the directory's: what the agent recorded
+      // as worth coming back to, under the key the reference client reads.
+      ...(artifacts !== undefined && artifacts.length > 0 ? { [ARTIFACTS_META]: artifacts } : {}),
+    };
+  };
+  /**
+   * Replace what a session recorded, and say so.
+   *
+   * `session/metaChanged` carries the whole map, which `metaOf` composes; the
+   * row moves with it, since the window draws the pills from the row.
+   */
+  const setArtifacts = (uri: string, list: Bag[]): void => {
+    kept.setArtifacts(idOf(uri), list);
+    const meta = metaOf(uri);
+    dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
+    summaryMoved(uri);
   };
   /**
    * What is true of a session because of where it is.
@@ -2060,6 +2080,7 @@ export function createHost(options: HostOptions): Host {
        * announcement moved the list.
        */
       ...(boundTools(uri, chatUri).length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
+      ...(instructions().length > 0 ? { instructions: instructions() } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -3201,6 +3222,8 @@ export function createHost(options: HostOptions): Host {
     setWorkspace: (directory, isolation) => {
       moving.set(uri, { chat: chatUri, directory: directory.replace(/^file:\/\//, ''), isolation });
     },
+    artifacts: () => [...(kept.artifacts(idOf(uri)) ?? [])],
+    setArtifacts: (list) => { setArtifacts(uri, list); },
     terminals: () => [...terminals.values()].map((held) => ({
       uri: held.uri,
       title: held.title(),
@@ -3226,6 +3249,8 @@ export function createHost(options: HostOptions): Host {
     definition: one.definition,
     run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
   }))];
+  /** What the host's tools want the model told, in the order the tools are offered. */
+  const instructions = (): string[] => contributing.flatMap((one) => (one.instruction === undefined ? [] : [one.instruction]));
 
   /**
    * Host-wide configuration, which a connected client pushes.
@@ -3986,6 +4011,14 @@ export function createHost(options: HostOptions): Host {
              * right outcome for a host that cannot run it.
              */
             ...(options.terminals ? { terminalCommandPrefix: BANG } : {}),
+            /*
+             * What the reference client may ask beyond the protocol.
+             *
+             * Its window reads these flags off `initialize` and offers the
+             * feature only where the host said so: `vscode/removeSessionArtifact`
+             * is the close button on an artifact pill.
+             */
+            _meta: { 'vscode.removeSessionArtifact': true },
           };
         },
         ping: async () => ({}),
@@ -5164,6 +5197,25 @@ export function createHost(options: HostOptions): Host {
         },
         disposeSession: async (params) => {
           removeSession(String(params.channel ?? ''));
+          return {};
+        },
+        /**
+         * A pill's close button.
+         *
+         * The reference client's own request, outside the protocol, behind
+         * `_meta['vscode.removeSessionArtifact']` in `initialize`: a person
+         * taking off what the agent recorded, without a turn to say so in.
+         * `session` names the session, `artifactId` the entry; an id nobody
+         * has is nothing to do, the way the reference host answers it.
+         */
+        'vscode/removeSessionArtifact': async (params) => {
+          const session = String(params.session ?? '');
+          const artifactId = String(params.artifactId ?? '').trim();
+          if (session === '' || artifactId === '') throw new RpcError(-32602, 'session and artifactId must be non-empty strings');
+          const uri = sessions.has(session) ? session : sessionFor(session);
+          const held = kept.artifacts(idOf(uri)) ?? [];
+          const left = held.filter((one) => one.id !== artifactId);
+          if (left.length !== held.length) setArtifacts(uri, left);
           return {};
         },
         /**

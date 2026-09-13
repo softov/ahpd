@@ -16,12 +16,15 @@ import type { SessionStore } from './types/sessions.js';
 export function memorySessions(): SessionStore {
   const flags = new Map<string, number>();
   const config = new Map<string, Record<string, unknown>>();
+  const artifacts = new Map<string, Record<string, unknown>[]>();
   return {
     flags: (id) => flags.get(id) ?? 0,
     setFlags: (id, value) => { flags.set(id, value); },
     config: (id) => config.get(id),
     setConfig: (id, values) => { config.set(id, values); },
-    forget: (id) => { flags.delete(id); config.delete(id); },
+    artifacts: (id) => artifacts.get(id),
+    setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
+    forget: (id) => { flags.delete(id); config.delete(id); artifacts.delete(id); },
   };
 }
 
@@ -42,7 +45,7 @@ export interface FileSessionOptions {
 /** What is persisted. Versioned, so a later shape can be recognised rather than guessed at. */
 interface Saved {
   version: 1;
-  sessions: { id: string; flags?: number; config?: Record<string, unknown> }[];
+  sessions: { id: string; flags?: number; config?: Record<string, unknown>; artifacts?: Record<string, unknown>[] }[];
 }
 
 /**
@@ -80,14 +83,16 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       sessions: [...known].map((id) => {
         const flags = inner.flags(id);
         const config = inner.config(id);
+        const artifacts = inner.artifacts(id);
         return {
           id,
           ...(flags === 0 ? {} : { flags }),
           ...(config === undefined ? {} : { config }),
+          ...(artifacts === undefined ? {} : { artifacts }),
         };
-      // A row with neither is a session somebody looked at and left alone,
-      // which is nothing to remember.
-      }).filter((row) => row.flags !== undefined || row.config !== undefined),
+      // A row with none of them is a session somebody looked at and left
+      // alone, which is nothing to remember.
+      }).filter((row) => row.flags !== undefined || row.config !== undefined || row.artifacts !== undefined),
     };
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -131,6 +136,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       known.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null) inner.setConfig(row.id, row.config);
+      if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
     }
   };
 
@@ -141,6 +147,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     config: (id) => inner.config(id),
     setFlags: (id, value) => { known.add(id); inner.setFlags(id, value); later(); },
     setConfig: (id, values) => { known.add(id); inner.setConfig(id, values); later(); },
+    artifacts: (id) => inner.artifacts(id),
+    setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
     forget: (id) => { known.delete(id); inner.forget(id); later(); },
   };
 }

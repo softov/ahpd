@@ -1391,6 +1391,17 @@ export function createSession(options: SessionOptions): Session {
        * `setMcpServers` does not touch servers that came from a settings file.
        */
       ...(Object.keys(declared).length > 0 ? { mcpServers: declared as never } : {}),
+      /*
+       * What the host wants said, after the CLI's own prompt.
+       *
+       * The preset with an `append`, not a prompt of this backend's own: the
+       * CLI's prompt is what makes it the CLI. `snapshot`, so the prompt is
+       * recorded once for the conversation and a resume does not rewrite it
+       * under the model's reasoning.
+       */
+      ...(options.instructions && options.instructions.length > 0
+        ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: options.instructions.join('\n\n'), snapshot: true } }
+        : {}),
       includePartialMessages: true,
       /*
        * Over the daemon's own environment, never instead of it.

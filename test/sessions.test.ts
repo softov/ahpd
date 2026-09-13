@@ -108,6 +108,21 @@ it('forgets a session that was disposed, rather than keeping its bits for ever',
   expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
 });
 
+it('keeps what the agent recorded, and drops the slot when the last entry goes', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  const one = { id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' };
+  store.setArtifacts('a', [one]);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([{ id: 'a', artifacts: [one] }]);
+  // Read back by a second store on the same file, which is what a restart is.
+  expect(fileSessions({ file }).artifacts('a')).toEqual([one]);
+  store.setArtifacts('a', []);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(memorySessions().artifacts('a')).toBeUndefined();
+});
+
 it('keeps the settings a session was given, so a resumed one still has them', async () => {
   const store = memorySessions();
   store.setConfig('one', { voice: 'shouty' });

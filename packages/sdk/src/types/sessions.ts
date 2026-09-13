@@ -34,6 +34,19 @@ export interface SessionStore {
   /** Replace it. Merging is the caller's, which already holds the defaults. */
   setConfig(id: string, values: Record<string, unknown>): void;
   /**
+   * What the agent recorded as worth coming back to, or nothing where it
+   * recorded nothing.
+   *
+   * The reference host's session artifacts and references, as its
+   * `add_artifact_or_reference` tool writes them and its window draws them
+   * beside the input: `{ id, type, label, isArtifact, link?, uri?,
+   * commitHash?, isGitHub? }`. Kept whole and in the order recorded, since a
+   * client lists them newest last by that order.
+   */
+  artifacts(id: string): Record<string, unknown>[] | undefined;
+  /** Replace them. Empty forgets them, which is what removing the last one means. */
+  setArtifacts(id: string, values: Record<string, unknown>[]): void;
+  /**
    * Forget a session entirely.
    *
    * Called when one is disposed. Without it a store that survives restarts is

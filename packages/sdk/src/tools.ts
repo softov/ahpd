@@ -1,5 +1,6 @@
 import type { HostTool } from './types/host.js';
 import { sessionTools } from './sessiontools.js';
+import { artifactTools } from './artifacttools.js';
 
 /**
  * The tools this package contributes to every session, as a host's `tools`.
@@ -8,9 +9,10 @@ import { sessionTools } from './sessiontools.js';
  * a client's - and what makes one worth contributing is that the host knows
  * something the agent inside a session cannot: the other sessions running
  * beside it, and the terminals the person is watching. The session tools are
- * the reference host's nine, by name and by schema (`sessiontools.ts`), so a
- * skill written against that host works here; the two after them are this
- * host's own, and read-only.
+ * the reference host's nine, by name and by schema (`sessiontools.ts`), and
+ * the artifact tools its three (`artifacttools.ts`), so a skill written
+ * against that host works here; the two after them are this host's own, and
+ * read-only.
  *
  * ```ts
  * createHost({ path, agents, tools: hostTools() });
@@ -21,6 +23,7 @@ import { sessionTools } from './sessiontools.js';
  */
 export const hostTools = (): HostTool[] => [
   ...sessionTools(),
+  ...artifactTools(),
   {
     definition: {
       name: 'ahp_resource',

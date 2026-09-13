@@ -112,6 +112,8 @@ export interface SessionOptions {
    * host's business; this only runs them.
    */
   tools?: BoundTool[];
+  /** What the host wants the model told beside this backend's own prompt, one entry per instruction. */
+  instructions?: string[];
   /** Turns already known, so a resumed session does not open empty. */
   seed?: Bag[];
   /**
