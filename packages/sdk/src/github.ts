@@ -1,7 +1,7 @@
 /** Pull requests, asked of GitHub. */
 
 import { execFile } from 'node:child_process';
-import type { PullRequest, PullRequests } from './types/github.js';
+import type { NewPullRequest, PullRequest, PullRequests } from './types/github.js';
 
 /** The reference host's resource for a github.com token, verbatim. */
 const RESOURCE = {
@@ -71,11 +71,55 @@ export function githubPullRequests(): PullRequests {
       });
     });
 
+  const createByApi = async (owner: string, repo: string, wanted: NewPullRequest, token: string): Promise<PullRequest> => {
+    const answer = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify({ title: wanted.title, body: wanted.body, head: wanted.head, base: wanted.base, draft: wanted.draft }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const said = await answer.json().catch(() => ({})) as { html_url?: unknown; message?: unknown; errors?: { message?: unknown }[] };
+    if (!answer.ok || typeof said.html_url !== 'string') {
+      const why = [said.message, ...(said.errors ?? []).map((one) => one.message)].filter((one) => typeof one === 'string').join(': ');
+      throw new Error(`GitHub would not open the pull request (${answer.status})${why ? `: ${why}` : ''}`);
+    }
+    return { url: said.html_url, state: 'open' };
+  };
+
+  const createByGh = (owner: string, repo: string, wanted: NewPullRequest, cwd: string): Promise<PullRequest> =>
+    new Promise((answer, refuse) => {
+      execFile('gh', [
+        'pr', 'create', '--repo', `${owner}/${repo}`, '--head', wanted.head, '--base', wanted.base,
+        '--title', wanted.title, '--body', wanted.body, ...(wanted.draft ? ['--draft'] : []),
+      ], { cwd, timeout: 30_000, maxBuffer: 1 << 20 }, (error, out, bad) => {
+        if (error) {
+          refuse(new Error(bad.toString().trim() || error.message));
+          return;
+        }
+        // `gh` prints the page it opened, and nothing else, on success.
+        const url = out.toString().trim().split('\n').find((line) => /^https:\/\//.test(line));
+        if (url === undefined) {
+          refuse(new Error(`gh opened a pull request but did not say where: ${out.toString().trim()}`));
+          return;
+        }
+        answer({ url, state: 'open' });
+      });
+    });
+
   return {
     resource: RESOURCE,
     forBranch: async ({ owner, repo }, branch, token, cwd) => {
       if (token !== undefined) return byApi(owner, repo, branch, token);
       return byGh(owner, repo, branch, cwd);
+    },
+    create: async ({ owner, repo }, wanted, token, cwd) => {
+      if (token !== undefined) return createByApi(owner, repo, wanted, token);
+      return createByGh(owner, repo, wanted, cwd);
     },
   };
 }

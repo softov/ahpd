@@ -620,6 +620,19 @@ and destructive ones carry the `confirmation` a client MUST show. `commit` acts
 on the working tree, `discard` on a file, `revert` on a file back to the state
 the agent found it in.
 
+The reference host's three are offered under its ids and driven by its request
+`_meta`, so its window's buttons work here. `prepare-pull-request` answers a
+title, a body and the branches as a `data:application/json` follow-up, which is
+what fills that window's form; `create-pr` commits what is uncommitted - on a
+branch of its own when the tree is on the base branch - pushes, and opens the
+request with what the form said under `_meta['vscode.pullRequest']`, or answers
+the open one the branch already has. Both are offered only where the host was
+given `githubPullRequests()`, the remote is GitHub's, and the branch has no
+request yet. `checkout` is offered on a session nobody has spoken in, takes
+`_meta.treeish` and `_meta.preCheckoutAction` (`stash` or `commit`), and
+refuses a dirty tree with `-32602` carrying `reason: dirtyWorkingTree`, which
+is what the window reads to offer the two.
+
 ### Authentication
 
 The Claude agent advertises `https://api.anthropic.com` in

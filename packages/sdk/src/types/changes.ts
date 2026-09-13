@@ -5,6 +5,7 @@ import type {
   ChangesetOperationTargetKind as TargetKind,
   ChangesetStatus,
 } from '@microsoft/agent-host-protocol';
+import type { PullRequests } from './github.js';
 
 /** A pointer to content the state tree does not carry. */
 export interface ContentRef {
@@ -149,8 +150,31 @@ export interface ChangesetOperation {
   writes?: boolean;
 }
 
+/**
+ * What the host knows about a session that bears on which verbs to offer.
+ *
+ * All of it is the host's rather than this source's: which branch a worktree
+ * was cut from, whether GitHub can be asked, whether it already has a pull
+ * request for this branch, and whether anything has been said in the session
+ * yet. Handed to `operations` so the source can decide, and to `invoke` so
+ * the operation can act on the same facts it was offered against.
+ */
+export interface ChangesetOperationContext {
+  /** The branch the session's tree was cut from, when the host chose one. */
+  base?: string;
+  /**
+   * How to ask GitHub, when the host was given a way and the directory's
+   * remote is a GitHub one. With the token a client lent, if one has.
+   */
+  github?: { ask: PullRequests; token?: string; owner: string; repo: string };
+  /** A pull request is already known for the branch the tree is on. */
+  pullRequest?: boolean;
+  /** Nothing has been said in the session yet, so its tree is nobody's work. */
+  unused?: boolean;
+}
+
 /** One invocation, as the host hands it to the source. */
-export interface ChangesetOperationRequest {
+export interface ChangesetOperationRequest extends ChangesetOperationContext {
   dir: string;
   session: string;
   /** The scope segment, e.g. `uncommitted` or `turn/abc`. */
@@ -166,12 +190,21 @@ export interface ChangesetOperationRequest {
    * commit is in the second one.
    */
   subject?: string;
+  /**
+   * The request's `_meta`, verbatim.
+   *
+   * The reference client puts an operation's arguments there - the title and
+   * body of a pull request under `vscode.pullRequest`, the branch to check
+   * out under `treeish` - and an operation that takes arguments reads them
+   * from here under the same names.
+   */
+  meta?: Record<string, unknown>;
 }
 
 /** What an invocation says for itself. Thrown errors are the failure path. */
 export interface ChangesetOperationResult {
-  /** One line for the client to show. */
-  message?: string;
+  /** One line for the client to show, plain or as markdown. */
+  message?: string | { markdown: string };
   /**
    * Something to open afterwards, when the operation produced one.
    *
@@ -252,7 +285,7 @@ export interface ChangesetSource {
    * to it. A source with no method at all advertises none anywhere, which is
    * what a host serving a directory it may not write looks like.
    */
-  operations?(dir: string, session: string, scope: string): ChangesetOperation[];
+  operations?(dir: string, session: string, scope: string, context?: ChangesetOperationContext): ChangesetOperation[];
   /**
    * Run one.
    *
@@ -261,6 +294,9 @@ export interface ChangesetSource {
    * accepts, and that a write grant is held where the operation says it writes.
    * What is left is doing it, and throwing if it did not work - the protocol
    * signals failure by rejecting the request, not by a field on the result.
+   * An error thrown with a numeric `code` is the request's error code, and
+   * its `data` goes with it; anything else is an internal error carrying the
+   * message.
    */
   invoke?(request: ChangesetOperationRequest): Promise<ChangesetOperationResult>;
 }

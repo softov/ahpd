@@ -38,4 +38,21 @@ export interface PullRequests {
    * credentials from there.
    */
   forBranch(repo: { owner: string; repo: string }, branch: string, token: string | undefined, cwd: string): Promise<PullRequest[]>;
+  /**
+   * Open one, from a branch already pushed, answering its page.
+   *
+   * `head` is the branch on the repository's own remote; a fork is
+   * `owner:branch`, the way GitHub spells it. The same token rule as
+   * `forBranch`.
+   */
+  create(repo: { owner: string; repo: string }, wanted: NewPullRequest, token: string | undefined, cwd: string): Promise<PullRequest>;
+}
+
+/** What a pull request is opened with. */
+export interface NewPullRequest {
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  draft: boolean;
 }

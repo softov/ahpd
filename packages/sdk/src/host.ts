@@ -30,7 +30,7 @@ import { memorySessions } from './sessions.js';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
-import type { ChangesetState } from './types/changes.js';
+import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, ToolCall } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
@@ -1665,11 +1665,39 @@ export function createHost(options: HostOptions): Host {
    * would race the thing that is doing the work; `Running` while an invocation
    * is out; `Error` carrying whatever the last one said.
    */
+  /**
+   * What the host knows that bears on a changeset's verbs.
+   *
+   * The base branch it chose for a worktree; GitHub, when there is a way to
+   * ask it and the directory's remote is there, with the token a client lent;
+   * whether the branch already has a pull request; and whether the session
+   * has said anything yet. Read at the moment of asking, since every one of
+   * them moves.
+   */
+  const operationContext = (uri: string, dir: string): ChangesetOperationContext => {
+    const base = worktrees.get(uri)?.base;
+    const git = (options.directories?.meta(dir) as { git?: Record<string, unknown> } | undefined)?.git;
+    const facts = githubFacts.get(dir) as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
+    const owner = git?.githubOwner;
+    const repo = git?.githubRepo;
+    const token = options.github === undefined ? undefined : lent(String(options.github.resource.resource ?? ''));
+    const github = options.github !== undefined && typeof owner === 'string' && typeof repo === 'string'
+      ? { ask: options.github, owner, repo, ...(token === undefined ? {} : { token }) }
+      : undefined;
+    const held = sessions.get(uri);
+    const lead = held && leadOf(held);
+    return {
+      ...(base !== undefined && base !== 'HEAD' ? { base } : {}),
+      ...(github !== undefined ? { github } : {}),
+      ...(facts?.pullRequestUrls !== undefined && facts.pullRequestBranchName === git?.branchName ? { pullRequest: true } : {}),
+      ...(lead !== undefined && lead.allTurns().length === 0 ? { unused: true } : {}),
+    };
+  };
   const operationsOf = (channel: string): Bag[] => {
     const at = changesetAt(channel);
     if (!at) return [];
     const busy = (statusOf(at.owner) & Status.InProgress) !== 0;
-    return (options.changes?.operations?.(at.dir, at.owner, at.scope) ?? []).map((operation) => {
+    return (options.changes?.operations?.(at.dir, at.owner, at.scope, operationContext(at.owner, at.dir)) ?? []).map((operation) => {
       const key = opKey(channel, operation.id);
       const failure = lastError.get(key);
       const status = inFlight.has(key) ? 'running'
@@ -1926,6 +1954,9 @@ export function createHost(options: HostOptions): Host {
       const meta = metaOf(uri);
       dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
       summaryMoved(uri);
+      // And the verbs, since a branch that gained a pull request offers
+      // different ones from a branch that lacks it.
+      operationsMoved(uri);
     }
   };
   /**
@@ -4807,7 +4838,8 @@ export function createHost(options: HostOptions): Host {
           if (!at) throw new RpcError(-32001, `No changeset at ${channel}`);
           const source = need(options.changes, 'invokeChangesetOperation');
           const operationId = String(params.operationId ?? '');
-          const offered = (source.operations?.(at.dir, at.owner, at.scope) ?? [])
+          const context = operationContext(at.owner, at.dir);
+          const offered = (source.operations?.(at.dir, at.owner, at.scope, context) ?? [])
             .find((one) => one.id === operationId);
           if (!offered)
             throw new RpcError(-32602, `No operation called ${operationId} on ${channel}`);
@@ -4851,13 +4883,16 @@ export function createHost(options: HostOptions): Host {
           lastError.delete(key);
           dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
           try {
+            const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
             const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
+              ...context,
               dir: at.dir,
               session: at.owner,
               scope: at.scope,
               operationId,
               ...(target !== undefined ? { target } : {}),
               ...(lead ? { subject: lead.title() } : {}),
+              ...(meta !== undefined ? { meta } : {}),
             });
             inFlight.delete(key);
             dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
@@ -4886,6 +4921,10 @@ export function createHost(options: HostOptions): Host {
               error: { message },
             });
             log(`${operationId} on ${channel} failed: ${message}`);
+            // With the source's code and data when it chose them: a refusal
+            // the reference client branches on is more than its message.
+            const chosen = error as { code?: unknown; data?: unknown };
+            if (typeof chosen.code === 'number') throw new RpcError(chosen.code, message, chosen.data);
             throw new RpcError(INTERNAL_ERROR, message);
           }
         },

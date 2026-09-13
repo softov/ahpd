@@ -6065,6 +6065,7 @@ describe('what GitHub knows about the branch', () => {
           asked.push({ branch, token });
           return answer();
         },
+        create: async () => { throw new Error('not here'); },
       },
     };
   };

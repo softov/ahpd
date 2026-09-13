@@ -143,9 +143,12 @@ ninety-eight sessions in one repository asks git once.
 ### `github`
 
 `forBranch(repo, branch, token, cwd)` answers the pull requests whose head is
-that branch, newest first, and `resource` is the protected resource a client
-lends a token under - the reference host's `https://api.github.com/repos`,
-advertised on every backend. The host puts the answer beside the git facts as
+that branch, newest first; `create(repo, wanted, token, cwd)` opens one from a
+branch already pushed; and `resource` is the protected resource a client lends
+a token under - the reference host's `https://api.github.com/repos`,
+advertised on every backend. `gitChanges()` is handed the port on each
+`operations` and `invoke` call, as `context.github`, which is what makes it
+offer `prepare-pull-request` and `create-pr`. The host puts the answer beside the git facts as
 `_meta.github`: `owner`, `repo`, `pullRequestUrls`, `pullRequestBranchName`,
 and `pullRequestState` (`open`, `closed`, `merged`) with the
 `pullRequestStateUrl` it is the state of. Asked at startup, when a token

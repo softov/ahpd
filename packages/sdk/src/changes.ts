@@ -3,8 +3,9 @@
 import { execFile } from 'node:child_process';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import type {
-  ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetSource, ChangesetState,
+  ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetOperationResult, ChangesetSource, ChangesetState,
 } from './types/changes.js';
+import type { PullRequests } from './types/github.js';
 
 /**
  * How many lines a file has, for one git will not count.
@@ -154,6 +155,78 @@ const REVERT: ChangesetOperation = {
   icon: 'discard',
   writes: true,
 };
+
+/*
+ * The reference host's pull request pair, under its ids and its labels.
+ *
+ * `prepare-pull-request` writes nothing: it answers a title, a body and the
+ * branches, as a `data:application/json` follow-up the reference client reads
+ * into its form (`agentPullRequestOperationMeta.ts`). `create-pr` is the
+ * form's submit: what was typed arrives under `_meta['vscode.pullRequest']`,
+ * and without it the operation does the same with what `prepare` would have
+ * said. Both go on a changeset, not a file.
+ */
+const PREPARE_PR: ChangesetOperation = {
+  id: 'prepare-pull-request',
+  label: 'Prepare PR',
+  description: 'Generate a pull request title and description and read repository merge options without changing the repository.',
+  scopes: ['changeset'],
+  icon: 'git-pull-request-create',
+  group: 'pull-request',
+};
+
+const CREATE_PR: ChangesetOperation = {
+  id: 'create-pr',
+  label: 'Create PR',
+  description: 'Commit what is uncommitted, push the branch, and open a pull request for it',
+  scopes: ['changeset'],
+  icon: 'git-pull-request-create',
+  group: 'pull-request',
+  writes: true,
+};
+
+/**
+ * Check a branch out, before the session has done anything.
+ *
+ * The reference host offers this on an unused draft's uncommitted changeset,
+ * which is where somebody picks the branch a session will start on. The
+ * branch arrives as `_meta.treeish`, and `_meta.preCheckoutAction` says what
+ * to do with a dirty tree first: `stash` or `commit`. Without either, a dirty
+ * tree is a refusal carrying `reason: dirtyWorkingTree`, which is what the
+ * reference client reads to offer the two.
+ */
+const CHECKOUT: ChangesetOperation = {
+  id: 'checkout',
+  label: 'Checkout',
+  scopes: ['changeset'],
+  group: 'checkout',
+  writes: true,
+};
+
+/** The reference client's key for the pull request form's fields. */
+const PR_META = 'vscode.pullRequest';
+
+/** A branch name from a sentence, the way a person would shorten it. */
+const slug = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+
+/**
+ * A failure the reference client reads more from than the message.
+ *
+ * `-32602` with `reason: dirtyWorkingTree` is what its checkout form branches
+ * on to offer stashing or committing first; the host passes a thrown error's
+ * `code` and `data` through as the request's.
+ */
+class OperationError extends Error {
+  readonly code: number;
+  readonly data: Record<string, unknown> | undefined;
+
+  constructor(message: string, code: number, data?: Record<string, unknown>) {
+    super(message);
+    this.name = 'OperationError';
+    this.code = code;
+    this.data = data;
+  }
+}
 
 export function gitChanges(): ChangesetSource {
   /**
@@ -359,6 +432,188 @@ export function gitChanges(): ChangesetSource {
     return { files, summary };
   };
 
+  /**
+   * The branches a pull request would go between, as the tree stands.
+   *
+   * The base is the host's when it cut a worktree, and otherwise the remote's
+   * default branch, which is what `origin/HEAD` points at; a repository with
+   * neither is asked for `main` and then `master`, which is where most of
+   * them are. The upstream is read so a branch pushed under another name is
+   * requested under that name.
+   */
+  const branches = async (dir: string, base: string | undefined): Promise<{ branch: string; base: string; upstream?: string }> => {
+    const branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']))?.trim();
+    if (branch === undefined || branch === '' || branch === 'HEAD') throw new Error('The working tree is not on a branch.');
+    let found = base;
+    if (found === undefined) {
+      const head = (await git(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))?.trim();
+      if (head !== undefined && head !== '') found = head.replace(/^origin\//, '');
+    }
+    if (found === undefined) {
+      for (const candidate of ['main', 'master']) {
+        if (await git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${candidate}`]) !== undefined) { found = candidate; break; }
+      }
+    }
+    if (found === undefined) throw new Error('Could not tell which branch a pull request would go to.');
+    const upstream = (await git(dir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']))?.trim();
+    return { branch, base: found, ...(upstream !== undefined && upstream !== '' ? { upstream } : {}) };
+  };
+
+  /** What the reference client checks a prepared form against before submitting it. */
+  const contextOf = (dir: string, repo: { owner: string; repo: string }, at: { branch: string; base: string; upstream?: string }) => ({
+    workingDirectory: `file://${dir}`,
+    repository: `${repo.owner}/${repo.repo}`,
+    branchName: at.branch,
+    baseBranchName: at.base,
+    ...(at.upstream !== undefined ? { upstreamBranchName: at.upstream } : {}),
+  });
+
+  /**
+   * A title and a body, without a model to write them.
+   *
+   * The session's own title is the sentence somebody already wrote about this
+   * work, and the commits on the branch are what was done; between them a
+   * reviewer knows what the request is. A branch with nothing committed yet
+   * has only the first.
+   */
+  const words = async (dir: string, subject: string | undefined, at: { branch: string; base: string }): Promise<{ title: string; description: string }> => {
+    const line = (subject ?? '').split('\n')[0]?.trim();
+    const log = (await git(dir, ['log', '--format=%s', `${at.base}..${at.branch}`]))?.trim() ?? '';
+    const commits = log === '' ? [] : log.split('\n');
+    const title = line !== undefined && line !== '' && line !== 'New session' ? line : (commits[0] ?? at.branch);
+    const description = commits.length > 0 ? commits.map((one) => `- ${one}`).join('\n') : `Changes from an agent session on \`${at.branch}\`.`;
+    return { title, description };
+  };
+
+  /**
+   * `prepare-pull-request` and `create-pr`, as the reference host runs them.
+   *
+   * Prepare answers the form's contents and touches nothing. Create commits
+   * what is uncommitted - on a branch of its own first, when the tree is on
+   * the base branch - pushes, and opens the request, or answers the one the
+   * branch already has. `expectedContext` is the client checking that the
+   * tree still stands where the form was prepared against, and a tree that
+   * moved is a refusal in the reference host's words.
+   */
+  const pullRequest = async (
+    dir: string,
+    operationId: string,
+    subject: string | undefined,
+    meta: Record<string, unknown>,
+    base: string | undefined,
+    github: { ask: PullRequests; token?: string; owner: string; repo: string },
+  ): Promise<ChangesetOperationResult> => {
+    const asked = (typeof meta[PR_META] === 'object' && meta[PR_META] !== null ? meta[PR_META] : undefined) as Record<string, unknown> | undefined;
+    const repo = { owner: github.owner, repo: github.repo };
+    const at = await branches(dir, base);
+    const expected = asked?.expectedContext;
+    if (expected !== undefined && JSON.stringify(expected) !== JSON.stringify(contextOf(dir, repo, at))) {
+      throw new Error('The repository or branches have changed since this pull request was prepared. Reopen Create PR to review the current details.');
+    }
+    if (operationId === 'prepare-pull-request') {
+      if (asked?.validateOnly === true) return {};
+      const details = {
+        ...await words(dir, subject, at),
+        branchName: at.branch,
+        baseBranchName: at.base,
+        repository: `${repo.owner}/${repo.repo}`,
+        autoMergeAllowed: false,
+        mergeMethods: [],
+        agentMergeAvailable: false,
+        context: contextOf(dir, repo, at),
+      };
+      return { followUp: { content: { uri: `data:application/json,${encodeURIComponent(JSON.stringify(details))}`, contentType: 'application/json' } } };
+    }
+    if (asked !== undefined) {
+      if (typeof asked.title !== 'string' || asked.title.trim() === '') throw new Error('A pull request title is required.');
+      if (asked.agentMerge === true) throw new Error('Agent Merge is not available on this host.');
+      if (asked.autoMergeMethod !== undefined) throw new Error('The repository does not allow the requested auto-merge method.');
+    }
+    const dirty = (await git(dir, ['status', '--porcelain']))?.trim() !== '';
+    let branch = at.branch;
+    if (dirty && branch === at.base) {
+      // Not on the base branch: a request from `main` to `main` is nothing, so
+      // the work gets a branch of its own, named after what it is.
+      const line = (subject ?? '').split('\n')[0]?.trim() ?? '';
+      const stem = slug(line !== '' && line !== 'New session' ? line : 'changes') || 'changes';
+      let name = `agent/${stem}`;
+      for (let n = 2; await git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]) !== undefined; n++) name = `agent/${stem}-${n}`;
+      const made = await run(dir, ['checkout', '-b', name]);
+      if (!made.ok) throw new Error(`Failed to create a branch before creating a pull request: ${made.err}`);
+      branch = name;
+    }
+    if (dirty) {
+      const staged = await run(dir, ['add', '-A']);
+      if (!staged.ok) throw new Error(`Failed to commit changes before creating a pull request: ${staged.err}`);
+      const line = (subject ?? '').split('\n')[0]?.trim();
+      const done = await run(dir, ['commit', '-m', line !== undefined && line !== '' ? line : `Changes on ${branch}`]);
+      if (!done.ok) throw new Error(`Failed to commit changes before creating a pull request: ${done.err || done.out.trim()}`);
+    }
+    const ahead = (await git(dir, ['rev-list', '--count', `${at.base}..${branch}`]))?.trim();
+    if (ahead === '0') throw new Error('There are no branch changes to create a pull request for.');
+    /*
+     * Pushed where the branch already goes, and to `origin` under its own
+     * name when it goes nowhere yet. `-u` only then: an upstream already
+     * chosen is not this operation's to change.
+     */
+    const upstream = at.branch === branch ? at.upstream : undefined;
+    const [remote, head] = upstream !== undefined && upstream.includes('/')
+      ? [upstream.slice(0, upstream.indexOf('/')), upstream.slice(upstream.indexOf('/') + 1)]
+      : ['origin', branch];
+    const pushed = await run(dir, ['push', ...(upstream === undefined ? ['-u'] : []), remote, `${branch}:${head}`]);
+    if (!pushed.ok) throw new Error(`Failed to push branch '${branch}': ${pushed.err}`);
+    const existing = (await github.ask.forBranch(repo, head, github.token, dir)).find((one) => one.state === 'open');
+    if (existing !== undefined) {
+      return {
+        message: `Pushed ${branch}; its pull request is ${existing.url}`,
+        followUp: { content: { uri: existing.url, contentType: 'text/html' }, external: true },
+      };
+    }
+    const said = await words(dir, subject, { branch, base: at.base });
+    const opened = await github.ask.create(repo, {
+      title: typeof asked?.title === 'string' ? asked.title : said.title,
+      body: typeof asked?.description === 'string' ? asked.description : said.description,
+      head,
+      base: at.base,
+      draft: asked?.draft === true,
+    }, github.token, dir);
+    return {
+      message: `Opened ${opened.url}`,
+      followUp: { content: { uri: opened.url, contentType: 'text/html' }, external: true },
+    };
+  };
+
+  /** `checkout`, as the reference host runs it. */
+  const checkout = async (dir: string, meta: Record<string, unknown>): Promise<ChangesetOperationResult> => {
+    const treeish = typeof meta.treeish === 'string' && meta.treeish !== '' ? meta.treeish : undefined;
+    if (treeish === undefined) throw new Error('Select a branch to check out.');
+    if (treeish.startsWith('-') || await git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${treeish}`]) === undefined) {
+      throw new Error(`Branch '${treeish}' is not an existing local branch.`);
+    }
+    const before = meta.preCheckoutAction === 'stash' || meta.preCheckoutAction === 'commit' ? meta.preCheckoutAction : undefined;
+    if (before === 'stash') {
+      const stashed = await run(dir, ['stash', 'push', '--include-untracked', '-m', `WIP: Changes before checking out ${treeish}`]);
+      if (!stashed.ok) throw new Error(`Failed to stash changes before checking out '${treeish}': ${stashed.err}`);
+    }
+    else if (before === 'commit') {
+      const staged = await run(dir, ['add', '-A']);
+      const done = staged.ok ? await run(dir, ['commit', '-m', `WIP: Save changes before checking out ${treeish}`]) : staged;
+      if (!done.ok) throw new Error(`Failed to commit changes before checking out '${treeish}': ${done.err || done.out.trim()}`);
+    }
+    const out = await run(dir, ['checkout', treeish]);
+    if (!out.ok) {
+      if (before === undefined && /would be overwritten by checkout/.test(out.err)) {
+        throw new OperationError(
+          `Your local changes would be overwritten by checkout. Commit or stash the current changes before checking out \`${treeish}\`.`,
+          -32602,
+          { reason: 'dirtyWorkingTree' },
+        );
+      }
+      throw new Error(`Failed to check out '${treeish}': ${out.err}`);
+    }
+    return { message: { markdown: `Checked out branch \`${treeish}\`.` } };
+  };
+
   return {
     scopes: (dir, session) => {
       const scopes = held.has(dir)
@@ -532,13 +787,30 @@ export function gitChanges(): ChangesetSource {
      * nothing is a button that fails when pressed, and the protocol's whole
      * access model is that a client may only invoke what it was offered.
      */
-    operations: (dir, session, scope) => {
+    operations: (dir, session, scope, context) => {
       // Not a repository. `held` is only ever set for a directory `git status`
       // answered for, which is the same question as "is there git here".
       if (!held.has(dir)) return [];
-      if (scope === 'uncommitted') return held.get(dir)?.summary?.files ? [COMMIT, DISCARD] : [];
+      const dirty = held.get(dir)?.summary?.files !== undefined;
+      /*
+       * A pull request, where there is a GitHub to ask and nothing to ask it
+       * about yet: the reference host offers the pair while the branch has no
+       * request and something to put in one, and drops it once it has one.
+       * On the working tree and on the session's whole, not on a turn.
+       */
+      const pr = context?.github !== undefined && context.pullRequest !== true && dirty
+        && (scope === 'uncommitted' || scope === 'session')
+        ? [CREATE_PR, PREPARE_PR]
+        : [];
+      if (scope === 'uncommitted') {
+        return [
+          ...(dirty ? [COMMIT, DISCARD] : []),
+          ...pr,
+          ...(context?.unused === true ? [CHECKOUT] : []),
+        ];
+      }
       const files = capturedFor(session, scope);
-      return files && files.size > 0 ? [REVERT] : [];
+      return [...(files && files.size > 0 ? [REVERT] : []), ...pr];
     },
 
     /*
@@ -550,7 +822,12 @@ export function gitChanges(): ChangesetSource {
      * write grant is held. What is left is the doing, and saying what git said
      * when it did not work.
      */
-    invoke: async ({ dir, session, scope, operationId, target, subject }) => {
+    invoke: async ({ dir, session, scope, operationId, target, subject, meta, base, github }) => {
+      if (operationId === 'checkout') return checkout(dir, meta ?? {});
+      if (operationId === 'prepare-pull-request' || operationId === 'create-pr') {
+        if (github === undefined) throw new Error('This directory has no GitHub remote to open a pull request on.');
+        return pullRequest(dir, operationId, subject, meta ?? {}, base, github);
+      }
       if (operationId === 'commit') {
         // `-A`, including files git has not been told about: the changeset this
         // was invoked on counted untracked files as changes, and committing

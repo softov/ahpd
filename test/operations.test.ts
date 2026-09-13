@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../packages/sdk/src/host.js';
 import { echo } from '../examples/echo/agent.js';
-import type { ChangesetOperation, ChangesetOperationRequest, ChangesetSource } from '../packages/sdk/src/types/changes.js';
+import type { ChangesetOperation, ChangesetOperationContext, ChangesetOperationRequest, ChangesetSource } from '../packages/sdk/src/types/changes.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
@@ -43,20 +43,21 @@ const DISCARD: ChangesetOperation = {
 const LOOK: ChangesetOperation = { id: 'look', label: 'Look', scopes: ['changeset'] };
 
 /** A source that offers three verbs and records what was asked of it. */
-function scripted(fail?: string) {
+function scripted(fail?: string | Error) {
   const invoked: ChangesetOperationRequest[] = [];
+  const asked: (ChangesetOperationContext | undefined)[] = [];
   const source: ChangesetSource = {
     scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
     state: async () => ({ status: 'ready', files: [{ id: `file://${DIR}/a.txt`, edit: {} }] }),
     summary: () => ({ files: 1 }),
-    operations: () => [COMMIT, DISCARD, LOOK],
+    operations: (_dir, _session, _scope, context) => { asked.push(context); return [COMMIT, DISCARD, LOOK]; },
     invoke: async (request) => {
       invoked.push(request);
-      if (fail !== undefined) throw new Error(fail);
+      if (fail !== undefined) throw typeof fail === 'string' ? new Error(fail) : fail;
       return { message: `did ${request.operationId}` };
     },
   };
-  return { source, invoked };
+  return { source, invoked, asked };
 }
 
 /*
@@ -315,6 +316,31 @@ it('keeps the failure on the operation, and hands it to the next reader', async 
   };
   const operations = again.snapshot.state.operations;
   expect(operations[0]).toMatchObject({ id: 'commit', status: 'error' });
+});
+
+it('hands the source the request\'s _meta and what the host knows, and passes a coded refusal through', async () => {
+  const { source, invoked, asked } = scripted();
+  const { client, changeset } = await watching(source);
+  // Asked with the host's context: a session that has said nothing yet is an
+  // unused one, which is when the reference host offers a checkout.
+  expect(asked.at(-1)).toEqual({ unused: true });
+  await client.handle({
+    method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look', _meta: { treeish: 'main', preCheckoutAction: 'stash' } },
+  });
+  expect(invoked[0]?.meta).toEqual({ treeish: 'main', preCheckoutAction: 'stash' });
+  expect(invoked[0]?.unused).toBe(true);
+
+  // A refusal with a code and data of its own reaches the client as that
+  // code and that data, which is what the reference client's checkout form
+  // branches on.
+  const coded = Object.assign(new Error('Your local changes would be overwritten by checkout.'), { code: -32602, data: { reason: 'dirtyWorkingTree' } });
+  const failing = scripted(coded);
+  const other = await watching(failing.source);
+  const broke = await refused(other.client.handle({
+    method: 'invokeChangesetOperation', params: { channel: other.changeset, operationId: 'look' },
+  }));
+  expect(broke.code).toBe(-32602);
+  expect(broke.data).toEqual({ reason: 'dirtyWorkingTree' });
 });
 
 it('disables the verbs while a turn is running, and refuses one sent anyway', async () => {
