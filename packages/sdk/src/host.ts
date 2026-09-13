@@ -2895,9 +2895,11 @@ export function createHost(options: HostOptions): Host {
    *
    * The session is restarted where it was asked to go, resumed so it is the
    * same conversation, with a worktree made from the directory when isolation
-   * was asked for. Then a notice turn tells the agent where it now is and to
-   * carry on, marked the way the reference client marks its own host notices
-   * so the window draws the answer and not the request.
+   * was asked for. Then a continuation turn tells the agent where it now is
+   * and to carry on, marked the way the reference host marks its own: the
+   * request hidden so the window draws the answer and not the prompt, the
+   * label a person reads wherever the turn is listed, and the continuation
+   * key that keeps the turn owning the file changes made in it.
    */
   const moveSession = async (uri: string, move: { chat: string; directory: string; isolation: boolean }): Promise<void> => {
     const held = sessions.get(uri);
@@ -2913,7 +2915,11 @@ export function createHost(options: HostOptions): Host {
       undefined,
       {
         origin: { kind: 'systemNotification' },
-        _meta: { 'vscode.chat.requestHiddenFromTranscript': true, 'vscode.chat.workspaceContinuation': true },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Continue in Requested Workspace',
+          'vscode.chat.workspaceContinuation': true,
+        },
       },
     );
   };
