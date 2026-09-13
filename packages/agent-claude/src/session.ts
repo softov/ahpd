@@ -2241,7 +2241,10 @@ export function createSession(options: SessionOptions): Session {
         status: 'running',
         _meta: { toolKind: 'terminal' },
       } satisfies OnWire<ToolCallRunningState> as Bag;
-      holdPart(turn, call);
+      // As a part, the way every other call is held: the bare call went
+      // into the snapshot with no `kind`, so a client that subscribed after
+      // the command ran had a row it could not draw.
+      holdPart(turn, { id: toolCallId, kind: 'toolCall', toolCall: call });
       emit('chat', {
         type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
         displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },

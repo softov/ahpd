@@ -3357,10 +3357,13 @@ describe('a command typed into the conversation', () => {
     // And in the snapshot, not only in the stream: a client that subscribes
     // afterwards reads the transcript rather than the actions it missed.
     const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { message: { text: string }; responseParts: { toolName?: string }[] }[] } };
+      snapshot: { state: { turns: { message: { text: string }; responseParts: { kind?: string; toolCall?: { toolName: string; status: string } }[] }[] } };
     }).snapshot.state.turns;
     expect(kept.at(-1)?.message.text).toBe('!echo ran-from-the-composer');
-    expect(kept.at(-1)?.responseParts[0]?.toolName).toBe('terminal');
+    // A part, not a bare call: `kind` is what a client draws by.
+    expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
+    expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
+    expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
   });
 
   it('says a command failed when it did', async () => {
