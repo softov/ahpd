@@ -20,7 +20,7 @@ VS Code's host gives the agent inside a session tools for acting on the host (`s
 - [x] **`send_message`.** A turn on another session or chat, started at once when that chat is idle and queued behind the running turn when it is not (`chat/pendingMessageSet`, the queue a client already sees and can reorder). Asynchronous: the tool answers that it was delivered or queued and does not wait for the reply.
 - [x] **`create_session`.** `relationship: currentSession` makes a peer chat in the calling session, sharing its directory and lifecycle; `independent` makes a session with its own `workspace`, `worktree` deciding isolation the way the config's `isolation` does, and `model` choosing the provider. `prompt` is sent as the first turn. Answers with the new session's URI and its `openLink`.
 - [x] **`rename_chat` and `delete_session`.** The title, on the calling chat or a named one; a session gone for good, refusing the calling one.
-- [x] **`set_workspace`.** `workspaceFolder` and `isolation` on the calling session: the same restart-into-a-directory this host already does for a client's `session/workingDirectorySet`, made reachable from the agent, with a host-notice turn (`vscode.chat.requestHiddenFromTranscript`) saying the workspace changed so the window draws it the way it draws its own.
+- [x] **`set_workspace`.** `workspaceFolder` and `isolation` on the calling session: the same restart-into-a-directory this host already does for a client's `session/workingDirectorySet`, made reachable from the agent, with a continuation turn (`vscode.chat.requestHiddenFromTranscript` and `vscode.chat.workspaceContinuation`, the way `sessionWorkspaceConversionService.ts` marks its own) saying the workspace changed so the window draws it the way it draws its own, and still attributes the file changes made in it to that turn rather than skipping it as a host notice (`sessionState.ts` `isHostNoticeTurn`).
 
 ### git and GitHub
 
@@ -72,7 +72,6 @@ VS Code `3aa54039` (2026-08-29) to `8e35945b` (2026-09-12), 206 agentHost commit
 Kept here so the next pass does not re-read them.
 
 - `agent-merge` changeset kind and the `agentSystemNotificationMeta` kinds around it: Agent Merge is a Copilot service, and `create-pr` here says so when asked for it. `vscode.chat.systemInitiatedLabel` likewise, since no turn here is started by a service.
-- `vscode.chat.workspaceContinuation` on a message: rides on workspace conversion, which this host declines.
 - `vscode/requestWorkspaceTrust`: a VS Code-only RPC behind `_meta['vscode.requestWorkspaceTrust']` in `initialize`, which this host does not set. Trust is the window's to grant, and a daemon serving directories it was started on has nothing to ask.
 - `node/claude/`: `agentHostCapabilities.workspaceConversion: false`, `setWorkingDirectory` throws, a `PreToolUse` hook denying GitHub tools during Agent Merge turns, `activation: 'restore'` allowing a cold SDK download. This host already changes a session's directories by resuming it, which is the thing upstream declines to do.
 - Claude Agent SDK: upstream pins 0.3.239; this host is on 0.3.261.

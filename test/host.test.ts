@@ -4517,13 +4517,14 @@ describe('tools the host contributes', () => {
       const moved = actions(p, uri).find((one) => one.action.type === 'session/workingDirectoryReplaced');
       expect(moved?.action.directory).toBe('file:///tmp');
       // Restarted there, resumed, and told so in a turn the window will not
-      // draw as somebody's request.
+      // draw as somebody's request, but will still credit with the file
+      // changes made in it: the reference host's own continuation turn.
       const restarted = sessionQueries().at(-1);
       expect(restarted?.options.cwd).toBe('/tmp');
       const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
       expect(notice?.action.message).toMatchObject({
         origin: { kind: 'systemNotification' },
-        _meta: { 'vscode.chat.requestHiddenFromTranscript': true },
+        _meta: { 'vscode.chat.requestHiddenFromTranscript': true, 'vscode.chat.workspaceContinuation': true },
       });
       expect(String((notice?.action.message as { text: string }).text)).toContain('/tmp');
     });
