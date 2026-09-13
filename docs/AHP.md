@@ -186,7 +186,7 @@ which is a different complaint from an action nobody has served.
 | `session/chatRemoved` | host | ✅ | On `disposeChat`. The last chat cannot be removed - that is `disposeSession`, and the refusal says so. |
 | `session/chatUpdated` | host | ✅ | Only when the row actually moved - title, status or activity. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
 | `session/defaultChatChanged` | host | ✅ | When the chat that was the default is disposed and another takes over. |
-| `session/titleChanged` | both | ✅ | A client may rename a session; this host also names one after its first message, because an untitled row is one nobody can find again. |
+| `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames one with `rename_chat`. |
 | `session/serverToolsChanged` | host | ✅ | Full replacement, which is what the action means: it carries the new set rather than a difference. Sent to every running session when `host.setTools()` is called. |
 | `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made - under the `clientId` it introduced itself with rather than the one in the payload. |
 | `session/activeClientRemoved` | both | ✅ | Host-managed on the way out: a client that unsubscribes, drops without reconnecting in time, or reconnects without resubscribing is removed by this host rather than left in the list. |

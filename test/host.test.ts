@@ -2796,6 +2796,26 @@ describe('what it says it is doing', () => {
     expect(retitled?.action.title).toBe('a question about paging');
   });
 
+  it('takes a title from a client, for the row or for one chat, and refuses a blank one', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: 'Paging' } } });
+    await settle();
+    expect(actions(p, uri).find((e) => e.action.type === 'session/titleChanged')?.action.title).toBe('Paging');
+    const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
+    expect((row?.params as { changes: { title?: string } }).changes.title).toBe('Paging');
+    // On a chat channel it names the chat; the default chat is the session,
+    // so it is said as the session's.
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'session/titleChanged', title: 'Paging, again' } } });
+    await settle();
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').at(-1)?.action.title).toBe('Paging, again');
+    client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: '  ' } } });
+    await settle();
+    expect(actions(p, uri).find((e) => e.rejectionReason?.includes('blank'))).toBeDefined();
+    const kept = actions(p, uri).filter((e) => e.action.type === 'session/titleChanged' && e.rejectionReason === undefined);
+    expect(kept.at(-1)?.action.title).toBe('Paging, again');
+  });
+
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({

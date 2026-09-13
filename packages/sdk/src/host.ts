@@ -5623,6 +5623,30 @@ export function createHost(options: HostOptions): Host {
            * answer that stops halfway, and `-32004` is the code for asking a
            * client to wait.
            */
+          /*
+           * A rename from a client.
+           *
+           * On a chat channel it names that chat, the way the reference host
+           * reads it (`sessionTitleContribution.ts`); on the session channel
+           * it names the session, which is its default chat. Blank is a
+           * refusal, not a blank title: a row nobody can find again is the
+           * thing the derived title exists to prevent.
+           */
+          case 'session/titleChanged': {
+            const uri = session.uri;
+            const owner = sessions.get(uri);
+            if (owner === undefined) {
+              no(`${channel} is not a session this host is running`);
+              break;
+            }
+            const title = String(action.title ?? '').trim();
+            if (title === '') {
+              no('a title cannot be blank');
+              break;
+            }
+            renameChat(uri, byChat.has(channel) ? channel : owner.defaultChat, title);
+            break;
+          }
           case 'session/workingDirectorySet':
           case 'session/workingDirectoryRemoved':
           case 'session/workingDirectoryReplaced': {
