@@ -25,3 +25,4 @@ export type { Agent, Listed, Start, BoundTool } from './agent.js';
 export type { Entry, Metadata, Read } from './resources.js';
 export type { Claim, Terminal, TerminalOptions, SpawnPty } from './terminals.js';
 export type { Worktree, Worktrees } from './worktrees.js';
+export type { PullRequest, PullRequests } from './github.js';

@@ -6,6 +6,7 @@ import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Writ
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
+import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { SessionStore } from './sessions.js';
 import type { Peer, Request } from './rpc.js';
@@ -191,6 +192,15 @@ export interface HostOptions {
    * discarding a file discards somebody else's work.
    */
   worktrees?: Worktrees;
+  /**
+   * What GitHub knows about the branch a session is on.
+   *
+   * Left out, no session carries `_meta.github` and no backend advertises a
+   * GitHub resource, so a client draws no pull request beside a branch and
+   * asks nobody to sign in for one. `githubPullRequests()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  github?: PullRequests;
   /**
    * The automations this host offers.
    *

@@ -6039,3 +6039,120 @@ it('takes a client into a session the catalogue has listed, before anybody reads
   }).snapshot.state;
   expect(state.activeClients.map((one) => one.clientId)).toEqual(['probe']);
 });
+
+describe('what GitHub knows about the branch', () => {
+  /*
+   * `_meta.github`, under the reference host's key and field names.
+   *
+   * The lookup is a port and is faked here; what is under test is the host's
+   * half - that the resource is advertised, that a token a client lent is the
+   * one spent, that the answer lands on the session and its row under the
+   * names the reference client reads, and that it is asked again when a turn
+   * ends, like the git facts it sits beside.
+   */
+  const REPOS = 'https://api.github.com/repos';
+  const facts = (git: Record<string, unknown> | undefined) => ({
+    meta: () => (git === undefined ? undefined : { git: { ...git } }),
+    refresh: async () => false,
+  });
+  const lookup = (answer: () => { url: string; state: 'open' | 'closed' | 'merged' }[]) => {
+    const asked: { branch: string; token: string | undefined }[] = [];
+    return {
+      asked,
+      port: {
+        resource: { resource: REPOS, resource_name: 'GitHub Repository', authorization_servers: ['https://github.com/login/oauth'], required: false },
+        forBranch: async (_repo: unknown, branch: string, token: string | undefined) => {
+          asked.push({ branch, token });
+          return answer();
+        },
+      },
+    };
+  };
+  const onBranch = (branch: string) => ({ branchName: branch, hasGitHubRemote: true, githubOwner: 'softov', githubRepo: 'ahpd' });
+
+  it('advertises the resource on every backend, so a client lends its token', async () => {
+    const { port } = lookup(() => []);
+    const served = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), github: port });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { protectedResources?: { resource: string; required?: boolean }[] }[] } };
+    }).snapshot.state;
+    const resources = state.agents[0]?.protectedResources?.map((one) => one.resource);
+    expect(resources).toContain(REPOS);
+    expect(state.agents[0]?.protectedResources?.find((one) => one.resource === REPOS)?.required).toBe(false);
+    // And takes a token for it, which it would refuse for a resource nobody advertised.
+    await expect(client.handle({ method: 'authenticate', params: { resource: REPOS, token: 'gho_x' } })).resolves.toEqual({});
+  });
+
+  it('puts the branch\'s pull request on the session and its row, and asks again when a turn ends', async () => {
+    let requests: { url: string; state: 'open' | 'closed' | 'merged' }[] = [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'open' }];
+    const { port, asked } = lookup(() => requests);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port,
+    });
+    const p = peer();
+    const client = served.accept(p);
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'authenticate', params: { resource: REPOS, token: 'gho_x' } });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/pr', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/pr' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown>; defaultChat: string } };
+    }).snapshot.state;
+    expect(state._meta?.github).toEqual({
+      owner: 'softov',
+      repo: 'ahpd',
+      pullRequestUrls: ['https://github.com/softov/ahpd/pull/7'],
+      pullRequestBranchName: 'fix/kqueue',
+      pullRequestState: 'open',
+      pullRequestStateUrl: 'https://github.com/softov/ahpd/pull/7',
+    });
+    // Beside the git facts, not instead of them: `_meta` is one map.
+    expect((state._meta?.git as { branchName: string }).branchName).toBe('fix/kqueue');
+    // Asked as the person who lent the token.
+    expect(asked.at(-1)?.token).toBe('gho_x');
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    await client.handle({ method: 'subscribe', params: { channel: state.defaultChat } });
+
+    // Merged while the agent worked: the turn ending is when it is asked again.
+    requests = [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'merged' }];
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+    const moved = actions(p, 'ahp-session:/pr').filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as { git?: { branchName?: string }; github?: { pullRequestState?: string } } | undefined;
+    expect(meta?.github?.pullRequestState).toBe('merged');
+    expect(meta?.git?.branchName).toBe('fix/kqueue');
+    const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
+    expect(((row?.params as { changes: { _meta?: { github?: { pullRequestState?: string } } } }).changes._meta)?.github?.pullRequestState).toBe('merged');
+  });
+
+  it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {
+    let fail = false;
+    const { port } = lookup(() => { if (fail) throw new Error('offline'); return []; });
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('main')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    expect(state._meta?.github).toEqual({ owner: 'softov', repo: 'ahpd' });
+    fail = true;
+    await client.handle({ method: 'unsubscribe', params: { channel: 'ahp-session:/none' } });
+    const again = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    expect(again._meta?.github).toEqual({ owner: 'softov', repo: 'ahpd' });
+  });
+});

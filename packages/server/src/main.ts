@@ -6,7 +6,7 @@ import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
 import type { Tap } from '@ahpd/sdk';
-import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -347,6 +347,7 @@ const host = createHost({
   directories: gitBranches(),
   changes: gitChanges(),
   worktrees: gitWorktrees(),
+  github: githubPullRequests(),
   /*
    * The host's own tools, offered to every session's model.
    *

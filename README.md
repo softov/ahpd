@@ -167,7 +167,7 @@ What it does *not* serve is anything that touches the machine, because `createHo
 Those arrive as **ports**, and each is optional and independent:
 
 ```ts
-import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, scheduledAutomations, hostTools } from '@ahpd/sdk';
+import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, githubPullRequests, scheduledAutomations, hostTools } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const host = createHost({
@@ -178,6 +178,7 @@ const host = createHost({
   terminals: shellTerminals(),                // a shell, as a terminal channel
   changes: gitChanges(),                      // what the working tree has that HEAD does not
   directories: gitBranches(),                 // which branch each served directory is on
+  github: githubPullRequests(),               // and the pull request GitHub has for it
   automations: scheduledAutomations({ file: 'automations.json' }),        // agents on a clock, with nobody connected
   tools: hostTools(),                         // tools the host contributes to every session
 

@@ -75,6 +75,7 @@ would fail part-way through instead.
 | `terminals` | how a shell is opened | no terminal can be created | `shellTerminals()` |
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
 | `directories` | facts about a served directory - the branch it is on | sessions carry their project and nothing more | `gitBranches()` |
+| `github` | what GitHub knows about that branch - its pull request and the state of it | no row carries `_meta.github`, and no backend advertises a GitHub resource | `githubPullRequests()` |
 | `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `scheduledAutomations({ file })`, or `memoryAutomations()` without the clock |
 
 ### `resources`
@@ -134,9 +135,23 @@ before-side out of `git show HEAD:` behind a URI it resolves itself.
 ### `directories`
 
 `meta(dir)` returns whatever this host can say about a directory, and
-`gitBranches()` returns `{ git: { branch } }` - which becomes `_meta.git.branch`
-on every session row in that directory. Cached per directory and re-read when a
-turn ends, so a host with ninety-eight sessions in one repository asks git once.
+`gitBranches()` returns `{ git: { branchName, ... } }` - which becomes
+`_meta.git` on every session row in that directory, under the reference host's
+field names. Cached per directory and re-read when a turn ends, so a host with
+ninety-eight sessions in one repository asks git once.
+
+### `github`
+
+`forBranch(repo, branch, token, cwd)` answers the pull requests whose head is
+that branch, newest first, and `resource` is the protected resource a client
+lends a token under - the reference host's `https://api.github.com/repos`,
+advertised on every backend. The host puts the answer beside the git facts as
+`_meta.github`: `owner`, `repo`, `pullRequestUrls`, `pullRequestBranchName`,
+and `pullRequestState` (`open`, `closed`, `merged`) with the
+`pullRequestStateUrl` it is the state of. Asked at startup, when a token
+arrives, and when a turn ends. `githubPullRequests()` asks the REST API with a
+lent token and `gh pr list` without one; a machine with neither answers no
+pull request rather than failing, and an answer that fails keeps what was held.
 
 ### `automations`
 
@@ -220,6 +235,7 @@ import {
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
   fileResources, shellTerminals,          // the resources and terminals ports
   gitChanges, gitBranches, gitWorktrees,  // the git-backed ports
+  githubPullRequests,                     // the pull request beside a branch
   memoryAutomations, scheduledAutomations,// automations, without a clock and with
   hostTools,                              // the tools this package contributes
   uriFor, idFor, idOf, Status,            // how a session is named, and its status bits

@@ -32,6 +32,7 @@ export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools.js';
 export { sessionTools } from './sessiontools.js';
 export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
+export { githubPullRequests } from './github.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
 export { fileSessions, memorySessions } from './sessions.js';

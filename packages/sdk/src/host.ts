@@ -1506,7 +1506,9 @@ export function createHost(options: HostOptions): Host {
    * when something else happened to move the row.
    */
   for (const dir_ of browsable()) {
-    void options.directories?.refresh?.(dir_).catch(() => {});
+    void (options.directories?.refresh?.(dir_) ?? Promise.resolve(false))
+      .then(() => refreshPullRequests(dir_))
+      .catch(() => {});
     void options.changes?.refresh?.(dir_).catch(() => {});
   }
 
@@ -1829,6 +1831,60 @@ export function createHost(options: HostOptions): Host {
     return changesets.length > 0 ? { changesets } : {};
   };
   /**
+   * What a backend may be handed a token for: its own, and GitHub's.
+   *
+   * The reference host lists its GitHub repository resource on every agent,
+   * because the token is the host's to use - for the pull request beside a
+   * branch - whichever backend the session runs on. So it is listed here the
+   * same way, when there is a lookup to spend it on.
+   */
+  const resourcesOf = (agent: Agent): Bag[] => [
+    ...(agent.protectedResources ?? []) as Bag[],
+    ...(options.github ? [options.github.resource] : []),
+  ];
+  /** A token any connected client lent for a resource, and has not run out. */
+  const lent = (resource: string): string | undefined => {
+    for (const connection of connections) {
+      const held = connection.tokens.get(resource);
+      if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) return held.token;
+    }
+    return undefined;
+  };
+  /**
+   * What GitHub said about each served directory's branch, under the
+   * reference host's key and field names (`ISessionGitHubState`).
+   *
+   * Per directory, like the git facts, since a pull request is a branch's
+   * and the branch is the directory's. `pullRequestBranchName` says which
+   * branch the URLs were found on, so a row on another branch does not draw
+   * them; `pullRequestStateUrl` says which URL the state is of.
+   */
+  const githubFacts = new Map<string, Bag>();
+  /**
+   * The session's `_meta`, whole.
+   *
+   * `git` is the port's answer plus the one fact only this host knows - the
+   * branch a worktree was cut from - and `github` is what was last heard from
+   * GitHub. Composed in one place because `session/metaChanged` replaces the
+   * map entirely: a producer that dispatched its own part would erase the
+   * other's.
+   */
+  const metaOf = (uri: string): Bag | undefined => {
+    const dir = dirOf(uri);
+    if (dir === undefined) return undefined;
+    const meta = options.directories?.meta(dir);
+    const base = worktrees.get(uri)?.base;
+    const git = typeof (meta as { git?: unknown } | undefined)?.git === 'object'
+      ? (meta as { git: Record<string, unknown> }).git
+      : undefined;
+    const told = base !== undefined && base !== 'HEAD' && git !== undefined
+      ? { ...meta, git: { ...git, baseBranchName: base } }
+      : meta;
+    const github = githubFacts.get(dir);
+    if (told === undefined && github === undefined) return undefined;
+    return { ...told, ...(github ? { github } : {}) };
+  };
+  /**
    * What is true of a session because of where it is.
    *
    * Spread into a `SessionState` and into a `SessionSummary` alike, so only
@@ -1850,24 +1906,7 @@ export function createHost(options: HostOptions): Host {
     const project = { uri: `file://${dir}`, displayName: dir.split('/').filter(Boolean).pop() ?? dir };
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
-    const meta = options.directories?.meta(dir);
-    /*
-     * The branch this session's tree was cut from, which only this host knows.
-     *
-     * `git` cannot answer it: a branch does not record what it started from,
-     * and the reflog that does is not a fact to build a field on. This host
-     * chose the base when it made the worktree, so it is the one thing here
-     * added to the port's answer rather than read from it - and it is merged
-     * into `git` rather than sent beside it, because that is the namespace the
-     * client reads and the key names in it are the reference host's.
-     */
-    const base = worktrees.get(uri)?.base;
-    const git = typeof (meta as { git?: unknown } | undefined)?.git === 'object'
-      ? (meta as { git: Record<string, unknown> }).git
-      : undefined;
-    const told = base !== undefined && base !== 'HEAD' && git !== undefined
-      ? { ...meta, git: { ...git, baseBranchName: base } }
-      : meta;
+    const told = metaOf(uri);
     const summary = options.changes?.summary(dir);
     return {
       project,
@@ -1879,6 +1918,61 @@ export function createHost(options: HostOptions): Host {
     };
   };
 
+  /** Every session in a directory, since a fact is the directory's. */
+  const inThere = (dir: string): string[] => [...sessions.keys()].filter((uri) => dirOf(uri) === dir);
+  /** `_meta` moved: every session in the directory says so, and its row. */
+  const metaMoved = (dir: string): void => {
+    for (const uri of inThere(dir)) {
+      const meta = metaOf(uri);
+      dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
+      summaryMoved(uri);
+    }
+  };
+  /**
+   * Ask GitHub about the branch a directory is on, answering whether what it
+   * said differs from what was held.
+   *
+   * Only where the git facts name a GitHub remote and a branch. Asked with a
+   * token a client lent when one has, and otherwise however the port can;
+   * an answer that fails keeps what was held rather than erasing it, since
+   * the network being down is not the pull request being gone. The state is
+   * of the newest request, which is the one the row draws.
+   */
+  const refreshPullRequests = async (dir: string): Promise<boolean> => {
+    if (options.github === undefined) return false;
+    const git = (options.directories?.meta(dir) as { git?: Record<string, unknown> } | undefined)?.git;
+    const owner = git?.githubOwner;
+    const repo = git?.githubRepo;
+    const branch = git?.branchName;
+    if (typeof owner !== 'string' || typeof repo !== 'string' || typeof branch !== 'string') {
+      return githubFacts.delete(dir);
+    }
+    const resource = String(options.github.resource.resource ?? '');
+    let found;
+    try {
+      found = await options.github.forBranch({ owner, repo }, branch, lent(resource), dir);
+    }
+    catch (error) {
+      log(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+    const newest = found[0];
+    const now: Bag = {
+      owner,
+      repo,
+      ...(newest === undefined ? {} : {
+        pullRequestUrls: found.map((one) => one.url),
+        pullRequestBranchName: branch,
+        pullRequestState: newest.state,
+        pullRequestStateUrl: newest.url,
+      }),
+    };
+    const before = githubFacts.get(dir);
+    if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
+    githubFacts.set(dir, now);
+    return true;
+  };
+
   /**
    * Ask git again, and tell everyone if the answer moved.
    *
@@ -1888,16 +1982,9 @@ export function createHost(options: HostOptions): Host {
    * what `metaOf` writes.
    */
   const refreshFacts = (dir: string): void => {
-    /** Every session in that directory, since a fact is the directory's. */
-    const inThere = (): string[] => [...sessions.keys()].filter((uri) => dirOf(uri) === dir);
-
-    void options.directories?.refresh?.(dir).then((moved) => {
-      if (!moved) return;
-      for (const uri of inThere()) {
-        const meta = options.directories?.meta(dir);
-        dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-        summaryMoved(uri);
-      }
+    void (options.directories?.refresh?.(dir) ?? Promise.resolve(false)).then(async (moved) => {
+      if (moved) metaMoved(dir);
+      if (await refreshPullRequests(dir)) metaMoved(dir);
     }).catch(() => {});
 
     /*
@@ -1910,7 +1997,7 @@ export function createHost(options: HostOptions): Host {
      */
     void options.changes?.refresh?.(dir).then((moved) => {
       if (!moved) return;
-      for (const uri of inThere()) {
+      for (const uri of inThere(dir)) {
         // Asked per session, because two of the scopes are the session's own.
         dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
         summaryMoved(uri);
@@ -2078,8 +2165,8 @@ export function createHost(options: HostOptions): Host {
      * door. A host advertising none can be handed no credential at all, which
      * is what this one used to be.
      */
-    ...(agent.protectedResources && agent.protectedResources.length > 0
-      ? { protectedResources: agent.protectedResources }
+    ...(resourcesOf(agent).length > 0
+      ? { protectedResources: resourcesOf(agent) }
       : {}),
     /*
      * The skills, subagents and MCP servers, before any session exists.
@@ -3503,7 +3590,7 @@ export function createHost(options: HostOptions): Host {
   const advertised = (): Set<string> => {
     const out = new Set<string>();
     for (const agent of agents.values()) {
-      for (const one of agent.protectedResources ?? []) {
+      for (const one of resourcesOf(agent)) {
         const id = (one as { resource?: unknown }).resource;
         if (typeof id === 'string') out.add(id);
       }
@@ -3520,7 +3607,7 @@ export function createHost(options: HostOptions): Host {
    */
   const metadataFor = (resource: string): Bag => {
     for (const agent of agents.values()) {
-      for (const one of agent.protectedResources ?? []) {
+      for (const one of resourcesOf(agent)) {
         if ((one as { resource?: unknown }).resource === resource) return one as Bag;
       }
     }
@@ -4535,6 +4622,13 @@ export function createHost(options: HostOptions): Host {
           });
           if (expiresIn !== undefined) expire(resource);
           log(`${connection.clientId || 'a client'} authenticated for ${resource}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
+          // A GitHub token is a reason to ask GitHub again: a lookup that
+          // answered nothing as nobody may answer as this person.
+          if (resource === String(options.github?.resource.resource ?? '')) {
+            for (const dir of browsable()) {
+              void refreshPullRequests(dir).then((moved) => { if (moved) metaMoved(dir); }).catch(() => {});
+            }
+          }
           return {};
         },
         /** A page of what one automation has done, newest first. */

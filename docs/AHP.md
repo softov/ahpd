@@ -601,7 +601,8 @@ anybody had approved it - `ToolCallState` requires both.
 | toggling an MCP server | through the CLI, then read back. Switching on one that is not ready reconnects it, which is how signing in happens |
 | who else is here | `activeClients` on the session, `session/activeClientSet` from a client and `activeClientRemoved` from the host - taken out on unsubscribe, on a dropped connection, and on a reconnect that does not ask for the session back, and kept while another window of the same client still is |
 | read and archived | kept per session and told to every client, including for rows no agent is running for |
-| project and branch | `project` on every row from the path alone, and `_meta.git.branch` beside it when the host was given `gitBranches()` |
+| project and branch | `project` on every row from the path alone, and `_meta.git` beside it when the host was given `gitBranches()` - `branchName`, `upstreamBranchName`, the ahead and behind counts, `uncommittedChanges`, and `baseBranchName` for a worktree |
+| pull request | `_meta.github` when the host was given `githubPullRequests()`: `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
 | when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
 
 ### Changesets
