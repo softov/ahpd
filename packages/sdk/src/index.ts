@@ -30,6 +30,7 @@ export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools.js';
+export { sessionTools } from './sessiontools.js';
 export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';

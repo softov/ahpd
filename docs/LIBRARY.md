@@ -159,9 +159,14 @@ session it called from. They are reported on `SessionState.serverTools`, given
 to every backend that can take tools, and replaced whole with `host.setTools()`
 - which dispatches `session/serverToolsChanged` to every running session.
 
-`hostTools()` is the set that ships: `ahp_sessions` and `ahp_terminals`, both
-read-only, and both answering what an agent inside one session cannot see for
-itself - the sessions running beside it and the terminals a person is watching.
+`hostTools()` is the set that ships: the reference host's nine session tools
+(`list_sessions`, `get_current_session`, `get_session_context`, `send_message`,
+`create_session`, `create_chat`, `rename_chat`, `delete_session`,
+`set_workspace`), with its names, input schemas and answers, so a skill written
+against VS Code's host calls them here unchanged; and two of this host's own,
+`ahp_resource` and `ahp_terminals`, both read-only, answering what an agent
+inside one session cannot see for itself - a client's published resource and
+the terminals a person is watching. `sessionTools()` is the nine on their own.
 
 ```ts
 createHost({

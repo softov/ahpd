@@ -126,7 +126,10 @@ asking".
 
 `host.clients` is the same ten as named methods, so an embedder can read a
 client directly, and `ahp_resource` (see [state actions](#state-actions),
-`serverTools`) is how a session's agent reaches one.
+`serverTools`) is how a session's agent reaches one. The rest of what an agent
+gets from this host is the reference host's own set - `list_sessions`,
+`send_message`, `create_session` and the others in `sessiontools.ts` - under
+the same names and schemas, so a skill written for VS Code's host runs here.
 
 ## Server notifications
 

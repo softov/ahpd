@@ -5,7 +5,7 @@ import { protectedResource, urlOf } from './mcp.js';
 import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
 
 /**
  * The effort levels this backend has, weakest first.
@@ -1491,7 +1491,7 @@ export function createSession(options: SessionOptions): Session {
    */
   const ends = new Map<string, string>();
 
-  const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string): void => {
+  const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): void => {
     if (model !== undefined && model.id !== chosen) {
       chosen = model.id;
       void handle.setModel(model.id === 'default' ? undefined : model.id).catch(() => {});
@@ -1516,7 +1516,8 @@ export function createSession(options: SessionOptions): Session {
       startedAt: new Date().toISOString(),
       message: {
         text,
-        origin: { kind: 'user' },
+        origin: from?.origin ?? { kind: 'user' },
+        ...(from?._meta ? { _meta: from._meta } : {}),
         ...(chosen ? { model: { id: chosen, ...(model?.config ? { config: model.config } : {}) } } : {}),
       },
       responseParts: [],
@@ -1574,7 +1575,12 @@ export function createSession(options: SessionOptions): Session {
     let model: Chosen | undefined;
     if (id !== undefined)
       model = named.config ? { id, config: named.config as NonNullable<Chosen['config']> } : { id };
-    beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id));
+    // With whose it was: a message an agent queued is still an agent's when
+    // its turn comes.
+    const from: MessageFrom = {};
+    if (message.origin !== undefined) from.origin = bag(message.origin) as NonNullable<MessageFrom['origin']>;
+    if (message._meta !== undefined) from._meta = bag(message._meta);
+    beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from);
   };
 
   /**
@@ -2237,7 +2243,8 @@ export function createSession(options: SessionOptions): Session {
      * that cannot, because the transcript would then credit a turn to a model
      * that never ran it.
      */
-    begin: (turnId, text, model) => beginTurn(turnId, text, model),
+    begin: (turnId, text, model, from) => beginTurn(turnId, text, model, undefined, from),
+    setTitle: (said) => { if (said !== '') title = said; },
 
     /**
      * A turn this host answered itself, with a shell rather than the agent.
@@ -2390,12 +2397,13 @@ export function createSession(options: SessionOptions): Session {
      * immediately started, which is a queue entry a client sees appear and
      * leave rather than one that was never there.
      */
-    queue: (id, text, model) => {
+    queue: (id, text, model, from) => {
       const entry: Bag = {
         id,
         message: {
           text,
-          origin: { kind: 'user' },
+          origin: from?.origin ?? { kind: 'user' },
+          ...(from?._meta ? { _meta: from._meta } : {}),
           ...(model ? { model: { id: model.id, ...(model.config ? { config: model.config } : {}) } } : {}),
         },
       };

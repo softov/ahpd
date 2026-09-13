@@ -146,6 +146,14 @@ export interface Ran {
   code?: number;
 }
 
+/** Who a message came from, when not the person at the keyboard. */
+export interface MessageFrom {
+  /** `Message.origin`. The user's when absent. */
+  origin?: { kind: 'user' | 'agent' | 'tool' | 'automation' | 'systemNotification' };
+  /** `Message._meta`, carried whole. */
+  _meta?: Bag;
+}
+
 /** A live session. */
 export interface Session {
   /** The session channel URI. */
@@ -202,6 +210,15 @@ export interface Session {
   activity(): string | undefined;
   /** Display title. */
   title(): string;
+  /**
+   * Give it a title, without announcing it.
+   *
+   * The host announces: on the default chat a title is the session's and goes
+   * out as `session/titleChanged`, on a peer chat as `session/chatUpdated`,
+   * and the chat cannot tell which it is. Optional; a backend without it
+   * keeps whatever title it derives.
+   */
+  setTitle?(title: string): void;
   /** ISO 8601 timestamp of the last change. */
   modifiedAt(): string;
   /**
@@ -255,8 +272,15 @@ export interface Session {
    */
   steer?(id: string, text: string): boolean;
 
-  /** Start a turn with what the person said, optionally naming a model. */
-  begin(turnId: string, text: string, model?: Chosen): void;
+  /**
+   * Start a turn with what was said, optionally naming a model.
+   *
+   * `from` is the message's provenance when it was not typed by a person:
+   * `origin` (`{ kind: 'agent' }` for a message another session's agent
+   * sent) and `_meta` (where from, in the reference client's
+   * `vscode.chat.delegation` spelling). Absent, the message is the user's.
+   */
+  begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom): void;
   /**
    * Run the latest turn again, without adding a message.
    *
@@ -279,7 +303,7 @@ export interface Session {
    * would be the only thing that could ever send it, and nothing in a client
    * watches for a turn to end. The same `id` twice edits what is waiting.
    */
-  queue(id: string, text: string, model?: Chosen): void;
+  queue(id: string, text: string, model?: Chosen, from?: MessageFrom): void;
   /** Take one back, while it is still waiting. */
   unqueue(id: string): void;
   /**

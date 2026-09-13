@@ -1,4 +1,5 @@
 import type { HostTool } from './types/host.js';
+import { sessionTools } from './sessiontools.js';
 
 /**
  * The tools this package contributes to every session, as a host's `tools`.
@@ -6,7 +7,10 @@ import type { HostTool } from './types/host.js';
  * The protocol's `serverTools` are the *host's* own - not a backend's and not
  * a client's - and what makes one worth contributing is that the host knows
  * something the agent inside a session cannot: the other sessions running
- * beside it, and the terminals the person is watching. Both are read-only.
+ * beside it, and the terminals the person is watching. The session tools are
+ * the reference host's nine, by name and by schema (`sessiontools.ts`), so a
+ * skill written against that host works here; the two after them are this
+ * host's own, and read-only.
  *
  * ```ts
  * createHost({ path, agents, tools: hostTools() });
@@ -16,23 +20,7 @@ import type { HostTool } from './types/host.js';
  * contributes none, and its sessions report no `serverTools` at all.
  */
 export const hostTools = (): HostTool[] => [
-  {
-    definition: {
-      name: 'ahp_sessions',
-      title: 'Sessions on this host',
-      description: 'The other agent sessions running on this host, with the directories each works in. '
-        + 'Use it before touching a file to find out whether another agent is already working there.',
-      inputSchema: { type: 'object', properties: {} },
-      annotations: { title: 'Sessions on this host', readOnlyHint: true, openWorldHint: false },
-    },
-    run: (_input, at) => {
-      const others = at.sessions().filter((one) => one.uri !== at.session);
-      if (others.length === 0) return 'No other session is running on this host.';
-      return others
-        .map((one) => `${one.uri}\t${one.provider}\t${one.title}\t${one.workingDirectories.join(' ')}`)
-        .join('\n');
-    },
-  },
+  ...sessionTools(),
   {
     definition: {
       name: 'ahp_resource',

@@ -4170,7 +4170,11 @@ describe('tools the host contributes', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { serverTools?: { name: string }[] } };
     }).snapshot.state;
-    expect(state.serverTools?.map((one) => one.name)).toEqual(['ahp_sessions', 'ahp_resource', 'ahp_terminals']);
+    expect(state.serverTools?.map((one) => one.name)).toEqual([
+      'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
+      'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'ahp_resource', 'ahp_terminals',
+    ]);
 
     // A host given none contributes none, and the field is absent rather than
     // an empty list - which is the difference between "no tools" and "a host
@@ -4195,30 +4199,242 @@ describe('tools the host contributes', () => {
     }[] }>;
     // Under a name of this host's, beside whatever the settings files declared.
     expect(Object.keys(servers)).toContain('ahp');
-    const listing = servers.ahp?.tools.find((one) => one.name === 'ahp_sessions');
-    expect(listing?.description).toContain('other agent sessions');
+    const listing = servers.ahp?.tools.find((one) => one.name === 'list_sessions');
+    expect(listing?.description).toContain('List sessions');
 
     // And calling one answers about this host, which is the whole reason a
-    // tool is the host's rather than the backend's.
+    // tool is the host's rather than the backend's: the row is the catalogue's
+    // own, with the link the reference window opens.
     const answered = await listing?.handler({});
-    expect(answered?.content[0]?.text).toContain('No other session is running');
-    const host = sessionQueries().length;
-    expect(host).toBeGreaterThan(0);
-    expect(uri).toBe('ahp-session:/served');
+    const said = JSON.parse(answered?.content[0]?.text ?? '{}') as { sessions: { session: string; openLink: string; status: string }[] };
+    expect(said.sessions.map((one) => one.session)).toEqual([uri]);
+    expect(said.sessions[0]?.openLink).toBe('agent-host-session://claude/served');
+    expect(said.sessions[0]?.status).toBe('idle');
   });
 
-  it('answers about the sessions beside the one that asked', async () => {
-    const { client } = await withTools();
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/second', provider: 'claude' } });
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
-      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_sessions')?.handler({});
-    // The calling session is left out - it knows about itself - and the other
-    // one is named by the URI a client would subscribe to.
-    const text = said?.content[0]?.text ?? '';
-    expect(text).toContain('ahp-session:/served');
-    expect(text).not.toContain('ahp-session:/second');
+  /**
+   * The session tools, driven the way the model drives them.
+   *
+   * Each is the same operation a client has - a command or a dispatch - reached
+   * from inside a turn, so what is checked is that the host side actually
+   * moves: a message becomes a turn, a session appears in the catalogue, a
+   * title changes on the wire.
+   */
+  describe('the session tools', () => {
+    type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
+    const toolsOf = (index = -1): Record<string, Tool> => {
+      const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
+      return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+    };
+    // A refusal is a tool result too: the backend hands the model the message
+    // as text, marked as an error, which is how a model learns what it got wrong.
+    const call = async (name: string, input: unknown, index = -1): Promise<string> => {
+      const tool = toolsOf(index)[name];
+      if (!tool) throw new Error(`no ${name}`);
+      return (await tool.handler(input)).content[0]?.text ?? '';
+    };
+
+    it('says which session it is running in, with the row and the link', async () => {
+      const { uri } = await withTools();
+      const said = JSON.parse(await call('get_current_session', {})) as Record<string, unknown>;
+      expect(said.session).toBe(uri);
+      expect(said.openLink).toBe('agent-host-session://claude/served');
+      expect(said.status).toBe('idle');
+      expect(said.workingDirectory).toBe('file:///home/softov');
+    });
+
+    it('sends a message into another session, and it starts a turn there as the agent\'s', async () => {
+      const { client, peer: p } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/other', provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/other' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      // From the first session's tools, at the second, by its link.
+      const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
+      expect(said).toBe('Message sent (agent-host-session://claude/other).');
+      await settle();
+      const started = actions(p, chatUri).find((one) => one.action.type === 'chat/turnStarted');
+      expect(started?.action.message).toMatchObject({
+        text: 'check the makefile',
+        origin: { kind: 'agent' },
+        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served' } },
+      });
+    });
+
+    it('queues the message when the other chat is busy, and refuses its own chat', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/busy', provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/busy' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      });
+      await settle();
+      const said = await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0);
+      expect(said).toBe('Message queued (agent-host-session://claude/busy).');
+      await settle();
+      const queued = actions(p, chatUri).find((one) => one.action.type === 'chat/pendingMessageSet');
+      expect(queued?.action).toMatchObject({ kind: 'queued', message: { text: 'and then this', origin: { kind: 'agent' } } });
+
+      expect(await call('send_message', { session: uri, message: 'to myself' }, 0)).toContain('refusing to send a message to the current chat');
+      expect(await call('send_message', { session: 'ahp-session:/nobody', message: 'x' }, 0)).toContain('session must match the URI of a known session');
+    });
+
+    it('creates an independent session in a directory, titled, with its first prompt', async () => {
+      const { client, peer: p } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: '/home/softov', title: 'Port the makefile', prompt: 'port it', worktree: false,
+      });
+      expect(said).toMatch(/^New session created \(agent-host-session:\/\/claude\/[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = p.notes.find((one) => one.method === 'root/sessionAdded');
+      const summary = (added?.params as { summary?: { resource: string; title: string; workingDirectories: string[] } } | undefined)?.summary;
+      expect(summary?.title).toBe('Port the makefile');
+      expect(summary?.workingDirectories).toEqual(['file:///home/softov']);
+      // Its first turn, as the creating agent's.
+      const chat = (await client.handle({ method: 'subscribe', params: { channel: summary?.resource } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      const state = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+        snapshot: { state: { activeTurn?: { message: unknown }; turns: { message: unknown }[] } };
+      }).snapshot.state;
+      const first = state.activeTurn ?? state.turns[0];
+      expect(first?.message).toMatchObject({ text: 'port it', origin: { kind: 'agent' } });
+      // And a second session's own tools answer about both.
+      const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
+      expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
+      expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+    });
+
+    it('creates a chat in the current session for currentSession work, and refuses a workspace with it', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      const said = await call('create_session', { relationship: 'currentSession', title: 'Tests', prompt: 'write the tests' }, 0);
+      expect(said).toMatch(/^Chat created in the current session \(agent-host-session:\/\/claude\/served\?chat=[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = actions(p, uri).find((one) => one.action.type === 'session/chatAdded');
+      expect((added?.action.summary as { title?: string } | undefined)?.title).toBe('Tests');
+      expect(await call('create_session', { relationship: 'currentSession', title: 'x', prompt: 'y', workspace: '/tmp' }, 0)).toContain('only valid with relationship "independent"');
+      expect(await call('create_session', { relationship: 'sideways', title: 'x', prompt: 'y' }, 0)).toContain('relationship must be');
+    });
+
+    it('renames the calling chat, which is the session when it is the default one', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      expect(await call('rename_chat', { title: '  Kqueue   port ' })).toBe('Renamed chat to "Kqueue port".');
+      expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.action.title).toBe('Kqueue port');
+      const rows = JSON.parse(await call('list_sessions', { session: uri })) as { sessions: { title: string }[] };
+      expect(rows.sessions[0]?.title).toBe('Kqueue port');
+      expect(await call('rename_chat', { title: 'Auto', automatic: true })).toBe('Renaming chat.');
+      expect(await call('rename_chat', { title: '   ' })).toContain('title must be a non-empty string');
+    });
+
+    it('renames a peer chat as a chat, by its link', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      const made = await call('create_chat', { prompt: 'look at the tests' }, 0);
+      const link = /\((agent-host-session:[^)]+)\)/.exec(made)?.[1] as string;
+      expect(link).toContain('?chat=');
+      p.notes.length = 0;
+      expect(await call('rename_chat', { chat: link, title: 'Tests' }, 0)).toBe('Renamed chat to "Tests".');
+      const updated = actions(p, uri).find((one) => one.action.type === 'session/chatUpdated');
+      expect(updated?.action.changes).toEqual({ title: 'Tests' });
+      expect(actions(p, uri).some((one) => one.action.type === 'session/titleChanged')).toBe(false);
+    });
+
+    it('deletes another session and refuses its own', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
+      expect(await call('delete_session', { session: uri }, 0)).toContain('refusing to delete the current session');
+      expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
+        .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
+      expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
+        && (one.params as { session?: string }).session === 'ahp-session:/doomed')).toBe(true);
+      const rows = JSON.parse(await call('list_sessions', {}, 0)) as { sessions: { session: string }[] };
+      expect(rows.sessions.map((one) => one.session)).not.toContain('ahp-session:/doomed');
+    });
+
+    it('reads another chat\'s turns, cut to the detail asked for', async () => {
+      const { client, chatUri: mine } = await (async () => {
+        const made = await withTools();
+        const chat = (await made.client.handle({ method: 'subscribe', params: { channel: made.uri } }) as {
+          snapshot: { state: { defaultChat: string } };
+        }).snapshot.state.defaultChat;
+        return { ...made, chatUri: chat };
+      })();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reader', provider: 'claude' } });
+      // A turn in the first session, said and answered.
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: mine, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is in this directory' } } },
+      });
+      await settle();
+      const first = sessionQueries()[0];
+      if (!first) throw new Error('no first session');
+      first.frames.push(
+        { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Four files.' }] } },
+        { type: 'result', subtype: 'success', is_error: false, duration_ms: 4 },
+      );
+      first.wake?.();
+      first.wake = undefined;
+      await settle(8);
+      // Read from the second session's tools.
+      const said = JSON.parse(await call('get_session_context', { session: 'ahp-session:/served', detail: 'digest' })) as {
+        openLink: string; transcript: { turn: number; state: string; user?: string; assistant?: string }[];
+      };
+      expect(said.openLink).toBe('agent-host-session://claude/served');
+      expect(said.transcript).toEqual([{ turn: 1, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' }]);
+      expect(await call('get_session_context', { session: 'ahp-session:/served', detail: 'everything' })).toContain('detail must be');
+    });
+
+    it('moves the session once the turn that asked is over, and tells the agent where it is', async () => {
+      const { client, peer: p, uri, chatUri } = await (async () => {
+        const host = createHost({
+          path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+        });
+        const p_ = peer();
+        const client_ = host.accept(p_);
+        await client_.handle(hello(['0.8.0']));
+        const uri_ = 'ahp-session:/mover';
+        await client_.handle({ method: 'createSession', params: { channel: uri_, provider: 'claude' } });
+        const chat = (await client_.handle({ method: 'subscribe', params: { channel: uri_ } }) as {
+          snapshot: { state: { defaultChat: string } };
+        }).snapshot.state.defaultChat;
+        await client_.handle({ method: 'subscribe', params: { channel: chat } });
+        return { client: client_, peer: p_, uri: uri_, chatUri: chat };
+      })();
+      // Not from outside a turn: there is nothing to wait for the end of.
+      expect(await call('set_workspace', { workspaceFolder: '/tmp', isolation: false })).toContain('must run from an active chat turn');
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work in /tmp' } } },
+      });
+      await settle();
+      const said = await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false });
+      expect(said).toContain('Workspace will be set to file:///tmp after this turn ends');
+      // Nothing moved yet: the turn is still running.
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+      const moved = actions(p, uri).find((one) => one.action.type === 'session/workingDirectoryReplaced');
+      expect(moved?.action.directory).toBe('file:///tmp');
+      // Restarted there, resumed, and told so in a turn the window will not
+      // draw as somebody's request.
+      const restarted = sessionQueries().at(-1);
+      expect(restarted?.options.cwd).toBe('/tmp');
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: { 'vscode.chat.requestHiddenFromTranscript': true },
+      });
+      expect(String((notice?.action.message as { text: string }).text)).toContain('/tmp');
+    });
   });
 
   it('replaces the set whole, and tells every running session', async () => {

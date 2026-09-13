@@ -31,7 +31,7 @@ import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetState } from './types/changes.js';
-import type { Clients, Connection, Credential, Host, HostOptions, HostTool } from './types/host.js';
+import type { Clients, Connection, Credential, Host, HostOptions, HostTool, ToolCall } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -1988,6 +1988,17 @@ export function createHost(options: HostOptions): Host {
         // itself - so it has to be said here or it is never said.
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
           || action.type === 'chat/turnCancelled') operationsMoved(uri);
+        // And a move the agent asked for is made now, once its turn is over:
+        // the one moment the backend can be started again without losing
+        // anything.
+        if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
+          && moving.get(uri)?.chat === chatUri) {
+          const move = moving.get(uri) as { chat: string; directory: string; isolation: boolean };
+          moving.delete(uri);
+          void moveSession(uri, move).catch((error: unknown) => {
+            log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
       },
       /*
        * A file the agent is about to change, on its way to the changeset.
@@ -2479,18 +2490,119 @@ export function createHost(options: HostOptions): Host {
    * it. Once a turn has run there is a conversation about files in a place, and
    * the answer is fixed for good.
    */
+  /**
+   * A session gone, with everything it held.
+   *
+   * What `disposeSession` does, and what the `delete_session` tool does from
+   * inside another session: the chats closed, the terminals they claimed
+   * killed, the worktree removed if clean, the run that started it unlinked,
+   * and every client told.
+   */
+  const removeSession = (uri: string): void => {
+    const held = sessions.get(uri);
+    if (!held)
+      throw new RpcError(-32001, `No agent for session ${uri}`);
+    for (const [chatUri, chat] of held.chats) {
+      chat.close();
+      byChat.delete(chatUri);
+      drafts.delete(chatUri);
+    }
+    /*
+     * And the shells the session was holding.
+     *
+     * A terminal claimed by a session outlives nothing: the chat it
+     * belongs to is gone, so the transcript that pointed at it is gone
+     * too, and what is left is a channel in the root catalogue that
+     * nobody can reach. `!` commands are the ordinary way these
+     * accumulate - one terminal each, kept so the finished tool call
+     * points somewhere real.
+     */
+    for (const [terminalUri, terminal] of [...terminals]) {
+      const claim = terminal.claim();
+      if (claim.kind !== 'session' || claim.session !== uri) continue;
+      terminal.close();
+      terminals.delete(terminalUri);
+    }
+    dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+    /*
+     * And the worktree, unless somebody's work is still in it.
+     *
+     * The decision this feature turns on. A worktree with uncommitted
+     * changes is the one thing here a daemon cannot judge the value of:
+     * it may be an experiment nobody wanted, or the only copy of an
+     * afternoon. So a clean one goes and a dirty one stays exactly where
+     * it is, on the branch it was made on, findable with `git worktree
+     * list` - and the path is logged, because the session it belonged to
+     * is about to stop being a place to say it.
+     *
+     * Not refusing the dispose instead: a session somebody cannot close
+     * because of a file they forgot about is a session they close by
+     * killing the daemon.
+     */
+    const tree = worktrees.get(uri);
+    if (tree) {
+      worktrees.delete(uri);
+      const port = options.worktrees;
+      void (async () => {
+        if (await port?.dirty(tree.path).catch(() => true) !== false) {
+          log(`kept ${tree.path}: it has changes nobody committed`);
+          return;
+        }
+        await port?.remove(tree.repository, tree.path, tree.branch)
+          .then(() => { log(`removed ${tree.path}`); })
+          .catch((error: unknown) => {
+            log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
+          });
+      })();
+    }
+    sessions.delete(uri);
+    /*
+     * And the run that started it, which is now holding a URI that
+     * opens onto nothing.
+     *
+     * The store answers whether the set actually moved and says so
+     * through `onChanged`, which is where the action comes from - so a
+     * store that keeps its runs immutable simply changes nothing here.
+     */
+    const from = origins.get(uri);
+    if (from !== undefined) options.automations?.unlink?.(from.run, uri);
+    origins.delete(uri);
+    presence.delete(idOf(uri));
+    // And what was kept *about* it. All of these are keyed by a session
+    // that no longer exists, so anything left here is held for nobody -
+    // a daemon that runs for weeks would accumulate one of each per
+    // session anybody ever opened, and a store that writes them down
+    // would keep them for ever.
+    marks.delete(idOf(uri));
+    decided.delete(uri);
+    kept.forget(idOf(uri));
+    offered.delete(uri);
+    for (const channel of [...shown.keys()]) {
+      if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
+    }
+    activeSessionsMoved();
+    // Every other client is told, because the session was theirs too.
+    // `session`, which is the name the protocol gives it. Under
+    // `resource` a client reads `undefined` and takes nothing out, so a
+    // disposed session stayed in every catalogue until something else
+    // made that client re-read the list.
+    broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
+    log(`disposed ${uri}`);
+    
+  };
+
   const restart = async (
     uri: string,
     credentials: Record<string, string>,
-    keeping?: { additional?: string[] },
+    keeping?: { additional?: string[]; directory?: string },
   ): Promise<void> => {
     const held = sessions.get(uri);
     if (!held) return;
     const mine = decided.get(uri) ?? {};
     // The repository rather than the worktree: the choice is made against the
     // directory somebody asked for, and a worktree is only where a previous
-    // answer put it.
-    const from = worktrees.get(uri)?.repository ?? held.workingDirectory;
+    // answer put it. Or the directory a move asked for, which is neither.
+    const from = keeping?.directory ?? worktrees.get(uri)?.repository ?? held.workingDirectory;
     const was = worktrees.get(uri);
     if (was) {
       worktrees.delete(uri);
@@ -2564,6 +2676,34 @@ export function createHost(options: HostOptions): Host {
      * directory at all.
      */
     if (to !== undefined) dispatch(uri, { type: 'session/workingDirectoryReplaced', directory: `file://${to}` });
+  };
+
+  /**
+   * The move `set_workspace` asked for, once the turn that asked is over.
+   *
+   * The session is restarted where it was asked to go, resumed so it is the
+   * same conversation, with a worktree made from the directory when isolation
+   * was asked for. Then a notice turn tells the agent where it now is and to
+   * carry on, marked the way the reference client marks its own host notices
+   * so the window draws the answer and not the request.
+   */
+  const moveSession = async (uri: string, move: { chat: string; directory: string; isolation: boolean }): Promise<void> => {
+    const held = sessions.get(uri);
+    if (!held) return;
+    decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
+    offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
+    await restart(uri, {}, { additional: [], directory: move.directory });
+    const lead = byChat.get(chatUriFor(uri));
+    const now = sessions.get(uri)?.workingDirectory ?? move.directory;
+    lead?.chat.begin(
+      crypto.randomUUID(),
+      `The workspace is now ${now}${move.isolation ? ', an isolated worktree' : ''}. Continue the task you were working on there.`,
+      undefined,
+      {
+        origin: { kind: 'systemNotification' },
+        _meta: { 'vscode.chat.requestHiddenFromTranscript': true, 'vscode.chat.workspaceContinuation': true },
+      },
+    );
   };
 
   /**
@@ -2811,39 +2951,162 @@ export function createHost(options: HostOptions): Host {
     }
   };
 
+  /** The chat a tool means in a session: the one with that id, or the default. */
+  const chatMeant = (held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined => {
+    if (chatId === undefined) {
+      const lead = leadOf(held);
+      return lead === undefined ? undefined : { uri: held.defaultChat, chat: lead };
+    }
+    for (const [at, chat] of held.chats) {
+      if (idOf(at) === chatId) return { uri: at, chat };
+    }
+    return undefined;
+  };
+
+  /**
+   * A move a session's agent asked for, waiting for its turn to end.
+   *
+   * `set_workspace` is the one tool that cannot act when it is called: the
+   * agent is restarted in the new directory, and a restart mid-turn is a turn
+   * that never finishes. So the request is held here and acted on from the
+   * `emit` hook the moment the chat says its turn is over.
+   */
+  const moving = new Map<string, { chat: string; directory: string; isolation: boolean }>();
+
+  /**
+   * Give a chat a title, and say so.
+   *
+   * The session's title is its default chat's and goes out as
+   * `session/titleChanged`; a peer chat's is its own and goes out as
+   * `session/chatUpdated`. A client renaming a row and an agent calling
+   * `rename_chat` come to the same place.
+   */
+  const renameChat = (uri: string, chatUri: string, title: string): void => {
+    const held = sessions.get(uri);
+    const found = held?.chats.get(chatUri);
+    if (held === undefined || found === undefined) throw new Error(`${chatUri} is not a chat this host is running`);
+    found.setTitle?.(title);
+    if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
+    else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
+    summaryMoved(uri);
+  };
+
+  /**
+   * What a host tool sees of this host, from inside one chat.
+   *
+   * Every operation here is one a client already has - a command, or an
+   * action a client may dispatch - reached from a turn rather than a socket.
+   * The catalogue is `listing()`, which is what `listSessions` answers; a
+   * message is `begin` or `queue` on the chat, which is what `chat/turnStarted`
+   * and `chat/pendingMessageSet` come to; a session is `openSession`, which is
+   * what `createSession` comes to. Nothing is reachable from here that is not
+   * reachable from a client, and the reverse is nearly true.
+   */
+  const toolContext = (uri: string, chatUri: string): ToolCall => ({
+    session: uri,
+    chat: chatUri,
+    turn: () => {
+      const chat = byChat.get(chatUri)?.chat;
+      const active = chat === undefined ? undefined : (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+      return typeof active?.id === 'string' ? active.id : undefined;
+    },
+    sessions: () => listing(),
+    chats: (session) => {
+      const held = sessions.get(heldAs(session));
+      if (!held) return [];
+      const rows = [...held.chats].map(([at, chat]) => ({ resource: at, title: chat.title() }));
+      // The default first, since that is the one a link without a chat opens.
+      rows.sort((a_, b_) => Number(b_.resource === held.defaultChat) - Number(a_.resource === held.defaultChat));
+      return rows;
+    },
+    models: () => [...learned].flatMap(([provider, known]) => known.models.map((model) => ({
+      id: model.id, name: model.name, provider,
+    }))),
+    context: async (session, chatId) => {
+      const held = sessions.get(heldAs(session));
+      const found = held === undefined ? undefined : chatMeant(held, chatId);
+      if (found === undefined) return undefined;
+      const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
+      return {
+        turns: Array.isArray(state.turns) ? state.turns as Bag[] : [],
+        ...(typeof state.activeTurn === 'object' && state.activeTurn !== null ? { activeTurn: state.activeTurn as Bag } : {}),
+        hasMoreHistory: state.turnsNextCursor !== undefined,
+      };
+    },
+    send: async (session, chatId, text, from) => {
+      const held = sessions.get(heldAs(session));
+      const found = held === undefined ? undefined : chatMeant(held, chatId);
+      if (found === undefined) throw new Error(`${session} is not a session this host is running`);
+      const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
+      const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
+        || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
+      if (busy) {
+        found.chat.queue(crypto.randomUUID(), text, undefined, from);
+        return 'queued';
+      }
+      found.chat.begin(crypto.randomUUID(), text, undefined, from);
+      return 'sent';
+    },
+    create: async (asked) => {
+      const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? first.provider;
+      const made = `ahp-session:/${crypto.randomUUID()}`;
+      const config: Record<string, unknown> = {
+        ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
+        ...(asked.model !== undefined ? { model: asked.model } : {}),
+      };
+      // The same steps `createSession` takes for a client, in the same order:
+      // the tree before anything runs in it, the host's keys kept apart from
+      // the backend's.
+      const where = await isolated(made, config, asked.workingDirectory);
+      decided.set(made, mineOf(config));
+      offered.set(made, (await isolating(asked.workingDirectory, asked.isolation)).schema);
+      openSession(made, provider, backendsOwn(config), where, undefined, undefined, undefined, asked.title);
+      const lead = byChat.get(chatUriFor(made));
+      if (lead === undefined) throw new Error(`${made} did not start`);
+      lead.chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
+      return { session: made, chat: chatUriFor(made) };
+    },
+    createChat: async (session, asked) => {
+      const at = heldAs(session);
+      const held = sessions.get(at);
+      if (!held) throw new Error(`${session} is not a session this host is running`);
+      const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
+      const chat = spawn(held.agent, at, chatUri, held.config, undefined, held.workingDirectory, undefined, held.additional);
+      log(`opened ${chatUri} in ${at}`);
+      if (asked.title !== undefined) chat.setTitle?.(asked.title);
+      dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
+      chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
+      return { chat: chatUri };
+    },
+    rename: (session, chat, title) => { renameChat(heldAs(session), chat, title); },
+    remove: async (session) => { removeSession(heldAs(session)); },
+    setWorkspace: (directory, isolation) => {
+      moving.set(uri, { chat: chatUri, directory: directory.replace(/^file:\/\//, ''), isolation });
+    },
+    terminals: () => [...terminals.values()].map((held) => ({
+      uri: held.uri,
+      title: held.title(),
+      cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
+      running: held.exitCode() === undefined,
+    })),
+    read: async (asked) => {
+      // The client that published it, if one did - that is the only thing
+      // that can read it - and this host's own store otherwise.
+      const owner = ownerOf(asked);
+      const answer = owner === undefined
+        ? await need(options.resources, 'resourceRead').read(asked, browsable())
+        : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
+      const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
+        data?: unknown; encoding?: unknown;
+      };
+      const data = String(held.data ?? '');
+      return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
+    },
+  });
+
   const boundTools = (uri: string, chatUri: string): BoundTool[] => [...clientTools(uri), ...contributing.map((one): BoundTool => ({
     definition: one.definition,
-    run: (input: Record<string, unknown>) => one.run(input, {
-      session: uri,
-      chat: chatUri,
-      sessions: () => [...sessions].map(([at, held]) => ({
-        uri: at,
-        provider: held.agent.provider,
-        title: held.chats.get(held.defaultChat)?.title() ?? at,
-        workingDirectories: [held.workingDirectory, ...(held.additional ?? [])]
-          .filter((one_): one_ is string => one_ !== undefined)
-          .map((one_) => `file://${one_}`),
-      })),
-      terminals: () => [...terminals.values()].map((held) => ({
-        uri: held.uri,
-        title: held.title(),
-        cwd: String((held.state() as Record<string, unknown>).cwd ?? ''),
-        running: held.exitCode() === undefined,
-      })),
-      read: async (asked) => {
-        // The client that published it, if one did - that is the only thing
-        // that can read it - and this host's own store otherwise.
-        const owner = ownerOf(asked);
-        const answer = owner === undefined
-          ? await need(options.resources, 'resourceRead').read(asked, browsable())
-          : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
-        const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
-          data?: unknown; encoding?: unknown;
-        };
-        const data = String(held.data ?? '');
-        return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
-      },
-    }),
+    run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
   }))];
 
   /**
@@ -3296,6 +3559,7 @@ export function createHost(options: HostOptions): Host {
     origin?: { kind: 'automation'; automation: string; run: string },
     credentials?: Record<string, string>,
     additional?: string[],
+    title?: string,
   ): void => {
     named(uri, 'session');
     if (sessions.has(uri))
@@ -3304,7 +3568,11 @@ export function createHost(options: HostOptions): Host {
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
     try {
-      spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional);
+      const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional);
+      // Named before it is announced, when the maker had a name for it: a
+      // row that appears as "New session" and is renamed a moment later is
+      // two rows to a client that lists once.
+      if (title !== undefined) lead.setTitle?.(title);
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -4762,96 +5030,7 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         disposeSession: async (params) => {
-          const uri = String(params.channel ?? '');
-          const held = sessions.get(uri);
-          if (!held)
-            throw new RpcError(-32001, `No agent for session ${uri}`);
-          for (const [chatUri, chat] of held.chats) {
-            chat.close();
-            byChat.delete(chatUri);
-            drafts.delete(chatUri);
-          }
-          /*
-           * And the shells the session was holding.
-           *
-           * A terminal claimed by a session outlives nothing: the chat it
-           * belongs to is gone, so the transcript that pointed at it is gone
-           * too, and what is left is a channel in the root catalogue that
-           * nobody can reach. `!` commands are the ordinary way these
-           * accumulate - one terminal each, kept so the finished tool call
-           * points somewhere real.
-           */
-          for (const [terminalUri, terminal] of [...terminals]) {
-            const claim = terminal.claim();
-            if (claim.kind !== 'session' || claim.session !== uri) continue;
-            terminal.close();
-            terminals.delete(terminalUri);
-          }
-          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
-          /*
-           * And the worktree, unless somebody's work is still in it.
-           *
-           * The decision this feature turns on. A worktree with uncommitted
-           * changes is the one thing here a daemon cannot judge the value of:
-           * it may be an experiment nobody wanted, or the only copy of an
-           * afternoon. So a clean one goes and a dirty one stays exactly where
-           * it is, on the branch it was made on, findable with `git worktree
-           * list` - and the path is logged, because the session it belonged to
-           * is about to stop being a place to say it.
-           *
-           * Not refusing the dispose instead: a session somebody cannot close
-           * because of a file they forgot about is a session they close by
-           * killing the daemon.
-           */
-          const tree = worktrees.get(uri);
-          if (tree) {
-            worktrees.delete(uri);
-            const port = options.worktrees;
-            void (async () => {
-              if (await port?.dirty(tree.path).catch(() => true) !== false) {
-                log(`kept ${tree.path}: it has changes nobody committed`);
-                return;
-              }
-              await port?.remove(tree.repository, tree.path, tree.branch)
-                .then(() => { log(`removed ${tree.path}`); })
-                .catch((error: unknown) => {
-                  log(`kept ${tree.path}: ${error instanceof Error ? error.message : String(error)}`);
-                });
-            })();
-          }
-          sessions.delete(uri);
-          /*
-           * And the run that started it, which is now holding a URI that
-           * opens onto nothing.
-           *
-           * The store answers whether the set actually moved and says so
-           * through `onChanged`, which is where the action comes from - so a
-           * store that keeps its runs immutable simply changes nothing here.
-           */
-          const from = origins.get(uri);
-          if (from !== undefined) options.automations?.unlink?.(from.run, uri);
-          origins.delete(uri);
-          presence.delete(idOf(uri));
-          // And what was kept *about* it. All of these are keyed by a session
-          // that no longer exists, so anything left here is held for nobody -
-          // a daemon that runs for weeks would accumulate one of each per
-          // session anybody ever opened, and a store that writes them down
-          // would keep them for ever.
-          marks.delete(idOf(uri));
-          decided.delete(uri);
-          kept.forget(idOf(uri));
-          offered.delete(uri);
-          for (const channel of [...shown.keys()]) {
-            if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
-          }
-          activeSessionsMoved();
-          // Every other client is told, because the session was theirs too.
-          // `session`, which is the name the protocol gives it. Under
-          // `resource` a client reads `undefined` and takes nothing out, so a
-          // disposed session stayed in every catalogue until something else
-          // made that client re-read the list.
-          broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
-          log(`disposed ${uri}`);
+          removeSession(String(params.channel ?? ''));
           return {};
         },
         /**

@@ -16,7 +16,7 @@ export type { Bag } from './common.js';
 export type { OnWire, WireTurn } from './wire.js';
 export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
-export type { Emit, SessionOptions, Session, Ran, Chosen } from './session.js';
+export type { Emit, SessionOptions, Session, Ran, Chosen, MessageFrom } from './session.js';
 export type { HostOptions, Connection, Credential, Host } from './host.js';
 export type { Page } from './paging.js';
 export type { Connected, OnConnect, Runtime, Listener, Tap } from './listen.js';

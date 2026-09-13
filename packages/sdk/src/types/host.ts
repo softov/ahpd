@@ -9,6 +9,8 @@ import type { Worktrees } from './worktrees.js';
 import type { AutomationStore } from './automations.js';
 import type { SessionStore } from './sessions.js';
 import type { Peer, Request } from './rpc.js';
+import type { Summary } from './catalog.js';
+import type { Bag } from './common.js';
 
 /**
  * What a host can say about a directory beyond its path.
@@ -242,15 +244,84 @@ export interface HostTool {
  *
  * The reason a tool is the host's rather than the backend's: an agent inside
  * a session cannot see the sessions beside it or the terminals a person is
- * watching, and the host can. A tool that wants neither ignores both.
+ * watching, and the host can. A tool that wants none of it ignores it.
+ *
+ * The session half is what VS Code's host gives its agents under the same
+ * names (`serverToolNames.ts`): a catalogue with the same rows a client
+ * lists, a chat's turns, a message into another chat, a session or chat made
+ * from here, a title, a deletion, a move. Each is the same operation a
+ * client's command or dispatch performs, reached from inside a turn.
  */
 export interface ToolCall {
   /** The session channel URI the call was made in. */
   session: string;
   /** The chat channel URI it was made from. */
   chat: string;
-  /** Every session this host is running, including the calling one. */
-  sessions(): { uri: string; provider: string; title: string; workingDirectories: string[] }[];
+  /** The turn the call is running in, when the chat has one running. */
+  turn(): string | undefined;
+  /**
+   * Every session this host knows, running or on disk, the calling one included.
+   *
+   * The catalogue's own rows, as `listSessions` answers them, so a tool says
+   * about a session exactly what a client sees of it: status bits, activity,
+   * directories, project, changes, and the `git` and `github` facts in `_meta`.
+   */
+  sessions(): Promise<Summary[]>;
+  /** The chats of a running session, the default first. Empty for one that is not running. */
+  chats(session: string): { resource: string; title: string }[];
+  /** Models any session here can run on, each with the provider it belongs to. */
+  models(): { id: string; name: string; provider: string }[];
+  /**
+   * A chat's conversation, as its channel snapshot carries it.
+   *
+   * The newest page of turns, the running one, and whether older ones exist
+   * behind the page. Nothing for a session that is not running: a transcript
+   * on disk is opened by resuming, and a tool reading one would start an agent
+   * to answer a question about the past.
+   */
+  context(session: string, chatId?: string): Promise<{ turns: Bag[]; activeTurn?: Bag; hasMoreHistory: boolean } | undefined>;
+  /**
+   * A message into another chat, as a turn of its own.
+   *
+   * Started at once when nothing is running there, queued behind the running
+   * turn when something is - the queue a client sees and can reorder. `from`
+   * says who sent it (`origin.kind: agent`) and where from (`_meta`), and
+   * rides on the message so a client can draw it as delegated rather than
+   * typed. Answers which of the two happened.
+   */
+  send(session: string, chatId: string | undefined, text: string, from: Bag): Promise<'sent' | 'queued'>;
+  /**
+   * A new session, started with its first message.
+   *
+   * `isolation` decides a worktree the way a client's `config.isolation`
+   * does; absent, the host's default for the directory. `model` names the
+   * provider as well as the model. Answers the session's URI and its default
+   * chat's.
+   */
+  create(options: {
+    workingDirectory: string;
+    provider?: string;
+    model?: string;
+    isolation?: 'worktree' | 'folder';
+    title: string;
+    prompt: string;
+    from: Bag;
+  }): Promise<{ session: string; chat: string }>;
+  /** A second chat in a running session, started with its first message. */
+  createChat(session: string, options: { title?: string; model?: string; prompt: string; from: Bag }): Promise<{ chat: string }>;
+  /** A chat's title. On the default chat it is the session's title too. */
+  rename(session: string, chat: string, title: string): void;
+  /** A session gone, with its chats, terminals and a clean worktree. */
+  remove(session: string): Promise<void>;
+  /**
+   * Move the calling session to a directory once the running turn ends.
+   *
+   * `isolation` asks for a worktree made from the directory rather than the
+   * directory itself. Held until the turn is over, because the agent is
+   * restarted in the new place and a restart mid-turn would lose the turn;
+   * the host then continues the conversation there with a notice turn.
+   */
+  setWorkspace(directory: string, isolation: boolean): void;
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
   /**
