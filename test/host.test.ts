@@ -3591,6 +3591,102 @@ describe('authenticating', () => {
     expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
   });
 
+  it('refuses a lifetime that is not a positive integer of seconds', async () => {
+    const { client } = await opened();
+    for (const expiresIn of [0, -1, 1.5, '3600', null]) {
+      // A bad parameter rather than a token with no expiry: a client that
+      // sent `0` meant something, and "forever" is the opposite of it.
+      await expect(client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-t', expiresIn },
+      })).rejects.toMatchObject({ code: -32602 });
+    }
+  });
+
+  it('tells the client when its token runs out, and stops spending it', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = serving(DIR);
+      const wire = peer();
+      const client = host.accept(wire);
+      await client.handle(hello(['0.9.0']));
+      await client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-short', expiresIn: 60 },
+      });
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(wire.notes.filter((one) => one.method === 'auth/required')).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      // The protocol's own word for it, to the connection that pushed the
+      // token and no other, carrying the record a client signs in against
+      // rather than the bare identifier.
+      expect(wire.notes.filter((one) => one.method === 'auth/required')).toEqual([{
+        method: 'auth/required',
+        params: {
+          channel: 'ahp-root://',
+          resource: expect.objectContaining({ resource: ANTHROPIC }),
+          reason: 'expired',
+        },
+      }]);
+
+      await client.handle({
+        method: 'createSession',
+        params: { channel: 'ahp-session:/expired', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      // Not spent: a session started on a credential its client was just told
+      // is gone would fail saying so, later and less clearly.
+      expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forgets the clock when the token is replaced or withdrawn', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = serving(DIR);
+      const wire = peer();
+      const client = host.accept(wire);
+      await client.handle(hello(['0.9.0']));
+      await client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-first', expiresIn: 60 },
+      });
+      // Replaced by one with no expiry the client knows of: the old clock
+      // must not take the new token away when it strikes.
+      await client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-second' },
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(wire.notes.filter((one) => one.method === 'auth/required')).toHaveLength(0);
+      await client.handle({
+        method: 'createSession',
+        params: { channel: 'ahp-session:/kept', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      expect((sessionQueries().at(-1)?.options.env as Record<string, string> | undefined)?.ANTHROPIC_API_KEY).toBe('sk-second');
+
+      // And withdrawn: nothing to expire, so nothing is said.
+      await client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-third', expiresIn: 30 },
+      });
+      await client.handle({
+        method: 'authenticate',
+        params: { channel: 'ahp-root://', resource: ANTHROPIC, token: '' },
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(wire.notes.filter((one) => one.method === 'auth/required')).toHaveLength(0);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('still refuses a withdrawal for a resource it never advertised', async () => {
     const { client } = await opened();
     await expect(client.handle({

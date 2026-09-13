@@ -72,7 +72,7 @@ wrong constant into a connection that never opens.
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
 | `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
 | `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message). |
-| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. An empty token takes it back, which is the protocol's word for signing out. See [Authentication](#authentication). |
+| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. An empty token takes it back, which is the protocol's word for signing out; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. See [Authentication](#authentication). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate. A result may carry a `followUp`. |
@@ -132,7 +132,7 @@ handed them again as if it had not.
 | `root/sessionRemoved` | ✅ | Carries `session`. |
 | `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. |
 | `root/progress` | ✅ | Only when the request carried a `progressToken`, and only to the client that sent it: the token is that request's and means nothing to anybody else. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree on a large repository is seconds somebody otherwise waits through with nothing on screen. |
-| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, once per resource. Expiry of a token this host *accepted* is still not reported: nothing here verifies one, so it never learns that one has gone stale. |
+| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does: nothing here verifies a token, but `authenticate` now carries `expiresIn`, so when one goes stale is a fact this host holds. |
 | `otlp/exportLogs` | ✅ | `ahp-otlp://logs/{level}`, a template a client expands before subscribing - a literal URI would mean every subscriber got every line. Carries an OTLP/JSON `ExportLogsServiceRequest` verbatim, the same lines the daemon writes to stdout. |
 | `otlp/exportTraces` | ✅ | `ahp-otlp://traces`, a literal channel: the protocol defines template variables for `logs` alone, and one of this host's invention would be a channel nobody can expand. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, joined by `traceId` and sent as each ends. |
 | `otlp/exportMetrics` | ✅ | `ahp-otlp://metrics`. Cumulative sums against the process start, so a collector arriving late reads totals rather than a difference it missed the beginning of. |
@@ -626,6 +626,16 @@ The next session that client asks for starts on nothing, the way it would for
 a client that never pushed. What is already running keeps what it was started
 with: a token is spent at start, into the harness's environment, and there is
 no way to reach in and take it back out.
+
+A token may come with `expiresIn`, the seconds it has left - a positive
+integer, already less the time since the authorization server answered, which
+the protocol puts on the client to subtract. This host keeps the moment it
+runs out beside the token. A session asked for after that moment starts on
+nothing, and the connection that pushed the token is told `auth/required` with
+`reason: 'expired'` when it does, carrying the resource's whole RFC 9728 record
+so the client knows where to sign in again. Only that connection: the token
+was theirs. A token pushed without an expiry has none, and stays until it is
+replaced, withdrawn, or the connection goes.
 
 An automation firing at nine in the morning has no connection behind it and runs
 on the daemon's own credentials.

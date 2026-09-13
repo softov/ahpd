@@ -31,7 +31,7 @@ import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetState } from './types/changes.js';
-import type { Clients, Connection, Host, HostOptions, HostTool } from './types/host.js';
+import type { Clients, Connection, Credential, Host, HostOptions, HostTool } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -3221,6 +3221,37 @@ export function createHost(options: HostOptions): Host {
     }
     return out;
   };
+  /**
+   * The whole RFC 9728 record for a resource, as a backend advertised it.
+   *
+   * `auth/required` carries the record rather than the identifier, so a
+   * client knows where to go and sign in. One this host never advertised -
+   * an MCP server's, named on a session's own state - is answered with the
+   * identifier alone, which is the record's one required field.
+   */
+  const metadataFor = (resource: string): Bag => {
+    for (const agent of agents.values()) {
+      for (const one of agent.protectedResources ?? []) {
+        if ((one as { resource?: unknown }).resource === resource) return one as Bag;
+      }
+    }
+    return { resource };
+  };
+  /**
+   * Where a requirement for that resource is visible.
+   *
+   * A backend's own resource is the root's business; an MCP server's is the
+   * session that server belongs to, which is where its `authRequired` state
+   * is drawn.
+   */
+  const channelAwaiting = (resource: string): string => {
+    for (const [uri, held] of sessions) {
+      for (const chat of held.chats.values()) {
+        if (chat.awaiting?.().includes(resource) === true) return uri;
+      }
+    }
+    return ROOT;
+  };
 
   /**
    * Start a session.
@@ -3338,9 +3369,9 @@ export function createHost(options: HostOptions): Host {
     },
     connections: () => connections.size,
     accept(peer: Peer) {
-      const connection = {
+      const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(), grants: new Set<string>(),
-        tokens: new Map<string, string>(), aliases: new Map<string, string>(),
+        tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
       };
       /**
        * Whether this connection has been introduced.
@@ -3366,10 +3397,54 @@ export function createHost(options: HostOptions): Host {
         for (const one of agent?.protectedResources ?? []) {
           const id = (one as { resource?: unknown }).resource;
           if (typeof id !== 'string') continue;
-          const token = connection.tokens.get(id);
-          if (token !== undefined) out[id] = token;
+          const held = connection.tokens.get(id);
+          // Not one that has run out. The timer below takes it away at the
+          // moment it expires, but a session asked for in the same tick would
+          // still find it here, and would start on a credential the client
+          // was about to be told is gone.
+          if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) out[id] = held.token;
         }
         return out;
+      };
+      /**
+       * When each token runs out, so the client that pushed it is told.
+       *
+       * The protocol has a word for this - `auth/required` with
+       * `reason: 'expired'` - and until `expiresIn` arrived on `authenticate`
+       * this host had no way to earn it: nothing here verifies a token, so it
+       * never learned that one had gone stale. Now the client says how long
+       * it has, and the moment it runs out is a fact this host holds alone.
+       * Said to that connection and no other, because the token was theirs.
+       *
+       * `setTimeout` takes at most 2^31-1 milliseconds, a little under
+       * twenty-five days; a token good for longer is checked again at that
+       * boundary rather than fired early.
+       */
+      const expiring = new Map<string, ReturnType<typeof setTimeout>>();
+      const LONGEST = 2 ** 31 - 1;
+      const expire = (resource: string): void => {
+        const held = connection.tokens.get(resource);
+        if (held?.expiresAt === undefined) return;
+        const left = held.expiresAt - Date.now();
+        if (left > 0) {
+          expiring.set(resource, setTimeout(() => expire(resource), Math.min(left, LONGEST)));
+          expiring.get(resource)?.unref?.();
+          return;
+        }
+        expiring.delete(resource);
+        connection.tokens.delete(resource);
+        log(`${connection.clientId || 'a client'}'s token for ${resource} expired`);
+        connection.peer.notify('auth/required', {
+          channel: channelAwaiting(resource),
+          resource: metadataFor(resource),
+          reason: 'expired',
+        });
+      };
+      /** Stop watching a token's clock: it was replaced, revoked, or the client left. */
+      const forgetExpiry = (resource: string): void => {
+        const timer = expiring.get(resource);
+        if (timer !== undefined) clearTimeout(timer);
+        expiring.delete(resource);
       };
       connections.add(connection);
       /**
@@ -4103,8 +4178,22 @@ export function createHost(options: HostOptions): Host {
            */
           if (token === '') {
             const had = connection.tokens.delete(resource);
+            forgetExpiry(resource);
             log(`${connection.clientId || 'a client'} ${had ? 'revoked' : 'had no'} token for ${resource}`);
             return {};
+          }
+          /*
+           * How long it is good for, if the client knows.
+           *
+           * Seconds, a positive integer, already less the time since the
+           * authorization server answered - the protocol puts the subtraction
+           * on the client. Anything else is a bad parameter rather than a
+           * token with no expiry: a client that sent `0` or `-1` meant
+           * something, and taking it as "forever" is the opposite of it.
+           */
+          const expiresIn = params.expiresIn;
+          if (expiresIn !== undefined && !(typeof expiresIn === 'number' && Number.isInteger(expiresIn) && expiresIn > 0)) {
+            throw new RpcError(-32602, 'expiresIn must be a positive integer of seconds');
           }
           /*
            * Applied where it belongs, rather than only remembered.
@@ -4115,8 +4204,13 @@ export function createHost(options: HostOptions): Host {
            * that were waiting for it.
            */
           for (const chat of waiting) void chat.authenticated?.(resource, token);
-          connection.tokens.set(resource, token);
-          log(`${connection.clientId || 'a client'} authenticated for ${resource}`);
+          forgetExpiry(resource);
+          connection.tokens.set(resource, {
+            token,
+            ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
+          });
+          if (expiresIn !== undefined) expire(resource);
+          log(`${connection.clientId || 'a client'} authenticated for ${resource}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
           return {};
         },
         /** A page of what one automation has done, newest first. */
@@ -5941,6 +6035,8 @@ export function createHost(options: HostOptions): Host {
         close() {
           const was = [...connection.watching];
           connections.delete(connection);
+          // The tokens went with the connection; so do their clocks.
+          for (const resource of [...expiring.keys()]) forgetExpiry(resource);
           // And the watches it was keeping for other clients: the channel was
           // its to report on, and with it gone nothing ever will again.
           for (const [channel, away] of [...relayed]) {

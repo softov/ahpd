@@ -264,6 +264,21 @@ export interface ToolCall {
   read(uri: string): Promise<string>;
 }
 
+/**
+ * A token a client pushed, and how long it is good for.
+ *
+ * `expiresAt` is a wall-clock millisecond, from the `expiresIn` the client
+ * sent with it; absent when the client sent none, which the protocol allows
+ * when the authorization server named no expiry. A token past it is not spent
+ * on a new session, and the client that pushed it is told `auth/required`
+ * with `reason: 'expired'` rather than left to find out from a session that
+ * failed to start.
+ */
+export interface Credential {
+  token: string;
+  expiresAt?: number;
+}
+
 /** One connected client and what it is watching. */
 export interface Connection {
   /** Where to write messages for this client. */
@@ -298,7 +313,7 @@ export interface Connection {
    * none: it is the host's own work rather than any client's, and it runs on
    * the credentials the daemon was started with.
    */
-  tokens: Map<string, string>;
+  tokens: Map<string, Credential>;
   /**
    * Channels this client named in a shape of its own, by the channel they mean.
    *
