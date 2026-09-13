@@ -1538,6 +1538,35 @@ describe('what the harness offers', () => {
      */
     expect(found.items.map((one) => one.insertText).sort()).toEqual(['/compact', '/writing']);
     expect(found.items.map((one) => one.insertText)).not.toContain('/internal');
+    // And said to be a skill, where it is one. The reference client keeps a
+    // runtime skill in an automation's text only when the flag is there,
+    // and drops it otherwise as a command it cannot find a file for. `true`
+    // or absent, which is how it is read.
+    const meta = Object.fromEntries(found.items.map((one) => [one.insertText, (one.attachment._meta as Record<string, unknown>).isSkill]));
+    expect(meta).toEqual({ '/compact': undefined, '/writing': true });
+  });
+
+  it('knows a skill from a command on the harness-wide list too', async () => {
+    sdk.init = {
+      models: [],
+      commands: [
+        { name: 'compact', description: 'Compact the conversation' },
+        { name: 'writing', description: 'How to write' },
+      ],
+      agents: [],
+    };
+    sdk.skills.push({ name: 'writing', description: 'How to write' });
+    // The root channel, with no session to ask: the probe's flat command
+    // list cannot tell a skill from a command, but its customizations can.
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    await settle(8);
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-root://', kind: 'userMessage', text: '/', offset: 1, provider: 'claude' },
+    }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
+    const meta = Object.fromEntries(found.items.map((one) => [one.insertText, (one.attachment._meta as Record<string, unknown>).isSkill]));
+    expect(meta).toEqual({ '/compact': undefined, '/writing': true });
   });
 
   it('tells the client that a slash is worth asking about', async () => {

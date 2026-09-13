@@ -3904,7 +3904,30 @@ export function createHost(options: HostOptions): Host {
             name: String(entry.name),
             description: typeof entry.description === 'string' ? entry.description : undefined,
             argumentHint: typeof entry.argumentHint === 'string' ? entry.argumentHint : undefined,
+            isSkill: entry.type === 'skill',
           }));
+          /*
+           * Which of the backend-wide commands are skills.
+           *
+           * The probe's flat command list cannot say - the CLI reports a
+           * skill behind a slash as a command like any other - but its
+           * customizations can, and a skill is a leaf of one of them. Read
+           * once per answer rather than per item.
+           */
+          const skillsOf = (provider: string): Set<string> => {
+            const out = new Set<string>();
+            for (const entry of about(provider).seeds) {
+              const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
+              for (const leaf of children.length > 0 ? children : [entry]) {
+                if (leaf.type === 'skill' && typeof leaf.name === 'string') out.add(leaf.name);
+              }
+            }
+            return out;
+          };
+          const skilled = (provider: string) => {
+            const skills = skillsOf(provider);
+            return about(provider).commands.map((command) => ({ ...command, isSkill: skills.has(command.name) }));
+          };
           /*
            * ...but an empty list means *not known yet*, not *none*.
            *
@@ -3920,8 +3943,8 @@ export function createHost(options: HostOptions): Host {
            */
           const named = String(params.provider ?? '');
           const wide = named !== '' && agents.has(named)
-            ? about(named).commands
-            : [...agents.keys()].flatMap((provider) => about(provider).commands);
+            ? skilled(named)
+            : [...agents.keys()].flatMap((provider) => skilled(provider));
           const offered = own.length > 0 ? own : wide;
           const matches = offered
             .filter((command) => command.name.toLowerCase().includes(typed))
@@ -3970,6 +3993,11 @@ export function createHost(options: HostOptions): Host {
                  */
                 _meta: {
                   command: command.name,
+                  // A skill, said so: the reference client keeps a runtime
+                  // skill in an automation's text only when the flag is
+                  // there, and drops it as a command it cannot find a file
+                  // for otherwise. `true` or absent, the way it is read.
+                  ...(command.isSkill ? { isSkill: true } : {}),
                   ...(command.description ? { description: command.description } : {}),
                   ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
                 },
