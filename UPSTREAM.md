@@ -4,6 +4,39 @@ What VS Code's agent host changed since this host was last read against it, and 
 
 How a pass is made is in [REFERENCE.md](REFERENCE.md). The short of it: `git -C /github/externals/vscode fetch --depth=200 origin main && git merge --ff-only origin/main`, then `git log <last>..HEAD -- src/vs/platform/agentHost`, reading `common/state/protocol/` first because that is the wire, then `node/claude/`, `node/protocolServerHandler.ts`, and the workbench client under `src/vs/workbench/contrib/chat/browser/agentSessions/agentHost`, which is what VS Code *sends* to a host. The `.md` files were reflowed to one-line paragraphs upstream, so read them with `--word-diff`.
 
+## Pass 3 - 2026-09-13, the "not taken" list re-evaluated
+
+Same revisions as Pass 2. The list below was Pass 2's "Read and not taken", re-read with a different question: not "does the protocol require it" but "does VS Code's agent window draw or offer it from a host". Softov works in that window with this host behind it, so what the window can do from a host is what this host should provide, under the names VS Code uses, so that prompts and skills written for the reference host work here unchanged. The order is the order of work: the tap first, because every item after it is checked against a capture from a real window rather than against source read by eye.
+
+### Seeing the wire
+
+- [ ] **`--wire <file>` on `serve` writes every frame, both directions, as JSONL.** One line per frame: `{ "at": <ISO time>, "dir": "in" | "out", "peer": <connection number>, "frame": <the JSON-RPC message as sent> }`. `tools/validate.mjs` reads the wrapped line as well as the bare frame it reads today, so a capture from a running daemon goes straight through the strict schema. The same format is what `ahpc --wire` and advisor's tap write, so one reader serves all three.
+
+### The tools an agent gets from its host
+
+VS Code's host gives the agent inside a session tools for acting on the host (`serverToolNames.ts`, `node/shared/sessionServerTools.ts`). This host had three of its own, all read-only. The VS Code set is taken whole, with its names and input schemas, so a skill that calls `send_message` works on either host. `ahp_sessions` is retired into `list_sessions`; `ahp_resource` and `ahp_terminals` stay, since VS Code has no equivalent and they are not in the way.
+
+- [ ] **`list_sessions`, `get_current_session`, `get_session_context`.** The read side. `list_sessions` with VS Code's filters (`session`, `status`, `workspace`, `withChanges`, `unread`, `withPullRequest`, `includeArchived`, `createdAfter`, `createdBefore`) and its row shape (`session` for identity, `openLink` as an `agent-host-session://` link, status, activity, working directory, project, changes, git and GitHub facts, timestamps). `get_session_context` with `detail: summary | digest | full` and `transcriptLimit`, read from the chat's turns.
+- [ ] **`send_message`.** A turn on another session or chat, started at once when that chat is idle and queued behind the running turn when it is not (`chat/pendingMessageSet`, the queue a client already sees and can reorder). Asynchronous: the tool answers that it was delivered or queued and does not wait for the reply.
+- [ ] **`create_session`.** `relationship: currentSession` makes a peer chat in the calling session, sharing its directory and lifecycle; `independent` makes a session with its own `workspace`, `worktree` deciding isolation the way the config's `isolation` does, and `model` choosing the provider. `prompt` is sent as the first turn. Answers with the new session's URI and its `openLink`.
+- [ ] **`rename_chat` and `delete_session`.** The title, on the calling chat or a named one; a session gone for good, refusing the calling one.
+- [ ] **`set_workspace`.** `workspaceFolder` and `isolation` on the calling session: the same restart-into-a-directory this host already does for a client's `session/workingDirectorySet`, made reachable from the agent, with a host-notice turn (`vscode.chat.requestHiddenFromTranscript`) saying the workspace changed so the window draws it the way it draws its own.
+
+### git and GitHub
+
+- [ ] **`_meta.github` on the session summary.** `pullRequestUrls` (most recent first, at most 10), `pullRequestBranchName`, `pullRequestState` with `pullRequestStateUrl`, `owner` and `repo`. Found by asking GitHub for the pull request of the branch: `gh pr view` where `gh` is installed, otherwise the API with the token VS Code pushes through `authenticate` for `https://api.github.com`, which this host already stores with its expiry. Refreshed with the other git facts, and when a `prepare-pull-request` operation makes one.
+- [ ] **`prepare-pull-request` and `checkout` as changeset operations.** VS Code draws a button for each operation a host lists, and sends its own request `_meta` with the call: `vscode.pullRequest` with title, description and draft on `prepare-pull-request`; `treeish` and `preCheckoutAction: stash | commit` on `checkout`. Push the branch and open the pull request with `gh` or the API; check the tree out after stashing or committing as asked.
+- [ ] **Session artifacts.** The `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references` tools, the artifacts on the session summary they write, and `vscode/removeSessionArtifact` behind `_meta['vscode.removeSessionArtifact']` in `initialize`. A pull request made by `prepare-pull-request` is one such artifact; the pill on the session row is drawn from them.
+
+### Worktrees the window manages
+
+- [ ] **Detached worktrees.** `vscode/createAgentHostDetachedWorktree`, `claim`, `setArchived`, `delete` and `reconcile`, behind `_meta['vscode.detachedWorktrees']` in `initialize`. The window's "new session in a worktree" flow: a tree made from a prompt before the session exists, claimed by the session that starts in it, archived and deleted with it, and reconciled against the set the window still knows about. This host already makes worktrees for `isolation: worktree`; the methods put the window in charge of the same trees.
+
+### Session config keys the window pushes
+
+- [ ] **`shellInitScripts`.** VS Code sends it where a session's schema declares it: scripts to source before every shell command the agent runs. Declare it, and run them through a `PreToolUse` hook on the Claude backend's `Bash` tool, which is the seam this host already uses for approvals.
+- [ ] **`sandboxEnabled`.** Declare it and map it onto the Claude Agent SDK's sandbox setting where that backend supports it; a backend that does not gets the key refused in `resolveSessionConfig` rather than silently ignored.
+
 ## Pass 2 - 2026-09-13
 
 VS Code `3aa54039` (2026-08-29) to `8e35945b` (2026-09-12), 206 agentHost commits. Protocol repository `fd0471d` to `a21274d`, dependabot only: `@microsoft/agent-host-protocol@0.9.0` is still current. VS Code's vendored snapshot moved `a0bc67f8` to `fd0471d4`, which is where the three protocol changes below come from.
