@@ -37,6 +37,16 @@ git sparse-checkout set src/vs/platform/agentHost
 design, and keep the prose here ours. Nothing has been copied and nothing
 should be.
 
+**Last read against:** VS Code `8e35945b` (2026-09-12) and the protocol
+repository at `a21274d` (2026-09-12), on 2026-09-13. What each pass found and
+what it asked of this repository is [UPSTREAM.md](UPSTREAM.md); the next pass
+starts from these two revisions rather than from wherever the clone was left.
+`git log <that>..HEAD -- src/vs/platform/agentHost` is the list, and
+`common/state/protocol/` is the directory to read first, because it is the
+wire. The `.md` files there were reflowed to one-line paragraphs in September
+2026, so read them with `git diff --word-diff`; a plain diff of one is the
+whole file.
+
 What is in it, and why each part earned its keep here:
 
 | path | what it settled |
