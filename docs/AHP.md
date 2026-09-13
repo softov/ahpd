@@ -635,6 +635,28 @@ request yet. `checkout` is offered on a session nobody has spoken in, takes
 refuses a dirty tree with `-32602` carrying `reason: dirtyWorkingTree`, which
 is what the window reads to offer the two.
 
+### Worktrees the window manages
+
+A session made with `isolation: worktree` gets a tree of its own, and the
+reference window has five requests of its own for such trees, made when
+`initialize` says `_meta['vscode.detachedWorktrees']`. They are served here
+over the same trees, so the window's "new session in a worktree" flow runs
+against this host unchanged. `vscode/createAgentHostDetachedWorktree` answers a
+`handle` and the `resource` of the session's tree, and refuses `-32602` for a
+session that has none; `vscode/claimAgentHostDetachedWorktree` marks the handle
+as the session's, and refuses one this host never handed out.
+`vscode/setAgentHostDetachedWorktreeArchived` takes a clean tree off the disk
+once its session is gone, keeping the branch, and puts it back on that branch
+when unarchived; a tree with somebody's work in it, or a session still running
+in it, stays. `vscode/deleteAgentHostDetachedWorktree` removes tree and branch,
+and refuses `-32004` while the session runs.
+`vscode/reconcileAgentHostDetachedWorktrees` takes the `scope` and the
+`activeHandles` the window still holds, marks those as seen, and lets go of a
+clean tree nobody named for a day - the window forgetting a handle is not the
+same as a person being done with the branch. The handles live for the daemon's
+run: a restart forgets them, and the trees stand until a session or the window
+takes them down.
+
 ### Authentication
 
 The Claude agent advertises `https://api.anthropic.com` in

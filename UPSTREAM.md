@@ -30,12 +30,20 @@ VS Code's host gives the agent inside a session tools for acting on the host (`s
 
 ### Worktrees the window manages
 
-- [ ] **Detached worktrees.** `vscode/createAgentHostDetachedWorktree`, `claim`, `setArchived`, `delete` and `reconcile`, behind `_meta['vscode.detachedWorktrees']` in `initialize`. The window's "new session in a worktree" flow: a tree made from a prompt before the session exists, claimed by the session that starts in it, archived and deleted with it, and reconciled against the set the window still knows about. This host already makes worktrees for `isolation: worktree`; the methods put the window in charge of the same trees.
+- [x] **Detached worktrees.** `vscode/createAgentHostDetachedWorktree`, `claim`, `setArchived`, `delete` and `reconcile`, behind `_meta['vscode.detachedWorktrees']` in `initialize`. The window's "new session in a worktree" flow: a tree made from a prompt before the session exists, claimed by the session that starts in it, archived and deleted with it, and reconciled against the set the window still knows about. This host already makes worktrees for `isolation: worktree`; the methods put the window in charge of the same trees.
 
 ### Session config keys the window pushes
 
 - [ ] **`shellInitScripts`.** VS Code sends it where a session's schema declares it: scripts to source before every shell command the agent runs. Declare it, and run them through a `PreToolUse` hook on the Claude backend's `Bash` tool, which is the seam this host already uses for approvals.
 - [ ] **`sandboxEnabled`.** Declare it and map it onto the Claude Agent SDK's sandbox setting where that backend supports it; a backend that does not gets the key refused in `resolveSessionConfig` rather than silently ignored.
+
+### What the window asks a host about itself
+
+The rest of `IAgentHostExtensionCommandMap`, read on this pass and not noted before. Each is a request the window makes of its own host; a host that does not serve one answers `-32601`, which the window's commands for them show as unavailable.
+
+- [ ] **`vscode/getAgentHostSessionStateFile`.** `{ session, chat? }` to `{ resource? }`: where the chat's transcript lives on disk, behind `_meta['vscode.getAgentHostSessionStateFile.chat']` in `initialize`. The window's "open session state file" command. A Claude session has a JSONL transcript under `~/.claude/projects`, which is the honest answer; a backend without one answers no resource.
+- [ ] **`vscode/collectAgentHostDebugLogs` and `vscode/readAgentHostDebugLogsChunk`.** `{ session?, chat?, kind: archive | directory }` to a `resource` with its `entries`, and a base64 chunk reader over it. The window's "collect logs" command for a bug report. This host's wire tap and event log are the logs it has; the session's transcript is the provider's.
+- [ ] **`shutdown`, `getNetworkDiagnosticsInfo`, `diagnosticsFetch` and `getManagedSettingsDiagnostics`.** `shutdown` stops the host, which `ahpd stop` also does; the two network ones report proxy and certificate settings and try a fetch, for the window's network diagnostics; managed settings are Copilot's policy layer, which this host has no counterpart to and should answer as an empty list rather than `-32601`, since the window lists them beside the others.
 
 ## Pass 2 - 2026-09-13
 
@@ -63,11 +71,10 @@ VS Code `3aa54039` (2026-08-29) to `8e35945b` (2026-09-12), 206 agentHost commit
 
 Kept here so the next pass does not re-read them.
 
-- Session server tools: `set_workspace`, `create_session.worktree`, and `send_message` queueing behind a busy chat. This host's tools are its own (`ahp_sessions`, `ahp_resource`, `ahp_terminals`). The queueing semantic is the one to borrow if a `send` tool is ever added.
 - `sandboxEnabled` and `shellInitScripts` session config keys: Copilot's. The client pushes `shellInitScripts` only where the session's schema declares it, so sessions here are never sent it.
-- `agent-merge` changeset kind, `pullRequestState` in `_meta.github` (the reference host's second well-known session key, beside `git`; this host does not track pull requests), host-notice turns (`vscode.chat.requestHiddenFromTranscript`, `vscode.chat.systemInitiatedLabel`), `agentSystemNotificationMeta` kinds: Agent Merge and the merged-pull-request lifecycle, which is an editor's feature.
-- Request `_meta` on changeset operations VS Code sends its own host: `treeish` and `preCheckoutAction` on a `checkout`, `vscode.pullRequest` on `prepare-pull-request`. This host offers `commit`, `discard` and `revert`, so neither operation is ever invoked here; `vscode.chat.workspaceContinuation` on a message likewise rides on workspace conversion, which this host declines.
-- `vscode/removeSessionArtifact`, `vscode/requestWorkspaceTrust` and the detached-worktree extension methods: VS Code-only RPCs, each behind a `vscode.*` capability flag in `initialize`'s `_meta` that this host does not set.
+- `agent-merge` changeset kind and the `agentSystemNotificationMeta` kinds around it: Agent Merge is a Copilot service, and `create-pr` here says so when asked for it. `vscode.chat.systemInitiatedLabel` likewise, since no turn here is started by a service.
+- `vscode.chat.workspaceContinuation` on a message: rides on workspace conversion, which this host declines.
+- `vscode/requestWorkspaceTrust`: a VS Code-only RPC behind `_meta['vscode.requestWorkspaceTrust']` in `initialize`, which this host does not set. Trust is the window's to grant, and a daemon serving directories it was started on has nothing to ask.
 - `node/claude/`: `agentHostCapabilities.workspaceConversion: false`, `setWorkingDirectory` throws, a `PreToolUse` hook denying GitHub tools during Agent Merge turns, `activation: 'restore'` allowing a cold SDK download. This host already changes a session's directories by resuming it, which is the thing upstream declines to do.
 - Claude Agent SDK: upstream pins 0.3.239; this host is on 0.3.261.
 
