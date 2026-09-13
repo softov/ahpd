@@ -677,6 +677,29 @@ same as a person being done with the branch. The handles live for the daemon's
 run: a restart forgets them, and the trees stand until a session or the window
 takes them down.
 
+### What the window asks a host about itself
+
+The rest of the reference window's own requests, served in the shapes it
+reads. `vscode/getAgentHostSessionStateFile` answers the backend's own record
+of a session - the Claude transcript under `~/.claude/projects`, found under
+the CLI's spelling of the directory or any project it moved from - or of one
+chat, since a chat here is its own backend session; `initialize` says so
+under `_meta['vscode.getAgentHostSessionStateFile.chat']`, and a backend that
+writes no file answers no `resource`. `vscode/collectAgentHostDebugLogs`
+packs the host's log files under `agenthost/` and the session's record as
+`events.jsonl`, the collector's own names, as a zip written here with what
+Node ships or as a directory left where it is; either goes after ten
+minutes, and `vscode/readAgentHostDebugLogsChunk` reads an archive back a
+megabyte at a time, and only an archive this host made.
+`getNetworkDiagnosticsInfo` reports the version, platform, the proxy
+variables that are set and the endpoints the backends name - the Anthropic
+API, answering 401 unauthenticated, and the GitHub API where the host was
+given `githubPullRequests()` - and `diagnosticsFetch` looks one up over IPv4
+and IPv6 and fetches it, timed, with the body kept to 64 KiB.
+`getManagedSettingsDiagnostics` is an empty list: the policy layer it reports
+on is Copilot's. `shutdown` answers `{}` and then stops the daemon the way
+`ahpd stop` does, and `-32601` on a host built without a way to stop.
+
 ### Authentication
 
 The Claude agent advertises `https://api.anthropic.com` in

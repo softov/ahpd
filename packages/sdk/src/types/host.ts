@@ -230,8 +230,33 @@ export interface HostOptions {
    * passes none contributes none, which is what an absent `serverTools` says.
    */
   tools?: HostTool[];
+  /**
+   * What this host says about itself when a window asks.
+   *
+   * The reference window has requests of its own for the host's version, its
+   * logs, its network and its shutdown, and this is where a host answers
+   * them from. All optional: a host embedded in something else has its own
+   * answers to most of these, and the daemon fills in its own.
+   */
+  diagnostics?: Diagnostics;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
+}
+
+/** What a host knows about itself, for the window's diagnostics. */
+export interface Diagnostics {
+  /** The version `serverInfo` and the network diagnostics report. */
+  version?: string;
+  /**
+   * The host's own log files, for a "collect logs" request to pack up.
+   *
+   * Paths, read when asked rather than once: a log that rotates is a
+   * different file tomorrow. A path that is not there is skipped, not an
+   * error.
+   */
+  logs?(): string[];
+  /** What the window's `shutdown` request runs, once it has been answered. */
+  shutdown?(): void | Promise<void>;
 }
 
 /**

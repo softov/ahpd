@@ -242,6 +242,25 @@ export interface Agent {
   list?(): Promise<Listed[]>;
 
   /**
+   * Where this backend keeps its own record of a session, if it keeps one.
+   *
+   * What the window's "open session state file" opens and what a "collect
+   * logs" request copies in beside the host's own. `id` is this backend's id
+   * for the session and `directory` the one it ran in; undefined means there
+   * is no such file, which is a real answer for a backend that writes none.
+   */
+  stateFile?(id: string, directory: string): string | undefined;
+
+  /**
+   * Endpoints worth probing when the network is in question.
+   *
+   * Listed on the window's network diagnostics, which fetches each and
+   * compares the status with `expectedStatus` (200 when absent) and the body
+   * with `expectedContent`. A backend that reaches nothing lists none.
+   */
+  endpoints?(): Endpoint[];
+
+  /**
    * One past session's turns, read without starting anything.
    *
    * What makes a catalogue row openable: the host serves it from here, and
@@ -260,4 +279,14 @@ export interface Agent {
 
   /** Start one. */
   create(start: Start): Session;
+}
+
+/** One endpoint a backend suggests probing. */
+export interface Endpoint {
+  name: string;
+  url: string;
+  /** The status a probe treats as success; 200 when left off. */
+  expectedStatus?: number;
+  /** Text the body is expected to carry, when it is read at all. */
+  expectedContent?: string;
 }

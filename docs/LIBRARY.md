@@ -15,6 +15,7 @@ Four things go into a host, and only the first two are required:
 | `agents` | the backends it serves. `claude()` is one; anything satisfying `Agent` is another | required |
 | ports | `resources`, `terminals`, `changes`, `directories`, `automations`, `worktrees` | opt-in |
 | `tools` | tools this host contributes to every session it runs | opt-in |
+| `diagnostics` | its version, its log files and how it stops, for the window's own requests | opt-in |
 | `onEvent` | one line per notable event, for a log | opt-in |
 
 ## The smallest host
@@ -209,6 +210,20 @@ createHost({
   ],
 });
 ```
+
+## What the window asks a host about itself
+
+`diagnostics` is not a port either. The reference window has requests of its
+own for the host it runs - `shutdown`, `getNetworkDiagnosticsInfo`,
+`diagnosticsFetch`, `getManagedSettingsDiagnostics`,
+`vscode/getAgentHostSessionStateFile`, `vscode/collectAgentHostDebugLogs` and
+`vscode/readAgentHostDebugLogsChunk` - and this is what the host answers them
+from: `version` goes into `serverInfo` and the network report, `logs()` names
+the files a "collect logs" packs up under `agenthost/`, and `shutdown()` is
+run once the request has been answered. Leave it out and the host still
+answers the network and log requests with what it has; `shutdown` alone
+answers `-32601`. The session's own file comes from the agent's `stateFile`,
+and the endpoints to probe from its `endpoints()`.
 
 ## The agents
 

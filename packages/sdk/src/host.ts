@@ -29,6 +29,9 @@ import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
 import { ARTIFACTS_META } from './artifacttools.js';
+import { debugLogs, hostLogPath } from './debuglogs.js';
+import type { LogFile } from './debuglogs.js';
+import { lookup } from 'node:dns/promises';
 import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
@@ -91,6 +94,29 @@ const WRITE_MODES: string[] = ['truncate', 'append', 'insert'] satisfies WriteMo
 
 /** What a session's annotations channel is called, under the session's own URI. */
 const MARKS = '/annotations';
+
+/** The proxy variables the network diagnostics report, when set. */
+const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'] as const;
+/** How long a network probe waits, and how much of the body it keeps. */
+const PROBE_TIMEOUT = 10_000;
+const MAX_BODY = 64 * 1024;
+
+const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** One address lookup for the network diagnostics, timed and never thrown. */
+const resolved = async (host: string, family: 4 | 6): Promise<{ address?: string; durationMs: number; error?: string }> => {
+  const began = Date.now();
+  try {
+    const { address } = await Promise.race([
+      lookup(host, { family }),
+      new Promise<never>((_, reject) => { setTimeout(() => { reject(new Error(`Timed out after ${PROBE_TIMEOUT / 1000}s`)); }, PROBE_TIMEOUT).unref?.(); }),
+    ]);
+    return { address, durationMs: Date.now() - began };
+  }
+  catch (error) {
+    return { durationMs: Date.now() - began, error: reason(error) };
+  }
+};
 
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
 
@@ -1626,6 +1652,28 @@ export function createHost(options: HostOptions): Host {
     const lead = held && leadOf(held);
     const where = lead?.workingDirectories()[0] ?? wheres.get(named)?.[0];
     return where?.replace(/^file:\/\//, '');
+  };
+
+  /** What the window's "collect logs" gets, and reads back. */
+  const logs = debugLogs();
+
+  /**
+   * The backend's own file for a session, or for one chat of it.
+   *
+   * A chat here is its own backend session with an id of its own, so a chat
+   * named is that id; a session named is its lead's. A row that is not
+   * running has the id in its URI, which is what the catalogue listed it by.
+   */
+  const stateFileOf = (session: string, chat?: string): string | undefined => {
+    const uri = sessions.has(session) ? session : sessionFor(session);
+    const held = sessions.get(uri);
+    const agent = held?.agent ?? owners.get(uri);
+    const dir = dirOf(uri);
+    const chosen = chat === undefined ? undefined : byChat.get(chat);
+    if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(-32602, 'chat must belong to the requested Agent Session');
+    if (agent?.stateFile === undefined || dir === undefined) return undefined;
+    const live = chosen?.chat ?? (held ? leadOf(held) : undefined);
+    return agent.stateFile(live?.agentId() ?? idOf(uri), dir);
   };
 
   /**
@@ -3993,7 +4041,7 @@ export function createHost(options: HostOptions): Host {
           return {
             protocolVersion: agreed,
             serverSeq,
-            serverInfo: { name: 'ahpd', version: '0.0.1' },
+            serverInfo: { name: 'ahpd', version: options.diagnostics?.version ?? '0.0.1' },
             snapshots,
             defaultDirectory: `file://${dir}`,
             // What the client should ask about rather than send. A slash is a
@@ -4044,7 +4092,7 @@ export function createHost(options: HostOptions): Host {
              * is the close button on an artifact pill, and the detached
              * worktree five are its dev container flow.
              */
-            _meta: { 'vscode.removeSessionArtifact': true, 'vscode.detachedWorktrees': true },
+            _meta: { 'vscode.removeSessionArtifact': true, 'vscode.detachedWorktrees': true, 'vscode.getAgentHostSessionStateFile.chat': true },
           };
         },
         ping: async () => ({}),
@@ -5373,6 +5421,102 @@ export function createHost(options: HostOptions): Host {
           const left = held.filter((one) => one.id !== artifactId);
           if (left.length !== held.length) setArtifacts(uri, left);
           return {};
+        },
+        /**
+         * Where the backend's own record of a session is.
+         *
+         * The window's "open session state file", behind
+         * `_meta['vscode.getAgentHostSessionStateFile.chat']` in `initialize`
+         * since it names a chat as well as a session. A backend that writes
+         * no such file answers no resource, which is the reference host's
+         * answer too.
+         */
+        'vscode/getAgentHostSessionStateFile': async (params) => {
+          if (typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
+          if (params.chat !== undefined && typeof params.chat !== 'string') throw new RpcError(-32602, 'chat must be a URI string');
+          const found = stateFileOf(params.session, params.chat);
+          return found === undefined ? {} : { resource: `file://${found}` };
+        },
+        /**
+         * The logs, packed up for a bug report.
+         *
+         * The host's own files under `agenthost/`, and the session's record
+         * as `events.jsonl` when a session is named - the names the reference
+         * host's collector gives them, so the window reads the result the
+         * same. The archive is read back in chunks; the directory is opened
+         * where it is.
+         */
+        'vscode/collectAgentHostDebugLogs': async (params) => {
+          const kind = params.kind;
+          if (kind !== 'archive' && kind !== 'directory') throw new RpcError(-32602, 'kind must be archive or directory');
+          if (params.session !== undefined && typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
+          if (params.chat !== undefined && typeof params.chat !== 'string') throw new RpcError(-32602, 'chat must be a URI string');
+          if (params.chat !== undefined && params.session === undefined) throw new RpcError(-32602, 'chat must belong to the requested Agent Session');
+          const files: LogFile[] = (options.diagnostics?.logs?.() ?? []).map((file) => ({ path: hostLogPath(file), from: file }));
+          const record = params.session === undefined ? undefined : stateFileOf(params.session, params.chat);
+          if (record !== undefined) files.push({ path: 'events.jsonl', from: record, provider: true });
+          return await logs.collect(files, kind);
+        },
+        'vscode/readAgentHostDebugLogsChunk': async (params) => {
+          if (typeof params.resource !== 'string') throw new RpcError(-32602, 'resource must be a URI string');
+          if (typeof params.position !== 'number') throw new RpcError(-32602, 'position must be a number');
+          try { return await logs.read(params.resource, params.position); }
+          catch (error) { throw new RpcError(-32602, error instanceof Error ? error.message : String(error)); }
+        },
+        /**
+         * The four the window asks of its own host about itself.
+         *
+         * `shutdown` answers first and stops after, so the window hears yes
+         * rather than a dropped socket. The network diagnostics are what the
+         * process can see - the proxy variables, and the endpoints its
+         * backends name - and `diagnosticsFetch` tries one. Managed settings
+         * are a policy layer this host has no counterpart to, and an empty
+         * list is the honest shape of that.
+         */
+        shutdown: async () => {
+          const stop = options.diagnostics?.shutdown;
+          if (stop === undefined) throw new RpcError(METHOD_NOT_FOUND, 'This host does not serve shutdown');
+          setTimeout(() => { void Promise.resolve(logs.close()).then(() => stop()); }, 0);
+          return {};
+        },
+        getNetworkDiagnosticsInfo: async () => {
+          const proxyEnv: Record<string, string> = {};
+          for (const key of PROXY_ENV) {
+            const value = process.env[key];
+            if (value) proxyEnv[key] = value;
+          }
+          const endpoints = [...agents.values()].flatMap((agent) => agent.endpoints?.() ?? []);
+          if (options.github !== undefined) endpoints.push({ name: 'GitHub API', url: 'https://api.github.com/' });
+          return {
+            version: options.diagnostics?.version ?? '0.0.1',
+            os: process.platform,
+            arch: process.arch,
+            proxySettings: {},
+            proxyEnv,
+            endpoints,
+          };
+        },
+        getManagedSettingsDiagnostics: async () => [],
+        diagnosticsFetch: async (params) => {
+          if (typeof params.url !== 'string') throw new RpcError(-32602, 'url must be a string');
+          let target: URL;
+          try { target = new URL(params.url); }
+          catch { throw new RpcError(-32602, `${params.url} is not a URL`); }
+          const [dnsIpv4, dnsIpv6] = await Promise.all([resolved(target.hostname, 4), resolved(target.hostname, 6)]);
+          const began = Date.now();
+          try {
+            const answer = await fetch(target, { signal: AbortSignal.timeout(PROBE_TIMEOUT) });
+            const body = await answer.text();
+            return {
+              url: params.url, dnsIpv4, dnsIpv6,
+              statusCode: answer.status, statusMessage: answer.statusText,
+              body: body.length > MAX_BODY ? body.slice(0, MAX_BODY) : body,
+              durationMs: Date.now() - began,
+            };
+          }
+          catch (error) {
+            return { url: params.url, dnsIpv4, dnsIpv6, error: reason(error), durationMs: Date.now() - began };
+          }
         },
         /**
          * The configuration a session would have, before one exists.

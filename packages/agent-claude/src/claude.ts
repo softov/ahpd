@@ -3,6 +3,9 @@ import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf } from './transcript.js';
 import { catalogue } from './catalog.js';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { within } from '@ahpd/sdk';
 import type { Agent, Bag, Start } from '@ahpd/sdk';
 
@@ -323,6 +326,40 @@ export function claude(options: ClaudeOptions): Agent {
     // catalogue of the directory it ran in, and a host serving several has
     // one catalogue.
     list: async () => (await Promise.all(dirs.map((served) => catalogue(served)))).flat(),
+
+    /*
+     * The transcript on disk, which is the CLI's own record of a session.
+     *
+     * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory spelled
+     * the way the CLI spells it - every character that is not a letter or a
+     * digit made a dash - and `CLAUDE_CONFIG_DIR` in place of `~/.claude`
+     * where it is set. A session resumed elsewhere may have been written
+     * under the directory it started in, so the other projects are looked
+     * through before answering that there is none.
+     */
+    stateFile: (id, directory) => {
+      if (!/^[A-Za-z0-9-]+$/.test(id)) return undefined;
+      const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
+      const own = join(projects, directory.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
+      if (existsSync(own)) return own;
+      let names: string[];
+      try { names = readdirSync(projects); }
+      catch { return undefined; }
+      for (const name of names) {
+        const file = join(projects, name, `${id}.jsonl`);
+        if (existsSync(file)) return file;
+      }
+      return undefined;
+    },
+
+    // What to probe when the network is in question: the API, which answers
+    // an unauthenticated request with 401 - reached, and refusing - and the
+    // base URL the CLI would use where one is set.
+    endpoints: () => [{
+      name: 'Anthropic API',
+      url: `${(process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`,
+      expectedStatus: 401,
+    }],
 
     // Whichever directory holds it. The transcript reader wants the one the
     // session ran in, and only its own catalogue knows which that was.

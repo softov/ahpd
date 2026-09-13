@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { automationsPath, configPath, loadConfig, sessionsPath } from './config.js';
+import { automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
 import { version } from './version.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
@@ -407,6 +407,18 @@ const host = createHost({
    * `onEvent` hands it the message to do that with.
    */
   onEvent: (message) => process.stdout.write(`${new Date().toISOString()} ${message}\n`),
+  /*
+   * What the window's diagnostics get from this daemon.
+   *
+   * The version out of the manifest, the log a detached daemon writes to and
+   * the wire capture when there is one, and a shutdown that is the same
+   * signal handler `ahpd stop` reaches through `SIGTERM`.
+   */
+  diagnostics: {
+    version: version(),
+    logs: () => [daemonLog(), ...(options.wire === undefined ? [] : [options.wire])],
+    shutdown: () => { process.kill(process.pid, 'SIGTERM'); },
+  },
 });
 
 // Whichever runtime this is. `listen` is the only file that knows, and it

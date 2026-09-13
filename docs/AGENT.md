@@ -84,6 +84,8 @@ const host = createHost({ path, agents: [shout()] });
 | `list()` | Sessions somebody can browse | optional |
 | `transcript(id)` | One of those, as turns - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
+| `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
+| `endpoints()` | What to probe when the network is in question | optional |
 
 What you leave out is a real answer rather than a gap: no `list` means no
 sessions to browse, no `probe` means no models until a session of yours reports
