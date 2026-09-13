@@ -1,6 +1,9 @@
+import { rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
 import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
@@ -57,6 +60,43 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+
+/** One client-generated script, sourced before every shell command. */
+interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
+
+/** A generated script is a few hundred bytes; anything near this is not one. */
+const MAX_SHELL_INIT_SCRIPT = 64 * 1024;
+
+/**
+ * The `shellInitScripts` value, checked to the reference host's rule.
+ *
+ * A list of `{ shell, script }`, each script non-empty and no longer than a
+ * generated one could be. `undefined` for anything else, which is what lets
+ * `setConfig` refuse it rather than write it to disk.
+ */
+const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const list: ShellInitScript[] = [];
+  for (const entry of value) {
+    const one = bag(entry);
+    if ((one.shell !== 'bash' && one.shell !== 'powershell') || typeof one.script !== 'string') return undefined;
+    if (one.script.length === 0 || one.script.length > MAX_SHELL_INIT_SCRIPT) return undefined;
+    list.push({ shell: one.shell, script: one.script });
+  }
+  return list;
+};
+
+/**
+ * What goes in front of a shell command while a script is in force.
+ *
+ * Sourced, so what it sets is there for the command; its stderr dropped, as
+ * the reference runtime drops it; and a nonzero status reported rather than
+ * hidden, since a profile that fails is something the model should hear.
+ */
+const sourcing = (path: string): string => `{ . '${path.replaceAll("'", "'\\''")}'; } 2>/dev/null || printf 'shell init script exited %s\\n' "$?"`;
+
+/** The CLI's sandbox setting for the reference host's three words; `null` clears it back to the settings files. */
+const sandboxOf = (value: unknown): { enabled: boolean } | null => (value === 'on' ? { enabled: true } : value === 'off' ? { enabled: false } : null);
 
 interface PendingInput {
   id: string;
@@ -536,6 +576,43 @@ export function createSession(options: SessionOptions): Session {
    * backend declared a string are narrowed where they are read.
    */
   const settings: Record<string, unknown> = { permissionMode: 'default', ...options.settings };
+
+  /*
+   * The shell init script, on disk where a shell can source it.
+   *
+   * The reference client pushes `shellInitScripts` for the profile and the
+   * Python environment it has selected, and the SDK's shell tool has no
+   * setting for one - so a `PreToolUse` hook on `Bash` puts a `source` of
+   * this file in front of every command. One path for the session's life,
+   * rewritten on each change, because the hook is built once with the query
+   * and reads the file by name. The bash entry only: the CLI's shell tool is
+   * bash on every platform it runs on.
+   */
+  const initScript = join(tmpdir(), `ahpd-shell-init-${crypto.randomUUID()}.sh`);
+  let sourced = false;
+  const setShellInit = (value: unknown): true | string => {
+    const list = shellInitScripts(value);
+    if (list === undefined) return 'shellInitScripts takes a list of { shell, script }';
+    const bash = list.find((one) => one.shell === 'bash');
+    try {
+      if (bash === undefined) rmSync(initScript, { force: true });
+      else writeFileSync(initScript, bash.script, { mode: 0o600 });
+    }
+    catch (error) {
+      return `Could not write the shell init script: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    sourced = bash !== undefined;
+    settings.shellInitScripts = list;
+    return true;
+  };
+  if (settings.shellInitScripts !== undefined) setShellInit(settings.shellInitScripts);
+  const sourceFirst: HookCallback = async (input) => {
+    if (!sourced || input.hook_event_name !== 'PreToolUse') return {};
+    const given = bag(input.tool_input);
+    const command = str(given.command);
+    if (command === undefined) return {};
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${sourcing(initScript)}\n${command}` } } };
+  };
 
   /**
    * The MCP server a tool belongs to, out of its name.
@@ -1417,6 +1494,11 @@ export function createSession(options: SessionOptions): Session {
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
       ...(typeof settings.permissionMode === 'string' ? { permissionMode: settings.permissionMode } : {}),
+      // The flag settings layer, which `applyFlagSettings` moves later: one
+      // place for the sandbox, whether it was set at creation or since.
+      ...(sandboxOf(settings.sandboxEnabled) !== null ? { settings: { sandbox: sandboxOf(settings.sandboxEnabled) } } : {}),
+      // Before every shell command, while a client has a script in force.
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [sourceFirst] }] },
       /*
        * The lists, at the moment the query is built.
        *
@@ -2067,7 +2149,14 @@ export function createSession(options: SessionOptions): Session {
         settings.permissions = held;
         return true;
       }
+      if (key === 'shellInitScripts') return setShellInit(value);
       const said = typeof value === 'string' ? value : '';
+      if (key === 'sandboxEnabled') {
+        if (said !== 'default' && said !== 'on' && said !== 'off') return `sandboxEnabled takes default, on or off, not ${said}`;
+        settings.sandboxEnabled = said;
+        void handle.applyFlagSettings({ sandbox: sandboxOf(said) }).catch(() => {});
+        return true;
+      }
       if (key === 'model') {
         try {
           await handle.setModel(said === 'default' ? undefined : said);
@@ -2718,6 +2807,8 @@ export function createSession(options: SessionOptions): Session {
         one.settle({ behavior: 'deny', message: 'The session was disposed' });
       }
       releaseCalls('The session was disposed');
+      try { rmSync(initScript, { force: true }); }
+      catch { /* a script that was never written */ }
       handle.close();
     },
   };

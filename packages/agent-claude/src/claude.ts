@@ -205,6 +205,50 @@ export function claude(options: ClaudeOptions): Agent {
         sessionMutable: false,
       },
       /*
+       * The sandbox, on the reference host's three words.
+       *
+       * A platform key the reference client draws a control for on every
+       * backend that declares it. The CLI has a sandbox of its own for shell
+       * commands, `sandbox.enabled` in its settings, and that is what the
+       * three values reach: `on` and `off` set it, `default` leaves it to the
+       * settings files. Live, because the flag settings take it mid-session.
+       */
+      sandboxEnabled: {
+        scope: 'session',
+        type: 'string',
+        title: 'Sandbox',
+        description: 'Sandbox behavior for this session. Default follows the global setting.',
+        enum: ['default', 'on', 'off'],
+        enumLabels: ['Default', 'On', 'Off'],
+        default: 'default',
+        sessionMutable: true,
+      },
+      /*
+       * Scripts a client generated, sourced before every shell command.
+       *
+       * The reference client sends this only where a schema declares it, and
+       * `readOnly` because nobody types one: it carries the shell profile and
+       * the Python environment the window has selected for the folder. No
+       * `default`, so absent stays tellable from an explicit empty list.
+       */
+      shellInitScripts: {
+        scope: 'session',
+        type: 'array',
+        title: 'Shell Init Script',
+        description: 'A script sourced before each built-in shell tool command.',
+        items: {
+          type: 'object',
+          title: 'Shell Init Script',
+          properties: {
+            shell: { type: 'string', title: 'Shell', enum: ['bash', 'powershell'] },
+            script: { type: 'string', title: 'Script' },
+          },
+          required: ['shell', 'script'],
+        },
+        readOnly: true,
+        sessionMutable: true,
+      },
+      /*
        * Per-tool allow and deny, which is the slope the mode above is a cliff.
        *
        * A platform key rather than one of this backend's invention: it is what
@@ -244,6 +288,7 @@ export function claude(options: ClaudeOptions): Agent {
     // a control a client cannot show and cannot change.
     ...(perModelEffort ? {} : { effortLevel: 'high' }),
     thinking: 'adaptive',
+    sandboxEnabled: 'default',
     permissions: { allow: [], deny: [] },
     ...(style !== undefined ? { outputStyle: style } : {}),
   });

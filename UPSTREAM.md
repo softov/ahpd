@@ -34,8 +34,8 @@ VS Code's host gives the agent inside a session tools for acting on the host (`s
 
 ### Session config keys the window pushes
 
-- [ ] **`shellInitScripts`.** VS Code sends it where a session's schema declares it: scripts to source before every shell command the agent runs. Declare it, and run them through a `PreToolUse` hook on the Claude backend's `Bash` tool, which is the seam this host already uses for approvals.
-- [ ] **`sandboxEnabled`.** Declare it and map it onto the Claude Agent SDK's sandbox setting where that backend supports it; a backend that does not gets the key refused in `resolveSessionConfig` rather than silently ignored.
+- [x] **`shellInitScripts`.** VS Code sends it where a session's schema declares it: scripts to source before every shell command the agent runs. Declare it, and run them through a `PreToolUse` hook on the Claude backend's `Bash` tool, which is the seam this host already uses for approvals.
+- [x] **`sandboxEnabled`.** Declare it and map it onto the Claude Agent SDK's sandbox setting where that backend supports it; a backend that does not gets the key refused in `resolveSessionConfig` rather than silently ignored.
 
 ### What the window asks a host about itself
 
@@ -71,7 +71,6 @@ VS Code `3aa54039` (2026-08-29) to `8e35945b` (2026-09-12), 206 agentHost commit
 
 Kept here so the next pass does not re-read them.
 
-- `sandboxEnabled` and `shellInitScripts` session config keys: Copilot's. The client pushes `shellInitScripts` only where the session's schema declares it, so sessions here are never sent it.
 - `agent-merge` changeset kind and the `agentSystemNotificationMeta` kinds around it: Agent Merge is a Copilot service, and `create-pr` here says so when asked for it. `vscode.chat.systemInitiatedLabel` likewise, since no turn here is started by a service.
 - `vscode.chat.workspaceContinuation` on a message: rides on workspace conversion, which this host declines.
 - `vscode/requestWorkspaceTrust`: a VS Code-only RPC behind `_meta['vscode.requestWorkspaceTrust']` in `initialize`, which this host does not set. Trust is the window's to grant, and a daemon serving directories it was started on has nothing to ask.

@@ -432,6 +432,26 @@ invented number is worse than an absent field. A client reads an absent
 `supportsVision` as `false` and an absent `policyState` as "not disabled",
 which are the right answers.
 
+### Two platform keys the window pushes
+
+`sandboxEnabled` and `shellInitScripts` are the reference host's platform
+config keys, declared on every backend of its own, and the Claude backend
+here declares both under the same names so the window's controls work
+against it. `sandboxEnabled` is `default`, `on` or `off`, and reaches the
+CLI's own `sandbox.enabled` setting through the flag settings layer - at
+creation and on a running session alike, since `applyFlagSettings` moves that
+layer live; `default` clears it back to whatever the settings files say. A
+sandbox asked for on a machine that cannot make one is the CLI's refusal to
+report, not a command run outside one. `shellInitScripts` is the list of
+`{ shell, script }` the window generates for the folder's shell profile and
+selected Python environment, `readOnly` so it is sent and not drawn. The
+SDK's shell tool has no setting for one, so a `PreToolUse` hook on `Bash`
+puts a `source` of the bash entry in front of every command: the script is
+written to a file of its own for the session's life and rewritten on each
+change, its stderr is dropped and a nonzero status is printed, the way the
+reference runtime treats it. A PowerShell entry is kept and not sourced, since
+the CLI's shell tool is bash everywhere; an empty list clears the file.
+
 ### Chat URIs
 
 A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, and the

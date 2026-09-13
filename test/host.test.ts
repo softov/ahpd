@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import { Status } from '../packages/sdk/src/catalog.js';
 import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
  * This checkout, as an absolute path.
@@ -41,6 +42,7 @@ const sdk = vi.hoisted(() => {
     modelsSet: [] as (string | undefined)[],
     modesSet: [] as string[],
     effortsSet: [] as (string | null | undefined)[],
+    sandboxSet: [] as ({ enabled: boolean } | null | undefined)[],
     interrupted: 0,
     mcpToggled: [] as { name: string; enabled: boolean }[],
     mcpReconnected: [] as string[],
@@ -95,7 +97,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       interrupt: async () => { sdk.interrupted++; },
       setPermissionMode: async (mode: string) => { sdk.modesSet.push(mode); },
       setModel: async (model?: string) => { sdk.modelsSet.push(model); },
-      applyFlagSettings: async (settings: { effortLevel?: string | null }) => { sdk.effortsSet.push(settings.effortLevel); },
+      applyFlagSettings: async (settings: { effortLevel?: string | null; sandbox?: { enabled: boolean } | null }) => {
+        if ('effortLevel' in settings) sdk.effortsSet.push(settings.effortLevel);
+        if ('sandbox' in settings) sdk.sandboxSet.push(settings.sandbox);
+      },
       toggleMcpServer: async (name: string, enabled: boolean) => { sdk.mcpToggled.push({ name, enabled }); },
       reconnectMcpServer: async (name: string) => { sdk.mcpReconnected.push(name); },
       // Replaces the set, which is what the real one does - so the options a
@@ -175,6 +180,7 @@ beforeEach(() => {
   sdk.modelsSet.length = 0;
   sdk.modesSet.length = 0;
   sdk.effortsSet.length = 0;
+  sdk.sandboxSet.length = 0;
   sdk.queries.length = 0;
   sdk.init = {};
   sdk.interrupted = 0;
@@ -1795,6 +1801,71 @@ describe('choosing a model', () => {
     // Told, not merely recorded: a control that updates the state a client
     // reads while the CLI keeps its old setting is the worst of both.
     expect(sdk.effortsSet).toEqual(['max']);
+  });
+
+  it('sets the sandbox on the reference host\'s three words, at creation and since', async () => {
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/boxed', provider: 'claude', config: { sandboxEnabled: 'on' } },
+    });
+    await settle();
+    // Into the flag settings layer, which is the one `applyFlagSettings`
+    // moves later - so `on` at creation and `on` since reach the same place.
+    expect((sessionQueries().at(-1)?.options.settings as { sandbox?: unknown })?.sandbox).toEqual({ enabled: true });
+    const uri = 'ahp-session:/boxed';
+    for (const value of ['off', 'default', 'sideways']) {
+      client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { sandboxEnabled: value } } } });
+      await settle();
+    }
+    // `off` sets it, `default` clears it back to the settings files, and a
+    // word that is not one of the three is refused rather than passed on.
+    expect(sdk.sandboxSet).toEqual([{ enabled: false }, null]);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { schema: { properties: Record<string, { enum?: string[] }> }; values: Record<string, string> } } };
+    }).snapshot.state;
+    expect(state.config.values.sandboxEnabled).toBe('default');
+    expect(state.config.schema.properties.sandboxEnabled?.enum).toEqual(['default', 'on', 'off']);
+    // And absent from the harness's options when nobody asked.
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/unboxed', provider: 'claude' } });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.settings).toBeUndefined();
+  });
+
+  it('sources the client\'s shell init script before every shell command, while one is in force', async () => {
+    const { client, uri } = await running();
+    const options = sessionQueries().at(-1)?.options as {
+      hooks?: { PreToolUse?: { matcher?: string; hooks: ((input: unknown) => Promise<{ hookSpecificOutput?: { updatedInput?: { command?: string } } }>)[] }[] };
+    };
+    const matcher = options.hooks?.PreToolUse?.[0];
+    expect(matcher?.matcher).toBe('Bash');
+    const hook = matcher?.hooks[0];
+    if (hook === undefined) throw new Error('no PreToolUse hook on Bash');
+    const before = (command: string) => hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: '' });
+    // Nothing in force: the command runs as written.
+    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    const set = async (value: unknown) => {
+      client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { shellInitScripts: value } } } });
+      await settle();
+      return (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { config: { values: Record<string, unknown> } } };
+      }).snapshot.state.config.values.shellInitScripts;
+    };
+    // The reference client's shape, declared `readOnly` in the schema so the
+    // window sends it and draws no control for it.
+    expect(await set([{ shell: 'bash', script: 'export FOO=bar\n' }])).toEqual([{ shell: 'bash', script: 'export FOO=bar\n' }]);
+    const sourced = (await before('make')).hookSpecificOutput?.updatedInput?.command ?? '';
+    expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
+    const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
+    expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
+    // A PowerShell script is nothing to a bash tool, and a malformed list is refused rather than written.
+    expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
+    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
+    // Cleared, and the file with it.
+    expect(await set([])).toEqual([]);
+    expect(existsSync(path)).toBe(false);
   });
 
   it('hands the allow and deny lists to the harness when the session starts', async () => {
