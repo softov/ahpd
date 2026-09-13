@@ -2,6 +2,7 @@ import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
+import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
@@ -926,12 +927,17 @@ export function createSession(options: SessionOptions): Session {
         const contributor = from === undefined
           ? undefined
           : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        // What kind of row to draw, from the name and from the first frame:
+        // a client that waited for the arguments to know it was a shell
+        // command would draw a generic box and then redraw it.
+        const meta = toolMetaOf(name);
         const call: Bag = {
           toolCallId: id,
           toolName: name,
           displayName: name,
           status: 'streaming',
           ...(contributor ? { contributor } : {}),
+          ...(meta ? { _meta: meta } : {}),
         };
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
@@ -943,6 +949,7 @@ export function createSession(options: SessionOptions): Session {
           toolName: name,
           displayName: name,
           ...(contributor ? { contributor } : {}),
+          ...(meta ? { _meta: meta } : {}),
         });
         return;
       }
@@ -1055,12 +1062,14 @@ export function createSession(options: SessionOptions): Session {
         // Running against somebody else's server, and so a call that can end
         // up waiting on a sign-in rather than on its own work.
         if (from !== undefined) onServer.set(id, { server: from, turnId: str(turn.id) ?? '', blocked: false });
+        const meta = toolMetaOf(name);
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: name,
           displayName: name,
           status: 'running',
           ...(contributor ? { contributor } : {}),
+          ...(meta ? { _meta: meta } : {}),
           /*
            * On the call, and not only on the action that announces it.
            *
@@ -1111,6 +1120,7 @@ export function createSession(options: SessionOptions): Session {
             toolName: name,
             displayName: name,
             ...(contributor ? { contributor } : {}),
+            ...(meta ? { _meta: meta } : {}),
           });
         }
         emit('chat', {
@@ -1296,11 +1306,13 @@ export function createSession(options: SessionOptions): Session {
       // The call the assistant message opened, if it arrived first. Which of
       // the two comes first is the CLI's business; either order is one call.
       const held = parts.get(id);
+      const meta = toolMetaOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
         toolName,
         displayName,
         ...(command ? { toolInput: command } : {}),
+        ...(meta ? { _meta: meta } : {}),
       } as Bag;
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
@@ -1312,7 +1324,10 @@ export function createSession(options: SessionOptions): Session {
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         parts.set(id, part);
         holdPart(turn, part);
-        emit('chat', { type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName });
+        emit('chat', {
+          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
+          ...(meta ? { _meta: meta } : {}),
+        });
       }
       emit('chat', {
         type: 'chat/toolCallReady',
@@ -2224,11 +2239,12 @@ export function createSession(options: SessionOptions): Session {
         // The person typed it themselves, so there is nobody left to ask.
         confirmed: 'not-needed',
         status: 'running',
+        _meta: { toolKind: 'terminal' },
       } satisfies OnWire<ToolCallRunningState> as Bag;
       holdPart(turn, call);
       emit('chat', {
         type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
-        displayName: 'Terminal', intention: command,
+        displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },
       });
       emit('chat', {
         type: 'chat/toolCallReady', turnId, toolCallId,

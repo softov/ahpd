@@ -652,6 +652,74 @@ describe('driving a turn', () => {
     expect(done[0]?.toolCall?.partialInput).toBeUndefined();
   });
 
+  /*
+   * `_meta.toolKind`, the one well-known key the reference client routes a
+   * tool call's rendering by. Not protocol: `terminal` gets the command and
+   * output renderer, `subagent` the subagent view, and a call with none is a
+   * name in a box. The reference host derives it for a "remote host" from a
+   * Copilot-internal permission payload this backend does not have, so it is
+   * stamped here from the harness's own tool names.
+   */
+  describe('what kind of row a tool call is', () => {
+    const kinds = async (frames: Record<string, unknown>[]) => {
+      const { client, peer: p, uri, chatUri } = await running();
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      await emit(...frames);
+      const started = actions(p, chatUri)
+        .filter((e) => e.action.type === 'chat/toolCallStart')
+        .map((e) => [e.action.toolName, (e.action._meta as { toolKind?: string } | undefined)?.toolKind]);
+      const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { activeTurn: { responseParts: { toolCall?: { toolName: string; _meta?: { toolKind?: string } } }[] } } };
+      }).snapshot.state.activeTurn.responseParts
+        .filter((one) => one.toolCall !== undefined)
+        .map((one) => [one.toolCall?.toolName, one.toolCall?._meta?.toolKind]);
+      return { started, held };
+    };
+
+    it('says so from the first frame, and in the snapshot', async () => {
+      const { started, held } = await kinds([
+        { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+        {
+          type: 'stream_event',
+          event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tc1', name: 'Bash' } },
+        },
+        {
+          type: 'assistant',
+          message: {
+            id: 'm1',
+            content: [
+              { type: 'tool_use', id: 'tc1', name: 'Bash', input: { command: 'ls' } },
+              { type: 'tool_use', id: 'tc2', name: 'Grep', input: { pattern: 'x' } },
+              { type: 'tool_use', id: 'tc3', name: 'Task', input: { description: 'look' } },
+              { type: 'tool_use', id: 'tc4', name: 'Read', input: { file_path: '/a' } },
+            ],
+          },
+        },
+      ]);
+      // On the action that opens the row - before the arguments, because a
+      // client that waited for them would draw a box and then redraw it.
+      expect(started).toEqual([['Bash', 'terminal'], ['Grep', 'search'], ['Task', 'subagent'], ['Read', 'read']]);
+      // And on the call a late subscriber reads, which is the same row.
+      expect(held).toEqual([['Bash', 'terminal'], ['Grep', 'search'], ['Task', 'subagent'], ['Read', 'read']]);
+    });
+
+    it('says nothing for a tool it has no kind for', async () => {
+      const { started, held } = await kinds([{
+        type: 'assistant',
+        message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'Write', input: { file_path: '/a' } }] },
+      }]);
+      // Unstamped rather than guessed: the generic renderer is the right one
+      // for a tool nobody here knows, and an empty `_meta` is a bag that says
+      // nothing while looking like it might.
+      expect(started).toEqual([['Write', undefined]]);
+      expect(held).toEqual([['Write', undefined]]);
+    });
+  });
+
   it('moves the running turn into the history when it completes', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
@@ -1498,6 +1566,26 @@ describe('a session that already happened', () => {
 
     // Browsing ninety-eight rows must not cost ninety-eight subprocesses.
     expect(sessionQueries()).toHaveLength(0);
+  });
+
+  it('draws the shell commands in its transcript as shell commands', async () => {
+    sdk.sessions.push(older);
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'list it' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'tool_use', id: 'tc1', name: 'Bash', input: { command: 'ls' } }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'a b' }] } },
+    );
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: state.defaultChat } }) as {
+      snapshot: { state: { turns: { responseParts: { toolCall?: { _meta?: { toolKind?: string } } }[] }[] } };
+    }).snapshot.state;
+    // The same hint a live call carries. A transcript read back off disk is
+    // the same conversation, and its rows should draw the same way.
+    expect(chat.turns[0]?.responseParts[0]?.toolCall?._meta?.toolKind).toBe('terminal');
   });
 
   it('agrees with the catalogue about what the conversation is called', async () => {

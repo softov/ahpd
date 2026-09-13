@@ -1,6 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, WireTurn } from '@ahpd/sdk';
+import { toolMetaOf } from './kinds.js';
 
 /**
  * Reads a session that already happened, as turns.
@@ -149,6 +150,7 @@ export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
+        const meta = toolMetaOf(name);
         /*
          * Checked against the state it claims to be in, at the moment it is
          * built.
@@ -167,6 +169,9 @@ export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<
           // a call still reading `running` would be a spinner that never stops.
           status: 'completed',
           ...(command ? { toolInput: command } : {}),
+          // The same hint a live call carries, so a transcript read back off
+          // disk draws its shell commands as shell commands.
+          ...(meta ? { _meta: meta } : {}),
           /*
            * Required on a completed call, all four of them, and this builder
            * sent one of them sometimes.
