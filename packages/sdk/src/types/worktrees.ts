@@ -64,9 +64,11 @@ export interface Worktrees {
   /**
    * The branches this repository has, most useful first.
    *
-   * What a client draws the base-branch picker from. An empty list is a real
-   * answer - a repository with no commits has no branches - and leaves the
-   * control with nothing to choose but the default.
+   * What a client draws the base-branch picker from, and the first is what a
+   * session starts from when nobody chooses: the branch checked out, where
+   * there is one. An empty list is a real answer - a repository with no
+   * commits has no branches - and leaves the control with nothing to choose
+   * but the default.
    */
   branches(repository: string): Promise<string[]>;
 

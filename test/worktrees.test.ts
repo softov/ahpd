@@ -102,8 +102,12 @@ describe('a session with a working tree of its own', () => {
     }) as { schema: { properties: Record<string, { enum?: string[] }> }; values: Record<string, string> };
     expect(offered.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
     // The branches it actually has, with the one it is on first: a picker that
-    // opens on the oldest branch is one somebody has to search.
+    // opens on the oldest branch is one somebody has to search. `release` was
+    // made after `main` and sorts above it by commit date, but `main` is
+    // checked out.
+    expect(offered.schema.properties.branch?.enum?.[0]).toBe('main');
     expect(offered.schema.properties.branch?.enum).toContain('release');
+    expect(offered.values.branch).toBe('main');
     // `folder`, because every session this daemon has run has been one, and a
     // default that moved them all would be changing where an agent works
     // without being asked.

@@ -54,18 +54,26 @@ export function gitWorktrees(): Worktrees {
 
     branches: async (repository) => {
       /*
-       * Local branches by most recent commit, then the remote ones.
+       * The branch checked out, then local branches by most recent commit,
+       * then the remote ones.
        *
        * Ordered rather than alphabetical because the useful answer is almost
        * always near the top of the first list, and a picker that opens on
-       * `archive/2019-cleanup` is one somebody has to search.
+       * `archive/2019-cleanup` is one somebody has to search. The checked-out
+       * one first because "work from here" is what a folder session means,
+       * and it is what somebody who never opens the picker gets - the
+       * reference host defaults to the same.
        */
-      const said = await git(
-        repository,
-        ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'],
-        10_000,
-      ).catch(() => '');
+      const [current, said] = await Promise.all([
+        git(repository, ['branch', '--show-current'], 5_000).catch(() => ''),
+        git(
+          repository,
+          ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'],
+          10_000,
+        ).catch(() => ''),
+      ]);
       const seen = new Set<string>();
+      if (current.trim() !== '') seen.add(current.trim());
       for (const line of said.split('\n')) {
         const name = line.trim();
         // `origin/HEAD` is a symbolic ref rather than a branch, and checking

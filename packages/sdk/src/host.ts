@@ -2452,14 +2452,10 @@ export function createHost(options: HostOptions): Host {
     if (!port || where === undefined) return { schema: {}, defaults: {} };
     const repository = await port.repository(where).catch(() => undefined);
     if (repository === undefined) return { schema: {}, defaults: {} };
-    const branches = await port.branches(repository).catch(() => [] as string[]);
-    const facts = options.directories?.meta(repository) as { git?: { branch?: string } } | undefined;
-    const current = facts?.git?.branch;
-    // The branch it is on, first, because that is what "work from here" means
-    // and it is what somebody who does not open the picker gets.
-    const offered = current !== undefined && branches.includes(current)
-      ? [current, ...branches.filter((one) => one !== current)]
-      : branches;
+    // Most useful first, which the port defines: the checked-out branch is
+    // what "work from here" means, and it is what somebody who does not open
+    // the picker gets.
+    const offered = await port.branches(repository).catch(() => [] as string[]);
     const base = offered[0];
     return {
       repository,
