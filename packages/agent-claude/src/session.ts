@@ -1201,6 +1201,22 @@ export function createSession(options: SessionOptions): Session {
        * itself, and it is checked against the state it completes.
        */
       Object.assign(call, result);
+      /*
+       * The progress line goes with the running state it described.
+       *
+       * Meaningful only while the call runs, and a completed row that still
+       * carries "Running Grep" is a row that says two things. Sent on the
+       * completion only when there was one to take off, because an action
+       * carrying `_meta` replaces the bag whole and an absent one leaves
+       * the kind stamped at the start alone.
+       */
+      const meta = bag(call._meta);
+      const progressed = meta.progressMessage !== undefined;
+      if (progressed) {
+        const { progressMessage: _gone, ...rest } = meta;
+        if (Object.keys(rest).length > 0) call._meta = rest;
+        else delete call._meta;
+      }
       // And as it is now the tool has run. Paired with the `before` above by
       // the call's own id, which is the only thing that survives the gap.
       const changed = id === undefined ? undefined : editing.get(id);
@@ -1213,6 +1229,7 @@ export function createSession(options: SessionOptions): Session {
         turnId: active?.id,
         toolCallId: id,
         result,
+        ...(progressed ? { _meta: call._meta ?? {} } : {}),
       });
     }
   };
@@ -1777,6 +1794,40 @@ export function createSession(options: SessionOptions): Session {
         if (active !== undefined && (type === 'user' || type === 'assistant')) {
           const entry = str(message.uuid);
           if (entry !== undefined) ends.set(String(active.id), entry);
+        }
+
+        /*
+         * A running subagent, saying how far it has got.
+         *
+         * `task_progress` is the harness's own status line for a `Task`
+         * that is still running: a model-written summary when the option
+         * is on, or the last tool it reached for. It goes on the call as
+         * `_meta.progressMessage` - the reference client's word for a line
+         * drawn on a running row and dropped when the row ends - and never
+         * into the result, which is what the tool answered and not what it
+         * was doing on the way. The reducer replaces a call's whole `_meta`
+         * on any action that carries one, so the kind stamped at the start
+         * is carried along rather than lost. The same line twice is said
+         * once.
+         */
+        if (type === 'system' && str(message.subtype) === 'task_progress') {
+          const id = str(message.tool_use_id);
+          const part = id === undefined ? undefined : parts.get(id);
+          const call = part === undefined ? undefined : bag(part.toolCall);
+          const line = str(message.summary)
+            ?? (str(message.last_tool_name) !== undefined ? `Running ${String(message.last_tool_name)}` : undefined);
+          if (call !== undefined && line !== undefined && str(call.status) === 'running'
+            && str(bag(call._meta).progressMessage) !== line) {
+            call._meta = { ...bag(call._meta), progressMessage: line };
+            emit('chat', {
+              type: 'chat/toolCallContentChanged',
+              turnId: active?.id,
+              toolCallId: id,
+              content: list(call.content),
+              _meta: call._meta,
+            });
+          }
+          continue;
         }
 
         if (type === 'stream_event') { streamed(bag(message.event)); continue; }

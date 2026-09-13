@@ -707,6 +707,52 @@ describe('driving a turn', () => {
       expect(held).toEqual([['Bash', 'terminal'], ['Grep', 'search'], ['Task', 'subagent'], ['Read', 'read']]);
     });
 
+    it('carries a running subagent\'s progress line, and drops it when the call ends', async () => {
+      const { client, peer: p, uri, chatUri } = await running();
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      const progress = (extra: Record<string, unknown>) => ({
+        type: 'system', subtype: 'task_progress', task_id: 'task-1', tool_use_id: 'tc1', description: 'look',
+        usage: { total_tokens: 10, tool_uses: 1, duration_ms: 5 }, ...extra,
+      });
+      await emit(
+        { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'Task', input: { description: 'look' } }] } },
+        progress({ summary: 'Reading the tests' }),
+        // The same line again is not news.
+        progress({ summary: 'Reading the tests' }),
+        // Without a summary, the last tool it reached for is the line.
+        progress({ last_tool_name: 'Grep' }),
+      );
+      const changed = actions(p, chatUri)
+        .filter((e) => e.action.type === 'chat/toolCallContentChanged')
+        .map((e) => e.action._meta);
+      // `_meta.progressMessage`, the reference client's word for a line on a
+      // running row - never the result, which is what the tool answered and
+      // not what it was doing on the way. The kind stamped at the start rides
+      // along, because an action carrying `_meta` replaces the bag whole.
+      expect(changed).toEqual([
+        { toolKind: 'subagent', progressMessage: 'Reading the tests' },
+        { toolKind: 'subagent', progressMessage: 'Running Grep' },
+      ]);
+      const mid = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
+      }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
+      expect(mid).toEqual({ toolKind: 'subagent', progressMessage: 'Running Grep' });
+
+      await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'found it' }] } });
+      // Gone with the running state it described: a completed row that still
+      // says "Running Grep" is a row saying two things.
+      const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+      expect(done?.action._meta).toEqual({ toolKind: 'subagent' });
+      const after = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
+      }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
+      expect(after).toEqual({ toolKind: 'subagent' });
+    });
+
     it('says nothing for a tool it has no kind for', async () => {
       const { started, held } = await kinds([{
         type: 'assistant',
