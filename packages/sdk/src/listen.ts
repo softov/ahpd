@@ -1,5 +1,5 @@
 import { createPeer, receive } from './rpc.js';
-import type { Connected, Listener, ListenOptions, OnConnect, Runtime } from './types/listen.js';
+import type { Connected, Listener, ListenOptions, OnConnect, Runtime, Tap } from './types/listen.js';
 
 /**
  * Accepts WebSocket connections on Node, Bun or Deno.
@@ -23,6 +23,7 @@ const runtimeOf = (): Runtime => {
 interface Bound {
   peer: ReturnType<typeof createPeer>;
   connected: Connected;
+  seen: ReturnType<typeof tapping>;
 }
 
 /**
@@ -55,9 +56,24 @@ const same = (a: string, b: string): boolean => {
   return differing === 0;
 };
 
+/**
+ * The tap on one connection, or nothing when nobody asked to see the wire.
+ *
+ * One number per accepted socket, in order of arrival, so the frames of two
+ * clients connected at once can be told apart in what the tap writes.
+ */
+const tapping = (tap: Tap | undefined, peer: number): {
+  out(text: string): void;
+  in(text: string): void;
+} => ({
+  out: (text) => { tap?.('host', text, peer); },
+  in: (text) => { tap?.('client', text, peer); },
+});
+
 export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
   const runtime = runtimeOf();
   const host = options.host ?? '127.0.0.1';
+  let accepted = 0;
   const token = options.token;
   /** Whether this handshake may proceed. No token configured accepts any. */
   const allowed = (url: string | undefined, authorization: string | null): boolean =>
@@ -84,17 +100,19 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       },
       websocket: {
         open(ws: BunSocket) {
+          const seen = tapping(options.tap, ++accepted);
           const peer = createPeer({
-            send: (text) => { ws.send(text); },
+            send: (text) => { seen.out(text); ws.send(text); },
             close: () => ws.close(),
             isOpen: () => ws.readyState === 1,
           });
-          bound.set(ws, { peer, connected: onConnect(peer) });
+          bound.set(ws, { peer, connected: onConnect(peer), seen });
         },
         message(ws: BunSocket, raw: string | Uint8Array) {
           const held = bound.get(ws);
           if (!held) return;
           const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw);
+          held.seen.in(text);
           receive(text, held.peer, (request) => held.connected.handle(request));
         },
         close(ws: BunSocket) {
@@ -128,17 +146,20 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       const { socket, response } = Deno.upgradeWebSocket(request);
       let held: Bound | undefined;
       socket.onopen = () => {
+        const seen = tapping(options.tap, ++accepted);
         const peer = createPeer({
-          send: (text) => { socket.send(text); },
+          send: (text) => { seen.out(text); socket.send(text); },
           close: () => socket.close(),
           isOpen: () => socket.readyState === 1,
         });
-        held = { peer, connected: onConnect(peer) };
+        held = { peer, connected: onConnect(peer), seen };
       };
       socket.onmessage = (event) => {
         const open = held;
         if (!open) return;
-        receive(String(event.data), open.peer, (request_) => open.connected.handle(request_));
+        const text = String(event.data);
+        open.seen.in(text);
+        receive(text, open.peer, (request_) => open.connected.handle(request_));
       };
       socket.onclose = () => { held?.peer.close(); held?.connected.close(); held = undefined; };
       return response;
@@ -177,14 +198,17 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     },
   });
   server.on('connection', (socket) => {
+    const seen = tapping(options.tap, ++accepted);
     const peer = createPeer({
-      send: (text) => { socket.send(text); },
+      send: (text) => { seen.out(text); socket.send(text); },
       close: () => socket.close(),
       isOpen: () => socket.readyState === 1,
     });
     const connected = onConnect(peer);
     socket.on('message', (raw) => {
-      receive(typeof raw === 'string' ? raw : raw.toString('utf8'), peer, (request) => connected.handle(request));
+      const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+      seen.in(text);
+      receive(text, peer, (request) => connected.handle(request));
     });
     socket.on('close', () => { peer.close(); connected.close(); });
   });

@@ -30,6 +30,8 @@ export interface Config {
    * beside this configuration, or `memory` until the process ends.
    */
   sessions?: 'file' | 'memory';
+  /** A file every frame is appended to, both directions, as JSON lines. */
+  wire?: string;
 }
 
 /**

@@ -325,6 +325,8 @@ pnpm typecheck
 pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```
 
+To see what a client and this host actually say to each other, start the daemon with `--wire <file>` (or `wire` in the configuration file). Every frame in both directions is appended as one JSON line, `{ at, from, peer, frame }`, `from` being `client` or `host` and `peer` numbering the connection; `pnpm wire -- <file>` runs the capture through the strict schema, and `jq` reads it. `scripts/tee.mjs` is the same recording as a proxy, for a host that cannot be restarted with the flag.
+
 The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
 
 [`test/conformance.test.ts`](test/conformance.test.ts): it drives the host and then replays every action it emitted through the protocol package's **own reducers** - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote. A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.

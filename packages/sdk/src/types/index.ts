@@ -19,7 +19,7 @@ export type { Summary } from './catalog.js';
 export type { Emit, SessionOptions, Session, Ran, Chosen } from './session.js';
 export type { HostOptions, Connection, Credential, Host } from './host.js';
 export type { Page } from './paging.js';
-export type { Connected, OnConnect, Runtime, Listener } from './listen.js';
+export type { Connected, OnConnect, Runtime, Listener, Tap } from './listen.js';
 export type { Offered } from './probe.js';
 export type { Agent, Listed, Start, BoundTool } from './agent.js';
 export type { Entry, Metadata, Read } from './resources.js';

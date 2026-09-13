@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { automationsPath, configPath, loadConfig, sessionsPath } from './config.js';
 import { version } from './version.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
+import type { Tap } from '@ahpd/sdk';
 import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
@@ -64,6 +65,14 @@ interface Options {
    * catalogue on a restart - for every client at once, since these are shared.
    */
   sessions: 'file' | 'memory';
+  /**
+   * A file every frame is appended to, both directions, one JSON line each.
+   *
+   * What a client and this host actually said to each other, which neither
+   * side's log can show: a log says what a program meant. Off unless asked,
+   * because the file grows by every token of every reply.
+   */
+  wire?: string;
   help: boolean;
   /** Say the version and stop. */
   version: boolean;
@@ -98,12 +107,16 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 session's settings go. file, the default,
                                 keeps them beside the configuration; memory
                                 forgets them when this process ends.
+  --wire <file>                 Append every frame, both directions, to this
+                                file as JSON lines: { at, from, peer, frame }.
+                                pnpm wire -- <file> checks it against the
+                                protocol schema.
   --version, -v                 What version this is
   --help, -h                    This
 
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
-connectionTokenFile, withoutConnectionToken, automations, sessions. A flag beats the file, because a
+connectionTokenFile, withoutConnectionToken, automations, sessions, wire. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
@@ -150,6 +163,7 @@ function parse(argv: string[]): Options {
         else stop(`--sessions takes file or memory, not ${said}.`);
         break;
       }
+      case '--wire': options.wire = String(argv[++i]); break;
       case '--help': case '-h': options.help = true; break;
       case '--version': case '-v': options.version = true; break;
       default:
@@ -181,6 +195,7 @@ function parse(argv: string[]): Options {
   if (!argv.includes('--sessions') && (file.sessions === 'file' || file.sessions === 'memory')) {
     options.sessions = file.sessions;
   }
+  if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
 
   if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;
@@ -396,8 +411,27 @@ const host = createHost({
 // Whichever runtime this is. `listen` is the only file that knows, and it
 // says which one it found - a daemon that silently ran somewhere unexpected
 // would be a daemon nobody could tell apart from the one they meant to start.
+/*
+ * The wire, written down as it happens.
+ *
+ * One line per frame, appended synchronously so the file is whole at the
+ * moment anything else is read: a capture that lags the crash it is meant to
+ * explain is no capture. `frame` is the message parsed, so `jq` reads the
+ * file; a frame that is not JSON is kept as the string it was, because a
+ * client that sent one is exactly what a capture is for.
+ */
+const tap = options.wire === undefined ? undefined : ((): Tap => {
+  const at = options.wire as string;
+  writeFileSync(at, '');
+  return (from, text, peer) => {
+    let frame: unknown = text;
+    try { frame = JSON.parse(text); } catch { /* kept as text */ }
+    appendFileSync(at, `${JSON.stringify({ at: new Date().toISOString(), from, peer, frame })}\n`);
+  };
+})();
+
 const listener = await listen(
-  { port: options.port, host: options.host, ...(token !== undefined ? { token } : {}) },
+  { port: options.port, host: options.host, ...(token !== undefined ? { token } : {}), ...(tap ? { tap } : {}) },
   (peer) => host.accept(peer),
 );
 
@@ -408,7 +442,8 @@ process.stdout.write(
   + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
-  + `${from}\n`,
+  + `${from}\n`
+  + (options.wire === undefined ? '' : `wire to ${options.wire}\n`),
 );
 
 const shutdown = (): void => {

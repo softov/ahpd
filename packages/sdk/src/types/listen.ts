@@ -13,6 +13,17 @@ export interface Connected {
 /** Called per connection, to hand it to whatever will answer it. */
 export type OnConnect = (peer: Peer) => Connected;
 
+/**
+ * Called with every frame, in either direction, as it crosses the socket.
+ *
+ * `from` is who wrote it; `text` is the frame as sent, before this side has
+ * parsed it or after it was serialised, which is the one form both ends of a
+ * connection agree on; `peer` numbers the connection, from one, so a capture
+ * of a host with three clients can be read apart. Called on the socket's own
+ * path, so it must not throw and should not block.
+ */
+export type Tap = (from: 'client' | 'host', text: string, peer: number) => void;
+
 /** The runtimes a listener can be running on. */
 export type Runtime = 'node' | 'bun' | 'deno';
 
@@ -50,4 +61,6 @@ export interface ListenOptions {
    * WebSocket, which is why the query string is the one that always works.
    */
   token?: string;
+  /** Sees every frame, both ways. Nothing is recorded without one. */
+  tap?: Tap;
 }

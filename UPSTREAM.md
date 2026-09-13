@@ -10,7 +10,7 @@ Same revisions as Pass 2. The list below was Pass 2's "Read and not taken", re-r
 
 ### Seeing the wire
 
-- [ ] **`--wire <file>` on `serve` writes every frame, both directions, as JSONL.** One line per frame: `{ "at": <ISO time>, "dir": "in" | "out", "peer": <connection number>, "frame": <the JSON-RPC message as sent> }`. `tools/validate.mjs` reads the wrapped line as well as the bare frame it reads today, so a capture from a running daemon goes straight through the strict schema. The same format is what `ahpc --wire` and advisor's tap write, so one reader serves all three.
+- [x] **`--wire <file>` writes every frame, both directions, as JSONL.** One line per frame: `{ "at": <ISO time>, "from": "client" | "host", "peer": <connection number>, "frame": <the JSON-RPC message, parsed> }`, the fields `scripts/tee.mjs` already wrote, so `tools/validate.mjs` reads either without change. Tapped on the socket in `listen.ts`, under the JSON-RPC layer, on all three runtimes, so what is written is what crossed the wire and not what either side meant. `ahpc --wire` and advisor's tap write the same lines.
 
 ### The tools an agent gets from its host
 
