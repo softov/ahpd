@@ -215,6 +215,36 @@ describe('a session with a working tree of its own', () => {
     expect(Object.keys(config.schema.properties).length).toBeGreaterThan(2);
   });
 
+  it('offers isolation and a branch on a session created with no config at all', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/unasked';
+    // What the window's provisional session sends: `{ isolation: 'folder' }`
+    // from an ordinary window, and nothing from the sessions window. It then
+    // draws its isolation and branch chips from this session's schema - so a
+    // host that echoed back only the keys it was sent drew no chips at all,
+    // where the reference host resolves the whole config on creation.
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'echo', workingDirectories: [`file://${project(root)}`] },
+    });
+    const config = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: {
+        state: {
+          config: {
+            schema: { properties: Record<string, { readOnly?: boolean; enum?: string[] }> };
+            values: Record<string, string>;
+          };
+        };
+      };
+    }).snapshot.state.config;
+    expect(config.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+    expect(config.schema.properties.branch?.enum).toContain('main');
+    expect(config.schema.properties.worktreeIncludeFiles).toBeDefined();
+    expect(config.values.isolation).toBe('folder');
+    expect(config.values.branch).toBe('main');
+  });
+
   it('answers the branches a client types for, not the whole list', async () => {
     const root = repository();
     const run = (...args: string[]) => execFileSync('git', ['-C', project(root), ...args], { stdio: 'pipe' });

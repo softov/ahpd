@@ -2626,7 +2626,9 @@ export function createHost(options: HostOptions): Host {
     const properties = ((offered.get(uri)?.properties ?? {}) as Bag);
     return Object.fromEntries(
       Object.entries(mine)
-        .filter(([, value]) => value !== undefined && value !== '')
+        // Everything offered, and anything else that was answered: a key the
+        // offer never had is worth a row only when it says something.
+        .filter(([key, value]) => properties[key] !== undefined || (value !== undefined && value !== ''))
         .map(([key]) => [
           key,
           // A session created before this host could ask - an automation on a
@@ -2635,6 +2637,25 @@ export function createHost(options: HostOptions): Host {
           properties[key] ?? { type: 'string', title: key, readOnly: true, sessionMutable: false },
         ]),
     );
+  };
+
+  /**
+   * What a new session settled on, as this host's half of its config.
+   *
+   * The offer is made against the directory that was asked for - the
+   * repository, not a worktree's own, which has one branch and is not where
+   * the choice is made. The values are the host's defaults under what the
+   * client chose: a session created with `{}` still reads back `isolation`
+   * and `branch`, the way one does on the reference host, whose
+   * `createSession` resolves the whole config rather than echoing the keys
+   * it was sent. A window draws its isolation and branch chips from the
+   * session's schema once a provisional session exists, and it sends
+   * `{ isolation: 'folder' }` or nothing at all.
+   */
+  const settle = async (uri: string, where: string | undefined, config: Record<string, unknown>): Promise<void> => {
+    const mine = await isolating(where, typeof config.isolation === 'string' ? config.isolation : undefined);
+    offered.set(uri, mine.schema);
+    decided.set(uri, { ...mine.defaults, ...mineOf(config) });
   };
 
   /**
@@ -3263,8 +3284,7 @@ export function createHost(options: HostOptions): Host {
       // the tree before anything runs in it, the host's keys kept apart from
       // the backend's.
       const where = await isolated(made, config, asked.workingDirectory);
-      decided.set(made, mineOf(config));
-      offered.set(made, (await isolating(asked.workingDirectory, asked.isolation)).schema);
+      await settle(made, asked.workingDirectory, config);
       openSession(made, provider, backendsOwn(config), where, undefined, undefined, undefined, asked.title);
       const lead = byChat.get(chatUriFor(made));
       if (lead === undefined) throw new Error(`${made} did not start`);
@@ -3814,8 +3834,7 @@ export function createHost(options: HostOptions): Host {
     // backend's to read. An automation asking for isolation is the case this
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
-    decided.set(uri, mineOf(config));
-    offered.set(uri, (await isolating(wanted.workingDirectory, typeof config.isolation === 'string' ? config.isolation : undefined)).schema);
+    await settle(uri, wanted.workingDirectory, config);
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -5082,12 +5101,7 @@ export function createHost(options: HostOptions): Host {
           along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
           const running = await isolated(uri, config, where);
           along(1, 'Starting the agent');
-          decided.set(uri, mineOf(config));
-          // The offer, kept so the session can make it again while nothing has
-          // been said in it. Against the directory that was asked for, which is
-          // the repository - a worktree's own has one branch and is not where
-          // the choice is made.
-          offered.set(uri, (await isolating(where, typeof config.isolation === 'string' ? config.isolation : undefined)).schema);
+          await settle(uri, where, config);
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.

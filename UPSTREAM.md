@@ -36,6 +36,7 @@ VS Code's host gives the agent inside a session tools for acting on the host (`s
 
 - [x] **`shellInitScripts`.** VS Code sends it where a session's schema declares it: scripts to source before every shell command the agent runs. Declare it, and run them through a `PreToolUse` hook on the Claude backend's `Bash` tool, which is the seam this host already uses for approvals.
 - [x] **`sandboxEnabled`.** Declare it and map it onto the Claude Agent SDK's sandbox setting where that backend supports it; a backend that does not gets the key refused in `resolveSessionConfig` rather than silently ignored.
+- [x] **A created session carries the whole host config.** `agentService.ts createSession` runs `_resolveCreatedSessionConfig` whenever a config or a directory was given, so the session's schema has `isolation`, `branch` and the `worktree*` keys with their values resolved, whatever the client sent. The window relies on it: its provisional session is created with `{ isolation: 'folder' }` from an ordinary window and nothing from the sessions window, and the chips are drawn from the session's schema. This host echoed back only the keys it was sent, so a session created with nothing drew no isolation and no branch chip; now the offer's defaults sit under the client's answers.
 
 ### What the window asks a host about itself
 
