@@ -32,8 +32,9 @@ Kept here so the next pass does not re-read them.
 
 - Session server tools: `set_workspace`, `create_session.worktree`, and `send_message` queueing behind a busy chat. This host's tools are its own (`ahp_sessions`, `ahp_resource`, `ahp_terminals`). The queueing semantic is the one to borrow if a `send` tool is ever added.
 - `sandboxEnabled` and `shellInitScripts` session config keys: Copilot's. The client pushes `shellInitScripts` only where the session's schema declares it, so sessions here are never sent it.
-- `agent-merge` changeset kind, `pullRequestState` in `_meta.git`, host-notice turns (`vscode.chat.requestHiddenFromTranscript`, `vscode.chat.systemInitiatedLabel`), `agentSystemNotificationMeta` kinds: Agent Merge and the merged-pull-request lifecycle, which is an editor's feature.
-- `vscode/removeSessionArtifact` and the detached-worktree extension methods: VS Code-only RPCs behind `_meta['vscode.removeSessionArtifact']`.
+- `agent-merge` changeset kind, `pullRequestState` in `_meta.github` (the reference host's second well-known session key, beside `git`; this host does not track pull requests), host-notice turns (`vscode.chat.requestHiddenFromTranscript`, `vscode.chat.systemInitiatedLabel`), `agentSystemNotificationMeta` kinds: Agent Merge and the merged-pull-request lifecycle, which is an editor's feature.
+- Request `_meta` on changeset operations VS Code sends its own host: `treeish` and `preCheckoutAction` on a `checkout`, `vscode.pullRequest` on `prepare-pull-request`. This host offers `commit`, `discard` and `revert`, so neither operation is ever invoked here; `vscode.chat.workspaceContinuation` on a message likewise rides on workspace conversion, which this host declines.
+- `vscode/removeSessionArtifact`, `vscode/requestWorkspaceTrust` and the detached-worktree extension methods: VS Code-only RPCs, each behind a `vscode.*` capability flag in `initialize`'s `_meta` that this host does not set.
 - `node/claude/`: `agentHostCapabilities.workspaceConversion: false`, `setWorkingDirectory` throws, a `PreToolUse` hook denying GitHub tools during Agent Merge turns, `activation: 'restore'` allowing a cold SDK download. This host already changes a session's directories by resuming it, which is the thing upstream declines to do.
 - Claude Agent SDK: upstream pins 0.3.239; this host is on 0.3.261.
 
