@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createHost } from '../packages/sdk/src/host.js';
 import { memoryAutomations } from '../packages/sdk/src/automations.js';
 import { echo } from '../examples/echo/agent.js';
@@ -109,6 +109,63 @@ it('answers a run on the automations channel, which is the one it declares', asy
   await expect(client.handle({
     method: 'runAutomation', params: { channel: 'ahp-root://', automation: ONE, requestId: 'r' },
   })).rejects.toMatchObject({ code: -32602 });
+});
+
+/*
+ * The catalogue under the spelling the reference host used for two weeks.
+ *
+ * `ahp-automations://catalog` was an authority added so the URI survived a
+ * round trip through VS Code's own URI class; the protocol never carried it,
+ * and Insiders builds from that window still subscribe under it. It was
+ * refused here with `-32001` about a session nobody had named.
+ */
+describe('the catalogue under its old spelling', () => {
+  const OLD = 'ahp-automations://catalog';
+
+  it('is subscribed, and answered under the name the client used', async () => {
+    const { client, peer: p } = await connected();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: OLD } }) as {
+      snapshot: { resource: string; state: { entries: unknown[] } };
+    };
+    expect(opened.snapshot.resource).toBe(OLD);
+    expect(opened.snapshot.state.entries).toEqual([]);
+    // Written under the old spelling too, and the action comes back under it:
+    // a client that asked about one URI is watching that URI, not another.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: OLD, action: { type: 'automation/createRequested', resource: ONE, definition: DEFINITION } },
+    });
+    await settle();
+    expect(actions(p, OLD).map((one) => one.type)).toContain('automation/set');
+    expect(actions(p, AUTOMATIONS)).toEqual([]);
+  });
+
+  it('is what the two automation commands may name', async () => {
+    const { client } = await connected();
+    await write(client, DEFINITION);
+    await expect(client.handle({
+      method: 'fetchAutomationRuns', params: { channel: OLD, automation: ONE },
+    })).resolves.toBeTruthy();
+  });
+
+  it('is resumed under it on reconnect, and replayed', async () => {
+    const { host, client } = await connected();
+    await client.handle({ method: 'subscribe', params: { channel: OLD } });
+    // Dropped and back, having seen nothing since it connected. The one
+    // action in the gap is the catalogue's, dispatched under the name this
+    // host holds it by - which is what the replay is keyed on.
+    await write(client, DEFINITION);
+    await settle();
+    const back = peer();
+    const again = host.accept(back);
+    const answer = await again.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'a', lastSeenServerSeq: 0, subscriptions: [OLD] },
+    }) as { type: string; actions?: { channel: string }[]; missing?: string[] };
+    expect(answer.type).toBe('replay');
+    expect(answer.missing).toEqual([]);
+    expect(answer.actions?.map((one) => one.channel)).toContain(AUTOMATIONS);
+  });
 });
 
 it('advertises no event triggers, and manual is not one', async () => {

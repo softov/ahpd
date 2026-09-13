@@ -923,8 +923,21 @@ export function createHost(options: HostOptions): Host {
     // off is: a client that opened the row under its own spelling dispatches
     // annotations under that spelling too.
     if (channel.endsWith(MARKS)) return `${heldAs(channel.slice(0, -MARKS.length))}${MARKS}`;
+    if (isAutomations(channel)) return AUTOMATIONS;
     return sessionOfChat(channel) !== undefined ? chatOf(channel) : heldAs(channel);
   };
+  /**
+   * Whether a URI names the automations catalogue, under any spelling.
+   *
+   * There is one catalogue and the protocol names it `ahp-automations://`.
+   * For two weeks the reference host spelt it `ahp-automations://catalog` -
+   * an authority added so the URI survived a round trip through its own URI
+   * class - and Insiders builds from that window still subscribe under it,
+   * and were refused `-32001` here about a session nobody had named. The
+   * reference host now takes anything on the scheme, and so does this one:
+   * a client is answered under the spelling it used, the way a chat is.
+   */
+  const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
   /**
    * What a client has marked on a session, by that session's id.
    *
@@ -3635,9 +3648,11 @@ export function createHost(options: HostOptions): Host {
           for (const channel of wanted) {
             try {
               // Resolved the way `subscribe` resolves it, so a client coming
-              // back under the older spelling of a chat is resumed rather than
-              // told the channel has gone.
-              const meant = chatOf(channel);
+              // back under its own spelling of a chat, a session, or the
+              // automations catalogue is resumed rather than told the channel
+              // has gone - and is replayed, which is keyed by the name this
+              // host dispatches under rather than the one the client used.
+              const meant = meantBy(channel);
               await snapshotOf(meant);
               if (meant !== channel) connection.aliases.set(meant, channel);
               connection.watching.add(channel);
@@ -6023,7 +6038,9 @@ export function createHost(options: HostOptions): Host {
            */
           const fixed = DECLARED[request.method];
           const named = (request.params as { channel?: unknown } | undefined)?.channel;
-          if (fixed !== undefined && typeof named === 'string' && named !== '' && named !== fixed) {
+          // The catalogue under any of its spellings is still the catalogue.
+          if (fixed !== undefined && typeof named === 'string' && named !== '' && named !== fixed
+            && !(fixed === AUTOMATIONS && isAutomations(named))) {
             throw new RpcError(-32602, `${request.method} is answered on ${fixed}, not on ${named}`);
           }
           if (REVERSE.has(request.method)) {

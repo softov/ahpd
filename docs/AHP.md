@@ -54,6 +54,15 @@ nothing wrong. `initialize` and `ping` are the other two and are exempt: they
 are how a client finds out it can talk at all, and refusing either turns a
 wrong constant into a connection that never opens.
 
+One spelling is taken as another: `ahp-automations://catalog` is the
+automations catalogue, on the two commands and on `subscribe`, `reconnect`
+and `dispatchAction`. The protocol names the channel `ahp-automations://`, and
+for two weeks the reference host spelt it with an authority so the URI survived
+a round trip through its own URI class; Insiders builds from that window still
+subscribe under it, and were refused here with `-32001` about a session nobody
+had named. Answered under whichever spelling the client used, the way a chat
+is.
+
 | command | ahpd | Notes |
 | --- | :---: | --- |
 | `initialize` | ✅ | Answers with a version the client actually offered, in the client's order of preference; a refusal carries `supportedVersions` to retry with. `initialSubscriptions` come back as snapshots in the same response. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port. |
