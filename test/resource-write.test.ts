@@ -59,7 +59,6 @@ for (const one of fixture.cases) {
     if (one.before === 'absent' && one.path !== undefined) rmSync(dirname(at), { recursive: true, force: true });
 
     const uri = pathToFileURL(at).href;
-    const roots = [root];
     /*
      * The etag from this end's own `resolve`.
      *
@@ -68,7 +67,7 @@ for (const one of fixture.cases) {
      */
     let ifMatch = one.write.ifMatch as string | undefined;
     if (ifMatch === 'current') {
-      ifMatch = (await resolve(uri, roots)).etag;
+      ifMatch = (await resolve(uri)).etag;
       expect(ifMatch, 'the fixture asked for the current etag and this end has none').toBeTypeOf('string');
     }
     else if (ifMatch === 'stale') ifMatch = 'W/"0-0"';
@@ -78,7 +77,7 @@ for (const one of fixture.cases) {
       encoding: (one.write.encoding as string | undefined) ?? 'utf8',
       ...(ifMatch === undefined ? {} : { ifMatch }),
     } as unknown as Write;
-    const asked = write(uri, roots, content);
+    const asked = write(uri, content);
 
     if (one.then.refusal !== undefined) {
       const refused = await asked.then(() => undefined, (error: unknown) => error);

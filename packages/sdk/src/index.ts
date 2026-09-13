@@ -19,7 +19,6 @@
  */
 
 export { createHost, ROOT } from './host.js';
-export { within } from './paths.js';
 export { listen } from './listen.js';
 export {
   createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,

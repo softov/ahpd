@@ -3,17 +3,19 @@ import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename,
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RpcError } from './rpc.js';
-import { within } from './paths.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write } from './types/resources.js';
 import type { ResourceStore } from './types/host.js';
 
 /**
- * The host's filesystem, as far as a client is allowed to see it.
+ * The host's filesystem, as the reference host serves it: all of it.
  *
- * Every path is checked against the directories the host was told to serve
- * before anything is opened. A host that answered for any path is one that
- * anybody who can reach the port can read `~/.ssh/id_ed25519` through - and
- * this daemon is meant to be reachable, with a token, from another machine.
+ * The connection token is the boundary, not the served directories. A client
+ * that may connect may list any directory, which is what the window's folder
+ * dialog does to let somebody pick where a session goes - it walks the disk
+ * through `resourceList` and checks the pick with `resourceResolve`, and a
+ * host that refused everything outside `--path` left that dialog able to
+ * pick nothing. `--path` says where the catalogue looks and where a session
+ * goes by default; it never said who may read what.
  *
  * `node:fs/promises` and `node:path` are used here because all three
  * supported runtimes provide them.
@@ -39,7 +41,6 @@ export const pathOf = (uri: string): string => {
 /** A path, back as the URI a client sends and receives. */
 export const uriOf = (path: string): string => pathToFileURL(path).href;
 
-/** Whether `path` is `root` or is under it. */
 /**
  * Why this store cannot answer for a URI, in the terms of what it is.
  *
@@ -60,45 +61,33 @@ const why = (uri: string): string => {
 };
 
 /**
- * The real path, if the client may see it.
+ * The path a URI names, as the filesystem knows it.
  *
- * Resolved *before* the check, not after: `served/link` pointing at `/etc`
- * passes a textual test and opens something else entirely. A path that does
- * not exist yet is checked as written, since there is nothing to resolve.
+ * Resolved through symlinks where it exists, so what is opened is what a
+ * directory listing showed rather than the text that was sent; a path that
+ * does not exist yet is taken as written, since there is nothing to resolve
+ * and it is what will be created.
  */
-export async function allowed(uri: string, roots: string[]): Promise<string> {
+export async function allowed(uri: string): Promise<string> {
   const asked = pathOf(uri);
   if (!isAbsolute(asked)) {
     throw new RpcError(REFUSED, why(uri));
   }
-  let real = asked;
   try {
-    real = await realpath(asked);
+    return await realpath(asked);
   }
-  catch { /* not there yet; the written path is what will be created */ }
-  const roots_ = await Promise.all(roots.map((root) => realpath(root).catch(() => root)));
-  if (!roots_.some((root) => within(root, real))) {
-    throw new RpcError(REFUSED, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
-  }
-  return real;
+  catch { return asked; }
 }
 
 /**
- * The path to write, if the client may write it.
+ * The path to write.
  *
- * Not `allowed`, and the difference is the whole security of the write half.
- * `allowed` resolves the path itself and falls back to the written text when
- * there is nothing there yet - which is right for reading, where a file that
- * does not exist has nothing to hand back either way. For a write it is a
- * hole: `served/link` pointing at `/etc` resolves to nothing for
- * `served/link/passwd`, so the textual test passes and the file is created
- * in `/etc`.
- *
- * So the *parent* is resolved, and the check is on that. A directory that is
- * not there yet is walked up until one is, because `mkdir -p` may be creating
- * several at once and none of them can escape a real ancestor.
+ * The *parent* is resolved rather than the path itself, because the thing
+ * being written may not be there yet. A directory that is not there yet is
+ * walked up until one is, because `mkdir -p` may be creating several at
+ * once, and the path is rebuilt from the resolved ancestor down.
  */
-export async function writable(uri: string, roots: string[]): Promise<string> {
+export async function writable(uri: string): Promise<string> {
   const asked = pathOf(uri);
   if (!isAbsolute(asked)) throw new RpcError(REFUSED, why(uri));
   /** The nearest ancestor that exists, and how far up it was. */
@@ -107,18 +96,11 @@ export async function writable(uri: string, roots: string[]): Promise<string> {
   for (;;) {
     const real = await realpath(up).catch(() => undefined);
     if (real !== undefined) {
-      const roots_ = await Promise.all(roots.map((root) => realpath(root).catch(() => root)));
-      if (!roots_.some((root) => within(root, real))) {
-        throw new RpcError(REFUSED, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
-      }
-      // Rebuilt from the resolved ancestor down, so what is opened is what was
-      // checked rather than the text that was sent.
       return join(real, ...climbed.reverse(), asked.slice(asked.lastIndexOf(sep) + 1));
     }
     const next = dirname(up);
-    // `/` resolving to nothing means the filesystem is gone, not that the
-    // client found a way out.
-    if (next === up) throw new RpcError(REFUSED, `This host does not serve ${asked}.`);
+    // `/` resolving to nothing means the filesystem is gone.
+    if (next === up) throw new RpcError(NOT_FOUND, `Nothing to write ${asked} under.`);
     climbed.push(up.slice(up.lastIndexOf(sep) + 1));
     up = next;
   }
@@ -133,8 +115,8 @@ const tagOf = (size: number, mtimeMs: number): string => `W/"${size.toString(16)
 const writes = new Map<string, Promise<void>>();
 
 /** One directory's entries, names only. */
-export async function list(uri: string, roots: string[]): Promise<Entry[]> {
-  const path = await allowed(uri, roots);
+export async function list(uri: string): Promise<Entry[]> {
+  const path = await allowed(uri);
   const found = await readdir(path, { withFileTypes: true }).catch(() => {
     throw new RpcError(NOT_FOUND, `No directory at ${uri}`);
   });
@@ -152,8 +134,8 @@ export async function list(uri: string, roots: string[]): Promise<Entry[]> {
  * the link points at, or what the link is - and they have different answers
  * for size and type.
  */
-export async function resolve(uri: string, roots: string[], followSymlinks = true): Promise<Metadata> {
-  const path = await allowed(uri, roots);
+export async function resolve(uri: string, followSymlinks = true): Promise<Metadata> {
+  const path = await allowed(uri);
   const asked = followSymlinks ? path : pathOf(uri);
   // `stat` describes the destination.  A caller that explicitly declined to
   // follow links asked about the directory entry itself, for which `lstat` is
@@ -188,8 +170,8 @@ const TEXTUAL = new Set([
  * hundred thousand times, so anything not recognisably textual comes back
  * base64 whatever was asked for - which the protocol allows for exactly this.
  */
-export async function read(uri: string, roots: string[], wanted?: string): Promise<Read> {
-  const path = await allowed(uri, roots);
+export async function read(uri: string, wanted?: string): Promise<Read> {
+  const path = await allowed(uri);
   const bytes = await readFile(path).catch(() => {
     throw new RpcError(NOT_FOUND, `No file at ${uri}`);
   });
@@ -210,12 +192,12 @@ export async function read(uri: string, roots: string[], wanted?: string): Promi
  * `@src/ho` complete to `@src/host.ts` rather than looking for a file called
  * `src/ho`.
  */
-export async function complete(typed: string, base: string, roots: string[], limit = 50): Promise<string[]> {
+export async function complete(typed: string, base: string, limit = 50): Promise<string[]> {
   const cut = typed.lastIndexOf('/');
   const inside = cut === -1 ? '' : typed.slice(0, cut + 1);
   const prefix = cut === -1 ? typed : typed.slice(cut + 1);
   const where = join(base, inside);
-  const found = await list(uriOf(where), roots).catch(() => [] as Entry[]);
+  const found = await list(uriOf(where)).catch(() => [] as Entry[]);
   return found
     .filter((entry) => entry.name.toLowerCase().startsWith(prefix.toLowerCase()))
     // A directory keeps its slash, so the next keystroke goes into it rather
@@ -238,7 +220,7 @@ export async function complete(typed: string, base: string, roots: string[], lim
  * putting it back is both the simplest form and the only one that can honour
  * `insert` at all.
  */
-export async function write(uri: string, roots: string[], content: Write): Promise<void> {
+export async function write(uri: string, content: Write): Promise<void> {
   /*
    * `ahpc` carries a second copy of everything below, in its `publish.ts`.
    *
@@ -249,7 +231,7 @@ export async function write(uri: string, roots: string[], content: Write): Promi
    * What is not deliberate is fixing one and not the other: everything here
    * was wrong in both at once, and was corrected in both at once.
    */
-  const path = await writable(uri, roots);
+  const path = await writable(uri);
   const before = writes.get(path) ?? Promise.resolve();
   const operation = before.catch(() => {}).then(() => writeAt(path, uri, content));
   writes.set(path, operation);
@@ -352,8 +334,8 @@ async function writeAt(path: string, uri: string, content: Write): Promise<void>
  * than emptied: the protocol has the flag so that deleting a tree is
  * something a client asked for in as many words.
  */
-export async function remove(uri: string, roots: string[], recursive = false): Promise<void> {
-  const path = await writable(uri, roots);
+export async function remove(uri: string, recursive = false): Promise<void> {
+  const path = await writable(uri);
   const found = await stat(path).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
   });
@@ -366,8 +348,8 @@ export async function remove(uri: string, roots: string[], recursive = false): P
 }
 
 /** Make a directory, and the parents it needs. */
-export async function mkdir(uri: string, roots: string[]): Promise<void> {
-  const path = await writable(uri, roots);
+export async function mkdir(uri: string): Promise<void> {
+  const path = await writable(uri);
   await makeDir(path, { recursive: true }).catch((error: NodeJS.ErrnoException) => {
     // `recursive` already tolerates an existing directory, so this is a *file*
     // in the way - which is a different thing to say.
@@ -381,15 +363,14 @@ export async function mkdir(uri: string, roots: string[]): Promise<void> {
 /**
  * Both ends of a two-path operation, checked.
  *
- * The source has to exist and the destination has to be somewhere this host
- * serves - so they are different questions and neither implies the other. A
- * move out of the served set is the interesting one to refuse: it would carry
- * a file somewhere the host can no longer see, which is a deletion nobody
- * asked for.
+ * The source has to exist and the destination has to have somewhere to go -
+ * different questions, and neither implies the other. Neither end is
+ * followed through a symbolic link at the destination, for the same reason a
+ * write is not.
  */
-async function pair(source: string, destination: string, roots: string[], failIfExists: boolean) {
-  const from = await allowed(source, roots);
-  const to = await writable(destination, roots);
+async function pair(source: string, destination: string, failIfExists: boolean) {
+  const from = await allowed(source);
+  const to = await writable(destination);
   await stat(from).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${source}`);
   });
@@ -402,22 +383,22 @@ async function pair(source: string, destination: string, roots: string[], failIf
   return { from, to };
 }
 
-/** Rename, within the served directories on both ends. */
-export async function move(source: string, destination: string, roots: string[], failIfExists = false): Promise<void> {
-  const { from, to } = await pair(source, destination, roots, failIfExists);
+/** Rename. */
+export async function move(source: string, destination: string, failIfExists = false): Promise<void> {
+  const { from, to } = await pair(source, destination, failIfExists);
   await rename(from, to).catch((error: NodeJS.ErrnoException) => {
     throw new RpcError(REFUSED, `Could not move ${source}: ${error.message}`);
   });
 }
 
-/** Copy, within the served directories on both ends. */
-export async function copy(source: string, destination: string, roots: string[], failIfExists = false): Promise<void> {
-  const { from, to } = await pair(source, destination, roots, failIfExists);
+/** Copy. */
+export async function copy(source: string, destination: string, failIfExists = false): Promise<void> {
+  const { from, to } = await pair(source, destination, failIfExists);
   const found = await stat(from);
   // Files use the same guarded open as resourceWrite; directories need a tree walk.
   const run = found.isDirectory()
     ? cp(from, to, { recursive: true, force: !failIfExists, errorOnExist: failIfExists })
-    : readFile(from).then((bytes) => write(uriOf(to), roots, { data: bytes.toString('base64'), encoding: 'base64' }));
+    : readFile(from).then((bytes) => write(uriOf(to), { data: bytes.toString('base64'), encoding: 'base64' }));
   await run.catch((error: NodeJS.ErrnoException) => {
     throw new RpcError(REFUSED, `Could not copy ${source}: ${error.message}`);
   });
@@ -489,11 +470,10 @@ const SKEW = 50;
  */
 export async function watch(
   uri: string,
-  roots: string[],
   options: WatchOptions,
   onChange: (changes: ResourceChange[]) => void,
 ): Promise<Watcher> {
-  const path = await allowed(uri, roots);
+  const path = await allowed(uri);
   await stat(path).catch(() => {
     throw new RpcError(NOT_FOUND, `Nothing at ${uri}`);
   });

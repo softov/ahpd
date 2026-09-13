@@ -45,26 +45,26 @@ export interface DirectoryFacts {
 }
 
 /**
- * The files a client may read through this host.
+ * The files a client reads through this host.
  *
  * A port, for the same reason `DirectoryFacts` is one: reading a directory is
  * `node:fs` on one runtime and something else on another, and a host embedded
- * in an editor may already have the file open. `roots` arrives per call rather
- * than being captured, because a backend may learn of a directory after the
- * host started and the answer has to move with it.
+ * in an editor may already have the file open. The whole filesystem, as the
+ * reference host serves it: the connection token is what decides who may
+ * read, and the served directories are where the catalogue looks.
  *
  * A host given none serves no `resource*` command at all - `-32601`, the same
  * answer it gives for anything else it does not have - and completes no `@`.
  */
 export interface ResourceStore {
   /** One directory's entries. */
-  list(uri: string, roots: string[], ): Promise<Entry[]>;
+  list(uri: string): Promise<Entry[]>;
   /** One file's bytes, or the range of them that was asked for. */
-  read(uri: string, roots: string[], wanted?: string): Promise<Read>;
+  read(uri: string, wanted?: string): Promise<Read>;
   /** What a URI is, without reading it. */
-  resolve(uri: string, roots: string[], followSymlinks?: boolean): Promise<Metadata>;
+  resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   /** Paths under `base` that start with what is typed. */
-  complete(typed: string, base: string, roots: string[], limit?: number): Promise<string[]>;
+  complete(typed: string, base: string, limit?: number): Promise<string[]>;
 
   /*
    * The half that writes.
@@ -77,20 +77,21 @@ export interface ResourceStore {
    * omission rather than by throwing on every call.
    *
    * The host has already checked the client's `resourceRequest` grant before
-   * any of these is reached. What is left to each is the path check, which is
-   * a store's own business because only it knows what a path means.
+   * any of these is reached. What is left to each is what the path means,
+   * which is a store's own business: a symlink, a directory, a parent that
+   * is not there.
    */
 
   /** Write, create or splice one file. */
-  write?(uri: string, roots: string[], content: WriteContent): Promise<void>;
+  write?(uri: string, content: WriteContent): Promise<void>;
   /** Remove a file, or a directory when `recursive`. */
-  remove?(uri: string, roots: string[], recursive?: boolean): Promise<void>;
+  remove?(uri: string, recursive?: boolean): Promise<void>;
   /** Make a directory, and the parents it needs. */
-  mkdir?(uri: string, roots: string[]): Promise<void>;
-  /** Rename, within the served directories on both ends. */
-  move?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
-  /** Copy, within the served directories on both ends. */
-  copy?(source: string, destination: string, roots: string[], failIfExists?: boolean): Promise<void>;
+  mkdir?(uri: string): Promise<void>;
+  /** Rename. `failIfExists` refuses a destination already there. */
+  move?(source: string, destination: string, failIfExists?: boolean): Promise<void>;
+  /** Copy. `failIfExists` refuses a destination already there. */
+  copy?(source: string, destination: string, failIfExists?: boolean): Promise<void>;
 
   /**
    * Tell me when that changes.
@@ -109,7 +110,6 @@ export interface ResourceStore {
    */
   watch?(
     uri: string,
-    roots: string[],
     options: WatchOptions,
     onChange: (changes: ResourceChange[]) => void,
   ): Promise<Watcher>;

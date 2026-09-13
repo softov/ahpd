@@ -162,11 +162,8 @@ it('lets the watcher go when the last subscriber leaves, and when the client doe
   await expect(third.handle({ method: 'subscribe', params: { channel: orphan.channel } })).rejects.toThrow();
 });
 
-it('will not watch what it does not serve, or what is not there', async () => {
+it('will not watch what is not there', async () => {
   const { client } = await connected();
-  expect((await refused(client.handle({
-    method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: 'file:///etc' },
-  }))).code).toBe(-32009);
   expect((await refused(client.handle({
     method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}/nowhere` },
   }))).code).toBe(-32008);

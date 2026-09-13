@@ -36,7 +36,7 @@ anything has been let go of.
 | --- | --- |
 | `--port <n>` | Default `9187`. `0` picks a free one |
 | `--host <addr>` | Default `127.0.0.1`. `0.0.0.0` accepts from other machines and needs a token |
-| `--path <dir>` | A directory this host serves. Repeatable. Default: where the daemon started |
+| `--path <dir>` | A directory this host catalogues. Repeatable. Default: where the daemon started |
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
@@ -59,22 +59,23 @@ Both are the same `AutomationStore`, so the host is not told which it was
 given. Runs are in memory either way: a run names the sessions it started, and
 those went when the process did.
 
-### `--path`, and why a client cannot name its own
+### `--path`, and what it is not
 
 A path is a directory on the machine **the daemon runs on**. The first is where
 a session goes when the client names none, and is what the host advertises as
-its default; the catalogue is the union of all of them, so nothing goes missing
-by adding one.
+its default; the catalogue is the union of all of them, so past sessions in any
+of them are listed and nothing goes missing by adding one.
 
 ```bash
 ahpd --path /work/api --path /work/web
 ```
 
-A directory the host was not told to serve is refused, with the list of what it
-does serve, rather than quietly replaced. A host that ran the agent wherever it
-was told is one that anybody who can reach the port can point at any directory
-on the machine; a directory accepted and then ignored is a session running
-somewhere nobody asked for, with nothing on screen saying which.
+It is not a fence. A client may name any directory on the machine for a
+session, a terminal or a `resource*` request, the way the reference host lets
+it: the window's folder dialog lists `..` from wherever it is and picks what is
+typed, and a host that refused everything outside `--path` was one where no
+folder outside it could be picked at all. Who may ask is decided once, by the
+connection token - which is why a host on `0.0.0.0` will not start without one.
 
 ## Configuration
 

@@ -93,12 +93,12 @@ describe('the words this host writes', () => {
 
   it('reports a resource kind and an encoding the protocol declares', async () => {
     const store = fileResources();
-    const entries = await store.list(`file://${REPO}/packages/sdk/src`, [REPO]);
+    const entries = await store.list(`file://${REPO}/packages/sdk/src`);
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(words('ResourceType')).toContain(entry.type);
     }
-    const read = await store.read(`file://${REPO}/package.json`, [REPO]);
+    const read = await store.read(`file://${REPO}/package.json`);
     expect(words('ContentEncoding')).toContain(read.encoding);
   });
 });

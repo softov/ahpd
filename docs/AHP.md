@@ -85,10 +85,10 @@ is.
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate. A result may carry a `followUp`. |
-| `resourceRead` | 🧩 | The `resources` port, inside the directories this host was told to serve. The changeset source is asked first, because the `before` side of an edit is not a file on disk. |
+| `resourceRead` | 🧩 | The `resources` port, anywhere on the machine. The changeset source is asked first, because the `before` side of an edit is not a file on disk. |
 | `resourceList` | 🧩 | The same port and the same fence. |
 | `resourceResolve` | 🧩 | What a URI actually is - type, size, times, and an `etag` for a file, which is what makes `resourceWrite`'s `ifMatch` usable. |
-| `resourceWrite` | 🧩 | Behind `resourceRequest`, and behind the store's own path check - which resolves the *parent*, so a symlink pointing out of the served set cannot be written through. `-32011` when `ifMatch` no longer matches. |
+| `resourceWrite` | 🧩 | Behind `resourceRequest`. The store resolves the *parent*, so what is written is where a listing said it is. `-32011` when `ifMatch` no longer matches. |
 | `resourceDelete` | 🧩 | The same two gates in the same order. |
 | `resourceMkdir` | 🧩 | `mkdir -p` semantics, as the protocol declares. |
 | `resourceMove` | 🧩 | Both ends checked. Refused `-32602` across two different clients, because neither peer could carry that out. |

@@ -83,28 +83,28 @@ would fail part-way through instead.
 
 ```ts
 interface ResourceStore {
-  list(uri, roots): Promise<Entry[]>;
-  read(uri, roots, wanted?): Promise<Read>;
-  resolve(uri, roots, followSymlinks?): Promise<Metadata>;
-  complete(typed, base, roots, limit?): Promise<string[]>;
+  list(uri): Promise<Entry[]>;
+  read(uri, wanted?): Promise<Read>;
+  resolve(uri, followSymlinks?): Promise<Metadata>;
+  complete(typed, base, limit?): Promise<string[]>;
 
   // The write half, all optional. A store without them is read-only, and a
   // write is answered `-32601` rather than refused about a path.
-  write?(uri, roots, content): Promise<void>;
-  remove?(uri, roots, recursive?): Promise<void>;
-  mkdir?(uri, roots): Promise<void>;
-  move?(source, destination, roots, failIfExists?): Promise<void>;
-  copy?(source, destination, roots, failIfExists?): Promise<void>;
+  write?(uri, content): Promise<void>;
+  remove?(uri, recursive?): Promise<void>;
+  mkdir?(uri): Promise<void>;
+  move?(source, destination, failIfExists?): Promise<void>;
+  copy?(source, destination, failIfExists?): Promise<void>;
 
   // Optional. Without it `createResourceWatch` answers `-32601`, which a
   // client degrades on rather than fails on.
-  watch?(uri, roots, options, onChange): Promise<Watcher>;
+  watch?(uri, options, onChange): Promise<Watcher>;
 }
 ```
 
-`roots` is handed in on every call and is the directories this host was told to
-serve. The store checks against it; the host does not do it for you, because a
-store that resolves symlinks knows things about a path that the host does not.
+The whole filesystem, as the reference host serves it. The connection token
+decides who may read; the served directories are where the catalogue looks,
+not where a client is allowed to.
 
 ### `terminals`
 
@@ -264,7 +264,6 @@ import {
   hostTools,                              // the tools this package contributes
   uriFor, idFor, idOf, Status,            // how a session is named, and its status bits
   tail, older, PAGE,                      // paging a long list of turns
-  within,                                 // whether a path is under a served root
 } from '@ahpd/sdk';
 
 // @ahpd/agent-claude - one backend, and nothing the host needs to know about

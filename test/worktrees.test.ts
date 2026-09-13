@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../packages/sdk/src/host.js';
 import { echo } from '../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../packages/sdk/src/worktrees.js';
+import { fileResources } from '../packages/sdk/src/resources.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
@@ -520,25 +521,36 @@ describe('a session with a working tree of its own', () => {
     expect(listed).toContain(where);
   });
 
-  it('refuses isolation it cannot serve the result of', async () => {
+  it('isolates a session whose host serves only the project itself', async () => {
     const root = repository();
-    // Served at the project itself, so its worktrees would sit outside every
-    // root - a session whose own files no client could read back.
+    // Worktrees sit beside their repository, outside `--path`. That was a
+    // refusal while `--path` fenced what a client could read; now the
+    // session's own files are readable wherever they land.
     const held = createHost({
       path: project(root),
       agents: [echo({ path: project(root), pace: 0 })],
       worktrees: gitWorktrees(),
+      resources: fileResources(),
     });
     const client = held.accept(peer());
     await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
-    await expect(client.handle({
+    await client.handle({
       method: 'createSession',
       params: {
         channel: 'ahp-session:/outside', provider: 'echo',
         workingDirectories: [`file://${project(root)}`],
         config: { isolation: 'worktree', branch: 'main' },
       },
-    })).rejects.toMatchObject({ code: -32602 });
+    });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { workingDirectories: string[] }[];
+    };
+    const where = listed.items[0]?.workingDirectories[0]?.replace(/^file:\/\//, '') ?? '';
+    expect(where).not.toBe(project(root));
+    const seen = await client.handle({
+      method: 'resourceList', params: { channel: 'ahp-root://', uri: `file://${where}` },
+    }) as { entries: { name: string }[] };
+    expect(seen.entries.map((e) => e.name)).toContain('.git');
   });
 });
 

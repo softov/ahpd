@@ -182,17 +182,14 @@ it('identifies links when resolving without following them', async () => {
   }
 });
 
-it('will not be written through a symlink pointing out of the served set', async () => {
+it('writes through a directory symlink, as the reference host does', async () => {
   const held = await client();
-  // The hole a textual path check leaves: the target does not exist, so
-  // resolving *it* answers nothing and the written text looks fine. The
-  // parent is what has to be resolved.
+  // There is no served set to point out of any more: a link to a directory
+  // elsewhere on the machine is a directory elsewhere on the machine, and a
+  // write under it lands there.
   symlinkSync(outside, join(root, 'link'));
-  const denied = await refused(put(held, 'link/escaped.txt', { data: 'no' }));
-  expect(denied.code).toBe(-32009);
-  expect(denied.message).not.toMatch(/^E[A-Z]+/);
-  expect(existsSync(join(outside, 'escaped.txt'))).toBe(false);
-  expect(existsSync(join(root, 'link/escaped.txt'))).toBe(false);
+  await put(held, 'link/escaped.txt', { data: 'through' });
+  expect(readFileSync(join(outside, 'escaped.txt'), 'utf8')).toBe('through');
 });
 
 it('says which directory is missing rather than which file', async () => {
@@ -242,7 +239,7 @@ it('makes a directory and the parents it needs', async () => {
   }))).code).toBe(-32010);
 });
 
-it('moves and copies, and refuses a destination outside the served set', async () => {
+it('moves and copies, and refuses a destination it holds no grant on', async () => {
   const held = await client();
   writeFileSync(join(root, 'from.txt'), 'carried');
 
@@ -260,9 +257,8 @@ it('moves and copies, and refuses a destination outside the served set', async (
   expect(text('moved.txt')).toBe('carried');
   expect(existsSync(join(root, 'from.txt'))).toBe(false);
 
-  // Out of the served set is the interesting refusal: it would carry a file
-  // somewhere this host can no longer see, which is a deletion nobody asked
-  // for.
+  // The grant is on `root`, and the destination is not under it: a move is
+  // a write at both ends, and the far end was never asked for.
   const away = await refused(held.handle({
     method: 'resourceMove',
     params: { channel: 'ahp-root://', source: `file://${root}/moved.txt`, destination: `file://${outside}/taken.txt` },

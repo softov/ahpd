@@ -45,6 +45,12 @@ The rest of `IAgentHostExtensionCommandMap`, read on this pass and not noted bef
 - [x] **`vscode/collectAgentHostDebugLogs` and `vscode/readAgentHostDebugLogsChunk`.** `{ session?, chat?, kind: archive | directory }` to a `resource` with its `entries`, and a base64 chunk reader over it. The window's "collect logs" command for a bug report. This host's wire tap and event log are the logs it has; the session's transcript is the provider's.
 - [x] **`shutdown`, `getNetworkDiagnosticsInfo`, `diagnosticsFetch` and `getManagedSettingsDiagnostics`.** `shutdown` stops the host, which `ahpd stop` also does; the two network ones report proxy and certificate settings and try a fetch, for the window's network diagnostics; managed settings are Copilot's policy layer, which this host has no counterpart to and should answer as an empty list rather than `-32601`, since the window lists them beside the others.
 
+### The filesystem the window browses
+
+The window's folder dialog is `agentHostFileSystemProvider.ts` over `resourceList` and `resourceResolve`: it lists `..` from wherever it is, and stats whatever is typed before accepting it. `agentService.ts resourceList` is `fileService.resolve` on any directory, and `resourceRequest` grants everything, because the connection token has already decided who may ask.
+
+- [x] **`--path` is the catalogue, not a fence.** This host refused every `resource*`, `createTerminal`, `createSession` and worktree outside the directories it was started on, which the reference host never did - so the window's "Select Folder" could pick nothing outside `--path` and a worktree of a served project was refused for landing beside it. The `ResourceStore` no longer takes `roots`, `within` is gone, and the backend takes any absolute directory. `--path` keeps its two meanings: where past sessions are listed, and where a session goes when nobody says.
+
 ## Pass 2 - 2026-09-13
 
 VS Code `3aa54039` (2026-08-29) to `8e35945b` (2026-09-12), 206 agentHost commits. Protocol repository `fd0471d` to `a21274d`, dependabot only: `@microsoft/agent-host-protocol@0.9.0` is still current. VS Code's vendored snapshot moved `a0bc67f8` to `fd0471d4`, which is where the three protocol changes below come from.

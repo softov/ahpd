@@ -5,8 +5,7 @@ import { turnsOf } from './transcript.js';
 import { catalogue } from './catalog.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { within } from '@ahpd/sdk';
+import { isAbsolute, join } from 'node:path';
 import type { Agent, Bag, Start } from '@ahpd/sdk';
 
 /**
@@ -30,15 +29,13 @@ const ANTHROPIC = 'https://api.anthropic.com';
 /** How to build the Claude backend. */
 export interface ClaudeOptions {
   /**
-   * The directories it will work in, and the ones it lists.
+   * The directories it lists, and where a session goes by default.
    *
-   * The first is where a session goes when the client names none. A client
-   * may name any of the others and nothing else: a host that ran the agent
-   * wherever it was told is one anybody who can reach the port can point at
-   * any directory on the machine.
-   *
-   * This is also the catalogue's scope, so a directory left out is one whose
-   * sessions are neither listed nor openable.
+   * The catalogue's scope: past sessions in these directories are listed and
+   * openable, and ones elsewhere are not. The first is also where a new
+   * session goes when the client names no directory. A client that names one
+   * gets it, wherever on the machine it is - the connection token decided who
+   * may be here, the way it does on the reference host.
    */
   paths: string[];
   /** The id clients name. `claude` unless something else already is. */
@@ -55,28 +52,15 @@ export function claude(options: ClaudeOptions): Agent {
   /**
    * Which directory a session goes in.
    *
-   * Named, or the first. Anything else is refused rather than quietly
-   * replaced - a directory accepted and then ignored is a session running
-   * somewhere nobody asked for, with nothing on screen to say so.
+   * Named, or the first. An absolute path is taken as it was given, so the
+   * session runs where the client said; a relative one has no meaning on a
+   * host whose own directory the client cannot see, and is refused.
    */
   const workingDirectory = (asked?: string): string => {
     if (asked === undefined)
       return dir;
-    /*
-     * Under a served directory, not equal to one.
-     *
-     * This compared for equality, so a host told to serve `/home/you` served
-     * that one directory and refused every project inside it - which is the
-     * only kind of directory anybody opens. An editor asks for its workspace
-     * folder, and that is never the path somebody passed to `--path`.
-     */
-    if (!dirs.some((served) => within(served, asked))) {
-      throw new Error(
-        `This host does not serve ${asked}. It serves ${dirs.join(', ')}.`,
-      );
-    }
-    // What was asked for, not the root it sits under: the session runs where
-    // the client said.
+    if (!isAbsolute(asked))
+      throw new Error(`A working directory is an absolute path, not ${asked}.`);
     return asked;
   };
 

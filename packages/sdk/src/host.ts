@@ -23,7 +23,6 @@ import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
-import { within } from './paths.js';
 import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
@@ -228,10 +227,11 @@ export function createHost(options: HostOptions): Host {
     agents.set(agent.provider, agent);
   }
   /**
-   * Every directory any backend serves, plus the host's own.
+   * Every directory any backend catalogues, plus the host's own.
    *
-   * What a client may browse and read. Asked each time rather than captured,
-   * because a backend may learn about a directory after this host started.
+   * Where past sessions and branches are looked for; not what a client may
+   * read, which is anything. Asked each time rather than captured, because a
+   * backend may learn about a directory after this host started.
    */
   const browsable = (): string[] => {
     const found = new Set<string>([options.path]);
@@ -2997,19 +2997,6 @@ export function createHost(options: HostOptions): Host {
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository), worktreeFor(branch ?? base));
-    /*
-     * Inside somewhere this host serves, or not at all.
-     *
-     * Worktrees sit beside their repository, so a repository that *is* a
-     * served root puts them outside every one of them - and the session would
-     * then be one whose own files no client could read back, because
-     * `resourceRead` refuses a path outside the roots. Better to refuse the
-     * isolation and say so than to make a session that half works.
-     */
-    const roots = browsable();
-    if (!roots.some((root) => within(root, path))) {
-      throw new RpcError(-32602, `A worktree of ${repository} would live at ${path}, which this host does not serve`);
-    }
     // Read as a string, because that is what the schema for it says. A config
     // value is `unknown` on the wire - the protocol declares the bag
     // `Record<string, unknown>` and `permissions` is an object - so a key
@@ -3314,7 +3301,7 @@ export function createHost(options: HostOptions): Host {
       // that can read it - and this host's own store otherwise.
       const owner = ownerOf(asked);
       const answer = owner === undefined
-        ? await need(options.resources, 'resourceRead').read(asked, browsable())
+        ? await need(options.resources, 'resourceRead').read(asked)
         : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
       const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
         data?: unknown; encoding?: unknown;
@@ -4350,7 +4337,7 @@ export function createHost(options: HostOptions): Host {
             // Nothing rather than an error: this same command serves `/`,
             // and a host with no filesystem still has commands to offer.
             if (!options.resources) return { items: [] };
-            const paths = await options.resources.complete(typed_, base, browsable());
+            const paths = await options.resources.complete(typed_, base);
             return {
               items: paths.map((path) => ({
                 insertText: `@${path}`,
@@ -4568,10 +4555,6 @@ export function createHost(options: HostOptions): Host {
           if (terminals.has(uri))
             throw new RpcError(-32003, `${uri} already exists`);
           const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
-          const roots = browsable();
-          if (!roots.some((root) => within(root, asked))) {
-            throw new RpcError(-32009, `This host does not serve ${asked}. It serves ${roots.join(', ')}.`);
-          }
           /*
            * Whose terminal this is, checked rather than taken.
            *
@@ -4631,7 +4614,7 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         resourceList: async (params) => ({
-          entries: await need(options.resources, 'resourceList').list(String(params.uri ?? ''), browsable()),
+          entries: await need(options.resources, 'resourceList').list(String(params.uri ?? '')),
         }),
         resourceRead: async (params) => {
           const uri = String(params.uri ?? '');
@@ -4642,7 +4625,6 @@ export function createHost(options: HostOptions): Host {
           if (own) return own;
           return await need(options.resources, 'resourceRead').read(
             uri,
-            browsable(),
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
         },
@@ -4801,7 +4783,7 @@ export function createHost(options: HostOptions): Host {
           const excludes = items(params.excludes);
           const includes = items(params.includes);
           const channel = `ahp-resource-watch:/${crypto.randomUUID()}`;
-          const watcher = await start.call(store, uri, browsable(), { recursive, excludes, includes }, (changes) => {
+          const watcher = await start.call(store, uri, { recursive, excludes, includes }, (changes) => {
             // Only if it still exists: a batch can be in flight when the last
             // subscriber leaves, and dispatching to a released channel is a
             // client being told about a watch it has forgotten.
@@ -4841,7 +4823,7 @@ export function createHost(options: HostOptions): Host {
           const uri = String(params.uri ?? '');
           needsWrite(uri);
           const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
-          await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, browsable(), {
+          await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, {
             data: String(params.data ?? ''),
             encoding,
             /*
@@ -4867,7 +4849,7 @@ export function createHost(options: HostOptions): Host {
           const uri = String(params.uri ?? '');
           needsWrite(uri);
           await need(need(options.resources, 'resourceDelete').remove, 'resourceDelete')(
-            uri, browsable(), params.recursive === true,
+            uri, params.recursive === true,
           );
           log(`${connection.clientId} removed ${uri}`);
           return {};
@@ -4875,7 +4857,7 @@ export function createHost(options: HostOptions): Host {
         resourceMkdir: async (params) => {
           const uri = String(params.uri ?? '');
           needsWrite(uri);
-          await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri, browsable());
+          await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
           return {};
         },
         /*
@@ -4892,7 +4874,7 @@ export function createHost(options: HostOptions): Host {
           needsWrite(source);
           needsWrite(destination);
           await need(need(options.resources, 'resourceMove').move, 'resourceMove')(
-            source, destination, browsable(), params.failIfExists === true,
+            source, destination, params.failIfExists === true,
           );
           log(`${connection.clientId} moved ${source} to ${destination}`);
           return {};
@@ -4902,7 +4884,7 @@ export function createHost(options: HostOptions): Host {
           const destination = String(params.destination ?? '');
           needsWrite(destination);
           await need(need(options.resources, 'resourceCopy').copy, 'resourceCopy')(
-            source, destination, browsable(), params.failIfExists === true,
+            source, destination, params.failIfExists === true,
           );
           return {};
         },
@@ -4914,18 +4896,15 @@ export function createHost(options: HostOptions): Host {
          * client asks about one file, is answered about that file, and a
          * second client on the same port inherits nothing from the first.
          *
-         * What this host will grant is the directories it was told to serve,
-         * and nothing else. There is no person at a daemon to prompt, so the
-         * third answer the protocol allows is not available to it - which
-         * makes the served set the whole policy, and makes a request for
-         * anything outside it a refusal rather than a question.
+         * What this host will grant is any `file:` URI, the way the
+         * reference host grants everything it is asked: there is no person
+         * at a daemon to prompt, and the connection token has already
+         * decided who may be here. The grant is what makes a later write
+         * deliberate, not what makes it permitted.
          */
         resourceRequest: async (params) => {
           const uri = String(params.uri ?? '');
-          const path = uri.startsWith('file://') ? uri.slice('file://'.length) : undefined;
-          const inside = path !== undefined
-            && browsable().some((dir_) => path === dir_ || path.startsWith(`${dir_}/`));
-          if (!inside) throw new RpcError(-32009, `This host does not mediate ${uri}`);
+          if (!uri.startsWith('file://')) throw new RpcError(-32009, `This host does not mediate ${uri}`);
           // Neither flag is a read, which is what the protocol tells receivers
           // to make of a request that sets nothing.
           const write = params.write === true;
@@ -5043,7 +5022,6 @@ export function createHost(options: HostOptions): Host {
         },
         resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
           String(params.uri ?? ''),
-          browsable(),
           params.followSymlinks !== false,
         ),
         /**

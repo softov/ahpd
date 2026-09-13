@@ -84,7 +84,7 @@ ahpd config                  # where the configuration is, and what it says
 
 `start` detaches, so the daemon outlives the shell that began it - which is the point of a sessions server: close the terminal and the turn keeps running, attach again from somewhere else.
 
-### Serve more than one directory
+### Catalogue more than one directory
 
 `--path` names a directory on the **host machine** and can be repeated:
 
@@ -94,9 +94,9 @@ ahpd \
   --path /work/web
 ```
 
-The first path is the default when a client does not choose one.
+Past sessions in any of them are listed, and the first is the default when a client does not choose one.
 
-A client cannot point the host at an arbitrary directory. Paths outside the served set are refused.
+It is not a fence: a client may start a session, open a terminal or read a file anywhere on the machine, as it may on the reference host. The connection token is what decides who may ask.
 
 ### To expose it elsewhere:
 

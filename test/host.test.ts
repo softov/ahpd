@@ -2642,20 +2642,35 @@ describe('where the agent works', () => {
     expect(listed.items[0]?.workingDirectories).toEqual(['file:///brb_main/src']);
   });
 
-  it('refuses one it was not told to serve, in the backend\'s own words', async () => {
+  it('runs one anywhere the client names, the way the reference host does', async () => {
     const client = await opened();
-    // A host that ran the agent wherever it was told is one anybody who can
-    // reach the port can point at any directory on the machine. Said, not
-    // silently replaced: a directory accepted and then ignored is a session
-    // running somewhere nobody asked for.
-    await expect(client.handle({
+    // `--path` is where the catalogue looks and where a session goes when
+    // nobody says; it is not a fence. The window's folder dialog picks any
+    // directory on the machine, and the connection token already decided
+    // who may ask.
+    await client.handle({
       method: 'createSession',
       params: {
         channel: 'ahp-session:/a',
         provider: 'claude',
         workingDirectories: ['file:///etc'],
       },
-    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('/etc') });
+    });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.cwd).toBe('/etc');
+  });
+
+  it('refuses a relative one, in the backend\'s own words', async () => {
+    const client = await opened();
+    // A relative path is relative to nothing a client can see.
+    await expect(client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/a',
+        provider: 'claude',
+        workingDirectories: ['file://src'],
+      },
+    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('absolute') });
     expect(sessionQueries()).toHaveLength(0);
   });
 
@@ -3260,22 +3275,29 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     expect(found.data).toContain('"name": "@ahpd/server"');
   });
 
-  it('refuses a path it was not told to serve', async () => {
-    const client = await opened();
-    // A host that answered for any path is one that anybody who can reach the
-    // port can read `~/.ssh/id_ed25519` through.
-    await expect(client.handle({
-      method: 'resourceRead',
-      params: { channel: 'ahp-root://', uri: 'file:///etc/passwd' },
-    })).rejects.toMatchObject({ code: -32009 });
-  });
-
-  it('refuses one that climbs out of a served directory', async () => {
+  it('serves the whole machine, not only the directories it was started on', async () => {
     const client = await opened(`${REPO}/packages/sdk/src`);
-    await expect(client.handle({
+    // The window's folder dialog lists `..` from wherever it is and stats
+    // whatever is typed; a host that refused everything outside `--path`
+    // was one where no folder outside it could be picked at all. The token
+    // on the connection is the boundary, as on the reference host.
+    const found = await client.handle({
       method: 'resourceList',
       params: { channel: 'ahp-root://', uri: `file://${REPO}/packages/sdk/src/../../../../..` },
-    })).rejects.toMatchObject({ code: -32009 });
+    }) as { entries: { name: string }[] };
+    expect(found.entries.length).toBeGreaterThan(0);
+    await expect(client.handle({
+      method: 'resourceResolve',
+      params: { channel: 'ahp-root://', uri: 'file:///' },
+    })).resolves.toMatchObject({ type: 'directory' });
+  });
+
+  it('refuses a relative path, which is relative to nothing a client can see', async () => {
+    const client = await opened();
+    await expect(client.handle({
+      method: 'resourceRead',
+      params: { channel: 'ahp-root://', uri: 'file://packages/sdk/src/host.ts' },
+    })).rejects.toMatchObject({ code: -32602 });
   });
 
   it('says a missing file is missing, not forbidden', async () => {
@@ -3681,14 +3703,14 @@ describe('a shell on this machine', () => {
       .rejects.toMatchObject({ code: -32001 });
   });
 
-  it('will not open one outside the directories it serves', async () => {
+  it('opens one wherever it is asked, as the reference host does', async () => {
     const { client } = await opened();
-    // A terminal is arbitrary code on this machine. One that started anywhere
-    // would be a host that hands out a shell wherever it is asked.
+    // A terminal is arbitrary code on this machine, and so is a session; the
+    // connection token is what decides who gets either, not the directory.
     await expect(client.handle({
       method: 'createTerminal',
       params: { channel: 'ahp-terminal:/four', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///etc' },
-    })).rejects.toMatchObject({ code: -32009 });
+    })).resolves.toBeDefined();
   });
 
   it('reports the exit code when the shell goes', async () => {

@@ -87,10 +87,10 @@ it('leaves a file on this machine to this host', async () => {
   const publisher = await joined(served, 'plugin');
   const reader = await joined(served, 'editor');
   // `file:` is never a client's, whatever a client is called - the host has a
-  // filesystem for it, and this one refuses a path outside what it serves.
+  // filesystem for it, and answers from that, here that there is no such file.
   await expect(reader.client.handle({
-    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'file:///etc/passwd' },
-  })).rejects.toThrow();
+    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'file:///etc/nothing-of-this-name' },
+  })).rejects.toMatchObject({ code: -32008 });
   expect(publisher.peer.asked).toEqual([]);
 });
 

@@ -180,13 +180,18 @@ it('lets an operation that writes nothing through without one', async () => {
   expect(source).toBeUndefined();
 });
 
-it('grants inside the directories it serves and refuses everywhere else', async () => {
+it('grants any file on this machine, and mediates nothing else', async () => {
   const { client } = await watching(scripted().source);
   expect(await client.handle({
     method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}/a.txt`, write: true },
   })).toEqual({});
+  // As the reference host: there is nobody at a daemon to ask, and the
+  // token already answered who may be here.
+  expect(await client.handle({
+    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'file:///etc/hostname', write: true },
+  })).toEqual({});
   const denied = await refused(client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'file:///etc/shadow', write: true },
+    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'virtual://plugin/a.txt', write: true },
   }));
   expect(denied.code).toBe(-32009);
 });
