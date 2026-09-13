@@ -1450,7 +1450,20 @@ export function createHost(options: HostOptions): Host {
     let changes: Bag = { status: statusOf(uri) };
     if (summary !== undefined) {
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
-      changes = mutable;
+      /*
+       * `activity: null` when there is none, rather than no key.
+       *
+       * A partial is applied by spreading it over the row a client holds,
+       * so a key that is not there is a field that did not change - and a
+       * session that has gone idle has no activity to carry, which left
+       * every row in the reference client saying what its last tool was
+       * doing until something else about it moved. That client reads
+       * `null` as "cleared" and its host sends it; the type says `string`,
+       * and this is the one place the wire carries what the type does not,
+       * because a row that never goes quiet is worse than a field that is
+       * off-schema by one value.
+       */
+      changes = { ...mutable, activity: mutable.activity ?? null };
     }
     broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };

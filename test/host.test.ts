@@ -2609,6 +2609,15 @@ describe('what it says it is doing', () => {
     // Cleared, not left saying the last thing it did.
     expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged').at(-1)?.action.activity)
       .toBeUndefined();
+    // And cleared on the catalogue row, which takes a `null` for it: a
+    // partial is spread over the row the client holds, so a key left off is
+    // a field that did not move, and the reference client's row went on
+    // saying `Bash ls -la` until something else about the session changed.
+    const moved = p.notes
+      .filter((n) => n.method === 'root/sessionSummaryChanged')
+      .map((n) => (n.params as { changes: Record<string, unknown> }).changes);
+    expect(moved.some((one) => one.activity === 'Bash ls -la')).toBe(true);
+    expect(moved.at(-1)).toHaveProperty('activity', null);
   });
 
   it('says the title once it has one', async () => {
