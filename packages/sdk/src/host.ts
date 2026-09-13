@@ -4090,7 +4090,22 @@ export function createHost(options: HostOptions): Host {
           if (waiting.length === 0 && !advertised().has(resource)) {
             throw new RpcError(-32602, `${resource || 'That'} is not a resource this host advertises`);
           }
-          if (token === '') throw new RpcError(-32602, 'A token cannot be empty');
+          /*
+           * An empty token takes the credential back.
+           *
+           * The protocol says so beside `expiresIn` - "when `token` is empty
+           * to revoke authentication" - and the reference host deletes what
+           * it held on one. This answered `-32602`, which left a client that
+           * had signed out with no way to say so: its next session here would
+           * have started on a credential it no longer meant to lend. Nothing
+           * running is told; a token is spent at start, and what is already
+           * running has it in its environment and no way to give it back.
+           */
+          if (token === '') {
+            const had = connection.tokens.delete(resource);
+            log(`${connection.clientId || 'a client'} ${had ? 'revoked' : 'had no'} token for ${resource}`);
+            return {};
+          }
           /*
            * Applied where it belongs, rather than only remembered.
            *

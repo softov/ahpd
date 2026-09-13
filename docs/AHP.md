@@ -72,7 +72,7 @@ wrong constant into a connection that never opens.
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
 | `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
 | `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message). |
-| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. See [Authentication](#authentication). |
+| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. An empty token takes it back, which is the protocol's word for signing out. See [Authentication](#authentication). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. Every other key is an enum of five or fewer and answers with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status and the write gate. A result may carry a `followUp`. |
@@ -619,6 +619,13 @@ spent only on sessions that client asks for. It is passed to the harness as
 `ANTHROPIC_API_KEY` **over** the daemon's own environment, never instead of it:
 the SDK's `env` replaces the subprocess environment rather than merging with it,
 so handing it a lone credential is a subprocess with no `PATH`.
+
+An empty token withdraws the one held for that resource - the protocol names
+this as revocation beside `expiresIn`, and the reference host does the same.
+The next session that client asks for starts on nothing, the way it would for
+a client that never pushed. What is already running keeps what it was started
+with: a token is spent at start, into the harness's environment, and there is
+no way to reach in and take it back out.
 
 An automation firing at nine in the morning has no connection behind it and runs
 on the daemon's own credentials.

@@ -3569,11 +3569,33 @@ describe('authenticating', () => {
     })).rejects.toMatchObject({ code: -32602 });
   });
 
-  it('refuses an empty token', async () => {
+  it('takes an empty token as the credential being withdrawn', async () => {
     const { client } = await opened();
+    await client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token: 'sk-lent' },
+    });
+    // The protocol's word for signing out, and the reference host's: an
+    // empty token revokes. This host refused it as a bad parameter, which
+    // left a client no way to take back what it had pushed.
     await expect(client.handle({
       method: 'authenticate',
       params: { channel: 'ahp-root://', resource: ANTHROPIC, token: '' },
+    })).resolves.toEqual({});
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/revoked', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    });
+    await settle();
+    // Started on nothing, the way a session for a client that never pushed is.
+    expect(sessionQueries().at(-1)?.options.env).toBeUndefined();
+  });
+
+  it('still refuses a withdrawal for a resource it never advertised', async () => {
+    const { client } = await opened();
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: 'https://api.github.com', token: '' },
     })).rejects.toMatchObject({ code: -32602 });
   });
 
