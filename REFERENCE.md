@@ -61,6 +61,24 @@ Read it when a design question has an answer somebody has already had to find.
 Do not read it to decide what this daemon should be: it is an editor's host,
 and this one is deliberately not.
 
+## What this repository is building
+
+`.project/` is the record of what is planned, decided and set aside, and it
+is read before code is proposed. [`.project/plans/index.md`](.project/plans/index.md)
+is the entry: one row per plan, and a reference file per domain
+(`plans/<domain>/00-<domain>.md`) saying what exists today. A plan is a
+folder with a `plan.md`, one file per task, and `implemented.md` once it is
+built. Every decision is a file under `decisions/`; a plan only links them,
+and a choice with no file is not a decision. What is not planned yet is one
+file each under `ideas/`, and a plan starts from one of them.
+
+The format is specai 0.1, and the rules are in the `do-spec` skill under
+[`.agents/skills/do-spec/`](.agents/skills/do-spec/SKILL.md): frontmatter on
+every file, a path is an identity and nothing is moved, and every plan,
+task and decision names the code it is about as `code://<path>`, which is
+how to find what has been decided about a file:
+`rg -n "code://packages/server/src/main.ts" .project/`.
+
 ## Ports, if you are writing one
 
 `createHost` imports no filesystem, no subprocess and no `git` - each arrives
