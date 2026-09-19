@@ -15,7 +15,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | planned; next: task 01 | - | the same plan in ahpc, which copies its comparison |
+| [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
 
 Next free number in `daemon`: `02`.
 

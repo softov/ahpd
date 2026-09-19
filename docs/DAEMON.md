@@ -42,6 +42,7 @@ anything has been let go of.
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
+| `--no-update-check` | Never ask npm whether a newer version exists. See below |
 | `--help`, `-h` | |
 
 ### `--automations`, and what memory costs
@@ -77,6 +78,30 @@ typed, and a host that refused everything outside `--path` was one where no
 folder outside it could be picked at all. Who may ask is decided once, by the
 connection token - which is why a host on `0.0.0.0` will not start without one.
 
+### `--no-update-check`, and knowing when it is old
+
+The daemon asks npm, six hours apart, whether a newer `@ahpd/server` exists,
+and writes the answer to `update.json` beside the configuration. Its startup
+line, `ahpd start` and `ahpd status` read that file and say so when there is
+one:
+
+```
+update: @ahpd/server 0.6.0 is on npm, this is 0.5.0
+```
+
+Nothing waits on the network: the line is what the file said last time, the
+request is made in the background after the daemon is up, and a fresh install
+says nothing on its first start because there is no file yet. The request is
+`GET <registry>/-/package/@ahpd/server/dist-tags`, eighteen bytes, against
+`npm_config_registry` when that is set and `registry.npmjs.org` otherwise, so
+a mirror is not reached past. Every failure is silence - offline, a proxy
+that answers nothing, a registry that is down - because none of them is
+something to act on from here.
+
+Off with `--no-update-check`, with `NO_UPDATE_NOTIFIER` or `CI` set to
+anything in the environment, or with `"updateCheck": false` in the file. The
+daemon has no terminal, so the file is the one that matters.
+
 ## Configuration
 
 XDG: `$XDG_CONFIG_HOME/ahpd/config.json`, or `~/.config/ahpd/config.json`.
@@ -94,7 +119,9 @@ Every flag can be a key instead, spelled without the dashes:
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` is the one exception worth knowing: a `--path` on the
 command line **replaces** the list rather than adding to it, so a file naming
-two and a flag naming a third serves one, not three.
+two and a flag naming a third serves one, not three. `updateCheck` is the one
+key with no value to give: `false` is `--no-update-check`, and anything else
+is the default.
 
 `ahpd config` prints the path it read and what was in it.
 

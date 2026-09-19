@@ -84,6 +84,8 @@ ahpd config                  # where the configuration is, and what it says
 
 `start` detaches, so the daemon outlives the shell that began it - which is the point of a sessions server: close the terminal and the turn keeps running, attach again from somewhere else.
 
+When a newer `@ahpd/server` is on npm, `start` and `status` say so on one more line, read from a file the daemon refreshes in the background six hours apart; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` or `"updateCheck": false` in the configuration switch it off. See [docs/DAEMON.md](docs/DAEMON.md).
+
 ### Catalogue more than one directory
 
 `--path` names a directory on the **host machine** and can be repeated:

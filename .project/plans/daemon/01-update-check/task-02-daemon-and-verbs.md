@@ -1,6 +1,6 @@
 ---
 title: The daemon refreshes in the background and three places read the file
-status: todo
+status: done
 depends: [task-01-update-module.md]
 layer: server
 refs:
@@ -42,4 +42,6 @@ A daemon started without any gate prints `update: @ahpd/server <latest> is on np
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Done 2026-09-18. `checkingUpdates(on, env)` and `updateLine({ name, version })` live in `update.ts`, not `main.ts` as the task said: `main.ts` runs the daemon on import, so nothing in it can be tested directly. `version.ts` gained `manifest()` for the name, and `version()` wraps it. `status` now parses its flags, so `ahpd status --no-update-check` and `--config-file` work there. Checked by hand against a `node:http` registry answering `9.9.9`: no line and a file written on the first start, the line from the daemon, `start` and `status` after, nothing and no file under `CI`, `--no-update-check` and `updateCheck: false`, the old file and the old line with the registry down, `stop` in 700 ms with the interval scheduled.
 

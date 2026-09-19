@@ -7,3 +7,5 @@ moved: 2026-09-18
 `resourceWrite` is symmetrical, so `ahpd` and `ahpc` each implement the whole of it: the same flags, the same order of preconditions, the same append and insert arithmetic. `ahpc` does not depend on `@ahpd/sdk` and is not going to. Both copies carry a comment naming the other.
 
 What now checks that they still agree is `test/fixtures/resource-write.json`, checked into both repositories byte for byte, with a runner in each - `test/resource-write.test.ts` on both sides - so twenty-one cases run against both implementations and a divergence fails a build rather than waiting for somebody to read the two files side by side. What running it here cannot catch is a case added on one side and never copied to the other, because there is no shared package to hold the file; each repository's CI reads the other's copy over HTTP and diffs it, which is what closes that.
+
+The update check is the second copy: `packages/server/src/update.ts` here and `src/update.ts` in `ahpc`, the same five functions, with the same comparison table in each repository's `test/update.test.ts` in the same order.

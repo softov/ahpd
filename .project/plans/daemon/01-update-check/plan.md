@@ -1,7 +1,7 @@
 ---
 title: Telling somebody the version is old
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-09-18
 revalidated: 2026-09-18
@@ -105,9 +105,9 @@ ahpd --version -> untouched
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The update module](task-01-update-module.md) | todo | - |
-| [02 - The daemon checks, the verbs read](task-02-daemon-and-verbs.md) | todo | 01 |
-| [03 - Docs and the roadmap](task-03-docs.md) | todo | 02 |
+| [01 - The update module](task-01-update-module.md) | done | - |
+| [02 - The daemon checks, the verbs read](task-02-daemon-and-verbs.md) | done | 01 |
+| [03 - Docs and the roadmap](task-03-docs.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -118,16 +118,16 @@ ahpd --version -> untouched
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-update-module.md](task-01-update-module.md).
+- **Done so far:** every task, 2026-09-18; see [implemented.md](implemented.md).
+- **Next action:** none; the same plan in ahpc copies `update.ts` and the test table.
 - **Open questions:** none.
 - **Watch out for:** `version()` answers `unknown` from a bundled build; `newer()` must treat it as not newer rather than throw. Do not await the refresh anywhere on the start path.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with `test/update.test.ts` in it.
-- [ ] `pnpm boundary` and `pnpm typecheck` green.
-- [ ] By hand: a daemon started with `npm_config_registry` at a fake server that answers `9.9.9` prints the line on its second start and `ahpd status` repeats it.
-- [ ] By hand: `CI=1 ahpd` prints no line and writes no file.
-- [ ] `docs/DAEMON.md` names the flag, the key and both environment variables.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with `test/update.test.ts` in it (33 files, 613 tests).
+- [x] `pnpm boundary` and `pnpm typecheck` green.
+- [x] By hand: a daemon started with `npm_config_registry` at a fake server that answers `9.9.9` prints the line on its second start and `ahpd status` repeats it.
+- [x] By hand: `CI=1 ahpd` prints no line and writes no file.
+- [x] `docs/DAEMON.md` names the flag, the key and both environment variables.
+- [x] `plans/index.md` updated.

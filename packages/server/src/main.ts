@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
-import { version } from './version.js';
+import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
+import { manifest, version } from './version.js';
 import { running, start, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
@@ -76,6 +77,8 @@ interface Options {
   help: boolean;
   /** Say the version and stop. */
   version: boolean;
+  /** Ask npm, in the background, whether a newer version exists. */
+  updateCheck: boolean;
 }
 
 const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
@@ -111,12 +114,15 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 file as JSON lines: { at, from, peer, frame }.
                                 pnpm wire -- <file> checks it against the
                                 protocol schema.
+  --no-update-check             Never ask npm whether a newer version exists.
+                                NO_UPDATE_NOTIFIER or CI in the environment,
+                                or updateCheck: false in the file, say the same.
   --version, -v                 What version this is
   --help, -h                    This
 
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
-connectionTokenFile, withoutConnectionToken, automations, sessions, wire. A flag beats the file, because a
+connectionTokenFile, withoutConnectionToken, automations, sessions, wire, updateCheck. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
@@ -136,6 +142,7 @@ function parse(argv: string[]): Options {
     open: false,
     help: false,
     version: false,
+    updateCheck: true,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -164,6 +171,7 @@ function parse(argv: string[]): Options {
         break;
       }
       case '--wire': options.wire = String(argv[++i]); break;
+      case '--no-update-check': options.updateCheck = false; break;
       case '--help': case '-h': options.help = true; break;
       case '--version': case '-v': options.version = true; break;
       default:
@@ -196,6 +204,7 @@ function parse(argv: string[]): Options {
     options.sessions = file.sessions;
   }
   if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
+  if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;
@@ -265,11 +274,12 @@ if (verb !== undefined) {
   if (verb === 'start') {
     // Parsed here as well as by the child, so a bad option is refused now
     // rather than by something that has already been let go of.
-    parse(rest);
+    const parsed = parse(rest);
     try {
       const begun = await start(rest, process.argv[1] as string);
       process.stdout.write(`ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`);
       if (begun.automations !== undefined) process.stdout.write(`automations ${begun.automations}\n`);
+      if (checkingUpdates(parsed.updateCheck)) process.stdout.write(updateLine(manifest()) ?? '');
       process.exit(0);
     }
     catch (error) {
@@ -290,6 +300,7 @@ if (verb !== undefined) {
     // Absent from a record written by an older daemon, which is the one case
     // where saying nothing is better than guessing which store it was given.
     if (found.automations !== undefined) process.stdout.write(`automations ${found.automations}\n`);
+    if (checkingUpdates(parse(rest).updateCheck)) process.stdout.write(updateLine(manifest()) ?? '');
     process.exit(0);
   }
   if (verb === 'config') {
@@ -456,8 +467,22 @@ process.stdout.write(
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`
-  + (options.wire === undefined ? '' : `wire to ${options.wire}\n`),
+  + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
+  + (checkingUpdates(options.updateCheck) ? updateLine(manifest()) ?? '' : ''),
 );
+
+/*
+ * Ask npm, later and in the background.
+ *
+ * The line above was read from the file as it was; this is what keeps that
+ * file current for the next start. Nothing here is awaited, and the timer is
+ * let go of so a daemon that is stopping does not wait six hours for it.
+ */
+if (checkingUpdates(options.updateCheck)) {
+  const ask = (): void => { void refreshUpdate({ name: manifest().name, registry: registry() }); };
+  if (stale(readUpdate())) ask();
+  setInterval(ask, MAX_AGE_MS).unref();
+}
 
 const shutdown = (): void => {
   void Promise.resolve(listener.close()).finally(() => process.exit(0));

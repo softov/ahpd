@@ -1,6 +1,6 @@
 ---
 title: The update module compares, reads and refreshes, and is tested without a network
-status: todo
+status: done
 depends: []
 layer: server
 refs:
@@ -41,4 +41,6 @@ refs:
 - `pnpm test` green; `pnpm typecheck` and `pnpm boundary` green.
 
 ## Resume
+
+Done 2026-09-18. `packages/server/src/update.ts` with `newer`, `registry`, `readUpdate`, `stale`, `refreshUpdate` and `MAX_AGE_MS`; `updatePath()` in `config.ts`; `test/update.test.ts` with 28 cases at this point (36 after task 02). The comparison table has thirteen rows, two more than the task listed (`1.0.0 > 0.99.99`, two prereleases of one version), to be copied to ahpc as is.
 

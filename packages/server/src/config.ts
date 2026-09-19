@@ -32,6 +32,12 @@ export interface Config {
   sessions?: 'file' | 'memory';
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
+  /**
+   * Ask npm whether a newer version exists, six hours apart. `false` never
+   * asks. The daemon has no terminal, so this key is how it is switched off
+   * where `--no-update-check` is not typed.
+   */
+  updateCheck?: boolean;
 }
 
 /**
@@ -88,6 +94,16 @@ export const automationsPath = (): string => join(configDir(), 'automations.json
  * a person edits.
  */
 export const sessionsPath = (): string => join(configDir(), 'sessions.json');
+
+/**
+ * Where what npm last said about this package is kept.
+ *
+ * Written by the daemon after it asks the registry, and read by the startup
+ * line and `ahpd status` without asking again. Beside the configuration for
+ * the same reason as the two above: a person edits `config.json`, and this
+ * one is rewritten four times a day.
+ */
+export const updatePath = (): string => join(configDir(), 'update.json');
 
 /** Make sure the directory is there, so a write into it can succeed. */
 export const ensureConfigDir = (): void => { mkdirSync(configDir(), { recursive: true }); };

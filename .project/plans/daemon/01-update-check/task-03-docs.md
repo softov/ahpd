@@ -1,6 +1,6 @@
 ---
 title: DAEMON.md says how the check works
-status: todo
+status: done
 depends: [task-02-daemon-and-verbs.md]
 layer: docs
 refs:
@@ -34,4 +34,6 @@ A person reading `docs/DAEMON.md` knows the flag, the key, the two environment v
 - Relative links in `.project/` resolve.
 
 ## Resume
+
+Done 2026-09-18. `docs/DAEMON.md`: the options row and a `--no-update-check` subsection under Options, one sentence under Configuration. `README.md`: one paragraph under "Run in the background". The deliberate-duplication idea names `update.ts` as the second copy.
 
