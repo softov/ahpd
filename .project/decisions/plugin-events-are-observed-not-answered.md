@@ -21,6 +21,7 @@ What it has no place for is knowing, which is a different thing from deciding, a
 
 ## Decision
 
+The option on `HostOptions` is called `events`, not `hooks`, because this protocol already calls a `Customization` a hook and two things named a hook is one too many.
 `on(event, handler)` handlers return nothing, and whatever one returns is ignored.
 The host calls handlers in registration order and awaits each one inside a try, so a handler that throws is reported against its plugin and the event continues to the next handler and the host continues what it was doing.
 Refusing or rewriting a host action is not available through `on`.

@@ -68,6 +68,7 @@ plugin apply -> host.on('session_start', handler)
 
 | What | Source | Task |
 | --- | --- | --- |
+| The option on `HostOptions` is called `events`, not `hooks` | Softov, asked 2026-09-20: "Plan 02: name the option events - events" | 01 |
 | `on` is the one method not named `register*`, because it adds no contribution | [plugin-registration-kinds](../../../decisions/plugin-registration-kinds.md) | 01 |
 | The handler's second argument is `PluginContext`, the same read-only context `apply` is handed | decision 1, and `ideas/plugins.md` | 01 |
 | `onEvent` stays the embedder's line writer and `log` is also an event, both called from one place rather than one replacing the other | decision 1, Consequences | 01 |
@@ -103,8 +104,8 @@ plugin apply -> host.on('session_start', handler)
 - **Done so far:** nothing; the plan, its decision and its three task files were written 2026-09-20.
 - **Next action:** [task-01-event-option-and-on.md](task-01-event-option-and-on.md).
 - **Open questions:**
-  1. Is `events` the right name for the option, or `hooks` - proposed: `events`, because a hook in this protocol is already a `Customization.type`, and two things called a hook is one too many.
-  2. Does an event carry the host's own sequence number - proposed: no, because it is not a protocol frame and ordering within one host process is call order.
+  1. Does an event carry the host's own sequence number - proposed: no, because it is not a protocol frame and ordering within one host process is call order.
+  2. Does `onEvent` survive beside `events` - proposed: yes, as the embedder's one-line shortcut for `events.log`; a plugin has no use for it because `on('log', …)` is the same thing with a `by` on it. Removing it would be one name and four call sites, and it is a separate decision from this one.
 - **Watch out for:** the event union is the contract, so adding an event is a change to `@ahpd/sdk` and every handler's types move with it; and `log` is the one event whose payload is a string the host already writes, so it must not grow a second shape later.
 
 ## Final verification checklist
