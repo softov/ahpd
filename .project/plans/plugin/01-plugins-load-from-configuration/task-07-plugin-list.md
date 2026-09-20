@@ -29,7 +29,7 @@ refs:
 1. Write `describePlugin` as resolve, then read the manifest from the resolved path, and nothing else: no `import`, no `apply`, so a plugin that would throw on load still lists.
 2. Return a row per spec with `problem` set to the resolver's message when the spec does not resolve, so a bad entry is visible in the listing rather than only at startup.
 3. Add the `plugin` verb to the dispatch, answering `No command called plugin` is not enough: accept `list` and refuse anything else with `plugin takes list`.
-4. Print one line per spec as `<state> <spec> -> <path> (<name>, <title>)`, using the manifest name and never importing, with the states doop's loader uses adapted to a command that does not load: `ready` for a spec that resolves and whose manifest parses, `unconfigured` where the manifest's `ahpd.options` names a required key the configuration does not set, `disabled` for `enabled: false`, `missing` where the spec does not resolve, and `error` where the manifest does not parse.
+4. Print one line per spec as `<state> <spec> -> <path> (<name>, <title>)`, using the manifest name and never importing, with the states doop's loader uses adapted to a command that does not load: `ready` for a spec that resolves and whose manifest parses, `incompatible` where `peerDependencies["@ahpd/sdk"]` is a range the running SDK does not satisfy, `unconfigured` where the manifest's `ahpd.options` names a required key the configuration does not set, `disabled` for `enabled: false`, `missing` where the spec does not resolve, and `error` where the manifest does not parse. `incompatible` is the same check task 03 gates on, run here for its answer rather than for a refusal, which is why it needs no import either.
 5. Read the plugins from the same `parse(argv)` the run uses, so a `--plugin` on the listing command lists what that command line would load, and `--no-plugins` lists nothing with a line saying so.
 6. Keep the verb free of `createHost` and of listening, so it cannot accidentally start a daemon.
 
@@ -43,6 +43,7 @@ refs:
   - a plugin whose `index.ts` throws on import still lists as `ready`, because nothing imported it.
   - a spec marked `enabled: false` lists as `disabled`.
   - a manifest naming a required option the configuration does not set lists as `unconfigured`.
+  - a manifest whose `@ahpd/sdk` range the running SDK does not satisfy lists as `incompatible`, and its entry is not imported.
 - By hand: `ahpd plugin list` and `ahpd --plugin ./test/fixtures/plugin-echo plugin list`.
 - `pnpm test` green, `pnpm typecheck` green.
 

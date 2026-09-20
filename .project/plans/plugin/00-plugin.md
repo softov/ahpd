@@ -75,5 +75,5 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 
 - The backend list and every port are a literal in `main.ts`; plan [01 - Plugins load from configuration](01-plugins-load-from-configuration/plan.md).
 - `@ahpd/sdk` declares no plugin contract; the first task of that plan adds one to it, beside `HostOptions`.
-- Nothing reads another package's `package.json`, so a plugin cannot be listed without being imported.
+- Nothing reads another package's `package.json`, so a plugin cannot be listed without being imported, and a plugin given as a path is not checked against its own manifest before its code runs.
 - No event reaches a plugin; plan [02 - Plugins subscribe to the host's own events](02-plugins-subscribe-to-host-events/plan.md) adds `on`, and a plugin that wants the live stream of a turn stays a client.

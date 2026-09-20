@@ -13,6 +13,7 @@ decisions:
   - decisions/plugin-manifest-is-package-json.md
   - decisions/plugin-contract-lives-in-the-sdk.md
   - decisions/plugin-registration-kinds.md
+  - decisions/plugin-compat-is-checked-before-import.md
 refs:
   - code://packages/server/src/main.ts#L342-L433 - the `createHost` literal, the one place composition happens today
   - code://packages/server/src/main.ts#L320-L341 - the flow between `parse` and `createHost`, where the fold is inserted
@@ -22,6 +23,8 @@ refs:
   - code://packages/server/src/config.ts#L8-L41 - `Config`, which gains `plugins`
   - code://packages/server/src/config.ts#L50-L57 - `configDir()`, the directory a bare spec resolves from and where the install happens
   - code://packages/server/src/version.ts#L20-L37 - `manifest()`, the walk up to a nearest `package.json` the manifest reader mirrors
+  - code://packages/server/src/update.ts#L28-L68 - `parse` and `newer`, the version comparison a plugin's range is checked with rather than a semver package
+  - code://.project/decisions/plugin-compat-is-checked-before-import.md - the manifest check a path spec gets before its code is imported
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, the surface a plugin contributes to and the fold consumes
   - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, whose `provider` is the field a collision refuses over
   - code://packages/sdk/src/index.ts - where `createHost` and the ports are exported, and where the contract and the fold join them
@@ -81,6 +84,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 - The `createHost` object is built inline, so there is no point between the flags and the host where a contribution can be inserted.
 - Nothing turns a spec into something importable, so no rule exists for where an installed package is found or what a bad spec does.
 - Nothing reads a plugin's `package.json`, so a plugin cannot be listed without being imported.
+- A path spec is neither turned into a file from a directory nor checked against its own manifest, so `--plugin ./some/dir` cannot resolve a directory and an incompatible range is only noticed after the code has run.
 - `Not found: a test for a backend that arrives any way but the literal - searched "agents:" in test/; every host test and the example pass their agents directly.`
 
 ## Decisions locked in
@@ -91,6 +95,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 | 2 | [The plugin manifest is an `ahpd` key in package.json, and the module is still the contract](../../../decisions/plugin-manifest-is-package-json.md) | Softov, asked 2026-09-20: "Can we use a manifest.json or the package.json as manifest for the plugin?" |
 | 3 | [The plugin contract lives in `@ahpd/sdk`, and only the loader is machine-touching](../../../decisions/plugin-contract-lives-in-the-sdk.md) | Softov, asked 2026-09-20: "instead a new package. packages/plugin, would not be better to insert plugin data inside sdk?" |
 | 4 | [A plugin registers from a closed set of kinds, one method each](../../../decisions/plugin-registration-kinds.md) | Softov, asked 2026-09-20: "I cant find where is the kinds of registration ... what a plugin can register ... agents, skills, tools, '/' commands, hooks, and what more?" |
+| 5 | [A plugin loaded from a path is checked against its own manifest before its code is imported](../../../decisions/plugin-compat-is-checked-before-import.md) | Softov, asked 2026-09-20: "--plugin ./some/dir need to validate plugin manifest.json." |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -100,6 +105,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 | A plugin that fails to resolve, import or apply is reported and skipped, and a duplicate `provider` refuses at startup naming both | [agents as extensions](../../../ideas/agents-as-extensions.md) | 03, 05 |
 | `--plugin` is repeatable and `--no-plugins` switches the whole set off | decision 1, and the flag shape `--path` and `--automations` already use | 04 |
 | Compatibility is `peerDependencies` on `@ahpd/sdk`, and no `apiVersion` field is added | decision 2, and deepseek-harness, which has none either | 01 |
+| A path spec is checked against its own manifest before its code is imported: a directory resolves through `ahpd.entry`, `exports`, `main` or `index.js`, and a `@ahpd/sdk` range the host does not satisfy is refused | decision 5, and doop's `validatePluginCompat` | 02, 03 |
 | Nine kinds are named, three are implemented, and skills, commands, MCP servers and hooks wait on an option rather than on this loader | decision 4, and the domain reference's table | 01, deferred |
 | Hooks into a running host are the protocol, and a plugin that wants them is a client | decision 1, Consequences | deferred |
 
@@ -134,6 +140,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 - `daemon.ts` reads the startup lines back with regular expressions, so the plugins line is added as its own line and never folded into the `sessions in` line the parser depends on.
 - A plugin can make the daemon refuse to start by colliding on `provider`, which is intended, but it must never do so silently - task 03 collects every collision and reports all of them before the host is built.
 - The checkers are hand-written, so one can miss a member a later interface change adds - task 08's test pairs each checker with a complete implementation and with an empty object, so a new required member fails a test rather than reaching a host.
+- The range check is hand-written and supports only the spellings it names - an unreadable range is refused by name rather than passed, so the worst case is a plugin that must be spelled differently and not one that loads unchecked.
 - A plugin cannot decorate the port it replaces, because `PluginHost` exposes no accessor to what is beneath it - replacing is the whole of what this plan offers, and reading the port beneath is a deferred decision rather than a flag forgotten here.
 
 ## Resume state
@@ -153,5 +160,6 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 - [ ] `pnpm typecheck`, `pnpm boundary` and `pnpm schema` green.
 - [ ] By hand: `ahpd --plugin <fixture>` serves the contributed backend, and `ahpd` with no plugins serves exactly what it does today.
 - [ ] By hand: a spec that does not resolve, a module that throws and a duplicate `provider` each say what happened without the daemon dying, except the collision, which refuses.
+- [ ] By hand: `--plugin ./fixture` with a `@ahpd/sdk` range the daemon does not satisfy is refused before its entry runs, and `ahpd plugin list` reports it as `incompatible`.
 - [ ] `docs/DAEMON.md` and the README name the `plugins` key and the two flags.
 - [ ] `plans/index.md` and `plans/daemon/00-daemon.md` updated.

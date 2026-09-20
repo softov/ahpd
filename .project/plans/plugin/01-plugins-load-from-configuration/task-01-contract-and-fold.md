@@ -9,7 +9,8 @@ refs:
   - code://packages/sdk/src/types/host.ts#L247-L306 - `Diagnostics` and `HostTool`, two of the contributions
   - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, the contract `registerAgent` checks against
   - code://packages/sdk/src/types/index.ts - the types barrel a `types/plugin.ts` joins
-  - code://packages/sdk/src/index.ts - where the contract and the fold join the exports, beside `createHost` and the ports
+  - code://packages/sdk/src/index.ts - where the contract, the fold and `sdkVersion()` join the exports, beside `createHost` and the ports
+  - code://packages/server/src/version.ts#L20-L37 - the walk up to the nearest manifest that `sdkVersion()` mirrors
   - code://.project/decisions/plugin-contract-lives-in-the-sdk.md - why this is not a package of its own
   - code://.project/decisions/plugin-registration-kinds.md - the closed set of kinds and the `register*` naming this task makes literal
   - code://.project/plans/plugin/00-plugin.md - the table these kinds are the rows of
@@ -26,6 +27,7 @@ refs:
 - `CREATE: packages/sdk/src/plugins.ts` - `foldHostOptions(base, contributions)`.
 - `UPDATE: packages/sdk/src/types/index.ts` - re-export `./plugin.js` beside the other type barrels.
 - `UPDATE: packages/sdk/src/index.ts` - export `foldHostOptions`, and add one line to the module comment saying a plugin contributes the option object and this composes several.
+- `CREATE: packages/sdk/src/version.ts` - `sdkVersion()`, read from the nearest `package.json` the way `packages/server/src/version.ts` does.
 - `CREATE: test/plugin-fold.test.ts` - the rules below.
 
 The `PluginHost` implementation and the check on what is registered are task 08; this task writes the shape they fill.
@@ -43,6 +45,7 @@ The `PluginHost` implementation and the check on what is registered are task 08;
 9. Treat a plugin port that lands on a base port as a collision with `the daemon`, so a plugin that supplies its own `resources` passes `'replace'` and one that forgets it is told, rather than winning by order.
 10. Return a fresh object and fresh arrays, never mutating `base`, and push a problem rather than throwing, so the loader can report every collision at once.
 11. Export the types from `src/types/index.ts` and `foldHostOptions` from `src/index.ts`.
+12. Add `sdkVersion()` in `src/version.ts`, walking up from its own module to the nearest `package.json` exactly as `packages/server/src/version.ts` does, and export it, because task 03 checks a plugin's range against the SDK actually in use and nothing else in the SDK answers what version that is.
 
 ## Validation
 
@@ -53,6 +56,7 @@ The `PluginHost` implementation and the check on what is registered are task 08;
   - the second plugin with `replace: true` wins, and there is no problem.
   - a plugin setting a port the base does not have, such as `automations`, needs no `replace`.
 - `pnpm test` green, `pnpm typecheck` green.
+- `sdkVersion()` answers what `packages/sdk/package.json` says, from both the source and the built output, pinned by a test the way `test/update.test.ts` pins the server's.
 - `pnpm boundary` green and unchanged: the SDK declares no new dependency, because the fold imports only its own types.
 - `pnpm build` still builds three packages.
 
