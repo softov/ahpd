@@ -1,0 +1,9 @@
+{
+  "name": "plugin-hello",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.ts" },
+  "peerDependencies": { "@ahpd/sdk": "^0.6.0" },
+  "ahpd": { "entry": "./index.ts", "title": "Hello" }
+}

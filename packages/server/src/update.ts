@@ -25,7 +25,8 @@ export const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** `X.Y.Z` with an optional prerelease tag; anything else is not a version here. */
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 
-const parse = (text: string): { numbers: [number, number, number]; prerelease: boolean } | undefined => {
+/** The comparison's own reader, exported so `compat.ts` reuses it rather than writing a second one. */
+export const parse = (text: string): { numbers: [number, number, number]; prerelease: boolean } | undefined => {
   const found = VERSION.exec(text);
   if (!found) return undefined;
   return {

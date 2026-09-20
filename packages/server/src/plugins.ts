@@ -1,26 +1,34 @@
 /**
- * Turning what a person wrote into something importable.
+ * Turning what a person wrote into something importable, and then into a host.
  *
  * A plugin is named in the configuration file or on the command line as a
  * module specifier, a path, or a package installed in the configuration
  * directory. This file is the half of the plugin mechanism that touches the
- * machine - the filesystem and the module resolver - and it stops short of
- * `import()`: resolving is a question a listing can ask without running
- * anything, so a listing and a load agree on what a spec means.
+ * machine - the filesystem, the module resolver and `import()` - and it is
+ * split so that resolving stops short of running anything: a listing can ask
+ * what a spec means without importing it, and a load and a listing agree.
  *
  * A bare name is resolved through the configuration directory's own
  * `node_modules`, which is what makes `npm i` there the install rather than a
  * flag somewhere. A path is tried against the working directory and then the
  * configuration directory, because a relative path means the person's shell
  * decides what runs and that has to be said rather than guessed.
+ *
+ * A plugin that fails to resolve, to manifest, to import or to apply is
+ * reported and skipped, because a daemon that dies on a bad plugin is a daemon
+ * a bad plugin can take down. The one thing this file refuses rather than
+ * reports is a duplicate `provider`, which the fold turns into a problem the
+ * caller refuses over: two backends a client cannot tell apart is worse than
+ * no backend at all.
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runtime } from '@ahpd/sdk';
-import type { PluginSpec } from '@ahpd/sdk';
+import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
+import type { Contribution, HostOptions, Loaded, Plugin, PluginSpec } from '@ahpd/sdk';
+import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
 export interface Resolved {
@@ -173,4 +181,305 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
     path: file,
     ...(packageDir === undefined ? {} : { packageDir }),
   };
+}
+
+/** One error, as the one line a person reads. */
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** What a plugin's own `package.json` says, read without judging it. */
+export interface Manifest {
+  /** The `package.json` it was read from, for every message about it. */
+  path: string;
+  /** The package name, when it is a string. */
+  name?: string;
+  /** `ahpd.title`, the fallback a listing prints. */
+  title?: string;
+  /** `ahpd.entry`, the entry a manifest names over what the package resolves to. */
+  entry?: string;
+  /** `peerDependencies["@ahpd/sdk"]`, the range compatibility is checked against. */
+  sdkRange?: string;
+  /** Set when the file could not be read or parsed, so nothing else is trustworthy. */
+  problem?: string;
+  /** The raw `ahpd` value, so the shape check can refuse one that is not an object. */
+  ahpd?: unknown;
+  /** The raw `peerDependencies["@ahpd/sdk"]` value, so the shape check can refuse a non-string. */
+  peer?: unknown;
+}
+
+/**
+ * Read one package's manifest once.
+ *
+ * Both checks that follow use this parse rather than reading the file again,
+ * and neither is done here: this answers what the file says, and a file it
+ * cannot read is a `problem` rather than a throw, because the caller decides
+ * what to do about a package that cannot describe itself.
+ */
+export const readManifest = (packageDir: string): Manifest => {
+  const path = join(packageDir, 'package.json');
+  let value: Record<string, unknown>;
+  try {
+    const found: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (typeof found !== 'object' || found === null || Array.isArray(found)) {
+      return { path, problem: `${path} is not a JSON object.` };
+    }
+    value = found as Record<string, unknown>;
+  }
+  catch (error) {
+    return { path, problem: `${path} could not be read: ${messageOf(error)}` };
+  }
+
+  const ahpd = value.ahpd;
+  const peers = typeof value.peerDependencies === 'object' && value.peerDependencies !== null && !Array.isArray(value.peerDependencies)
+    ? value.peerDependencies as Record<string, unknown>
+    : undefined;
+  const peer = peers?.['@ahpd/sdk'];
+  const inside = typeof ahpd === 'object' && ahpd !== null && !Array.isArray(ahpd) ? ahpd as Record<string, unknown> : undefined;
+
+  const manifest: Manifest = { path, ahpd, peer };
+  if (typeof value.name === 'string') manifest.name = value.name;
+  if (typeof inside?.title === 'string') manifest.title = inside.title;
+  if (typeof inside?.entry === 'string') manifest.entry = inside.entry;
+  if (typeof peer === 'string') manifest.sdkRange = peer;
+  return manifest;
+};
+
+/**
+ * Whether a manifest is a shape anything can read.
+ *
+ * The one place decision `plugin-manifest-is-package-json` names: an `ahpd`
+ * that is not an object, an `ahpd.entry` that is not a string or that points
+ * outside its own package, and a `@ahpd/sdk` peer that is not a string. A
+ * `package.json` that does not parse is the reader's own `problem` and is
+ * returned as it stands.
+ */
+export const checkManifest = (manifest: Manifest, packageDir: string): string | undefined => {
+  if (manifest.problem !== undefined) return manifest.problem;
+  if (manifest.ahpd !== undefined && (typeof manifest.ahpd !== 'object' || manifest.ahpd === null || Array.isArray(manifest.ahpd))) {
+    return `${manifest.path} has an ahpd key that is not an object.`;
+  }
+  const inside = manifest.ahpd as Record<string, unknown> | undefined;
+  if (inside !== undefined && inside.entry !== undefined && typeof inside.entry !== 'string') {
+    return `${manifest.path} has an ahpd.entry that is not a string.`;
+  }
+  if (manifest.entry !== undefined) {
+    const at = resolve(packageDir, manifest.entry);
+    if (at !== packageDir && !at.startsWith(packageDir + sep)) {
+      return `${manifest.path} names an ahpd.entry ${manifest.entry} that points outside the package.`;
+    }
+  }
+  if (manifest.peer !== undefined && typeof manifest.peer !== 'string') {
+    return `${manifest.path} has a peerDependencies["@ahpd/sdk"] that is not a string.`;
+  }
+  return undefined;
+};
+
+/**
+ * Whether an imported module is a plugin at all.
+ *
+ * `apply` is a named export and a default export is deliberately not
+ * consulted, because a module that exports one thing under `default` cannot
+ * say whether it is a plugin, a function or a piece of configuration, and a
+ * silent guess is worse than a refusal that names the URL.
+ */
+export const checkShape = (module: unknown, url: string): string | undefined => {
+  if (typeof module !== 'object' || module === null || typeof (module as Record<string, unknown>).apply !== 'function') {
+    return `${url} does not export an apply function`;
+  }
+  return undefined;
+};
+
+/** What one plugin is loaded with. */
+export interface LoadOneOptions {
+  /** The first directory the host serves, which a plugin reads as its `path`. */
+  path: string;
+  /** Every directory the host serves. */
+  paths: string[];
+  /** The `@ahpd/sdk` version a peer range is checked against. */
+  version: string;
+  /** One line per notable thing, for the daemon's log. */
+  log(message: string): void;
+}
+
+/** What one `loadOne` managed: a plugin, or the reasons it is not one. */
+export interface OneResult {
+  /** Set when the module imported, applied and contributed. */
+  loaded?: Loaded;
+  /** What it registered, for the fold. */
+  contribution?: Contribution;
+  /** Everything that went wrong, in the order it was found. */
+  problems: string[];
+}
+
+/**
+ * Resolve, validate, import and apply one plugin.
+ *
+ * The order is the point: the manifest is read and the range checked before
+ * `import()` is reached, so an incompatible or malformed plugin is never
+ * executed. Everything after that - the import, the shape of the module and
+ * `apply` itself - is caught and turned into a problem line, because a plugin
+ * that throws must cost a line in the log rather than the daemon.
+ */
+export async function loadOne(resolved: Resolved, options: LoadOneOptions): Promise<OneResult> {
+  const problems: string[] = [];
+  const spec = resolved.spec;
+  const said = nameOf(spec);
+  const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
+
+  let manifest: Manifest | undefined;
+  if (packageDir !== undefined) {
+    manifest = readManifest(packageDir);
+    const bad = checkManifest(manifest, packageDir);
+    if (bad !== undefined) return { problems: [bad] };
+    if (manifest.sdkRange !== undefined) {
+      let satisfied = false;
+      let why = '';
+      try {
+        satisfied = satisfies(options.version, manifest.sdkRange);
+      }
+      catch (error) {
+        // An unreadable range is refused rather than passed, which is the
+        // difference between a plugin that must be spelled differently and one
+        // that loads unchecked.
+        why = ` (${messageOf(error)})`;
+      }
+      if (!satisfied) {
+        return { problems: [`plugin ${manifest.name ?? said} needs @ahpd/sdk ${manifest.sdkRange}, this is ${options.version}${why}`] };
+      }
+    }
+  }
+
+  /*
+   * Where the module actually is. The manifest wins for resolution when the
+   * caller named a package rather than a file, and a mismatch between the two
+   * is reported rather than chosen silently - decision
+   * `plugin-manifest-is-package-json`.
+   */
+  let target = resolved.path;
+  let url = resolved.url;
+  if (packageDir !== undefined && manifest?.entry !== undefined) {
+    target = resolve(packageDir, manifest.entry);
+    if (resolved.path !== undefined && target !== resolved.path) {
+      problems.push(`${manifest.path} names ${manifest.entry}, but ${said} resolved to ${resolved.path}`);
+    }
+    url = pathToFileURL(target).href;
+  }
+
+  const provisional = manifest?.name ?? said;
+  let module: unknown;
+  try {
+    module = await import(url);
+  }
+  catch (error) {
+    return { problems: [...problems, `plugin ${provisional} could not be imported from ${target ?? url}: ${messageOf(error)}`] };
+  }
+
+  const wrong = checkShape(module, target ?? url);
+  if (wrong !== undefined) return { problems: [...problems, wrong] };
+
+  const held = module as Record<string, unknown>;
+  const apply = held.apply as Plugin['apply'];
+  // The module wins for shape and its `name` wins for the listing; the
+  // manifest is the fallback, and the spec is the last resort.
+  const name = typeof held.name === 'string' && held.name.trim() !== '' ? held.name : provisional;
+  const title = typeof held.title === 'string' ? held.title : manifest?.title;
+  const defaults = typeof held.defaults === 'object' && held.defaults !== null && !Array.isArray(held.defaults)
+    ? held.defaults as Record<string, unknown>
+    : undefined;
+  const named = typeof spec === 'object' && spec !== null ? spec.options : undefined;
+  const values: Record<string, unknown> = { ...(defaults ?? {}), ...(named ?? {}) };
+  const plugin: Plugin = {
+    name,
+    apply,
+    ...(title === undefined ? {} : { title }),
+    ...(defaults === undefined ? {} : { defaults }),
+  };
+
+  const { host, contribution } = pluginHost(name, { path: options.path, paths: options.paths, version: options.version, log: options.log });
+  try {
+    await apply.call(plugin, host, values);
+  }
+  catch (error) {
+    // One failure path: whatever the registration check or the plugin itself
+    // threw, the whole contribution is discarded and the plugin costs a line.
+    return { problems: [...problems, `plugin ${name} failed: ${messageOf(error)}`] };
+  }
+
+  // The absolute path is logged, so what ran is in the log even when a spec
+  // was relative or a bare name resolved somewhere nobody expected.
+  options.log(`plugin ${name} from ${target ?? url}`);
+  const loaded: Loaded = {
+    spec,
+    url,
+    path: target ?? url,
+    name,
+    options: values,
+    plugin,
+    ...(title === undefined ? {} : { title }),
+  };
+  return { loaded, contribution, problems };
+}
+
+/** What `loadPlugins` is given besides the specs. */
+export interface LoadOptions {
+  /** The options the daemon already built, which every contribution folds into. */
+  base: HostOptions;
+  /** The directory a bare spec resolves from, and where `npm i` is the install. */
+  configDir: string;
+  /** The directory a relative path is tried against first. */
+  cwd: string;
+  /** One line per notable thing. */
+  log(message: string): void;
+  /** Every directory the host serves; defaults to the base's one. */
+  paths?: string[];
+  /** The SDK version a peer range is checked against; defaults to this one. */
+  version?: string;
+}
+
+/** One host's worth of options, and what happened on the way to them. */
+export interface LoadedPlugins {
+  /** The base with every accepted contribution folded in. */
+  options: HostOptions;
+  /** What each plugin that applied contributed, in load order. */
+  contributions: Contribution[];
+  /** Everything that went wrong, the fold's collisions included. */
+  problems: string[];
+  /** The plugins that loaded and applied, in load order. */
+  loaded: Loaded[];
+}
+
+/**
+ * Load every spec, in the order it was configured.
+ *
+ * Nothing here throws and nothing here exits: a spec that fails is a problem
+ * and the next one is still tried, so one bad plugin costs itself and not the
+ * daemon. The agent `provider` collisions the plan asks this to scan for are
+ * the fold's, which sees every contribution at once and reports one problem
+ * per collision naming both parties.
+ */
+export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Promise<LoadedPlugins> {
+  const paths = options.paths ?? [options.base.path];
+  const version = options.version ?? sdkVersion();
+  const contributions: Contribution[] = [];
+  const problems: string[] = [];
+  const loaded: Loaded[] = [];
+
+  for (const spec of specs) {
+    if (typeof spec !== 'string' && spec.enabled === false) continue;
+    let resolved: Resolved;
+    try {
+      resolved = resolvePlugin(spec, { configDir: options.configDir, cwd: options.cwd });
+    }
+    catch (error) {
+      problems.push(messageOf(error));
+      continue;
+    }
+    const one = await loadOne(resolved, { path: options.base.path, paths, version, log: options.log });
+    problems.push(...one.problems);
+    if (one.loaded !== undefined) loaded.push(one.loaded);
+    if (one.contribution !== undefined) contributions.push(one.contribution);
+  }
+
+  const folded = foldHostOptions(options.base, contributions);
+  problems.push(...folded.problems);
+  return { options: folded.options, contributions, problems, loaded };
 }

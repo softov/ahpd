@@ -1,0 +1,8 @@
+{
+  "name": "plugin-no-peer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.ts" },
+  "ahpd": { "entry": "./index.ts" }
+}

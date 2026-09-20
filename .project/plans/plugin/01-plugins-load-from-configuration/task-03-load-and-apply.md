@@ -1,6 +1,6 @@
 ---
 title: A plugin module is validated, imported, checked and applied, and a bad one costs a line
-status: todo
+status: done
 depends:
   - task-02-resolve-a-spec.md
   - task-08-validate-registrations.md
@@ -71,4 +71,11 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/server/src/compat.ts` holds `satisfies(version, range)`, and `parse` in `update.ts` is exported so it is the one version reader.
+`packages/server/src/plugins.ts` gains `readManifest`, `checkManifest`, `checkShape`, `loadOne` and `loadPlugins`, with the `Manifest`, `LoadOneOptions`, `OneResult`, `LoadOptions` and `LoadedPlugins` shapes.
+The fixtures are `test/fixtures/plugin-hello`, `plugin-alike`, `plugin-no-peer`, `plugin-broken`, `plugin-throws`, `plugin-incompatible` and `plugin-bad-manifest`, and the tests are `test/plugin-load.test.ts` and `test/plugin-compat.test.ts`.
+Verified: `pnpm test` 693 passed, `pnpm typecheck` green, `pnpm boundary` green.
+Departure from the plan: the repeated `provider` scan it asked `loadPlugins` to run is the one `foldHostOptions` already does, so a collision is reported once by the fold rather than twice; `satisfies` also accepts `>`, `<` and `=` beside the named spellings, and still refuses anything it cannot read.
+Extra fixtures beyond the plan's file list, each because a case needed it: `plugin-alike` for a provider two working plugins share, `plugin-no-peer` for absent compatibility, `plugin-incompatible/index.ts` as the entry that must never run, and `plugin-bad-manifest/index.js` so a directory with a malformed manifest still resolves and the manifest check, not the resolver, reports it.
+`satisfies` pads `0.6` to `0.6.0`, which is what lets `>=0.6 <0.7` be read by the update check's three-number parser instead of a second one.
