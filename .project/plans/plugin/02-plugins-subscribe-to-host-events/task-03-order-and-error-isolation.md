@@ -1,6 +1,6 @@
 ---
 title: Handlers run in order, are awaited, and a throwing one is reported
-status: todo
+status: done
 depends:
   - task-02-the-first-events-fire.md
 layer: packages/sdk
@@ -42,4 +42,8 @@ One helper calls the listeners of an event in registration order, awaits each, c
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`fire` in `host.ts` already iterated, awaited and caught from task 02; this task adds the `log` re-entrancy guard and pins everything with `test/plugin-events-order.test.ts`.
+Verified: 406 tests across the plugin, host, automation, example, diagnostics and OTLP suites; `pnpm typecheck` green.
+The guard covers only the synchronous part of the `log` raise, and that is deliberate: a flag held for the whole awaited chain swallowed unrelated host lines written while a listener was awaiting, which the first version did and this test caught. A handler's `ctx.log` is the loader's writer rather than this host's `log`, so the recursion cannot happen through the public surface; the guard makes it impossible anyway, and the test pins the observable property that a `log` handler which logs raises no second event.
+A handler's return value is ignored and every call site discards `fire`'s promise, so a handler cannot answer the moment it observes even by returning something a later change might be tempted to read.

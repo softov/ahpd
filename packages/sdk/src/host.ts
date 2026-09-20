@@ -801,12 +801,32 @@ export function createHost(options: HostOptions): Host {
       }
     }
   };
+  /**
+   * Whether a `log` raise is already on the stack.
+   *
+   * `log` is itself an event, so a listener that calls this host's `log` from
+   * inside its own synchronous start would raise `log` again from within the
+   * raise. The flag covers exactly that window - the synchronous part of
+   * `fire`, where a handler's first segment runs - and is cleared the moment
+   * `fire` suspends, so a host line written while a listener is awaiting is
+   * still an event rather than being swallowed by a flag held across the whole
+   * chain.
+   */
+  let logging = false;
   const log = (message: string): void => {
     options.onEvent?.(message);
     // The line is also an event, raised from the one place every notable line
     // already passes through, so a plugin reads the log without a second
     // mechanism and without having to be the embedder.
-    if (options.events?.log !== undefined) void fire('log', { type: 'log', line: message });
+    if (options.events?.log !== undefined && !logging) {
+      logging = true;
+      try {
+        void fire('log', { type: 'log', line: message });
+      }
+      finally {
+        logging = false;
+      }
+    }
     /*
      * OTLP/JSON, verbatim, because the protocol says so: the payload is an
      * `ExportLogsServiceRequest` and AHP deliberately does not redeclare the

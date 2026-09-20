@@ -89,7 +89,7 @@ plugin apply -> host.on('session_start', handler)
 | --- | --- | --- |
 | [01 - The event option and `on`](task-01-event-option-and-on.md) | done | - |
 | [02 - The first events fire](task-02-the-first-events-fire.md) | done | 01 |
-| [03 - Order, awaiting, and a handler that throws](task-03-order-and-error-isolation.md) | todo | 02 |
+| [03 - Order, awaiting, and a handler that throws](task-03-order-and-error-isolation.md) | done | 02 |
 
 ## Risks and tradeoffs
 

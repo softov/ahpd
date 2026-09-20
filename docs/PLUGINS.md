@@ -84,9 +84,53 @@ So you do not go looking for a method that should not exist:
   resources.
 - **HTTP routes** are not, because there is no HTTP server.
 
-Customizations, MCP servers, an event subscription, a configuration key and host
-methods are named in the domain reference and not built yet; the whole list is in
+Customizations, MCP servers, a configuration key and host methods are named in
+the domain reference and not built yet; the whole list is in
 [deferred.md](../.project/plans/plugin/01-plugins-load-from-configuration/deferred.md).
+
+## Events
+
+A plugin may watch the host do its work with `on`. It is the one method not
+named `register*`, because it contributes nothing to `HostOptions`: it attaches
+a listener to a moment the host already has.
+
+```ts
+export function apply(host: PluginHost) {
+  host.on('session_start', (event, ctx) => {
+    ctx.log(`session ${event.session} on ${event.provider}`);
+  });
+  host.on('turn_end', async (event) => {
+    await report(event.session, event.turn, event.status);
+  });
+}
+```
+
+The handler is called with the event and the same read-only `PluginContext`
+`apply` was handed. Its return value is ignored and it cannot refuse or rewrite
+what it observes; a plugin that wants to change what happens contributes a tool,
+a port or an agent instead. Handlers run in registration order, each is awaited
+before the next, and a handler that throws is reported against its plugin and
+does not stop the next handler or the action it observed.
+
+| Event | What else the payload carries |
+| --- | --- |
+| `session_start` | `session`, `provider` |
+| `session_end` | `session`, `reason` |
+| `turn_start` | `session`, `chat`, `turn` |
+| `turn_end` | `session`, `chat`, `turn`, `status` (`complete` or `cancelled`) |
+| `message` | `session`, `chat`, `turn`, `text` |
+| `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
+| `client_connect` | `client` |
+| `client_disconnect` | `client` |
+| `authenticated` | `client`, `resource` |
+| `automation_fire` | `automation`, `run` |
+| `resource_write` | `uri` |
+| `terminal_open` | `terminal`, `cwd` |
+| `log` | `line`, the same string `onEvent` receives |
+
+There is no per-token event: a plugin that wants the live stream of a turn is a
+client. The `chat` on a turn event is the host's own chat URI, which is not
+always the alias a client addressed it by.
 
 ## The manifest
 
