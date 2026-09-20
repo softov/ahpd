@@ -1,7 +1,7 @@
 ---
 title: Plugins subscribe to the host's own events
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -101,16 +101,14 @@ plugin apply -> host.on('session_start', handler)
 
 ## Resume state
 
-- **Done so far:** task 01, the option and `on`, and task 02, the events firing at every host moment, done 2026-09-20.
-- **Next action:** [task-03-order-and-error-isolation.md](task-03-order-and-error-isolation.md).
-- **Open questions:**
-  1. Does an event carry the host's own sequence number - proposed: no, because it is not a protocol frame and ordering within one host process is call order.
-  2. Does `onEvent` survive beside `events` - proposed: yes, as the embedder's one-line shortcut for `events.log`; a plugin has no use for it because `on('log', …)` is the same thing with a `by` on it. Removing it would be one name and four call sites, and it is a separate decision from this one.
-- **Watch out for:** the event union is the contract, so adding an event is a change to `@ahpd/sdk` and every handler's types move with it; and `log` is the one event whose payload is a string the host already writes, so it must not grow a second shape later.
+- **Done so far:** all three tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
+- **Next action:** none; the plan is built. The agent plugins that arrive through plan 01 are the next domain work, with [agents as extensions](../../ideas/agents-as-extensions.md) as the order.
+- **Open questions:** none open; both were settled by the build, and the departures are in [implemented.md](implemented.md).
+- **Watch out for:** the event union is the contract, so adding an event changes `@ahpd/sdk` and every handler's types; a per-token delta is deliberately not one, and the reasons are in the event file.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with a plugin that subscribes to two events and a handler that throws.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: a fixture plugin subscribed to `session_start` and `turn_end` prints on both while a session runs from `ahpc`.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with a plugin that subscribes to two events and a handler that throws.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] By hand: a fixture plugin subscribed to `session_start` and `turn_end` prints on both while a session runs from `ahpc`.
+- [x] `plans/index.md` updated.

@@ -6,7 +6,8 @@ revalidated: 2026-09-20
 
 A plugin is an installed package the daemon folds into the options it hands `createHost`, so a backend, a port, a tool or a configuration key is an install and a configuration line rather than a rebuild.
 Plan [01 - Plugins load from configuration](01-plugins-load-from-configuration/plan.md) built the loader and the first three kinds: the contract and the fold live in `@ahpd/sdk`, the resolving, importing and applying half is `packages/server/src/plugins.ts`, and a daemon with plugins serves what they contributed.
-Every kind after those waits; events are [plan 02](02-plugins-subscribe-to-host-events/plan.md), and the rest are in [deferred.md](01-plugins-load-from-configuration/deferred.md).
+Plan [02 - Plugins subscribe to the host's own events](02-plugins-subscribe-to-host-events/plan.md) built `on` and the thirteen events a handler observes.
+Every kind after those waits, and the whole list is in [deferred.md](01-plugins-load-from-configuration/deferred.md).
 
 ## Packages
 
@@ -36,7 +37,7 @@ This is the list decision [plugin-registration-kinds](../../decisions/plugin-reg
 | port | `registerResources(store)`, `registerTerminals(store)`, `registerChanges(source)`, `registerDirectories(facts)`, `registerWorktrees(worktrees)`, `registerGithub(pullRequests)`, `registerAutomations(store)`, `registerSessions(store)`, `registerDiagnostics(diagnostics)` | set, closed key | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | built 2026-09-20 |
 | customization | `registerCustomization(customization)` | append | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | not planned yet |
 | MCP server | `registerMcpServer(server)` | append | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | not planned yet |
-| event | `on(event, handler)` | listen | a new `HostOptions.events`, called at the moments the host already logs | [plan 02](02-plugins-subscribe-to-host-events/plan.md) |
+| event | `on(event, handler)` | listen | a new `HostOptions.events`, called at the moments the host already knows | built 2026-09-20 |
 | configuration key | `registerConfig(key, schema, default)` | register, open key | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | not planned yet |
 | host method | `registerMethod(name, handler)` | register, open key | an extension table beside the request handlers, and a channel beside the declared ones | not planned yet, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
 
@@ -73,5 +74,5 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 
 ## Known gaps
 
-- Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload and reading the port beneath all wait on an SDK option or a later plan; the whole list is [deferred.md](01-plugins-load-from-configuration/deferred.md).
-- No event reaches a plugin yet; plan [02 - Plugins subscribe to the host's own events](02-plugins-subscribe-to-host-events/plan.md) adds `on`, and a plugin that wants the live stream of a turn stays a client until then.
+- Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload, ports through `Start` and reading the port beneath all wait on an SDK option or a later plan; the whole list is [deferred.md](01-plugins-load-from-configuration/deferred.md).
+- The first-party agent plugins (`@ahpd/agent-facio`, `@ahpd/agent-deepseek`, `@ahpd/agent-acp`, `@ahpd/agent-openai`) have no plan yet, and [agents as extensions](../../ideas/agents-as-extensions.md) is the order they arrive in.

@@ -60,7 +60,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - Plugins load from configuration](plugin/01-plugins-load-from-configuration/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/01-plugins-load-from-configuration/implemented.md)) | - | the agent plugins, which arrive through it |
-| [02 - Plugins subscribe to the host's own events](plugin/02-plugins-subscribe-to-host-events/plan.md) | high | active 2026-09-20 | plugin 01 | - |
+| [02 - Plugins subscribe to the host's own events](plugin/02-plugins-subscribe-to-host-events/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/02-plugins-subscribe-to-host-events/implemented.md)) | plugin 01 | - |
 
 Next free number in `plugin`: `03`.
 
