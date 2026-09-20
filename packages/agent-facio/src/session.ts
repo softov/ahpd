@@ -123,22 +123,21 @@ export function facioSession(
   sharedStore?: Store,
   harness: HarnessConfig = harnessConfig(),
 ): Session {
-  /*
-   * A cut this backend cannot make is refused rather than served as a plain
-   * continue: a fork that appended to the original would change the
-   * conversation it was meant to preserve, and a rewind that did nothing
-   * would keep the turns it was asked to drop. Both wait on a cut in
-   * `@facio/agents`; see the proposal in `.project/decisions/`.
-   */
-  if (start.forkAt !== undefined || start.rewindAt !== undefined) {
-    throw new Error(
-      'facio cannot cut a conversation yet: fork and rewind wait on a cut in @facio/agents, '
-      + 'so this session was refused rather than continued as though neither was asked',
-    );
-  }
   const provider = options.provider ?? 'facio';
-  /** The configured facio id, or the URI's when this is a fresh session. */
-  const sessionId = start.resume ?? sessionIdOf(start.uri);
+  /**
+   * The facio session this chat reads and writes.
+   *
+   * A fresh session and a plain resume are the id the host named, or the one
+   * the URI spells. A rewind is that same id: AHP keeps the session and drops
+   * a tail. A fork is the one case that does not continue what it was resumed
+   * with - AHP forks a *chat* into another chat of the same session, so
+   * `start.resume` names the conversation to copy from and the target has to
+   * be a new one, or the fork would append to the conversation it was told to
+   * preserve.
+   */
+  const sessionId = start.forkAt !== undefined
+    ? crypto.randomUUID()
+    : start.resume ?? sessionIdOf(start.uri);
   /** The directory the agent works in; the host's when it named one. */
   const where = start.workingDirectory ?? process.cwd();
   /**
@@ -149,6 +148,33 @@ export function facioSession(
    * is public - gets one of its own, which is what a single session had.
    */
   const store = sharedStore ?? storeOf(options);
+
+  /**
+   * The cut this session was asked for, made before it runs a turn.
+   *
+   * AHP gives a fork and a rewind the same job - the conversation the host
+   * named, ending at the point it named - and the difference is only where the
+   * result lives: a fork copies it into this session's new id and leaves the
+   * source whole, a rewind drops what followed the point in place. Both are
+   * one store call, and both are refused when the store cannot make the cut,
+   * because a fork that quietly continued would append to the conversation it
+   * was told to preserve and a rewind that did nothing would keep the turns it
+   * was told to drop.
+   */
+  const cut = async (): Promise<void> => {
+    if (start.forkAt !== undefined && start.rewindAt !== undefined) {
+      throw new Error(`${provider}: a session cannot fork and rewind at once`);
+    }
+    if (start.forkAt !== undefined) {
+      if (start.resume === undefined) throw new Error(`${provider}: a fork needs the conversation it copies`);
+      await store.sessions.fork({ fromSessionId: start.resume, throughMessageId: start.forkAt, sessionId });
+      return;
+    }
+    if (start.rewindAt !== undefined) {
+      if (start.resume === undefined) throw new Error(`${provider}: a rewind needs the conversation it cuts`);
+      await store.sessions.truncate({ sessionId, throughMessageId: start.rewindAt });
+    }
+  };
   /**
    * The tools the model is offered.
    *
@@ -195,9 +221,30 @@ export function facioSession(
    * A run paused before the restart still holds the session's writer claim, so
    * a turn that started before the lookup finished would fight it for the
    * claim and lose. Everything that would begin a turn waits on this instead,
-   * so it sees either an empty conversation or the reopened one.
+   * so it sees either an empty conversation or the reopened one. A fork or a
+   * rewind rides the same chain, because the cut has to land before the first
+   * turn reads the session.
    */
   let opening: Promise<void> | undefined;
+  /**
+   * Why the cut this session was asked for did not happen.
+   *
+   * A session whose fork or rewind failed does not fall back to an ordinary
+   * continue: every turn it is asked for is answered with this, so a client
+   * sees the cut it asked for not happen rather than a conversation quietly
+   * carrying on from the wrong place.
+   */
+  let refused: Error | undefined;
+  /**
+   * How each watched turn began and ended, in facio's own message ids.
+   *
+   * `forkPoint` and `endPoint` are asked synchronously and a store read is
+   * not, so the two ids are read once when the turn ends - before the client
+   * is told it ended - and kept here for the two methods to answer from. A
+   * turn this process did not watch has no entry, which is what makes the host
+   * offer no cut at it: a point nobody can name is worse than none.
+   */
+  const points = new Map<string, { input?: string; last?: string }>();
   /** What it is doing, or nothing while it is idle. */
   let activity: string | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
@@ -318,6 +365,24 @@ export function facioSession(
   };
 
   /**
+   * Keep where this turn began and ended, for the two cut methods.
+   *
+   * Read from the run record rather than from the events, because the last
+   * thing a run wrote is a message no event names - a tool result, a steer, the
+   * marker a cancel leaves - and a cut at a guessed point would drop a turn's
+   * log for a point it did not really have. The store advances the run's
+   * `lastMessageId` with every message it appends, so the record is exact.
+   */
+  const rememberPoints = async (turnId: string, runId: string): Promise<void> => {
+    const record = await store.runs.get({ sessionId, runId });
+    if (record === undefined) return;
+    points.set(turnId, {
+      ...(record.inputMessageId !== undefined ? { input: record.inputMessageId } : {}),
+      ...(record.lastMessageId !== undefined ? { last: record.lastMessageId } : {}),
+    });
+  };
+
+  /**
    * One event's actions, through the mapping, and what it did to the session.
    *
    * `replaying` is for a run history read back on a resume: the awaiting
@@ -325,8 +390,17 @@ export function facioSession(
    * is what is reading it and its handle is still open. Answers whether this
    * run has now said how it ended.
    */
-  const apply = (mapping: TurnMapping, event: RunEvent, replaying: boolean): boolean => {
+  const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent, replaying: boolean): Promise<boolean> => {
     if (event.type === 'run.finished') doing(undefined);
+    /*
+     * A finished turn's span is recorded before the client is told it ended,
+     * so a fork or a rewind asked for the moment the turn appears has a point
+     * to cut at. A pause is not an ending and is not recorded: `endPoint` is
+     * where a turn ended, and a run waiting on a person has not ended.
+     */
+    if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
+      await rememberPoints(turnId, event.runId);
+    }
     let settled = false;
     const mapped = mapping.actions(event);
     for (const action of mapped.actions) {
@@ -364,12 +438,12 @@ export function facioSession(
    * turn. A pause is not an ending: the awaiting outcome leaves the turn open
    * and records where the run stopped, so an answer can rejoin it.
    */
-  const read = (live: RunHandle, mapping: TurnMapping): void => {
+  const read = (live: RunHandle, mapping: TurnMapping, turnId: string): void => {
     /** Whether this run has already said how it ended. */
     let settled = false;
     void (async () => {
       for await (const event of live.events) {
-        if (apply(mapping, event, false)) settled = true;
+        if (await apply(mapping, turnId, event, false)) settled = true;
       }
       /*
        * A run that failed before it could publish anything ends its stream
@@ -380,7 +454,7 @@ export function facioSession(
        */
       if (!settled) {
         const outcome = await live.outcome;
-        apply(mapping, {
+        await apply(mapping, turnId, {
           seq: 0,
           runId: live.runId,
           sessionId: live.sessionId,
@@ -408,7 +482,7 @@ export function facioSession(
     paused = undefined;
     const rejoined = resume({ agent, sessionId, runId: waiting.runId, afterSeq: waiting.seq });
     handle = rejoined;
-    if (activeMapping !== undefined) read(rejoined, activeMapping);
+    if (activeMapping !== undefined) read(rejoined, activeMapping, active === undefined ? waiting.runId : String(active.id));
     return rejoined;
   };
 
@@ -456,7 +530,7 @@ export function facioSession(
   };
 
   /**
-   * Start a turn, whoever asked for it.
+   * Open a turn on the wire, before anything runs it.
    *
    * `chat/turnStarted` is emitted here, before `run()` is called, because the
    * host has already dispatched that action and AHP requires the order
@@ -465,9 +539,19 @@ export function facioSession(
    *
    * `queuedMessageId` names the waiting message it came from; a client's
    * reducer takes it out of the queue on that word.
+   *
+   * Answers nothing for a session that is closed or already running a turn.
+   * Both a turn with a run behind it and one that has to be failed before it
+   * starts share this opening, so a client sees the same turn either way.
    */
-  const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
-    if (closed || active !== undefined) return;
+  const openTurn = (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    queuedMessageId?: string,
+  ): { mapping: TurnMapping; values: Record<string, unknown> } | undefined => {
+    if (closed || active !== undefined) return undefined;
     cancelRequested = false;
     if (title === 'Facio session' && text !== '') {
       title = text.slice(0, 60);
@@ -518,13 +602,60 @@ export function facioSession(
       ...(chosen !== undefined ? { model: chosen } : {}),
     });
     activeMapping = mapping;
+    return { mapping, values };
+  };
 
-    const agent = agentOf(values);
+  /**
+   * Start a turn, whoever asked for it.
+   */
+  const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
+    const opened = openTurn(turnId, text, model, from, queuedMessageId);
+    if (opened === undefined) return;
+    const agent = agentOf(opened.values);
     liveAgent = agent;
     const live = run({ agent, session: sessionId, workspace: where, input: text });
     handle = live;
-    read(live, mapping);
+    read(live, opened.mapping, turnId);
     touch();
+  };
+
+  /**
+   * A turn that cannot run, answered with the reason.
+   *
+   * The client has already dispatched its own `chat/turnStarted`, so the turn
+   * exists whether or not a run does, and leaving it open would be a spinner
+   * nothing can settle. The failure goes through the mapping like every other
+   * ending, so a client draws the same `chat/error` a failed run produces.
+   *
+   * This is the path a session whose fork or rewind could not be cut takes: the
+   * honest answer to "carry on from there" is that there is no there.
+   */
+  const failTurn = (
+    turnId: string,
+    text: string,
+    model: Chosen | undefined,
+    from: MessageFrom | undefined,
+    queuedMessageId: string | undefined,
+    why: unknown,
+  ): void => {
+    const opened = openTurn(turnId, text, model, from, queuedMessageId);
+    if (opened === undefined) return;
+    const message = why instanceof Error ? why.message : String(why);
+    void apply(opened.mapping, turnId, {
+      seq: 0,
+      runId: `${turnId}:refused`,
+      sessionId,
+      agentId: AGENT_ID,
+      at: new Date().toISOString(),
+      type: 'run.finished',
+      outcome: {
+        status: 'failed',
+        error: { code: 'cut_refused', message },
+        usage: { inputTokens: 0, outputTokens: 0 },
+        steps: 0,
+        denials: [],
+      },
+    }, false);
   };
 
   /**
@@ -534,15 +665,31 @@ export function facioSession(
    * second run would fight the paused one for the session's writer claim and
    * fail `writer_busy`. Waiting for the lookup is what tells the two apart,
    * and it costs an ordinary session nothing: `opening` is only set when the
-   * host named a conversation to continue.
+   * host named a conversation to continue and when a fork or a rewind is being
+   * cut.
+   *
+   * A chain that ended in a refusal - a cut the store would not make - leaves
+   * every turn on the failure path rather than on the ordinary one: the client
+   * asked to carry on from a point, and carrying on from somewhere else
+   * without saying so is the one answer that is worse than an error.
    */
   const beginTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
-    const waiting = opening;
-    if (waiting === undefined) {
+    const start = (): void => {
+      if (refused !== undefined) {
+        failTurn(turnId, text, model, from, queuedMessageId, refused);
+        return;
+      }
       startTurn(turnId, text, model, from, queuedMessageId);
+    };
+    if (refused !== undefined) {
+      start();
       return;
     }
-    const start = (): void => startTurn(turnId, text, model, from, queuedMessageId);
+    const waiting = opening;
+    if (waiting === undefined) {
+      start();
+      return;
+    }
     void waiting.then(start, start);
   };
 
@@ -644,7 +791,7 @@ export function facioSession(
      */
     const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
     const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
-    for (const event of events) apply(mapping, event, true);
+    for (const event of events) await apply(mapping, turnId, event, true);
 
     // Everything up to `lastSeq` has just been replayed, so the live stream
     // carries only what happens next rather than the conversation again.
@@ -654,21 +801,30 @@ export function facioSession(
       return;
     }
     handle = live;
-    read(live, mapping);
+    read(live, mapping, turnId);
     doing('Waiting on you');
     touch();
   };
 
   /*
-   * A resumed conversation may be paused, and every turn has to wait for that
-   * answer before it can start. Nothing else in the session reads the store
-   * first, so this is the one lookup the deferral is for.
+   * A resumed conversation may be paused, and a fork or a rewind has a cut to
+   * make, and both have to land before the first turn reads the session.
+   * Nothing else in the session reads the store first, so this is the one
+   * deferral for all three.
    */
-  if (start.resume !== undefined && !closed) {
-    const pending = reopen();
+  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !closed) {
+    const pending = (async (): Promise<void> => {
+      await cut();
+      if (start.resume !== undefined) await reopen();
+    })();
     opening = pending;
     const settledOpening = (): void => { if (opening === pending) opening = undefined; };
-    void pending.then(settledOpening, settledOpening);
+    void pending.then(settledOpening, (why: unknown) => {
+      // The refusal is kept rather than thrown into an unhandled rejection:
+      // the turn paths read it and answer the client with it.
+      refused = why instanceof Error ? why : new Error(String(why));
+      settledOpening();
+    });
   }
 
   return {
@@ -688,6 +844,17 @@ export function facioSession(
       return id === undefined ? [] : [{ id, name: id }];
     },
     agentId: () => sessionId,
+    /*
+     * Where a fork and a rewind cut, in facio's own message ids.
+     *
+     * A turn this process did not watch run has no entry: it was read back off
+     * a transcript, and facio names a run's span rather than a turn's, so the
+     * point is not something this session can promise. Answering nothing is
+     * what makes the host offer no cut at that turn rather than offer one that
+     * fails when it is used.
+     */
+    forkPoint: (turnId) => points.get(turnId)?.input,
+    endPoint: (turnId) => points.get(turnId)?.last,
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
     status,

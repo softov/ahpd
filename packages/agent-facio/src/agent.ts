@@ -262,6 +262,16 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     displayName,
     ...(options.description !== undefined ? { description: options.description } : {}),
     /*
+     * A chat can be forked from one of its turns.
+     *
+     * A fork copies the conversation through a turn into a facio session of
+     * its own - `Store.sessions.fork` - and leaves the source whole, which is
+     * what AHP's `source.kind: 'fork'` asks for. There is no side chat: that
+     * is a fresh conversation told what a turn said, and this backend has no
+     * way to hand a model context that is not a message in the session.
+     */
+    chats: { fork: true },
+    /*
      * The resource a client may lend a token for.
      *
      * `required: false` because the daemon runs as whoever started it and
@@ -324,12 +334,12 @@ export function facioAgent(options: FacioOptions = {}): Agent {
      * and each event becomes the AHP action a client expects. The work is in
      * `session.ts`, `mapping.ts` and `tools.ts`.
      *
-     * `Start.forkAt` and `Start.rewindAt` are deliberately left unmapped.
-     * facio has the slots a fork and a rewind would cut at - a run's
-     * `inputMessageId` and `lastMessageId` - and turning one into a new
-     * session or a truncation is a task of its own rather than a branch taken
-     * silently through `resume()` here. Until then a request for either is
-     * served as the plain continue it arrives beside.
+     * `Start.forkAt` and `Start.rewindAt` are the cut the session was asked
+     * for: a fork copies the resumed conversation through that message into a
+     * facio session of its own, and a rewind drops what followed it from the
+     * resumed one, which is `Store.sessions.fork` and `Store.sessions.truncate`
+     * doing the work before the first turn runs. `session.ts` refuses a turn if
+     * the cut could not be made, rather than carrying on from the wrong place.
      */
     create: (start) => facioSession(options, start, store, harness),
   };

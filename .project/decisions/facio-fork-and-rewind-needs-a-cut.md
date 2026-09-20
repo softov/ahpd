@@ -1,6 +1,6 @@
 ---
-title: Fork and rewind wait on facio being able to cut a conversation, and only rewind truly needs it
-status: proposed
+title: Fork and rewind are a cut in the store, and the run loop keeps reading the session
+status: accepted
 date: 2026-09-20
 refs:
   - code://.project/plans/plugin/04-agent-facio-extras/task-02-fork-and-rewind.md - the task this decides the shape of
@@ -25,23 +25,31 @@ A rewind is not: the same session id cannot drop a tail, and deleting and recrea
 
 ## Decision
 
-Proposed, and it is one of three:
+`@facio/agents` gains two store primitives, and the run loop is not touched:
 
-1. **Fork only, from the bridge, and refuse a rewind.** `forkPoint`/`endPoint` answer the message ids a cut would use; `create` with `forkAt` seeds a new facio session through the public store calls and runs there; `rewindAt` is refused by name. A rewind needs facio to gain a truncation and is not faked.
-2. **A facio cut first, then both.** `@facio/agents` gains a way to run on a given history (a `RunArgs.history`, or `from`/`to` message ids) and `Store.sessions` gains a truncation, so a rewind can drop a tail without losing the run and step records. Then the bridge maps both, and the change is a plan and a decision in `/github/facio`.
-3. **Refuse both.** Neither `forkPoint` nor `endPoint` is implemented, so the host advertises no fork and no rewind for a facio session and the controls are not drawn. Nothing else regresses, and the capability waits for a client that needs it.
+1. `Store.sessions.truncate({ sessionId, throughMessageId })` drops the messages after the given one, and with them the runs, events, steps and requests of the turns that went with them. A run record is kept only when its `inputMessageId` and its `lastMessageId` are both among the messages that remain, so the kept turns keep their usage and their tool timings. It refuses with `writer_busy` while a `running` claim is held, the way `delete` already does, and with `not_found` for a session or a message that is not there. A rewind is this.
+2. `Store.sessions.fork({ fromSessionId, throughMessageId, sessionId })` creates the target session and copies the kept messages and their run, event and step records into it, leaving the source untouched. A fork is this, and the new id is what makes the original whole for somebody else to find.
+
+`run()` keeps reading `store.sessions.listMessages({ sessionId })` and gains no history argument: the session is the one place that says what the conversation is, and a history passed per call would let the store and the model's prompt disagree. The cut happens before the run, in the place that owns the conversation.
+Source: Softov, 2026-09-20: "ok do option 2".
 
 ## Consequences
 
-Option 1 gives fork today at the cost of an asymmetry a client cannot see until it tries a rewind, which is refused rather than silently continuing.
-Option 2 is the only one where both work and a rewind keeps the conversation's own record; it costs a change in another repository and a decision there about the shape of the cut.
-Option 3 is the smallest and the most honest about what facio can do, and it is the one that leaves a window's controls absent rather than present and failing.
-
-Whichever is chosen, `forkPoint`/`endPoint` must only be implemented when a `forkAt`/`rewindAt` can actually be honoured: the host advertises the controls from the methods' presence, so answering a point without being able to cut at it is a control that fails when used.
+Both AHP operations are honoured with the semantics AHP gives them: a fork under a new id with the original untouched, a rewind under the same id with the tail dropped, and neither one losing the record of the turns it keeps.
+The host's two paths already hand the cut point over - `forkPoint` for a fork, `endPoint` for a rewind - so the bridge only has to honour it, and a client that offers the controls gets a working one.
+The loop, the model request and the run record are unchanged, so nothing about a normal turn moves and the change is testable at the store alone.
+A truncation is also the primitive a compaction that replaces a prefix needs, so the store owns one more operation rather than the harness growing a second notion of history.
+The cost is a store contract that both implementations must honour identically, which is what the conformance suite is for.
 
 ## Options
 
+- **Fork only, from the bridge, and refuse a rewind.**
+  Rejected once the cut was understood: it is asymmetric for no reason, and the host has no separate rewind flag, so the window would offer a fork and no rewind, which is honest but half the feature.
+- **Refuse both.**
+  Rejected: the host's paths exist, `inputMessageId` and `lastMessageId` are already recorded, and the control is something a client draws.
+- **`RunArgs.history`, with the run given the messages to run on.**
+  Rejected: two sources of truth for the conversation. The store would hold one history and the prompt another, and every later feature would have to reconcile them.
 - **Seed a new session for a rewind as well**, keeping the id by deleting and recreating the session.
-  Rejected: it takes the runs, events and steps with it, so usage and tool timings are lost from the transcript a rewind was supposed to keep.
+  Rejected: it takes the kept turns' runs, events and steps with it, so usage and tool timings vanish from the conversation a rewind was supposed to keep.
 - **Write the messages into a new session without claiming the writer.**
   Rejected: the claim is what orders writers, and a store that accepted an unclaimed append would be a store whose whole claim protocol means nothing.
