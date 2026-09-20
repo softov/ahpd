@@ -122,6 +122,13 @@ export function facioSession(
   start: Start,
   sharedStore?: Store,
   harness: HarnessConfig = harnessConfig(),
+  /*
+   * What the endpoint this session is pointed at serves, in the backend's own
+   * catalogue. The backend shares one cache across its sessions, so a session
+   * answers the same list a picker was drawn from rather than a second one.
+   */
+  catalogue: (settings: Record<string, unknown>, credentials: Record<string, string>) => { id: string; name: string }[] =
+    () => [],
 ): Session {
   const provider = options.provider ?? 'facio';
   /**
@@ -832,14 +839,18 @@ export function facioSession(
     chatUri: start.chatUri,
 
     /**
-     * The model this session runs on.
+     * The models this session's endpoint serves, or the one it was told to run on.
      *
-     * Read off the adapter the turn would use rather than off the schema
-     * alone, because a package that ships no default and a session that chose
-     * nothing is a session that cannot answer a turn. An empty list is the
-     * honest form of that.
+     * The backend's catalogue for the endpoint and key in force is the real
+     * answer - what a picker was drawn from - and it is what the host learns
+     * from, so answering a single row here would shrink a list the user already
+     * saw. Until the endpoint has answered, the configured model is the honest
+     * answer: a session that chose nothing and has no default is one that cannot
+     * answer a turn, and an empty list is the form of that.
      */
     models: () => {
+      const listed = catalogue(settings, start.credentials ?? {});
+      if (listed.length > 0) return listed;
       const id = str(settings.model) ?? options.model ?? options.adapter?.modelId;
       return id === undefined ? [] : [{ id, name: id }];
     },

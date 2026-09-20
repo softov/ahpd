@@ -138,6 +138,129 @@ const endpointOf = (
 };
 
 /**
+ * Where a model is asked for, and with what.
+ *
+ * One resolution for both the adapter a turn runs on and the catalogue a
+ * picker draws, so the two cannot disagree about which endpoint is in force:
+ * a model offered by the list is selected through the same provider, base URL,
+ * key and headers the list was read from.
+ */
+interface Connection {
+  /** The model as it was spelled: a reference, or a bare id. */
+  reference?: string;
+  /** The model id the endpoint is asked for, without any provider prefix. */
+  model?: string;
+  baseUrl: string;
+  apiKey?: string | (() => string | Promise<string>);
+  headers?: Record<string, string>;
+  /**
+   * The prefix a model this endpoint serves is offered under.
+   *
+   * The harness provider that owns the endpoint, so a choice selects the same
+   * provider back; this backend's own id when no entry owns it, which `modelOf`
+   * accepts for the endpoint it was configured with.
+   */
+  prefix: string;
+}
+
+/** The endpoint a model is asked for when nothing named one; LM Studio's own port. */
+const LOCAL_ENDPOINT = 'http://127.0.0.1:1234/v1';
+
+/**
+ * Resolve the connection a model setting names, without requiring that a model
+ * was chosen: a probe lists what an endpoint serves before anybody picks.
+ *
+ * `strict` is the difference between asking and running. A call that builds an
+ * adapter refuses a missing model and a reference naming a provider the file
+ * does not carry; a call that only reads a catalogue falls back to the first
+ * provider's endpoint and lists what it has.
+ */
+const connectionOf = (
+  options: FacioOptions,
+  settings: Record<string, unknown>,
+  credentials: Record<string, string>,
+  harness: HarnessConfig,
+  strict: boolean,
+): Connection => {
+  const own = options.provider ?? 'facio';
+  const reference = text(settings.model) ?? options.model ?? harness.model;
+  const named = reference === undefined ? undefined : splitModel(reference);
+  const provider = endpointOf(options, harness, reference);
+  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
+  // A reference under this backend's own id names the endpoint it was
+  // configured with rather than a provider the harness file would have to hold.
+  const ownRef = named !== undefined && named.provider === own;
+  if (strict) {
+    if (reference === undefined) {
+      throw new Error(`${own}: no model was chosen, this backend has no default, and ${harness.path} names none`);
+    }
+    if (named !== undefined && provider === undefined && explicitBase === undefined && !ownRef) {
+      const known = harness.providers.map((one) => one.id);
+      throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
+    }
+  }
+  const model = reference === undefined ? undefined : (named === undefined ? reference : named.modelId);
+  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl ?? LOCAL_ENDPOINT;
+  const lent = credentials[resourceOf(options, harness)];
+  const key = text(lent) ?? options.apiKey ?? provider?.apiKey ?? harness.providers[0]?.apiKey;
+  return {
+    ...(reference === undefined ? {} : { reference }),
+    ...(model === undefined ? {} : { model }),
+    baseUrl,
+    ...(key === undefined ? {} : { apiKey: key }),
+    ...(provider?.headers === undefined ? {} : { headers: provider.headers }),
+    prefix: provider?.id ?? own,
+  };
+};
+
+/** How long the endpoint is given to publish its catalogue before the configured model stands alone. */
+const CATALOGUE_TIMEOUT_MS = 5000;
+
+/**
+ * Every model the endpoint says it serves.
+ *
+ * An OpenAI-compatible `GET /models`, which is where OpenRouter publishes the
+ * models it routes to and what LM Studio answers with what it has loaded. Each
+ * id is offered as `<provider>/<model id>`, the spelling the harness itself
+ * writes, because OpenRouter's ids contain slashes and a bare one would be read
+ * as a provider reference.
+ *
+ * Anything that goes wrong - a refused connection, a wrong shape, a timeout - is
+ * an empty list: an endpoint that cannot be asked offers the configured model
+ * alone, rather than a picker with no rows.
+ */
+const listModels = async (connection: Connection): Promise<{ id: string; name: string }[]> => {
+  try {
+    // A key written as a function is asked here too, so a catalogue read after
+    // a rotation is not sent the token the last one used.
+    const key = typeof connection.apiKey === 'function' ? await connection.apiKey() : connection.apiKey;
+    const response = await fetch(`${connection.baseUrl.replace(/\/+$/, '')}/models`, {
+      headers: {
+        accept: 'application/json',
+        ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
+        ...connection.headers,
+      },
+      signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS),
+    });
+    if (!response.ok) return [];
+    const body = await response.json() as { data?: unknown };
+    if (!Array.isArray(body.data)) return [];
+    const models: { id: string; name: string }[] = [];
+    for (const raw of body.data) {
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+      const held = raw as Record<string, unknown>;
+      const id = text(held.id);
+      if (id === undefined) continue;
+      models.push({ id: `${connection.prefix}/${id}`, name: text(held.name) ?? id });
+    }
+    return models;
+  }
+  catch {
+    return [];
+  }
+};
+
+/**
  * The model a session runs on.
  *
  * The settings a client sent win over the package's own, which win over the
@@ -159,26 +282,13 @@ export const modelOf = (
   harness: HarnessConfig = harnessConfig(),
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
-  const ref = text(settings.model) ?? options.model ?? harness.model;
-  if (ref === undefined) {
-    throw new Error(`${options.provider ?? 'facio'}: no model was chosen, this backend has no default, and ${harness.path} names none`);
-  }
-  const named = splitModel(ref);
-  const provider = endpointOf(options, harness, ref);
-  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
-  if (named !== undefined && provider === undefined && explicitBase === undefined) {
-    const known = harness.providers.map((one) => one.id);
-    throw new Error(`${options.provider ?? 'facio'}: model "${ref}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
-  }
-  const model = named === undefined ? ref : named.modelId;
-  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl ?? 'http://127.0.0.1:1234/v1';
-  const lent = credentials[resourceOf(options, harness)];
-  const key = text(lent) ?? options.apiKey ?? provider?.apiKey ?? harness.providers[0]?.apiKey;
+  const connection = connectionOf(options, settings, credentials, harness, true);
+  // Strict resolution has answered that a model was chosen.
   return openaiCompat({
-    baseUrl,
-    model,
-    ...(key === undefined ? {} : { apiKey: key }),
-    ...(provider?.headers !== undefined ? { headers: provider.headers } : {}),
+    baseUrl: connection.baseUrl,
+    model: connection.model as string,
+    ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
+    ...(connection.headers === undefined ? {} : { headers: connection.headers }),
   });
 };
 
@@ -257,6 +367,41 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
   });
 
+  /**
+   * What each endpoint answered, by the endpoint and the key it was asked with.
+   *
+   * One `GET /models` per backend rather than per session or per turn: a picker
+   * is drawn from the root channel before any session exists, and every session
+   * on the same endpoint and key would ask the same question. An empty answer is
+   * not kept, so an endpoint that was down at startup is asked again rather than
+   * remembered as one with no models.
+   */
+  const catalogues = new Map<string, { id: string; name: string }[]>();
+  const cacheKey = (connection: Connection): string => `${connection.baseUrl}\n${connection.apiKey ?? ''}`;
+
+  const catalogueOf = async (connection: Connection): Promise<{ id: string; name: string }[]> => {
+    const key = cacheKey(connection);
+    const held = catalogues.get(key);
+    if (held !== undefined) return held;
+    const listed = await listModels(connection);
+    if (listed.length > 0) catalogues.set(key, listed);
+    return listed;
+  };
+
+  /**
+   * The catalogue as it is known right now.
+   *
+   * `models()` is synchronous and the fetch is not, so an endpoint not yet
+   * asked answers nothing on this call and is asked in the background; the
+   * configured model stands in until it lands.
+   */
+  const knownCatalogue = (connection: Connection): { id: string; name: string }[] => {
+    const held = catalogues.get(cacheKey(connection));
+    if (held !== undefined) return held;
+    void catalogueOf(connection);
+    return [];
+  };
+
   return {
     provider,
     displayName,
@@ -283,13 +428,22 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     protectedResources: [{ resource: resourceOf(options, harness), resource_name: displayName, required: false }],
     schema,
     defaults,
+    /*
+     * What the endpoint serves, as the root channel's model list.
+     *
+     * The configured `model` is the default a session starts on, not the only
+     * model there is, so the endpoint's own catalogue is offered with it first
+     * when the endpoint does not carry it. No call is made for a caller that
+     * passed an adapter: an embedder's models are the adapter's, and the
+     * endpoint in `options` is not necessarily one it wants asked.
+     */
     probe: async (): Promise<Offered> => {
-      const configured = options.model ?? harness.model;
-      return {
-        models: configured === undefined ? [] : [{ id: configured, name: configured }],
-        customizations: [],
-        commands: [],
-      };
+      const connection = connectionOf(options, {}, {}, harness, false);
+      const listed = options.adapter === undefined ? await catalogueOf(connection) : [];
+      const models = connection.reference === undefined || listed.some((model) => model.id === connection.reference)
+        ? listed
+        : [{ id: connection.reference, name: connection.reference }, ...listed];
+      return { models, customizations: [], commands: [] };
     },
     /*
      * The sessions this backend already has.
@@ -341,6 +495,7 @@ export function facioAgent(options: FacioOptions = {}): Agent {
      * doing the work before the first turn runs. `session.ts` refuses a turn if
      * the cut could not be made, rather than carrying on from the wrong place.
      */
-    create: (start) => facioSession(options, start, store, harness),
+    create: (start) => facioSession(options, start, store, harness, (settings, credentials) =>
+      knownCatalogue(connectionOf(options, settings, credentials, harness, false))),
   };
 }

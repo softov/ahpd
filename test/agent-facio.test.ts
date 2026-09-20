@@ -48,7 +48,11 @@ it('gives a second registration its own provider', () => {
 });
 
 it('offers the configured model and no commands', async () => {
-  const offered = await facioAgent({ model: 'deepseek-chat' }).probe?.();
+  // An adapter, so the case is about the configured model standing in rather
+  // than about whatever endpoint this machine happens to have running; the
+  // catalogue an endpoint serves is `agent-facio-models.test.ts`.
+  const stub = { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
+  const offered = await facioAgent({ adapter: stub, model: 'deepseek-chat' }).probe?.();
   expect(offered?.models).toEqual([{ id: 'deepseek-chat', name: 'deepseek-chat' }]);
   expect(offered?.commands).toEqual([]);
 });

@@ -375,6 +375,25 @@ first provider's. A missing harness file is not an error, so a machine that has
 never run the harness reads an empty one and the plugin options are the only
 source.
 
+### The models a session can run on
+
+The endpoint is asked once, `GET <baseUrl>/models`, and what it answers is what
+a picker offers: every model OpenRouter routes to, or what an LM Studio holds.
+Each row is offered as `<provider>/<model id>`, the same reference the harness
+writes, so choosing one selects that provider's endpoint, key and headers along
+with the model - and an id that itself contains slashes is carried whole,
+`open_router/deepseek/deepseek-chat` being the OpenRouter model
+`deepseek/deepseek-chat`. An endpoint no provider entry owns offers its models
+under this backend's own provider id, which resolves to the endpoint it was
+configured with.
+
+The configured `model` is the default a session starts on, not the only model
+there is: it is offered first when the endpoint's list does not carry it, and it
+is the only row when the endpoint cannot be asked - so a machine that has never
+run the harness, or one whose endpoint is down, still shows what a turn would
+run on. A backend built with an `adapter` is never asked over the network, since
+an embedder's models are the adapter's own.
+
 A package becomes a plugin by exporting `name` and `apply` from the module its
 `ahpd.entry` names, and `@ahpd/agent-facio` is no different: its `package.json`
 carries the `ahpd` key and the `@ahpd/sdk` peer range shown under
