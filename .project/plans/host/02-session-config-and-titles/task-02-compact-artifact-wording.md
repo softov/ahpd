@@ -1,6 +1,6 @@
 ---
 title: The artifact instruction is short when the client asks, and every session can be handed it
-status: todo
+status: done
 depends: [task-01-root-config-keys.md]
 layer: packages/sdk
 refs:

@@ -186,6 +186,19 @@ const entrySchema = {
  */
 const ARTIFACT_TOOLS_INSTRUCTION = `Record notable artifacts and references with \`${ADD}\` so they are surfaced next to the chat input. Registration is optional, not an inventory of everything saved; default to no registration. ${CLASSIFICATION} Other artifacts are deliverables the user explicitly requested or standalone results the user is clearly likely to reopen, download, or reuse; references are existing resources the user will likely want to view. Batch related entries in one call when practical. Do not record routine files, scratch files, caches, logs, intermediate results, or configuration snapshots unless the user asked for them as deliverables; persistence or location outside the workspace is not an eligibility signal. Do not record incidental resources, commits you create unless the user asks, or sessions and chats created with session-management tools. Never create, copy, or relocate a file solely to have an artifact to register.`;
 
+/*
+ * The compact wording, copied from the reference host's `getDefinitions`.
+ *
+ * A client that pushes `artifactToolsCompactPrompts` gets the short
+ * instruction and a short ADD description instead of the long ones. The tool
+ * set is unchanged: the same three are offered, in the same order, and the
+ * compact treatment only selects words.
+ */
+export const COMPACT_ARTIFACT_TOOLS_INSTRUCTION = `Artifact registration is optional; default to none. Follow \`${ADD}\` eligibility rules and batch related entries. List/remove (discover if needed): \`${LIST}\`, \`${REMOVE}\`.`;
+
+/** The short ADD description the compact key selects, which still names the tool. */
+const COMPACT_ADD_DESCRIPTION = 'Record artifacts and references so they are surfaced next to the chat input. Call `add_artifact_or_reference` with `items`, batch related entries in one call when practical, and default to none. Adding an artifact promotes a matching reference, preserving its id.';
+
 export const artifactTools = (): HostTool[] => [
   {
     definition: {
@@ -202,6 +215,10 @@ export const artifactTools = (): HostTool[] => [
       annotations: { readOnlyHint: false },
     },
     instruction: ARTIFACT_TOOLS_INSTRUCTION,
+    compact: {
+      definition: { description: COMPACT_ADD_DESCRIPTION },
+      instruction: COMPACT_ARTIFACT_TOOLS_INSTRUCTION,
+    },
     /*
      * The reference's rule: the add tool the instruction names is never
      * deferred, and remove and list are, since the model reaches them through

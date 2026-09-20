@@ -260,6 +260,15 @@ export interface Diagnostics {
 }
 
 /**
+ * How a session names its chats, resolved once when it opens.
+ *
+ * `activeAgent` is the agent naming its own chats through `rename_chat`;
+ * `utility` is the host naming them and the tool withheld; `deferred` is the
+ * host naming them and the tool offered only for an explicit rename.
+ */
+export type TitleStrategy = 'activeAgent' | 'utility' | 'deferred';
+
+/**
  * One tool the host contributes, and what running it does.
  *
  * `definition` is what a client draws and what the model is offered;
@@ -281,6 +290,23 @@ export interface HostTool {
    * nothing asks for is worth calling on the model's own initiative.
    */
   instruction?: string;
+  /**
+   * The wording a client's root key selects for this tool.
+   *
+   * `definition` is merged over `definition` above and `instruction`
+   * replaces `instruction` above. It is words only: whether the tool is
+   * offered, where it sits in the list and how many there are do not move.
+   */
+  compact?: { definition?: Partial<ToolDefinition>; instruction?: string };
+  /**
+   * The shape one session's title strategy asks for.
+   *
+   * `undefined` leaves the tool as it is, `{ offered: false }` takes it out
+   * of the list for that session, and `definition` is merged over the tool's
+   * own. It is how a strategy that does not rename chats withholds the tool
+   * rather than offering one it would refuse.
+   */
+  forSession?: (session: { titleStrategy: TitleStrategy }) => { offered: boolean; definition?: Partial<ToolDefinition> } | undefined;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *

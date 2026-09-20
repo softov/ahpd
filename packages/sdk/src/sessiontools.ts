@@ -331,6 +331,26 @@ const workspaceMeant = (asked: string, rows: Summary[], tool: string): string =>
 
 const LIST_STATUS = ['idle', 'inProgress', 'inputNeeded', 'error', 'archived'];
 
+/** What `rename_chat` does today, for a session that names its own chats. */
+const RENAME_CHAT_DESCRIPTION = 'Rename one specific chat so it is easy to find later. Renaming the default chat also names its owning session, while peer-chat titles remain independent. Use a short, human-friendly chat name in sentence case (1-4 words). Pass an `agent-host-session://` session or chat link to target another chat, or omit `chat` to rename the chat in which this tool is running. Name a fresh chat once its scope is clear. Call this tool again whenever the user explicitly asks to rename the chat; every invocation replaces the current title.';
+
+/**
+ * What `rename_chat` says under a deferred strategy, from the reference host.
+ *
+ * A rename only when the user asks, because the host is the one naming a
+ * fresh chat, and there is no `automatic` argument to carry an automatic
+ * request with.
+ */
+const DEFERRED_RENAME_CHAT_DESCRIPTION = 'Rename one specific chat when the user explicitly asks to rename it. Automatic naming is handled by the host; do not call this tool to name a fresh chat. Renaming the default chat also names its owning session, while peer-chat titles remain independent. Use a short, human-friendly chat name in sentence case (1-4 words). Pass an `agent-host-session://` session or chat link to target another chat, or omit `chat` to rename the chat in which this tool is running. Every invocation replaces the current title.';
+
+/** The rename arguments, which a utility strategy withholds whole and a deferred one drops `automatic` from. */
+const RENAME_CHAT_PROPERTIES: Record<string, object> = {
+  session: { type: 'string', description: 'Optional owning session: a session URI from `list_sessions` or an `agent-host-session://` link. When provided with `chat`, it must match that chat\'s session.' },
+  chat: { type: 'string', description: 'The chat to rename: pass an `agent-host-session://` session or chat link. Omit when renaming the chat in which this tool is running.' },
+  title: { type: 'string', maxLength: 200, description: 'Short, descriptive chat title, ideally 1-4 words.' },
+  automatic: { type: 'boolean', description: 'Set to true only when this call is fulfilling the host\'s automatic title reminder. Omit for user-requested renames.' },
+};
+
 /** VS Code's session tools, in its order. */
 export const sessionTools = (): HostTool[] => [
   {
@@ -496,18 +516,31 @@ export const sessionTools = (): HostTool[] => [
     definition: {
       name: 'rename_chat',
       title: 'Rename Chat',
-      description: 'Rename one specific chat so it is easy to find later. Renaming the default chat also names its owning session, while peer-chat titles remain independent. Use a short, human-friendly chat name in sentence case (1-4 words). Pass an `agent-host-session://` session or chat link to target another chat, or omit `chat` to rename the chat in which this tool is running. Name a fresh chat once its scope is clear. Call this tool again whenever the user explicitly asks to rename the chat; every invocation replaces the current title.',
+      description: RENAME_CHAT_DESCRIPTION,
       inputSchema: {
         type: 'object',
-        properties: {
-          session: { type: 'string', description: 'Optional owning session: a session URI from `list_sessions` or an `agent-host-session://` link. When provided with `chat`, it must match that chat\'s session.' },
-          chat: { type: 'string', description: 'The chat to rename: pass an `agent-host-session://` session or chat link. Omit when renaming the chat in which this tool is running.' },
-          title: { type: 'string', maxLength: 200, description: 'Short, descriptive chat title, ideally 1-4 words.' },
-          automatic: { type: 'boolean', description: 'Set to true only when this call is fulfilling the host\'s automatic title reminder. Omit for user-requested renames.' },
-        },
+        properties: RENAME_CHAT_PROPERTIES,
         required: ['title'],
       },
       annotations: { title: 'Rename Chat', readOnlyHint: false, destructiveHint: false },
+    },
+    /*
+     * What a session's strategy asks of this tool. A utility strategy withholds
+     * it whole, which the host does by leaving it out of the list; a deferred
+     * strategy offers it without `automatic`, since the host is the one naming
+     * fresh chats.
+     */
+    forSession: ({ titleStrategy }) => {
+      if (titleStrategy === 'utility') return { offered: false };
+      if (titleStrategy !== 'deferred') return undefined;
+      const { automatic: _automatic, ...properties } = RENAME_CHAT_PROPERTIES;
+      return {
+        offered: true,
+        definition: {
+          description: DEFERRED_RENAME_CHAT_DESCRIPTION,
+          inputSchema: { type: 'object', properties, required: ['title'] },
+        },
+      };
     },
     run: async (input, at) => {
       const tool = 'rename_chat';

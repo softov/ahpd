@@ -35,7 +35,7 @@ import type { Claim, Terminal } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
-import type { Clients, Connection, Credential, Host, HostOptions, HostTool, ToolCall } from './types/host.js';
+import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -1984,14 +1984,67 @@ export function createHost(options: HostOptions): Host {
       : meta;
     const github = githubFacts.get(dir);
     const artifacts = kept.artifacts(idOf(uri));
-    if (told === undefined && github === undefined && artifacts === undefined) return undefined;
+    const baseline = kept.pullRequests(idOf(uri));
+    if (told === undefined && github === undefined && artifacts === undefined && baseline === undefined) return undefined;
     return {
       ...told,
-      ...(github ? { github } : {}),
+      // The directory's facts and the session's baseline meet here: the
+      // baseline is one session's and the facts are every session's in the
+      // directory, and `session/metaChanged` carries the whole map.
+      ...(github !== undefined || baseline !== undefined
+        ? {
+          github: {
+            ...github,
+            ...(baseline === undefined ? {} : {
+              initialPullRequestUrls: baseline.initialPullRequestUrls,
+              associatedPullRequestUrls: baseline.associatedPullRequestUrls,
+            }),
+          },
+        }
+        : {}),
       // The session's own, beside the directory's: what the agent recorded
       // as worth coming back to, under the key the reference client reads.
       ...(artifacts !== undefined && artifacts.length > 0 ? { [ARTIFACTS_META]: artifacts } : {}),
     };
+  };
+  /**
+   * Capture a session's pull request baseline, once.
+   *
+   * Called the first time GitHub answers for the directory and again when a
+   * session opens onto facts already held. The first answer wins: an empty
+   * array is a captured baseline, and a later answer says what the branch
+   * has now rather than what it had when the session began.
+   */
+  const captureBaseline = (uri: string, urls: string[]): void => {
+    if (kept.pullRequests(idOf(uri)) !== undefined) return;
+    kept.setPullRequests(idOf(uri), { initialPullRequestUrls: [...urls], associatedPullRequestUrls: [] });
+  };
+  /** The comparison the reference makes, so a URL with a trailing slash is the same one. */
+  const urlKey = (url: string): string => url.trim().replace(/\/+$/, '').toLowerCase();
+  /**
+   * Move a pull request out of the baseline and into the session's own.
+   *
+   * Called when the pull request becomes the session's, which is the
+   * `create-pr` association. The URL leads the associated list, leaves the
+   * initial one whatever spelling it arrived with, and `pullRequestUrls` is
+   * left alone: that is the directory's whole set and `refreshPullRequests`
+   * is its writer.
+   */
+  const promotePullRequest = (uri: string, url: string): void => {
+    const held = kept.pullRequests(idOf(uri));
+    const seen = new Set<string>();
+    const associatedPullRequestUrls: string[] = [];
+    for (const one of [url, ...(held?.associatedPullRequestUrls ?? [])]) {
+      const key = urlKey(one);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      associatedPullRequestUrls.push(one);
+    }
+    const promoted = urlKey(url);
+    kept.setPullRequests(idOf(uri), {
+      initialPullRequestUrls: (held?.initialPullRequestUrls ?? []).filter((one) => urlKey(one) !== promoted),
+      associatedPullRequestUrls,
+    });
   };
   /**
    * Replace what a session recorded, and say so.
@@ -2094,6 +2147,12 @@ export function createHost(options: HostOptions): Host {
     const before = githubFacts.get(dir);
     if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
     githubFacts.set(dir, now);
+    // Every session in the directory that has no baseline yet began before
+    // this answer, so this is the branch it started on.
+    const urls = Array.isArray(now.pullRequestUrls)
+      ? now.pullRequestUrls.filter((one): one is string => typeof one === 'string')
+      : [];
+    for (const uri of inThere(dir)) captureBaseline(uri, urls);
     return true;
   };
 
@@ -2114,6 +2173,9 @@ export function createHost(options: HostOptions): Host {
       isGitHub: isGitHubLink(pullRequest.url),
     }, () => crypto.randomUUID());
     setArtifacts(uri, recorded.held as unknown as Bag[]);
+    // In the same write as the artifact, so one `_meta` move says both and a
+    // client never sees the artifact without the promotion that came with it.
+    promotePullRequest(uri, pullRequest.url);
 
     const held = githubFacts.get(dir) ?? {};
     const urls = Array.isArray(held.pullRequestUrls)
@@ -2191,7 +2253,7 @@ export function createHost(options: HostOptions): Host {
        * announcement moved the list.
        */
       ...(boundTools(uri, chatUri).length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
-      ...(instructions().length > 0 ? { instructions: instructions() } : {}),
+      ...(instructions(uri).length > 0 ? { instructions: instructions(uri) } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -2281,6 +2343,16 @@ export function createHost(options: HostOptions): Host {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
+    /*
+     * The name it had before, when it is being created again.
+     *
+     * A chat's title is its own and the catalogue's is derived, so the store
+     * is what remembers it across a restart. Applied here, before the chat is
+     * announced or handed to a backend, so a client never sees the derived
+     * name first and then a correction.
+     */
+    const named_ = kept.chatTitle(idOf(uri), chatUri);
+    if (named_ !== undefined) session.setTitle?.(named_);
     // Named by whoever created it, which is the client. Recorded so every
     // other answer about it uses that same string.
     names.set(idOf(uri), uri);
@@ -3154,8 +3226,39 @@ export function createHost(options: HostOptions): Host {
    * `session/serverToolsChanged` means.
    */
   let contributing: HostTool[] = [...(options.tools ?? [])];
-  /** The definitions alone, which is the half that goes on the wire. */
-  const toolDefinitions = (): ToolDefinition[] => contributing.map((one) => one.definition);
+  /** Whether the client asked for the compact wording. */
+  const compactPrompts = (): boolean => rootConfig.artifactToolsCompactPrompts === true;
+  /**
+   * The title strategy each running session resolved when it opened.
+   *
+   * Snapshotted rather than read from the root config on every call, so a
+   * root change affects sessions opened after it and not one mid-turn. A
+   * session this host is only browsing has no entry and resolves from the
+   * root each time, which is the compatibility path.
+   */
+  const strategies = new Map<string, TitleStrategy>();
+  const strategyOf = (uri: string): TitleStrategy =>
+    strategies.get(uri) ?? (rootConfig.deferredTitleGeneration === true ? 'deferred' : 'activeAgent');
+  /**
+   * One tool's definition for a session, after the compact and strategy
+   * shaping, or nothing where the session's strategy withholds the tool.
+   *
+   * The compact wording is merged first and the strategy's over it, so a
+   * strategy that changes a description wins.
+   */
+  const shapedDefinition = (one: HostTool, uri: string): ToolDefinition | undefined => {
+    const compacted = compactPrompts() && one.compact?.definition !== undefined
+      ? { ...one.definition, ...one.compact.definition }
+      : one.definition;
+    const asked = one.forSession?.({ titleStrategy: strategyOf(uri) });
+    if (asked?.offered === false) return undefined;
+    return asked?.definition === undefined ? compacted : { ...compacted, ...asked.definition };
+  };
+  /** The definitions alone for one session, which is the half that goes on the wire. */
+  const toolDefinitions = (uri: string): ToolDefinition[] => contributing.flatMap((one) => {
+    const shaped = shapedDefinition(one, uri);
+    return shaped === undefined ? [] : [shaped];
+  });
   /**
    * The tools as one session runs them, with the host's own view bound in.
    *
@@ -3246,6 +3349,9 @@ export function createHost(options: HostOptions): Host {
     const found = held?.chats.get(chatUri);
     if (held === undefined || found === undefined) throw new Error(`${chatUri} is not a chat this host is running`);
     found.setTitle?.(title);
+    // Written down here rather than at either caller, because a client's
+    // `session/titleChanged` and the `rename_chat` tool both come through.
+    kept.setChatTitle(idOf(uri), chatUri, title);
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
     else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     summaryMoved(uri);
@@ -3332,7 +3438,7 @@ export function createHost(options: HostOptions): Host {
       const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
       const chat = spawn(held.agent, at, chatUri, held.config, undefined, held.workingDirectory, undefined, held.additional);
       log(`opened ${chatUri} in ${at}`);
-      if (asked.title !== undefined) chat.setTitle?.(asked.title);
+      if (asked.title !== undefined) { chat.setTitle?.(asked.title); kept.setChatTitle(idOf(at), chatUri, asked.title); }
       dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
       chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
       return { chat: chatUri };
@@ -3365,13 +3471,23 @@ export function createHost(options: HostOptions): Host {
     },
   });
 
-  const boundTools = (uri: string, chatUri: string): BoundTool[] => [...clientTools(uri), ...contributing.map((one): BoundTool => ({
-    definition: one.definition,
-    run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
-    ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
-  }))];
+  const boundTools = (uri: string, chatUri: string): BoundTool[] => [
+    ...clientTools(uri),
+    ...contributing.flatMap((one): BoundTool[] => {
+      const definition = shapedDefinition(one, uri);
+      return definition === undefined ? [] : [{
+        definition,
+        run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
+        ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
+      }];
+    }),
+  ];
   /** What the host's tools want the model told, in the order the tools are offered. */
-  const instructions = (): string[] => contributing.flatMap((one) => (one.instruction === undefined ? [] : [one.instruction]));
+  const instructions = (uri: string): string[] => contributing.flatMap((one) => {
+    if (one.forSession?.({ titleStrategy: strategyOf(uri) })?.offered === false) return [];
+    const said = compactPrompts() && one.compact?.instruction !== undefined ? one.compact.instruction : one.instruction;
+    return said === undefined ? [] : [said];
+  });
 
   /**
    * Host-wide configuration, which a connected client pushes.
@@ -3392,7 +3508,9 @@ export function createHost(options: HostOptions): Host {
   /**
    * The keys this host honours, which is what a client draws a control from.
    *
-   * One, so far. A key here is a promise that pushing it changes something.
+   * A key here is a promise that pushing it changes something. That is why
+   * the two below have behaviour behind them in `artifactTools` and the
+   * session tools rather than being kept and ignored.
    */
   const ROOT_CONFIG_SCHEMA = {
     // `type` is required of a `ConfigSchema` and is always `object`. Left out,
@@ -3403,6 +3521,16 @@ export function createHost(options: HostOptions): Host {
         type: 'string',
         title: 'Default Shell',
         description: 'Absolute path to the shell host-managed terminals open. The system shell when unset.',
+      },
+      artifactToolsCompactPrompts: {
+        type: 'boolean',
+        title: 'Compact Artifact Prompts',
+        description: 'Use the short artifact instruction and tool description. It changes the wording only, never whether a tool is offered.',
+      },
+      deferredTitleGeneration: {
+        type: 'boolean',
+        title: 'Deferred Title Generation',
+        description: 'Give a session a deferred title strategy, under which renaming a chat is only done when the user asks and the automatic argument is dropped.',
       },
     },
   };
@@ -3646,7 +3774,7 @@ export function createHost(options: HostOptions): Host {
         activeClients: activeClientsOf(channel),
         // What this host contributes, which is nothing unless it was given
         // any - and then the field is absent rather than an empty list.
-        ...(contributing.length > 0 ? { serverTools: toolDefinitions() } : {}),
+        ...(contributing.length > 0 ? { serverTools: toolDefinitions(channel) } : {}),
         status: statusOf(channel),
         // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
         // does not, and the catalogue row is where a client reads it.
@@ -3719,7 +3847,7 @@ export function createHost(options: HostOptions): Host {
           ],
           workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
           activeClients: activeClientsOf(nameOf(id)),
-          ...(contributing.length > 0 ? { serverTools: toolDefinitions() } : {}),
+          ...(contributing.length > 0 ? { serverTools: toolDefinitions(nameOf(id)) } : {}),
           ...describes(nameOf(id)),
           ...changesetsOf(nameOf(id)),
           // What its backend offers, since nothing is running to say what this
@@ -3831,18 +3959,38 @@ export function createHost(options: HostOptions): Host {
     const agent = agents.get(provider);
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
+    // Snapshotted before the backend is handed its tools, so this session's
+    // whole life runs under the strategy the root config named at this
+    // moment and a later root change waits for the next session.
+    strategies.set(uri, strategyOf(uri));
     try {
       const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional);
       // Named before it is announced, when the maker had a name for it: a
       // row that appears as "New session" and is renamed a moment later is
-      // two rows to a client that lists once.
-      if (title !== undefined) lead.setTitle?.(title);
+      // two rows to a client that lists once. Written down for the same
+      // reason a rename is: a first name outlives a restart too.
+      if (title !== undefined) { lead.setTitle?.(title); kept.setChatTitle(idOf(uri), chatUriFor(uri), title); }
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an
       // internal error it cannot.
       throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+    }
+    /*
+     * The branch it started on, when that is already known.
+     *
+     * A directory whose facts have answered holds the pull requests the
+     * branch had, and this session began after that answer, so they are its
+     * baseline. Where nothing has answered yet the capture waits for the
+     * first answer, which is the same moment one turn later.
+     */
+    const facts = dirOf(uri) === undefined ? undefined : githubFacts.get(dirOf(uri) as string);
+    if (facts !== undefined) {
+      const urls = Array.isArray(facts.pullRequestUrls)
+        ? facts.pullRequestUrls.filter((one): one is string => typeof one === 'string')
+        : [];
+      captureBaseline(uri, urls);
     }
     if (origin !== undefined) origins.set(uri, origin);
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
@@ -3922,7 +4070,7 @@ export function createHost(options: HostOptions): Host {
     setTools: (tools) => {
       contributing = [...tools];
       for (const uri of sessions.keys())
-        dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions() });
+        dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
     connections: () => connections.size,
     accept(peer: Peer) {
@@ -5780,6 +5928,18 @@ export function createHost(options: HostOptions): Host {
             else rootConfig[key] = value;
           }
           log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
+          /*
+           * The artifact wording is read where the tools are built, so a
+           * running session is told the new set now and handed it again when
+           * its chats are retooled. The definitions move even though the
+           * tools do not: what a client draws is the description.
+           */
+          if (Object.prototype.hasOwnProperty.call(config, 'artifactToolsCompactPrompts')) {
+            for (const uri of sessions.keys()) {
+              dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+              retool(uri);
+            }
+          }
           // Said back, like every other action a client originates: nothing
           // in a client applies its own dispatch, and a second client
           // watching the root learns of it only from here.

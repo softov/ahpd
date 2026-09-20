@@ -117,4 +117,19 @@ describe('the three tools', () => {
       list_artifacts_and_references: true,
     });
   });
+
+  it('carries a compact wording a client can select, which names the tool and differs from the long one', () => {
+    const add = tool('add_artifact_or_reference');
+    expect(add.compact?.instruction).toBeDefined();
+    expect(add.compact?.definition?.description).toBeDefined();
+    expect(add.compact?.instruction).not.toBe(add.instruction);
+    expect(add.compact?.definition?.description).not.toBe(add.definition.description);
+    // Both name the tool, so a model told only the short wording still knows
+    // what to call.
+    expect(add.compact?.instruction).toContain('add_artifact_or_reference');
+    expect(add.compact?.definition?.description).toContain('add_artifact_or_reference');
+    // And only the add tool carries one.
+    const others = artifactTools().filter((one) => one.definition.name !== 'add_artifact_or_reference');
+    expect(others.every((one) => one.compact === undefined)).toBe(true);
+  });
 });

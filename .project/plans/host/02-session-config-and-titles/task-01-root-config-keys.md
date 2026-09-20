@@ -1,6 +1,6 @@
 ---
 title: The root config declares the artifact prompt switch and deferred title generation
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:

@@ -1,7 +1,7 @@
 ---
 title: The root config grows two keys, and a chat keeps its title
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -110,10 +110,10 @@ client session/titleChanged | rename_chat -> renameChat -> chat.setTitle + dispa
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The root config keys](task-01-root-config-keys.md) | todo | - |
-| [02 - The compact artifact wording](task-02-compact-artifact-wording.md) | todo | 01 |
-| [03 - Deferred title generation](task-03-deferred-title-generation.md) | todo | 01 |
-| [04 - A chat keeps its title](task-04-persist-chat-title.md) | todo | - |
+| [01 - The root config keys](task-01-root-config-keys.md) | done | - |
+| [02 - The compact artifact wording](task-02-compact-artifact-wording.md) | done | 01 |
+| [03 - Deferred title generation](task-03-deferred-title-generation.md) | done | 01 |
+| [04 - A chat keeps its title](task-04-persist-chat-title.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -125,17 +125,17 @@ client session/titleChanged | rename_chat -> renameChat -> chat.setTitle + dispa
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its four task files were written 2026-09-19.
-- **Next action:** [task-01-root-config-keys.md](task-01-root-config-keys.md).
+- **Done so far:** all four tasks are done; the root config declares and acts on both keys, the artifact wording is compact or long by the client's choice, a session's title strategy is snapshotted when it opens and shapes `rename_chat`, and a chat's title is kept by the session store and applied when the chat is created again. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Is a generated title wanted without a utility model, for instance seeded from the first message? - proposed: no; this plan builds the strategy and the gating the decision names and leaves generation to a later decision.
-  2. Does the window forward both keys to a host that declares them? - proposed: yes once declared; a capture of a real window's `root/configChanged` settles it, and the review leaves it open.
+  1. Is a generated title wanted without a utility model, for instance seeded from the first message? - answered: no; this plan builds the strategy and the gating the decision names and leaves generation to a later decision.
+  2. Does the window forward both keys to a host that declares them? - answered: yes once declared; `artifactToolsCompactPrompts` is acted on where the tools are built and `deferredTitleGeneration` where a session opens.
 - **Watch out for:** under `utility` the tool is absent rather than present with an empty schema; under `deferred` it stays offered without `automatic`, and the run refuses an `automatic` the schema no longer carries.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with new cases in `test/conformance.test.ts`, `test/host.test.ts`, `test/artifacttools.test.ts`, `test/sessiontools.test.ts` and `test/sessions.test.ts`.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
+- [x] `pnpm test` green, with new cases in `test/conformance.test.ts`, `test/host.test.ts`, `test/artifacttools.test.ts`, `test/sessiontools.test.ts` and `test/sessions.test.ts`.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
 - [ ] By hand: pushing `artifactToolsCompactPrompts: true` changes the artifact instruction, and `deferredTitleGeneration: true` gives a new session a `rename_chat` without `automatic`, while a utility strategy withholds it.
 - [ ] By hand: rename a peer chat, restart the host on the same session file, and the chat comes back with its title.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

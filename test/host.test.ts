@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import { Status } from '../packages/sdk/src/catalog.js';
+import { fileSessions, memorySessions } from '../packages/sdk/src/sessions.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -2911,6 +2912,49 @@ describe('what it says it is doing', () => {
     expect(kept.at(-1)?.action.title).toBe('Paging, again');
   });
 
+  it('brings a renamed peer chat back with its title after a restart on the same file', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-title-'));
+    try {
+      const file = join(root, 'sessions.json');
+      const uri = 'ahp-session:/titled';
+      const peerChat = 'ahp-chat:/peer';
+      const first = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+      });
+      const pa = peer();
+      const a = first.accept(pa);
+      await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await a.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      await a.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
+      await a.handle({ method: 'subscribe', params: { channel: uri } });
+      await a.handle({ method: 'subscribe', params: { channel: peerChat } });
+      a.handle({ method: 'dispatchAction', params: { channel: peerChat, action: { type: 'session/titleChanged', title: 'Tests' } } });
+      await settle();
+      // A peer chat's title is said as a chat, not as the session's.
+      expect(actions(pa, uri).find((one) => one.action.type === 'session/chatUpdated')?.action.changes).toEqual({ title: 'Tests' });
+      // The write is coalesced onto the next tick.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      // A second host on the same file, which is what a restart is.
+      const second = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+      });
+      const b = second.accept(peer());
+      await b.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await b.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      // The same chat, created again, which is where the stored title is
+      // applied before the chat is announced.
+      await b.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
+      const state = (await b.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { chats: { resource: string; title: string }[] } };
+      }).snapshot.state;
+      expect(state.chats.find((one) => one.resource === peerChat)?.title).toBe('Tests');
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
@@ -4468,6 +4512,34 @@ describe('tools the host contributes', () => {
       const updated = actions(p, uri).find((one) => one.action.type === 'session/chatUpdated');
       expect(updated?.action.changes).toEqual({ title: 'Tests' });
       expect(actions(p, uri).some((one) => one.action.type === 'session/titleChanged')).toBe(false);
+    });
+
+    it('gives a deferred session rename_chat without the automatic argument, and still runs an explicit rename', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      const client = host.accept(p);
+      await client.handle(hello(['0.8.0']));
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { deferredTitleGeneration: true } } },
+      });
+      await settle();
+      const uri = 'ahp-session:/deferred';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { serverTools?: { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } }[] } };
+      }).snapshot.state;
+      const rename = state.serverTools?.find((one) => one.name === 'rename_chat');
+      expect(rename).toBeDefined();
+      expect(rename?.inputSchema?.properties).not.toHaveProperty('automatic');
+      expect(rename?.description).toContain('Automatic naming is handled by the host');
+      // Every other tool is offered, the artifact one included: the strategy
+      // shapes rename_chat alone.
+      expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
+      // And the model can still rename when the user asks, without `automatic`.
+      expect(await call('rename_chat', { title: 'Kqueue port' })).toBe('Renamed chat to "Kqueue port".');
     });
 
     it('deletes another session and refuses its own', async () => {
@@ -6218,7 +6290,14 @@ describe('what GitHub knows about the branch', () => {
       pullRequestBranchName: 'fix/kqueue',
       pullRequestState: 'open',
       pullRequestStateUrl: 'https://github.com/softov/ahpd/pull/7',
+      // The pull requests the branch already had when the session began, and
+      // nothing promoted to the session yet.
+      initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/7'],
+      associatedPullRequestUrls: [],
     });
+    expect((state._meta?.github as { initialPullRequestUrls?: string[] }).initialPullRequestUrls)
+      .toEqual(['https://github.com/softov/ahpd/pull/7']);
+    expect((state._meta?.github as { associatedPullRequestUrls?: string[] }).associatedPullRequestUrls).toEqual([]);
     // Beside the git facts, not instead of them: `_meta` is one map.
     expect((state._meta?.git as { branchName: string }).branchName).toBe('fix/kqueue');
     // Asked as the person who lent the token.
@@ -6257,13 +6336,34 @@ describe('what GitHub knows about the branch', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     }).snapshot.state;
-    expect(state._meta?.github).toEqual({ owner: 'softov', repo: 'ahpd' });
+    expect(state._meta?.github).toMatchObject({ owner: 'softov', repo: 'ahpd' });
     fail = true;
     await client.handle({ method: 'unsubscribe', params: { channel: 'ahp-session:/none' } });
     const again = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     }).snapshot.state;
-    expect(again._meta?.github).toEqual({ owner: 'softov', repo: 'ahpd' });
+    expect(again._meta?.github).toMatchObject({ owner: 'softov', repo: 'ahpd' });
+  });
+
+  it('captures an empty baseline where the branch had no pull request, rather than leaving it absent', async () => {
+    const { port } = lookup(() => []);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('main')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
+      snapshot: { state: { _meta?: { github?: Record<string, unknown> } } };
+    }).snapshot.state;
+    // The key is there with an empty array: a branch that had no pull request
+    // is a captured answer, which a client can tell from a host that never
+    // asked.
+    expect(state._meta?.github).toHaveProperty('initialPullRequestUrls');
+    expect((state._meta?.github as { initialPullRequestUrls?: unknown }).initialPullRequestUrls).toEqual([]);
+    expect((state._meta?.github as { associatedPullRequestUrls?: unknown }).associatedPullRequestUrls).toEqual([]);
   });
 });
 
@@ -6275,11 +6375,18 @@ describe('what a session recorded', () => {
    * by the window's own request, `vscode/removeSessionArtifact`.
    */
   const KEY = 'agentHost/sessionArtifacts';
-  const withTools = async () => {
+  const withTools = async (compact = false) => {
     const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools() });
     const p = peer();
     const client = host.accept(p);
     const said = await client.handle(hello(['0.9.0'])) as { _meta?: Record<string, unknown> };
+    if (compact) {
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } } },
+      });
+      await settle();
+    }
     const uri = 'ahp-session:/recorded';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
     return { client, peer: p, uri, said };
@@ -6297,6 +6404,27 @@ describe('what a session recorded', () => {
     expect(prompt?.preset).toBe('claude_code');
     expect(prompt?.snapshot).toBe(true);
     expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
+  });
+
+  it('tells the model the short wording when the client asks for it, and offers every tool the same', async () => {
+    const { client, uri } = await withTools(true);
+    const prompt = sessionQueries().at(-1)?.options.systemPrompt as { append: string } | undefined;
+    expect(prompt?.append).toContain('Artifact registration is optional; default to none.');
+    expect(prompt?.append).toContain('List/remove (discover if needed):');
+    expect(prompt?.append).not.toContain('Record notable artifacts and references with');
+    // The tools are all still offered, in the same order: the compact key
+    // selects words, not availability.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { serverTools?: { name: string; description?: string }[] } };
+    }).snapshot.state;
+    const tools = state.serverTools ?? [];
+    expect(tools.map((one) => one.name)).toEqual([
+      'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
+      'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
+      'ahp_resource', 'ahp_terminals',
+    ]);
+    expect(tools.find((one) => one.name === 'add_artifact_or_reference')?.description).toContain('Call `add_artifact_or_reference`');
   });
 
   it('publishes them on the session and its row, and says the change as the whole map', async () => {
@@ -6413,10 +6541,15 @@ describe('the pull request a create-pr recorded', () => {
   });
 
   /** A host on a real repository, its changes source and the fake GitHub, with tools. */
-  async function withRepo() {
+  async function withRepo(baseline?: { initialPullRequestUrls: string[]; associatedPullRequestUrls: string[] }) {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     const fake = lookup(URL);
+    const store = memorySessions();
+    // A baseline the session already carries. The directory facts are asked
+    // again and know nothing of it, which is a session that outlived the
+    // branch's pull request.
+    if (baseline !== undefined) store.setPullRequests('pr', baseline);
     const host = createHost({
       path: dir,
       agents: [claude({ paths: [dir] })],
@@ -6425,6 +6558,7 @@ describe('the pull request a create-pr recorded', () => {
       github: fake.port,
       changes: gitChanges(),
       tools: hostTools(),
+      sessions: store,
     });
     const p = peer();
     const client = host.accept(p);
@@ -6463,6 +6597,52 @@ describe('the pull request a create-pr recorded', () => {
     expect(held).toHaveLength(1);
     expect(held?.[0]).toMatchObject({ type: 'pullRequest', isArtifact: true, link: URL });
     expect((meta?.github as { pullRequestUrls?: string[] } | undefined)?.pullRequestUrls?.[0]).toBe(URL);
+  });
+
+  it('moves a pull request the branch already had out of the baseline, in the same move as the artifact', async () => {
+    const { dir, client, peer: p, uri, changeset } = await withRepo({ initialPullRequestUrls: [URL], associatedPullRequestUrls: [] });
+    // The branch already had it, so the session inherited it as its baseline.
+    const before = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { _meta?: { github?: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect((before._meta?.github as { initialPullRequestUrls?: unknown } | undefined)?.initialPullRequestUrls).toEqual([URL]);
+    await create(client, dir, changeset);
+    await settle(8);
+
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as Record<string, unknown> | undefined;
+    const github = meta?.github as {
+      pullRequestUrls?: string[]; initialPullRequestUrls?: string[]; associatedPullRequestUrls?: string[];
+    } | undefined;
+    // Gone from the baseline, first among the session's own, and still known
+    // to the branch under the whole set.
+    expect(github?.initialPullRequestUrls).toEqual([]);
+    expect(github?.associatedPullRequestUrls).toEqual([URL]);
+    expect(github?.pullRequestUrls).toEqual([URL]);
+    // The artifact rode the same `session/metaChanged`, so a client never saw
+    // one without the other.
+    const held = meta?.[KEY] as { type: string; isArtifact: boolean; link: string }[] | undefined;
+    expect(held).toHaveLength(1);
+    expect(held?.[0]).toMatchObject({ type: 'pullRequest', isArtifact: true, link: URL });
+  });
+
+  it('associates a pull request the branch did not have, leaving the empty baseline alone', async () => {
+    const { dir, client, peer: p, uri, changeset } = await withRepo();
+    const before = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { _meta?: { github?: Record<string, unknown> } } };
+    }).snapshot.state;
+    // The branch had none, and that is a captured baseline rather than an
+    // absent one.
+    expect((before._meta?.github as { initialPullRequestUrls?: unknown } | undefined)?.initialPullRequestUrls).toEqual([]);
+    await create(client, dir, changeset);
+    await settle(8);
+
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const github = (moved?.action._meta as Record<string, unknown> | undefined)?.github as {
+      initialPullRequestUrls?: string[]; associatedPullRequestUrls?: string[];
+    } | undefined;
+    expect(github?.initialPullRequestUrls).toEqual([]);
+    expect(github?.associatedPullRequestUrls).toEqual([URL]);
   });
 
   it('promotes a reference the session already held, keeping its id', async () => {

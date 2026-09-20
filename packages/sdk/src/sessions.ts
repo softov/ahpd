@@ -2,7 +2,18 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { SessionStore } from './types/sessions.js';
+import type { PullRequestBaseline, SessionStore } from './types/sessions.js';
+
+/**
+ * What the file store needs beyond the port.
+ *
+ * The port answers one chat at a time, which is what a caller asks. Writing
+ * the whole slot down needs them all, and that is the one question only the
+ * store that holds them can answer.
+ */
+interface HeldChatTitles {
+  chatTitlesOf(id: string): Record<string, string> | undefined;
+}
 
 /**
  * What a host keeps about its sessions, for as long as the process runs.
@@ -13,10 +24,12 @@ import type { SessionStore } from './types/sessions.js';
  * unread - which is a real answer for a host that was never meant to outlive
  * the thing that started it, and the wrong one for a daemon.
  */
-export function memorySessions(): SessionStore {
+export function memorySessions(): SessionStore & HeldChatTitles {
   const flags = new Map<string, number>();
   const config = new Map<string, Record<string, unknown>>();
   const artifacts = new Map<string, Record<string, unknown>[]>();
+  const pullRequests = new Map<string, PullRequestBaseline>();
+  const chatTitles = new Map<string, Map<string, string>>();
   return {
     flags: (id) => flags.get(id) ?? 0,
     setFlags: (id, value) => { flags.set(id, value); },
@@ -24,7 +37,24 @@ export function memorySessions(): SessionStore {
     setConfig: (id, values) => { config.set(id, values); },
     artifacts: (id) => artifacts.get(id),
     setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
-    forget: (id) => { flags.delete(id); config.delete(id); artifacts.delete(id); },
+    pullRequests: (id) => pullRequests.get(id),
+    setPullRequests: (id, value) => { pullRequests.set(id, value); },
+    chatTitle: (id, chatUri) => chatTitles.get(id)?.get(chatUri),
+    setChatTitle: (id, chatUri, title) => {
+      const held = chatTitles.get(id);
+      if (title === '') {
+        held?.delete(chatUri);
+        if (held !== undefined && held.size === 0) chatTitles.delete(id);
+        return;
+      }
+      if (held === undefined) chatTitles.set(id, new Map([[chatUri, title]]));
+      else held.set(chatUri, title);
+    },
+    chatTitlesOf: (id) => {
+      const held = chatTitles.get(id);
+      return held === undefined ? undefined : Object.fromEntries(held);
+    },
+    forget: (id) => { flags.delete(id); config.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
   };
 }
 
@@ -45,7 +75,14 @@ export interface FileSessionOptions {
 /** What is persisted. Versioned, so a later shape can be recognised rather than guessed at. */
 interface Saved {
   version: 1;
-  sessions: { id: string; flags?: number; config?: Record<string, unknown>; artifacts?: Record<string, unknown>[] }[];
+  sessions: {
+    id: string;
+    flags?: number;
+    config?: Record<string, unknown>;
+    artifacts?: Record<string, unknown>[];
+    pullRequests?: PullRequestBaseline;
+    chatTitles?: Record<string, string>;
+  }[];
 }
 
 /**
@@ -84,15 +121,20 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
         const flags = inner.flags(id);
         const config = inner.config(id);
         const artifacts = inner.artifacts(id);
+        const pullRequests = inner.pullRequests(id);
+        const chatTitles = inner.chatTitlesOf(id);
         return {
           id,
           ...(flags === 0 ? {} : { flags }),
           ...(config === undefined ? {} : { config }),
           ...(artifacts === undefined ? {} : { artifacts }),
+          ...(pullRequests === undefined ? {} : { pullRequests }),
+          ...(chatTitles === undefined || Object.keys(chatTitles).length === 0 ? {} : { chatTitles }),
         };
       // A row with none of them is a session somebody looked at and left
       // alone, which is nothing to remember.
-      }).filter((row) => row.flags !== undefined || row.config !== undefined || row.artifacts !== undefined),
+      }).filter((row) => row.flags !== undefined || row.config !== undefined
+        || row.artifacts !== undefined || row.pullRequests !== undefined || row.chatTitles !== undefined),
     };
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -137,6 +179,24 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null) inner.setConfig(row.id, row.config);
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
+      // Only an object with two arrays of strings is a baseline this version
+      // understands; anything else is ignored rather than guessed at.
+      const baseline = row.pullRequests as Partial<PullRequestBaseline> | undefined;
+      if (typeof baseline === 'object' && baseline !== null
+        && Array.isArray(baseline.initialPullRequestUrls) && Array.isArray(baseline.associatedPullRequestUrls)) {
+        const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
+        inner.setPullRequests(row.id, {
+          initialPullRequestUrls: strings(baseline.initialPullRequestUrls),
+          associatedPullRequestUrls: strings(baseline.associatedPullRequestUrls),
+        });
+      }
+      // A record of string titles, one per chat, and anything else is ignored
+      // rather than guessed at.
+      if (typeof row.chatTitles === 'object' && row.chatTitles !== null && !Array.isArray(row.chatTitles)) {
+        for (const [chatUri, title] of Object.entries(row.chatTitles)) {
+          if (typeof title === 'string') inner.setChatTitle(row.id, chatUri, title);
+        }
+      }
     }
   };
 
@@ -149,6 +209,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setConfig: (id, values) => { known.add(id); inner.setConfig(id, values); later(); },
     artifacts: (id) => inner.artifacts(id),
     setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
+    pullRequests: (id) => inner.pullRequests(id),
+    setPullRequests: (id, value) => { known.add(id); inner.setPullRequests(id, value); later(); },
+    chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
+    setChatTitle: (id, chatUri, title) => { known.add(id); inner.setChatTitle(id, chatUri, title); later(); },
     forget: (id) => { known.delete(id); inner.forget(id); later(); },
   };
 }

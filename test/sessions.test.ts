@@ -131,6 +131,55 @@ it('keeps the settings a session was given, so a resumed one still has them', as
   expect(store.config('one')).toBeUndefined();
 });
 
+it('keeps a session\'s pull request baseline across a restart, empty included, and forgets it with the session', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  const inherited = { initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/7'], associatedPullRequestUrls: [] };
+  // An all-empty baseline is a captured answer - the branch had none - and is
+  // not the same as a session nobody asked about.
+  const none = { initialPullRequestUrls: [], associatedPullRequestUrls: ['https://github.com/softov/ahpd/pull/9'] };
+  store.setPullRequests('a', inherited);
+  store.setPullRequests('b', none);
+  store.setPullRequests('c', { initialPullRequestUrls: [], associatedPullRequestUrls: [] });
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
+    { id: 'a', pullRequests: inherited },
+    { id: 'b', pullRequests: none },
+    { id: 'c', pullRequests: { initialPullRequestUrls: [], associatedPullRequestUrls: [] } },
+  ]);
+  // Read back by a second store on the same file, which is what a restart is.
+  const second = fileSessions({ file });
+  expect(second.pullRequests('a')).toEqual(inherited);
+  expect(second.pullRequests('b')).toEqual(none);
+  expect(second.pullRequests('c')).toEqual({ initialPullRequestUrls: [], associatedPullRequestUrls: [] });
+  expect(second.pullRequests('nobody')).toBeUndefined();
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  const after = fileSessions({ file });
+  expect(after.pullRequests('a')).toBeUndefined();
+  expect(after.pullRequests('b')).toEqual(none);
+});
+
+it('keeps the titles chats were given, and forgets them with the session', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  store.setChatTitle('a', 'ahp-chat:/one', 'Kqueue port');
+  store.setChatTitle('a', 'ahp-chat:/two', 'Tests');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
+    { id: 'a', chatTitles: { 'ahp-chat:/one': 'Kqueue port', 'ahp-chat:/two': 'Tests' } },
+  ]);
+  // Read back by a second store on the same file, which is what a restart is.
+  const second = fileSessions({ file });
+  expect(second.chatTitle('a', 'ahp-chat:/one')).toBe('Kqueue port');
+  expect(second.chatTitle('a', 'ahp-chat:/two')).toBe('Tests');
+  expect(second.chatTitle('a', 'ahp-chat:/nobody')).toBeUndefined();
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(fileSessions({ file }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
+});
+
 it('starts empty and says so when the file cannot be read', () => {
   const file = join(root, 'sessions.json');
   writeFileSync(file, 'this is not json');

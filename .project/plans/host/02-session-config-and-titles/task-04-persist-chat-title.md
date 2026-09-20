@@ -1,6 +1,6 @@
 ---
 title: A renamed chat comes back with its title after the host restarts
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:

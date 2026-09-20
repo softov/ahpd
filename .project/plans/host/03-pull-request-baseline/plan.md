@@ -1,7 +1,7 @@
 ---
 title: The session pull request baseline is sent
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -91,8 +91,8 @@ create-pr -> recordPullRequest (plan 01) -> the URL becomes the session's
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The baseline at session start](task-01-baseline-at-session-start.md) | todo | - |
-| [02 - The promotion on association](task-02-promote-on-association.md) | todo | 01 |
+| [01 - The baseline at session start](task-01-baseline-at-session-start.md) | done | - |
+| [02 - The promotion on association](task-02-promote-on-association.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -104,16 +104,16 @@ create-pr -> recordPullRequest (plan 01) -> the URL becomes the session's
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its two task files were written 2026-09-19.
-- **Next action:** [task-01-baseline-at-session-start.md](task-01-baseline-at-session-start.md).
+- **Done so far:** both tasks are done; the baseline is captured once at session start or on the first answer for the directory, kept by the session store across a restart, composed onto `_meta.github` in `metaOf`, and a pull request that becomes the session's is promoted out of it in the same write as its artifact. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Does the window read `associatedPullRequestUrls` for a session whose baseline was never captured? - proposed: it treats an absent baseline as "unknown" and falls back to present behaviour, which is what the reference's optional keys allow.
+  1. Does the window read `associatedPullRequestUrls` for a session whose baseline was never captured? - answered: it treats an absent baseline as "unknown" and falls back to present behaviour, which is what the reference's optional keys allow.
 - **Watch out for:** the merge order in `metaOf`, because the baseline must not be overwritten by `refreshPullRequests`, and an empty array must survive the presence check.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with new cases in `test/sessions.test.ts` and `test/host.test.ts`.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
+- [x] `pnpm test` green, with new cases in `test/sessions.test.ts` and `test/host.test.ts`.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
 - [ ] By hand: a session opened on a branch with an existing pull request reports it under `initialPullRequestUrls`, and `create-pr` moves it to `associatedPullRequestUrls`.
 - [ ] By hand: restart the host on the same session file and the split is unchanged.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

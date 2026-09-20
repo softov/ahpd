@@ -206,4 +206,25 @@ describe('the set itself', () => {
     expect(schema('send_message').required).toEqual(['session', 'message']);
     expect(schema('rename_chat').required).toEqual(['title']);
   });
+
+  it('shapes rename_chat by the title strategy the session runs under', () => {
+    const rename = sessionTools().find((one) => one.definition.name === 'rename_chat');
+    expect(rename?.forSession).toBeDefined();
+    // A utility strategy names chats itself, so the tool is not offered.
+    expect(rename?.forSession?.({ titleStrategy: 'utility' })).toEqual({ offered: false });
+    // An active agent names its own chats with the tool as it stands.
+    expect(rename?.forSession?.({ titleStrategy: 'activeAgent' })).toBeUndefined();
+    const deferred = rename?.forSession?.({ titleStrategy: 'deferred' });
+    expect(deferred?.offered).toBe(true);
+    const definition = deferred?.definition as {
+      description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
+    };
+    expect(definition.description).not.toBe(rename?.definition.description);
+    expect(definition.description).toContain('Automatic naming is handled by the host');
+    // No `automatic` argument under deferred naming, since the host does the
+    // automatic half.
+    expect(definition.inputSchema?.properties).not.toHaveProperty('automatic');
+    expect(Object.keys(definition.inputSchema?.properties ?? {})).toEqual(['session', 'chat', 'title']);
+    expect(definition.inputSchema?.required).toEqual(['title']);
+  });
 });

@@ -1,4 +1,18 @@
 /**
+ * The pull requests a session's branch had when it started, and the ones it
+ * has made its own since.
+ *
+ * An empty `initialPullRequestUrls` is a captured baseline and not an absent
+ * one: it says the branch had none, which is a different answer from a host
+ * that never asked. `associatedPullRequestUrls` is what the session took as
+ * its own, most recent first. Both keep the spelling they arrived with.
+ */
+export interface PullRequestBaseline {
+  initialPullRequestUrls: string[];
+  associatedPullRequestUrls: string[];
+}
+
+/**
  * What a host knows about a session that no backend does.
  *
  * Two things, and they have nothing in common except who owns them. `flags`
@@ -46,6 +60,30 @@ export interface SessionStore {
   artifacts(id: string): Record<string, unknown>[] | undefined;
   /** Replace them. Empty forgets them, which is what removing the last one means. */
   setArtifacts(id: string, values: Record<string, unknown>[]): void;
+  /**
+   * The pull requests this session inherited and the ones it made its own,
+   * or nothing where its branch was never asked about.
+   *
+   * Kept per session rather than per directory, since the baseline is the
+   * moment one session began and two sessions in one directory began at
+   * different moments.
+   */
+  pullRequests(id: string): PullRequestBaseline | undefined;
+  /**
+   * Replace it. An all-empty pair is still a baseline - it says the branch
+   * had none - so it is kept rather than dropped.
+   */
+  setPullRequests(id: string, value: PullRequestBaseline): void;
+  /**
+   * The title a chat was given, or nothing where it was never named.
+   *
+   * The catalogue's title is derived and the reference host keeps a chat's
+   * own beside it. A chat is not a session: a peer chat's title belongs to
+   * that chat, which is why the chat URI is part of the key.
+   */
+  chatTitle(id: string, chatUri: string): string | undefined;
+  /** Set it. An empty string forgets it, which is a title taken back. */
+  setChatTitle(id: string, chatUri: string, title: string): void;
   /**
    * Forget a session entirely.
    *

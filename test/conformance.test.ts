@@ -465,6 +465,10 @@ it('keeps what a client pushes on the root channel, and says it back', async () 
   };
   expect(again.snapshot.state.config.values.defaultShell).toBe('/usr/bin/fish');
   expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('defaultShell');
+  // The two keys this host acts on besides the shell, declared so a client
+  // draws a control for each.
+  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('artifactToolsCompactPrompts');
+  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('deferredTitleGeneration');
 });
 
 it('carries a root config on every snapshot, so a client can ever apply one', async () => {

@@ -1,6 +1,6 @@
 ---
 title: The branch's pull requests are captured once as the session baseline, and survive a restart
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:

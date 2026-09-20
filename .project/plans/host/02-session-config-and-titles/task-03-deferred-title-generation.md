@@ -1,6 +1,6 @@
 ---
 title: A session's title strategy shapes rename_chat, and is snapshotted when the session opens
-status: todo
+status: done
 depends: [task-01-root-config-keys.md]
 layer: packages/sdk
 refs:

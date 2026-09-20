@@ -1,6 +1,6 @@
 ---
 title: A pull request that becomes the session's is promoted out of the baseline
-status: todo
+status: done
 depends: [task-01-baseline-at-session-start.md]
 layer: packages/sdk
 refs:
