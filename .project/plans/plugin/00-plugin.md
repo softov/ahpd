@@ -29,24 +29,32 @@ What exists is everything the mechanism is built on, and it is all in `@ahpd/sdk
 The whole of what a plugin may register, one method each, and the plan each kind belongs to.
 This is the list decision [plugin-registration-kinds](../../decisions/plugin-registration-kinds.md) closes; nothing registers anything that is not a row here.
 
-| Kind | `PluginHost` method | Lands in | Status |
-| --- | --- | --- | --- |
-| agent | `agent()`, `agents()` | `HostOptions.agents`, the backend a client names in `createSession` | this plan |
-| tool | `tool()`, `tools()` | `HostOptions.tools`, the server tools offered to every session's model | this plan |
-| port | `port(key, value, when?)` | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | this plan |
-| customization | `customization()` | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | next plan |
-| MCP server | `mcpServer()` | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | next plan |
-| hook | `hook(event, fn)` | a new `HostOptions.hooks`, called where the host already logs | later |
-| configuration key | `config(key, schema, default)` | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | later |
-| host method | `method(name, handler)` | an extension table beside the request handlers, and a channel beside the declared ones | later, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
-| log sink | `onEvent(fn)` | `HostOptions.onEvent`, which becomes additive rather than a single function | later |
+| Kind | `PluginHost` method | Operation | Lands in | Status |
+| --- | --- | --- | --- | --- |
+| agent | `agent()`, `agents()` | append | `HostOptions.agents`, the backend a client names in `createSession` | this plan |
+| tool | `tool()`, `tools()` | append | `HostOptions.tools`, the server tools offered to every session's model | this plan |
+| port | `port(key, value, when?)` | set, closed key | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | this plan |
+| customization | `customization()` | append | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | next plan |
+| MCP server | `mcpServer()` | append | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | next plan |
+| hook | `hook(event, fn)` | listen | a new `HostOptions.hooks`, called where the host already logs | later |
+| configuration key | `config(key, schema, default)` | register, open key | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | later |
+| host method | `method(name, handler)` | register, open key | an extension table beside the request handlers, and a channel beside the declared ones | later, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
+| log sink | `onEvent(fn)` | listen | `HostOptions.onEvent`, which becomes additive rather than a single function | later |
+
+Methods group by **operation**, not by kind, and that is the whole reason the nine ports share one method while `agent` and `tool` do not.
+`append` adds one entry to a list.
+`set` installs the single value for a key, which is what lets one conflict rule and one `replace` flag serve all nine ports instead of nine near-identical copies.
+`listen` adds a handler that is never in conflict with another.
+`register, open key` adds an entry under a name the plugin invents, so its keys cannot be a written union the way the ports' keys can.
+A key belongs to exactly one operation.
+`PortKey` is the closed set of `set` keys, so it excludes `agents` and `tools` and every other `append`, and there is never both a `tool()` and a `port('tools')`.
+If a kind ever changes operation, which is what `tools` becoming one store rather than a list would be, the old method is removed rather than left beside a second spelling of the same thing.
 
 Four things are deliberately not kinds, so that a plugin does not look for a method that should not exist.
 Models are not, because each agent reports its own through `probe()`.
 Slash commands are not separate from customizations, because `Offered.commands` is already one projection of them.
 UI is not, because a client owns its own screen and the host serves it resources.
 HTTP routes are not, because there is no HTTP server.
-`port` is the only method that takes a key, and the key is the written-out `PortKey` union rather than a `string`, so it is one generic method over the nine ports and not a way to register a tenth thing the table does not have.
 
 ## Runtime path
 

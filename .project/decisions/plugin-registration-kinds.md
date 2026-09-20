@@ -30,6 +30,10 @@ The first plan implements `agent`, `tool` and `port` only, and every other kind 
 `port<K extends PortKey>(key: K, value: PortOf<K>, when?)` takes a key from a union written out as the nine ports and a value whose type is looked up from that key, so a wrong key and a wrong value are both compile errors.
 Every other kind is a method that takes no key.
 A contribution that is not one of the nine gets a method of its own rather than a tenth `port` key, and adding a port is a deliberate change to `PortKey` and to the table in the domain reference.
+Methods group by operation rather than by kind, which is why the nine ports share one: `append` adds to a list, `set` installs the single value for a closed key, `listen` adds a handler that cannot conflict with another, and an open key is registered under a name the plugin invents.
+A key belongs to exactly one operation.
+`PortKey` is the closed set of `set` keys, so it excludes `agents`, `tools` and every appended kind, and there is never both a `tool()` and a `port('tools')`.
+If a kind ever changes operation, which is what `tools` becoming a single store rather than a list would be, the old method is removed rather than left beside a second spelling of the same thing.
 
 ## Consequences
 

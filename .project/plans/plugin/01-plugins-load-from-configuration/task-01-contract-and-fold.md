@@ -32,7 +32,7 @@ refs:
 
 ## Steps
 
-1. In `src/types/plugin.ts`, declare `PortKey` as the union of the singleton keys of `HostOptions`: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics`.
+1. In `src/types/plugin.ts`, declare `PortKey` as the union of the singleton keys of `HostOptions`: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics`. It deliberately excludes `agents` and `tools`, which are appended rather than set, so no key can be reached by two operations.
 2. Declare `PortOf<K extends PortKey> = NonNullable<HostOptions[K]>`, so `port('resources', …)` demands a `ResourceStore` and not a bag.
 3. Declare `PluginSpec = string | { name: string; options?: Record<string, unknown>; enabled?: boolean }`, which is both what `config.json` holds and what `--plugin` produces.
 4. Declare `PluginHost` with `agent`, `agents`, `tool`, `tools`, `port<K>(key, value, when?)` where `when` is the literal `'replace'`, and the read-only `path`, `paths`, `version`, `log`. These three are the first three rows of the table in `plans/plugin/00-plugin.md`, so the doc comment says the surface is `HostOptions` named back (decision 1), that the set of kinds is closed (decision 4), and which kinds are not here yet, so an author reads the whole surface from the first release. The comment on `port` says in as many words that it is the one generic method, that its key is the written-out `PortKey` union rather than a `string`, and that it is not the open bag decision 4 rejects.
