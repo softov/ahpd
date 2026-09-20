@@ -10,6 +10,7 @@ refs:
   - file:///github/facio/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
   - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, which today start a run from its session's whole history
   - code://packages/agent-claude/src/session.ts - a backend that already answers both
+  - code://.project/decisions/facio-fork-and-rewind-needs-a-cut.md - the proposed decision this task waits on
 ---
 
 ## Objective
@@ -44,4 +45,7 @@ A facio session answers `forkPoint(turnId)` with the message the turn began at a
 
 ## Resume
 
-Empty until started.
+Not started, and waiting on [facio-fork-and-rewind-needs-a-cut](../../decisions/facio-fork-and-rewind-needs-a-cut.md), which is proposed.
+Read against facio: `run()` has no argument for the history to run on and `turn.ts` reads the whole session's messages, `Store.sessions` cannot remove messages after one, and a run record's `inputMessageId`/`lastMessageId` are the only cut points it records.
+So a fork is reachable today by seeding a new facio session through the public store calls, and a rewind is not without facio gaining a truncation.
+Step 1 of the task is therefore done as reconnaissance and its outcome is the decision; the implementation waits for which option is chosen.
