@@ -1424,10 +1424,19 @@ export function createSession(options: SessionOptions): Session {
             required: true,
             // The label is the id, because the label is what the SDK wants
             // back: answers are valued by the option's own label, not by an id.
-            options: list(question.options).map((option) => ({
-              id: str(bag(option).label) ?? '',
-              label: str(bag(option).label) ?? '',
-            })),
+            options: list(question.options).map((option) => {
+              const held = bag(option);
+              const label = str(held.label) ?? '';
+              const description = str(held.description);
+              return {
+                id: label,
+                label,
+                // Carried through because a choice with a name and no
+                // explanation is a choice somebody has to guess at, and the
+                // agent wrote one for every option it offered.
+                ...(description === null ? {} : { description }),
+              };
+            }),
             allowFreeformInput: true,
           };
         });
