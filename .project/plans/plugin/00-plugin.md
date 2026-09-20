@@ -46,6 +46,7 @@ Models are not, because each agent reports its own through `probe()`.
 Slash commands are not separate from customizations, because `Offered.commands` is already one projection of them.
 UI is not, because a client owns its own screen and the host serves it resources.
 HTTP routes are not, because there is no HTTP server.
+`port` is the only method that takes a key, and the key is the written-out `PortKey` union rather than a `string`, so it is one generic method over the nine ports and not a way to register a tenth thing the table does not have.
 
 ## Runtime path
 
