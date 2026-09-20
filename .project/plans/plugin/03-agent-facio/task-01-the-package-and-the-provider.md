@@ -1,6 +1,6 @@
 ---
 title: The package exists, registers provider `facio`, and carries its model config
-status: todo
+status: done
 depends: []
 layer: packages/agent-facio
 refs:
@@ -52,4 +52,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/agent-facio` holds `package.json`, `tsconfig.json`, `src/agent.ts` and `src/index.ts`; `facioAgent(options)` answers provider `facio` by default, the schema carries `model`, `baseUrl`, `apiKey` and `instructions`, `defaults()` names only what the package was given, `modelOf` builds an `openaiCompat` adapter or returns a caller's, `storeOf` builds the file store at `options.store` or under `XDG_DATA_HOME` and a memory store for a test, and `probe()` offers the configured model with no commands.
+The root `tsconfig.json` paths, `vitest.config.ts` alias and `package.json` `build` script name the package, and the root `devDependencies` carry the same three `link:` deps so a test under `test/` can import a facio type.
+`test/agent-facio.test.ts` covers the provider and the schema keys, a second registration's provider, the defaults agreeing with the schema, the model factory and the caller's adapter, the refusal when no model was chosen, and the store.
+Verified: `pnpm test` 739 passed over 49 files, `pnpm typecheck` green, `pnpm boundary` green with `@ahpd/agent-facio: 4 declared, none undeclared`, `pnpm build` builds four packages.
+Facio is linked rather than published: `/github/facio/packages/agents`, `model-openai-compat` and `store-file` are built with `node node_modules/typescript/bin/tsc -p` in the facio checkout, because `pnpm build` there cannot open its store under the sandbox; the ahpd installs that wrote the link symlinks and `pnpm-lock.yaml` did so with wider access for the same reason.
+Departures from the plan: the package is `private: true` until facio publishes, since a `link:` dependency cannot be published; `create` throws saying the session arrives in task 02, so a client cannot mistake an unbuilt backend for a model that said nothing; the root `devDependencies` carry the facio links as well as the package's own, because the package-local links are not visible to a test file at the repository root.

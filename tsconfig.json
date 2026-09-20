@@ -10,7 +10,8 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "@ahpd/sdk": ["packages/sdk/src/index.ts"],
-      "@ahpd/agent-claude": ["packages/agent-claude/src/index.ts"]
+      "@ahpd/agent-claude": ["packages/agent-claude/src/index.ts"],
+      "@ahpd/agent-facio": ["packages/agent-facio/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]

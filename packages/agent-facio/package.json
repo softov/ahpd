@@ -1,0 +1,40 @@
+{
+  "name": "@ahpd/agent-facio",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "An AHP backend over the facio agent runtime: every model it can reach is a model inside one provider",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": "^0.6"
+  },
+  "dependencies": {
+    "@facio/agents": "link:../../../facio/packages/agents",
+    "@facio/model-openai-compat": "link:../../../facio/packages/model-openai-compat",
+    "@facio/store-file": "link:../../../facio/packages/store-file"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "Facio"
+  }
+}

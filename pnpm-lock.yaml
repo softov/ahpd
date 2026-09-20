@@ -17,6 +17,15 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.278
         version: 0.3.278(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(zod@4.5.4)
+      '@facio/agents':
+        specifier: link:../facio/packages/agents
+        version: link:../facio/packages/agents
+      '@facio/model-openai-compat':
+        specifier: link:../facio/packages/model-openai-compat
+        version: link:../facio/packages/model-openai-compat
+      '@facio/store-file':
+        specifier: link:../facio/packages/store-file
+        version: link:../facio/packages/store-file
       '@microsoft/agent-host-protocol':
         specifier: ^0.9.0
         version: 0.9.0
@@ -58,6 +67,21 @@ importers:
         specifier: ^0.9.0
         version: 0.9.0
 
+  packages/agent-facio:
+    dependencies:
+      '@ahpd/sdk':
+        specifier: ^0.6
+        version: 0.6.0(@microsoft/agent-host-protocol@0.9.0)
+      '@facio/agents':
+        specifier: link:../../../facio/packages/agents
+        version: link:../../../facio/packages/agents
+      '@facio/model-openai-compat':
+        specifier: link:../../../facio/packages/model-openai-compat
+        version: link:../../../facio/packages/model-openai-compat
+      '@facio/store-file':
+        specifier: link:../../../facio/packages/store-file
+        version: link:../../../facio/packages/store-file
+
   packages/sdk:
     devDependencies:
       '@microsoft/agent-host-protocol':
@@ -84,6 +108,12 @@ importers:
         version: 0.9.0
 
 packages:
+
+  '@ahpd/sdk@0.6.0':
+    resolution: {integrity: sha512-6e2y0CripQvMhpRlB86+jCHGP1WSQcJ+iNRgj6CKFUDroijG7xWV+6O6t8rWOHHAyHX1XuQl2x70AxPiKyhOqA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@microsoft/agent-host-protocol': ^0.9.0
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.278':
     resolution: {integrity: sha512-lwkbWfYucsgiFo6mWF3Dw7ImohlWXEkkh+4e93EpeVPCxwN4IJuLztFkl28qEwY17sZ9SYQw1mRksKauqKccqg==}
@@ -1116,6 +1146,16 @@ packages:
     resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
 
 snapshots:
+
+  '@ahpd/sdk@0.6.0(@microsoft/agent-host-protocol@0.9.0)':
+    dependencies:
+      '@microsoft/agent-host-protocol': 0.9.0
+    optionalDependencies:
+      node-pty: 1.1.0
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.278':
     optional: true

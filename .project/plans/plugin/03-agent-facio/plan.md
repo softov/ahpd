@@ -1,7 +1,7 @@
 ---
 title: An agent backend over facio, so every model is one provider rather than one package
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -102,7 +102,7 @@ ahpd --plugin @ahpd/agent-facio
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The package, the provider and its config](task-01-the-package-and-the-provider.md) | todo | - |
+| [01 - The package, the provider and its config](task-01-the-package-and-the-provider.md) | done | - |
 | [02 - A turn becomes the chat actions](task-02-a-turn-becomes-the-chat-actions.md) | todo | 01 |
 | [03 - Approval and questions pause the run and come back](task-03-approval-and-questions.md) | todo | 02 |
 | [04 - The catalogue, the transcript and resume](task-04-catalogue-transcript-and-resume.md) | todo | 01 |
@@ -119,13 +119,13 @@ ahpd --plugin @ahpd/agent-facio
 
 ## Resume state
 
-- **Done so far:** nothing; the decision and this plan were written 2026-09-20, and the by-hand session through `test/fixtures/plugin-echo` is what proved the loader this plan rides on.
-- **Next action:** [task-01-the-package-and-the-provider.md](task-01-the-package-and-the-provider.md).
+- **Done so far:** task 01, the package and the provider, done 2026-09-20.
+- **Next action:** [task-02-a-turn-becomes-the-chat-actions.md](task-02-a-turn-becomes-the-chat-actions.md).
 - **Open questions:**
-  1. Is `@facio/agents` published before this plan starts, or is the dependency a `link:` to `/github/facio/packages/agents` until it is - proposed: linked for the first two tasks, published before task 05 is called done.
-  2. Does `agent-facio` register one provider called `facio` with a model in the session config, or does the plugin's `options` name a provider per registered agent - proposed: `facio` by default and a provider override in the options, so two model-backed backends can be put side by side.
-  3. Where does a plugin put a durable store, since `PluginContext` carries `path`, `paths` and the version and not the configuration directory - proposed: the plugin's `options.store` names it, and the package derives the same default `packages/server/src/config.ts` would, because exposing the configuration directory on `PluginContext` is a plugin surface change worth deciding once rather than sneaking into this plan.
-- **Watch out for:** the facio `Store` is keyed by `sessionId` and `runId`, and AHP's identity is a channel URI, so the bridge needs one deliberate translation rather than an id passed through by accident; and `RunEvent` is facio's contract for its own CLI as well, so it is mapped here and not reshaped to look like an AHP frame.
+  1. Settled: facio is linked, not published - the three packages are `link:` deps of `packages/agent-facio` and of the root devDependencies, and their `dist/` is built in the facio checkout before the bridge typechecks.
+  2. Settled: one provider `facio` by default with a provider override in the options, so two model-backed backends can be put side by side.
+  3. Settled: the store is `options.store`, a memory store for a test, and otherwise a directory under `XDG_DATA_HOME`, because `PluginContext` carries the served directories and not the configuration directory.
+- **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; and `@facio/agents` resolves from `node_modules/@facio` at the root, so a future `pnpm install` without network or with the links removed leaves the package unable to typecheck.
 
 ## Final verification checklist
 
