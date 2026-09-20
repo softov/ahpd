@@ -12,6 +12,7 @@ decisions:
   - decisions/plugin-contributes-host-options.md
   - decisions/plugin-manifest-is-package-json.md
   - decisions/plugin-contract-lives-in-the-sdk.md
+  - decisions/plugin-registration-kinds.md
 refs:
   - code://packages/server/src/main.ts#L342-L433 - the `createHost` literal, the one place composition happens today
   - code://packages/server/src/main.ts#L320-L341 - the flow between `parse` and `createHost`, where the fold is inserted
@@ -29,6 +30,7 @@ refs:
   - code://scripts/boundary.mjs#L60-L82 - the check that every package declares what it imports, which the SDK's new export does not disturb
   - code://test/example.test.ts#L1-L30 - the fake-peer pattern the end-to-end plugin test reuses
   - code://.project/ideas/plugins.md - the shape this plan implements
+  - code://.project/plans/plugin/00-plugin.md - the registration kinds table, of which this plan implements the first three
   - code://.project/ideas/agents-as-extensions.md - the decision that a backend is a configuration key, that a bare spec resolves through `createRequire` against the configuration directory, that a failing plugin is skipped and that a duplicate `provider` refuses
   - file:///github/pi/packages/coding-agent/src/core/pi-manifest.ts - the `package.json` manifest precedent, and the `pi.extensions` key it reads
   - file:///github/pi/packages/coding-agent/src/core/extensions/loader.ts#L592-L600 - how pi reports a module that exports no factory and a factory that throws
@@ -73,6 +75,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 ### Gaps
 
 - `@ahpd/sdk` holds no plugin contract: there is no `Plugin` or `PluginHost` type and no pure fold to test, though every type they are built from is already there.
+- Nothing enumerates the kinds a plugin may register: the `PluginHost` sketch in `ideas/plugins.md` shows three and the rest are inferable only from `HostOptions`, which is why decision 4 writes the closed list down.
 - `Options` and `Config` have no `plugins` key and `parse()` has no case for `--plugin`, so a plugin can be neither named nor switched off.
 - The `createHost` object is built inline, so there is no point between the flags and the host where a contribution can be inserted.
 - Nothing turns a spec into something importable, so no rule exists for where an installed package is found or what a bad spec does.
@@ -86,6 +89,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 | 1 | [A plugin contributes the host's own options, and there is no service container](../../../decisions/plugin-contributes-host-options.md) | Softov, asked 2026-09-20: "A plugin does not register only agents. it could be used to register more things. like resources, store, config, options, hook to sessions, etc." |
 | 2 | [The plugin manifest is an `ahpd` key in package.json, and the module is still the contract](../../../decisions/plugin-manifest-is-package-json.md) | Softov, asked 2026-09-20: "Can we use a manifest.json or the package.json as manifest for the plugin?" |
 | 3 | [The plugin contract lives in `@ahpd/sdk`, and only the loader is machine-touching](../../../decisions/plugin-contract-lives-in-the-sdk.md) | Softov, asked 2026-09-20: "instead a new package. packages/plugin, would not be better to insert plugin data inside sdk?" |
+| 4 | [A plugin registers from a closed set of kinds, one method each](../../../decisions/plugin-registration-kinds.md) | Softov, asked 2026-09-20: "I cant find where is the kinds of registration ... what a plugin can register ... agents, skills, tools, '/' commands, hooks, and what more?" |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -94,6 +98,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 | A plugin that fails to resolve, import or apply is reported and skipped, and a duplicate `provider` refuses at startup naming both | [agents as extensions](../../../ideas/agents-as-extensions.md) | 03, 05 |
 | `--plugin` is repeatable and `--no-plugins` switches the whole set off | decision 1, and the flag shape `--path` and `--automations` already use | 04 |
 | Compatibility is `peerDependencies` on `@ahpd/sdk`, and no `apiVersion` field is added | decision 2, and deepseek-harness, which has none either | 01 |
+| Nine kinds are named, three are implemented, and skills, commands, MCP servers and hooks wait on an option rather than on this loader | decision 4, and the domain reference's table | 01, deferred |
 | Hooks into a running host are the protocol, and a plugin that wants them is a client | decision 1, Consequences | deferred |
 
 ## Proposed architecture

@@ -13,6 +13,8 @@ refs:
   - code://packages/sdk/src/sessions.ts - `memorySessions()`, the same pattern for a port
   - code://.project/decisions/plugin-contract-lives-in-the-sdk.md - why this is not a package of its own
   - code://.project/decisions/plugin-contributes-host-options.md - the surface this task makes literal
+  - code://.project/decisions/plugin-registration-kinds.md - the closed set of kinds, of which three are declared here
+  - code://.project/plans/plugin/00-plugin.md - the table those three are the first rows of
   - code://test/example.test.ts#L1-L30 - the fake `Agent` the fold test builds a base from
 ---
 
@@ -33,7 +35,7 @@ refs:
 1. In `src/types/plugin.ts`, declare `PortKey` as the union of the singleton keys of `HostOptions`: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics`.
 2. Declare `PortOf<K extends PortKey> = NonNullable<HostOptions[K]>`, so `port('resources', …)` demands a `ResourceStore` and not a bag.
 3. Declare `PluginSpec = string | { name: string; options?: Record<string, unknown>; enabled?: boolean }`, which is both what `config.json` holds and what `--plugin` produces.
-4. Declare `PluginHost` with `agent`, `agents`, `tool`, `tools`, `port<K>(key, value, when?)` where `when` is the literal `'replace'`, and the read-only `path`, `paths`, `version`, `log`. Add a doc comment saying the surface is `HostOptions` named back, citing decision 1.
+4. Declare `PluginHost` with `agent`, `agents`, `tool`, `tools`, `port<K>(key, value, when?)` where `when` is the literal `'replace'`, and the read-only `path`, `paths`, `version`, `log`. These three are the first three rows of the table in `plans/plugin/00-plugin.md`, so the doc comment says the surface is `HostOptions` named back (decision 1), that the set of kinds is closed (decision 4), and which kinds are not here yet, so an author reads the whole surface from the first release.
 5. Declare `Plugin` with required `name` and `apply(host, options)`, and optional `title` and `defaults`, and say in a comment that a default export is deliberately not consulted, citing the deepseek-harness postmortem the plan refs.
 6. Declare `Contribution` as what one `apply` produced: `by` (the plugin's name), `agents`, `tools`, and `ports` as a partial record of `PortKey` to `{ value: unknown; replace: boolean }`. Declare `Loaded` as `{ spec, url, path, name, title?, options, plugin }`.
 7. Keep `src/types/plugin.ts` free of runtime imports, so the file is a contract and the barrel rule holds.

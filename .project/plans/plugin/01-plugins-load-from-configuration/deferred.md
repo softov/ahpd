@@ -4,6 +4,12 @@ title: Deferred from plugins load from configuration
 
 ## What waits
 
+- **Customizations, and MCP servers through them.** A plugin contributing skills, prompts, slash commands, rules or an MCP server to every session.
+  It waits because it is a new `HostOptions.customizations` merged into each session and into an agent's `probe()`, which is an SDK change and not a loader one, and it is the next plan in this domain.
+- **The required-config gate.** A plugin whose manifest names a required option the configuration does not set lists as `unconfigured` and `apply` is not called, which is what doop does before `register()`.
+  It waits on the manifest carrying the options schema, which decision 2 leaves until `needs` and `provides` arrive.
+- **A plugin test runtime.** doop ships `testing/plugin-test-runtime.ts`, a fake host a plugin is tested against without the daemon.
+  It waits until there is a contract worth testing against.
 - **`needs` and `provides` ordering.** A plugin that names a store another plugin provides, which `@facio/store-file` is the first real case of.
   It waits because ordering is only worth implementing once two plugins depend on each other, and this plan proves the loading first.
   It goes in `packages/sdk` beside `Plugin`, with the resolution rule `packages/commands/src/registry.ts` in facio already uses: resolve by declared dependency, refuse a missing one at startup and refuse a cycle by name.

@@ -22,6 +22,30 @@ What exists is everything the mechanism is built on, and it is all in `@ahpd/sdk
 - `code://.project/decisions/plugin-contributes-host-options.md` - what a plugin is allowed to contribute and what it is not.
 - `code://.project/decisions/plugin-manifest-is-package-json.md` - where a plugin declares its entry and its title.
 - `code://.project/decisions/plugin-contract-lives-in-the-sdk.md` - where the contract lives, and why it is not a package of its own.
+- `code://.project/decisions/plugin-registration-kinds.md` - why the set below is closed and one method per kind.
+
+## Registration kinds
+
+The whole of what a plugin may register, one method each, and the plan each kind belongs to.
+This is the list decision [plugin-registration-kinds](../../decisions/plugin-registration-kinds.md) closes; nothing registers anything that is not a row here.
+
+| Kind | `PluginHost` method | Lands in | Status |
+| --- | --- | --- | --- |
+| agent | `agent()`, `agents()` | `HostOptions.agents`, the backend a client names in `createSession` | this plan |
+| tool | `tool()`, `tools()` | `HostOptions.tools`, the server tools offered to every session's model | this plan |
+| port | `port(key, value, when?)` | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | this plan |
+| customization | `customization()` | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | next plan |
+| MCP server | `mcpServer()` | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | next plan |
+| hook | `hook(event, fn)` | a new `HostOptions.hooks`, called where the host already logs | later |
+| configuration key | `config(key, schema, default)` | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | later |
+| host method | `method(name, handler)` | an extension table beside the request handlers, and a channel beside the declared ones | later, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
+| log sink | `onEvent(fn)` | `HostOptions.onEvent`, which becomes additive rather than a single function | later |
+
+Four things are deliberately not kinds, so that a plugin does not look for a method that should not exist.
+Models are not, because each agent reports its own through `probe()`.
+Slash commands are not separate from customizations, because `Offered.commands` is already one projection of them.
+UI is not, because a client owns its own screen and the host serves it resources.
+HTTP routes are not, because there is no HTTP server.
 
 ## Runtime path
 
