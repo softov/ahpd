@@ -16,9 +16,17 @@
  *
  * Every shape lives in `types/` and nothing there imports a runtime value, so
  * the contract can be read without loading any of this.
+ *
+ * A plugin contributes this same option object rather than a second kind of
+ * thing: `foldHostOptions` composes several plugins' contributions into one
+ * `HostOptions`, and `PluginHost` in `types/plugin.ts` is those options named
+ * back.
  */
 
 export { createHost, ROOT } from './host.js';
+export { foldHostOptions } from './plugins.js';
+export type { FoldedOptions } from './plugins.js';
+export { sdkVersion } from './version.js';
 export { listen } from './listen.js';
 export {
   createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,

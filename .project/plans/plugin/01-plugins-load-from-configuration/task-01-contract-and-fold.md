@@ -1,6 +1,6 @@
 ---
 title: The plugin contract and the fold live in `@ahpd/sdk`
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:
@@ -62,4 +62,11 @@ The `PluginHost` implementation and the check on what is registered are task 08;
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`types/plugin.ts` holds `PortKey`, `PortOf`, `PluginSpec`, `PluginContext`, `PluginHost`, `Plugin`, `PortContribution`, `Contribution` and `Loaded`.
+`plugins.ts` holds `foldHostOptions` returning `{ options, problems }`, with `PORT_KEYS` a runtime list plus a compile-time check that it is the whole `PortKey` union.
+`version.ts` holds `sdkVersion()`, read from the nearest `package.json` the way `packages/server/src/version.ts` reads its own.
+`test/plugin-fold.test.ts` covers the append order, the base-left-alone rule, the agent `provider` collision, a plugin against a daemon port, two plugins on one free port, `'replace'` for both collisions, and the free-port case.
+The same file pins `sdkVersion()` against `packages/sdk/package.json`.
+Verified: `pnpm test` 649 passed, `pnpm typecheck` green, `pnpm boundary` unchanged, `pnpm build` builds three packages, and `packages/sdk/dist/version.js` answers `0.6.1`.
+The fold checks nothing about the shape of what was registered; the runtime `PluginHost` and that check are task 08, which fills the shape this task wrote.

@@ -18,6 +18,7 @@ export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
 export type { Emit, SessionOptions, Session, Ran, Chosen, MessageFrom } from './session.js';
 export type { HostOptions, Connection, Credential, Host, Diagnostics } from './host.js';
+export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, Contribution, PortContribution, PortKey, PortOf } from './plugin.js';
 export type { Page } from './paging.js';
 export type { Connected, OnConnect, Runtime, Listener, Tap } from './listen.js';
 export type { Offered } from './probe.js';
