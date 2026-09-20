@@ -1,7 +1,7 @@
 ---
 title: Plugins load from configuration and contribute to the host
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -145,22 +145,17 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 06 and 08, done 2026-09-20.
-- **Next action:** [task-07-plugin-list.md](task-07-plugin-list.md).
-- **Open questions:**
-  1. Does a plugin contribute a root configuration key in this plan - proposed: no, `ROOT_CONFIG_SCHEMA` becomes a `HostOptions` field in a later plan and this one only proves the loading.
-  2. Does the contract go in `types/host.ts` or a `types/plugin.ts` of its own - proposed: its own file, so `host.ts` stays the option object and the whole plugin surface is one import.
-  3. Does `ahpd plugin list` ship in this plan - proposed: yes as task 07, because it is the only consumer of the manifest decision and the manifest is otherwise unjustified until then.
-  4. Can a plugin read the port it is replacing, so that a decorator is possible - proposed: no in this plan, because an accessor is a second kind of contribution and a plugin that replaces is enough to prove the loading.
-- **Watch out for:** the `createHost` object is currently built after `await pty()` and before `listen`, so the fold happens there and `loadPlugins` has to be awaited; the base object keeps every existing port so a daemon with no plugins behaves exactly as it does today.
-  Another session commits to this checkout, so re-read a file before editing it, stage explicit paths, and refuse to sweep its work into yours; the `code://` line anchors were last checked 2026-09-20 and a moved line is worth re-finding rather than trusting.
+- **Done so far:** all eight tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
+- **Next action:** none; the plan is built. [Plan 02 - Plugins subscribe to the host's own events](../02-plugins-subscribe-to-host-events/plan.md) requires it and is next.
+- **Open questions:** none open; each of the four was settled by the build, and every departure is in [implemented.md](implemented.md).
+- **Watch out for:** this plan is closed, so a change to it is a new plan rather than an edit here; the `code://` anchors in it were checked 2026-09-20 and the loader has moved since.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the fold, resolver, loader and end-to-end plugin cases in it.
-- [ ] `pnpm typecheck`, `pnpm boundary` and `pnpm schema` green.
-- [ ] By hand: `ahpd --plugin <fixture>` serves the contributed backend, and `ahpd` with no plugins serves exactly what it does today.
-- [ ] By hand: a spec that does not resolve, a module that throws and a duplicate `provider` each say what happened without the daemon dying, except the collision, which refuses.
-- [ ] By hand: `--plugin ./fixture` with a `@ahpd/sdk` range the daemon does not satisfy is refused before its entry runs, and `ahpd plugin list` reports it as `incompatible`.
-- [ ] `docs/DAEMON.md` and the README name the `plugins` key and the two flags.
-- [ ] `plans/index.md` and `plans/daemon/00-daemon.md` updated.
+- [x] `pnpm test` green, with the fold, resolver, loader and end-to-end plugin cases in it.
+- [x] `pnpm typecheck`, `pnpm boundary` and `pnpm schema` green.
+- [x] By hand: `ahpd --plugin <fixture>` serves the contributed backend, and `ahpd` with no plugins serves exactly what it does today.
+- [x] By hand: a spec that does not resolve, a module that throws and a duplicate `provider` each say what happened without the daemon dying, except the collision, which refuses.
+- [x] By hand: `--plugin ./fixture` with a `@ahpd/sdk` range the daemon does not satisfy is refused before its entry runs, and `ahpd plugin list` reports it as `incompatible`.
+- [x] `docs/DAEMON.md` and the README name the `plugins` key and the two flags.
+- [x] `plans/index.md` and `plans/daemon/00-daemon.md` updated.
