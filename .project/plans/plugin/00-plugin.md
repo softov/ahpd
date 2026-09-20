@@ -75,4 +75,5 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 ## Known gaps
 
 - Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload, ports through `Start` and reading the port beneath all wait on an SDK option or a later plan; the whole list is [deferred.md](01-plugins-load-from-configuration/deferred.md).
-- The first-party agent plugins (`@ahpd/agent-facio`, `@ahpd/agent-deepseek`, `@ahpd/agent-acp`, `@ahpd/agent-openai`) have no plan yet, and [agents as extensions](../../ideas/agents-as-extensions.md) is the order they arrive in.
+- [03 - An agent backend over facio](03-agent-facio/plan.md) is the first real consumer of this mechanism: one installed package that runs a harness and serves every model it can reach.
+- `@ahpd/agent-acp`, the bridge to any Agent Client Protocol server, has no plan yet; `@deepseek-ai/dsh-acp` is one, and the decision [agent-package-only-when-it-brings-a-runtime](../../decisions/agent-package-only-when-it-brings-a-runtime.md) is why a model or an endpoint is not a package of its own.
