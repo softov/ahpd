@@ -39,11 +39,21 @@ type Unlisted = Exclude<PortKey, (typeof PORT_KEYS)[number]>;
 const everyPortIsListed: Unlisted extends never ? true : never = true;
 void everyPortIsListed;
 
+/** What every agent `provider` collision problem starts with. */
+export const AGENT_CLASH = 'agent provider clash:';
+
 /** What `foldHostOptions` answers: the composed options, and everything that could not be composed. */
 export interface FoldedOptions {
   /** The base, copied, with every contribution that was accepted folded in. */
   options: HostOptions;
-  /** One message per conflict, in the order the contributions arrived. Empty when nothing collided. */
+  /**
+   * One message per conflict, in the order the contributions arrived. Empty
+   * when nothing collided.
+   *
+   * An agent `provider` clash starts with `AGENT_CLASH`, because the daemon
+   * refuses to start over one and needs to tell it from the problems it only
+   * reports - and reading prose is not how a program should decide that.
+   */
   problems: string[];
 }
 
@@ -87,7 +97,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     for (const agent of contribution.agents) {
       const held = providers.get(agent.provider);
       if (held !== undefined) {
-        problems.push(`plugin ${contribution.by} registers agent ${agent.provider}, which ${held === 'the daemon' ? 'the daemon' : `plugin ${held}`} already registered`);
+        problems.push(`${AGENT_CLASH} plugin ${contribution.by} registers agent ${agent.provider}, which ${held === 'the daemon' ? 'the daemon' : `plugin ${held}`} already registered`);
       }
       else {
         providers.set(agent.provider, contribution.by);

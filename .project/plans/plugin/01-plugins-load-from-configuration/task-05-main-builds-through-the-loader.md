@@ -1,6 +1,6 @@
 ---
 title: The daemon builds its host through the loader
-status: todo
+status: done
 depends:
   - task-03-load-and-apply.md
   - task-04-config-and-flags.md
@@ -48,4 +48,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`main.ts` names the old `createHost` literal `base: HostOptions` with every key and comment kept, extracts one `stamp` writer that both `onEvent` and the loader's `log` use, awaits `loadPlugins` between `secret` and `createHost`, stamps every problem, exits 1 when one is a provider clash, and prints `plugins <names>` or `plugins none` as its own line after the automations line.
+`test/plugin-host.test.ts` folds one contribution into a base, hands the result to `createHost`, initializes a fake peer, sees the contributed backend beside `echo` with its `displayName`, lists the empty catalogue, and pins the clash marker.
+Verified: `pnpm test` 699 passed, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` builds three packages.
+By hand: `node packages/server/dist/main.js --port 0` prints `plugins none`; the same with `--plugin ./test/fixtures/plugin-hello` prints `plugin hello from …` and `plugins hello`; with `plugin-hello` and `plugin-alike` it prints the clash and exits 1.
+Departure from the plan: the refusal needs to tell a `provider` clash from the problems that are only reported, so `foldHostOptions` now prefixes a clash with the exported `AGENT_CLASH` constant rather than the daemon matching English; task 01's own test still passes because it asserts on the names inside the message.
+The refusal exits 1 after writing the problems, which is a non-zero status without the stderr-and-exit-2 shape `stop` uses for a bad flag.

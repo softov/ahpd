@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { asSpec, automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
+import { asSpec, automationsPath, configDir, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
+import { loadPlugins } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
-import type { PluginSpec, Tap } from '@ahpd/sdk';
-import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -395,7 +396,26 @@ const { token, from } = secret(options);
  */
 const memory = options.automations === 'memory';
 
-const host = createHost({
+/*
+ * One timestamped writer for everything this daemon says outside the protocol.
+ *
+ * The daemon's own lines had no times on them, so a log read after something
+ * went wrong said what happened in order and nothing about how far apart -
+ * which is most of what is worth knowing when a process died a minute after
+ * starting. It is also what makes this log line up against a client's, since
+ * the two are separate programs and the only thing they share is a clock.
+ */
+const stamp = (line: string): void => { process.stdout.write(`${new Date().toISOString()} ${line}\n`); };
+
+/*
+ * What the daemon contributes before any plugin does.
+ *
+ * This is the literal it has always been, named so a plugin's contributions
+ * can be folded into it rather than built beside it. It keeps every port, so a
+ * daemon with no plugins is exactly the daemon it was, and it is a value the
+ * fold never mutates.
+ */
+const base: HostOptions = {
   path: options.paths[0] as string,
   // The daemon serves Claude Code. The host serves whatever it is given -
   // see `examples/` for what a second one looks like.
@@ -462,18 +482,11 @@ const host = createHost({
   /*
    * When, as well as what.
    *
-   * The daemon's own lines had no times on them, so a log read after
-   * something went wrong said what happened in order and nothing about how
-   * far apart - which is most of what is worth knowing when a process died
-   * a minute after starting. It is also what makes this log line up against
-   * a client's, since the two are separate programs and the only thing they
-   * share is a clock.
-   *
    * The timestamp is added here rather than in `createHost`, because a host
    * embedded in something else has its own log with its own format and
    * `onEvent` hands it the message to do that with.
    */
-  onEvent: (message) => process.stdout.write(`${new Date().toISOString()} ${message}\n`),
+  onEvent: stamp,
   /*
    * What the window's diagnostics get from this daemon.
    *
@@ -486,7 +499,29 @@ const host = createHost({
     logs: () => [daemonLog(), ...(options.wire === undefined ? [] : [options.wire])],
     shutdown: () => { process.kill(process.pid, 'SIGTERM'); },
   },
+};
+
+/*
+ * The plugins, between the base and the host.
+ *
+ * `loadPlugins` is the only thing here that runs code the daemon did not
+ * write, and it is handed the specs the flags and the file named. Every
+ * problem is a line in the log so a skipped plugin is where a log reader
+ * looks; the one problem that is not skipped is a duplicate `provider`, which
+ * is refused because a host built over it would answer a turn with the wrong
+ * backend. Everything else - a plugin that does not resolve, one that throws,
+ * one whose manifest is wrong - costs itself and nothing else.
+ */
+const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
+  base,
+  configDir: configDir(),
+  cwd: process.cwd(),
+  log: stamp,
 });
+for (const problem of problems) stamp(problem);
+if (problems.some((problem) => problem.startsWith(AGENT_CLASH))) process.exit(1);
+
+const host = createHost(folded);
 
 // Whichever runtime this is. `listen` is the only file that knows, and it
 // says which one it found - a daemon that silently ran somewhere unexpected
@@ -520,6 +555,9 @@ process.stdout.write(
   // Its own line rather than the end of the one above, which `daemon.ts`
   // reads the session directories off with a regular expression.
   + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`
+  // Its own line for the same reason: a client that only needs the names reads
+  // one line, and `daemon.ts` keeps matching the two above unchanged.
+  + `plugins ${loaded.length === 0 ? 'none' : loaded.map((one) => one.name).join(', ')}\n`
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`

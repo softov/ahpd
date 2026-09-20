@@ -125,7 +125,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 | [02 - A spec becomes an importable URL](task-02-resolve-a-spec.md) | done | 01 |
 | [03 - A module is imported, checked and applied](task-03-load-and-apply.md) | done | 02, 08 |
 | [04 - The daemon names plugins in configuration and on the command line](task-04-config-and-flags.md) | done | 01 |
-| [05 - The daemon builds its host through the loader](task-05-main-builds-through-the-loader.md) | todo | 03, 04 |
+| [05 - The daemon builds its host through the loader](task-05-main-builds-through-the-loader.md) | done | 03, 04 |
 | [06 - A backend arrives by configuration, end to end](task-06-a-backend-arrives-by-configuration.md) | todo | 05 |
 | [07 - `ahpd plugin list` reads manifests without importing](task-07-plugin-list.md) | todo | 03 |
 | [08 - Every register method checks what it is given](task-08-validate-registrations.md) | done | 01 |
@@ -145,8 +145,8 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 and 08, done 2026-09-20.
-- **Next action:** [task-05-main-builds-through-the-loader.md](task-05-main-builds-through-the-loader.md).
+- **Done so far:** tasks 01 to 05 and 08, done 2026-09-20.
+- **Next action:** [task-06-a-backend-arrives-by-configuration.md](task-06-a-backend-arrives-by-configuration.md).
 - **Open questions:**
   1. Does a plugin contribute a root configuration key in this plan - proposed: no, `ROOT_CONFIG_SCHEMA` becomes a `HostOptions` field in a later plan and this one only proves the loading.
   2. Does the contract go in `types/host.ts` or a `types/plugin.ts` of its own - proposed: its own file, so `host.ts` stays the option object and the whole plugin surface is one import.
