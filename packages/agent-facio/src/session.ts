@@ -18,8 +18,8 @@
  *   `responseParts` is what the agent answered.
  */
 
-import { createAgent, resume, run } from '@facio/agents';
-import type { Agent as FacioAgent, RunCommand, RunEvent, RunHandle } from '@facio/agents';
+import { createAgent, resume, run, textOf } from '@facio/agents';
+import type { Agent as FacioAgent, RunCommand, RunEvent, RunHandle, Store } from '@facio/agents';
 import { Status } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { modelOf, storeOf } from './agent.js';
@@ -97,14 +97,20 @@ export const sessionIdOf = (uri: string): string => uri.replace(/^ahp-session:\/
  * feed. `start` is what this particular session was told. Everything after
  * this is the turn lifecycle.
  */
-export function facioSession(options: FacioOptions, start: Start): Session {
+export function facioSession(options: FacioOptions, start: Start, sharedStore?: Store): Session {
   const provider = options.provider ?? 'facio';
   /** The configured facio id, or the URI's when this is a fresh session. */
   const sessionId = start.resume ?? sessionIdOf(start.uri);
   /** The directory the agent works in; the host's when it named one. */
   const where = start.workingDirectory ?? process.cwd();
-  /** The store every turn of this session shares. */
-  const store = storeOf(options);
+  /**
+   * The store every turn of this session shares.
+   *
+   * `facioAgent` builds one for the whole backend, so the catalogue and the
+   * conversation read the same store; a caller that named none - the export
+   * is public - gets one of its own, which is what a single session had.
+   */
+  const store = sharedStore ?? storeOf(options);
 
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
@@ -136,6 +142,15 @@ export function facioSession(options: FacioOptions, start: Start): Session {
   let title = 'Facio session';
   let modified = new Date().toISOString();
   let closed = false;
+  /**
+   * Whether the conversation the host resumed is still being looked up.
+   *
+   * A run paused before the restart still holds the session's writer claim, so
+   * a turn that started before the lookup finished would fight it for the
+   * claim and lose. Everything that would begin a turn waits on this instead,
+   * so it sees either an empty conversation or the reopened one.
+   */
+  let opening: Promise<void> | undefined;
   /** What it is doing, or nothing while it is idle. */
   let activity: string | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
@@ -221,6 +236,46 @@ export function facioSession(options: FacioOptions, start: Start): Session {
   };
 
   /**
+   * One event's actions, through the mapping, and what it did to the session.
+   *
+   * `replaying` is for a run history read back on a resume: the awaiting
+   * `run.finished` that ends it is not a pause to rejoin, because the rejoin
+   * is what is reading it and its handle is still open. Answers whether this
+   * run has now said how it ended.
+   */
+  const apply = (mapping: TurnMapping, event: RunEvent, replaying: boolean): boolean => {
+    if (event.type === 'run.finished') doing(undefined);
+    let settled = false;
+    const mapped = mapping.actions(event);
+    for (const action of mapped.actions) {
+      const type = str(action.type) ?? '';
+      /*
+       * A pause lives on the session channel and a turn on the chat channel;
+       * the action's own name is what says which, so a client watching the
+       * catalogue alone still learns somebody is being asked.
+       */
+      start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
+      if (type === 'chat/turnComplete' || type === 'chat/turnCancelled' || type === 'chat/error') {
+        settled = true;
+        settleTurn(type === 'chat/turnCancelled' ? 'cancelled' : type === 'chat/error' ? 'error' : 'complete');
+      }
+    }
+    if (mapped.opened !== undefined) pending.set(mapped.opened.requestId, mapped.opened);
+    if (mapped.settled !== undefined) pending.delete(mapped.settled);
+    /*
+     * The awaiting outcome is a pause, not an ending: the handle is closed
+     * and the turn stays open until somebody answers. This read is over, so
+     * the fallback below must not report the pause as a turn that ended, and
+     * the sequence is kept so the answer rejoins rather than replays.
+     */
+    if (!replaying && event.type === 'run.finished' && event.outcome.status === 'awaiting') {
+      settled = true;
+      paused = { runId: event.runId, seq: event.seq };
+    }
+    return settled;
+  };
+
+  /**
    * Read a run to its end.
    *
    * Every action comes from `mapping.ts`, including the one that ends the
@@ -230,38 +285,10 @@ export function facioSession(options: FacioOptions, start: Start): Session {
   const read = (live: RunHandle, mapping: TurnMapping): void => {
     /** Whether this run has already said how it ended. */
     let settled = false;
-    /** One event's actions, and the ending if it carried one. */
-    const send = (event: RunEvent): void => {
-      if (event.type === 'run.finished') doing(undefined);
-      const mapped = mapping.actions(event);
-      for (const action of mapped.actions) {
-        const type = str(action.type) ?? '';
-        /*
-         * A pause lives on the session channel and a turn on the chat
-         * channel; the action's own name is what says which, so a client
-         * watching the catalogue alone still learns somebody is being asked.
-         */
-        start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
-        if (type === 'chat/turnComplete' || type === 'chat/turnCancelled' || type === 'chat/error') {
-          settled = true;
-          settleTurn(type === 'chat/turnCancelled' ? 'cancelled' : type === 'chat/error' ? 'error' : 'complete');
-        }
-      }
-      if (mapped.opened !== undefined) pending.set(mapped.opened.requestId, mapped.opened);
-      if (mapped.settled !== undefined) pending.delete(mapped.settled);
-      /*
-       * The awaiting outcome is a pause, not an ending: the handle is closed
-       * and the turn stays open until somebody answers. This read is over, so
-       * the fallback below must not report the pause as a turn that ended,
-       * and the sequence is kept so the answer rejoins rather than replays.
-       */
-      if (event.type === 'run.finished' && event.outcome.status === 'awaiting') {
-        settled = true;
-        paused = { runId: event.runId, seq: event.seq };
-      }
-    };
     void (async () => {
-      for await (const event of live.events) send(event);
+      for await (const event of live.events) {
+        if (apply(mapping, event, false)) settled = true;
+      }
       /*
        * A run that failed before it could publish anything ends its stream
        * with the handle's outcome and no `run.finished`. The turn is still
@@ -271,7 +298,7 @@ export function facioSession(options: FacioOptions, start: Start): Session {
        */
       if (!settled) {
         const outcome = await live.outcome;
-        send({
+        apply(mapping, {
           seq: 0,
           runId: live.runId,
           sessionId: live.sessionId,
@@ -279,7 +306,7 @@ export function facioSession(options: FacioOptions, start: Start): Session {
           at: new Date().toISOString(),
           type: 'run.finished',
           outcome,
-        });
+        }, false);
       }
     })();
   };
@@ -350,7 +377,7 @@ export function facioSession(options: FacioOptions, start: Start): Session {
    * `queuedMessageId` names the waiting message it came from; a client's
    * reducer takes it out of the queue on that word.
    */
-  const beginTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
+  const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
     if (closed || active !== undefined) return;
     cancelRequested = false;
     if (title === 'Facio session' && text !== '') {
@@ -410,8 +437,33 @@ export function facioSession(options: FacioOptions, start: Start): Session {
     touch();
   };
 
+  /**
+   * Begin a turn, once the resume lookup has settled.
+   *
+   * A resumed session may already have an open turn waiting on a person, so a
+   * second run would fight the paused one for the session's writer claim and
+   * fail `writer_busy`. Waiting for the lookup is what tells the two apart,
+   * and it costs an ordinary session nothing: `opening` is only set when the
+   * host named a conversation to continue.
+   */
+  const beginTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
+    const waiting = opening;
+    if (waiting === undefined) {
+      startTurn(turnId, text, model, from, queuedMessageId);
+      return;
+    }
+    const start = (): void => startTurn(turnId, text, model, from, queuedMessageId);
+    void waiting.then(start, start);
+  };
+
   /** The head of the queue, once there is nothing running. */
   const startNext = (): void => {
+    if (opening !== undefined) {
+      // A paused run decides whether anything may be taken off the queue, so
+      // the queue waits for the same lookup every turn does.
+      void opening.then(startNext, startNext);
+      return;
+    }
     if (active !== undefined || closed) return;
     const next = queued.shift();
     if (next === undefined) return;
@@ -424,6 +476,94 @@ export function facioSession(options: FacioOptions, start: Start): Session {
       String(next.id),
     );
   };
+
+  /**
+   * Rejoin the run a restart left paused.
+   *
+   * A paused facio run still holds the session's writer claim, so a new run
+   * under this id would be refused `writer_busy`, and no answer could reach it
+   * either: `resume()` is the only call that installs a command channel. The
+   * run's own events are replayed through the same mapping a live turn uses,
+   * so the request reaches the client by the path that put it there rather
+   * than a second path written here.
+   *
+   * A conversation whose newest run already finished, or that the store has
+   * never seen, is left alone: the next turn appends a new run under the same
+   * facio session, which is what continuing a finished conversation means.
+   */
+  const reopen = async (): Promise<void> => {
+    if (closed) return;
+    const record = await store.sessions.get({ sessionId });
+    if (record === undefined || closed) return;
+    const runs = await store.runs.list({ sessionId });
+    const newest = runs[0];
+    if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
+
+    const agent = agentOf(settings);
+    liveAgent = agent;
+    const messages = await store.sessions.listMessages({ sessionId });
+    const input = messages.find((one) => one.id === newest.inputMessageId);
+    const turnId = input?.id ?? newest.runId;
+    const began = input === undefined ? Date.now() : Date.parse(input.createdAt);
+    const startedAt = new Date(Number.isFinite(began) ? began : Date.now()).toISOString();
+    /*
+     * The same opening as a live turn: the markdown part exists before the
+     * replay, so a text delta from a replayed event has a part to append to
+     * exactly as it did when the turn first ran.
+     */
+    const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
+    active = {
+      id: turnId,
+      startedAt,
+      message: { text: input === undefined ? '' : textOf(input) },
+      responseParts: [part],
+    };
+    start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: active.message });
+    start.emit('chat', { type: 'chat/responsePart', turnId, part });
+    const mapping = mapTurn({
+      turnId,
+      chatUri: start.chatUri,
+      markdownPartId: String(part.id),
+      parts: active.responseParts as Bag[],
+      startedAt: Number.isFinite(began) ? began : Date.now(),
+      displayNameOf: (name) => start.tools?.find((one) => one.definition.name === name)?.definition.title ?? name,
+      cancelled: () => false,
+    });
+    activeMapping = mapping;
+
+    /*
+     * What the run already wrote, in the order facio persisted it, before the
+     * live handle is read: the paused call and the request it waits on are
+     * rebuilt by the events that carry them.
+     */
+    const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
+    const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
+    for (const event of events) apply(mapping, event, true);
+
+    // Everything up to `lastSeq` has just been replayed, so the live stream
+    // carries only what happens next rather than the conversation again.
+    const live = resume({ agent, sessionId, runId: newest.runId, afterSeq: lastSeq });
+    if (closed) {
+      live.cancel({ reason: 'the session closed' });
+      return;
+    }
+    handle = live;
+    read(live, mapping);
+    doing('Waiting on you');
+    touch();
+  };
+
+  /*
+   * A resumed conversation may be paused, and every turn has to wait for that
+   * answer before it can start. Nothing else in the session reads the store
+   * first, so this is the one lookup the deferral is for.
+   */
+  if (start.resume !== undefined && !closed) {
+    const pending = reopen();
+    opening = pending;
+    const settledOpening = (): void => { if (opening === pending) opening = undefined; };
+    void pending.then(settledOpening, settledOpening);
+  }
 
   return {
     uri: start.uri,

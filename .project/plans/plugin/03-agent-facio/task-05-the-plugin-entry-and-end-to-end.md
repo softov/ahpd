@@ -38,6 +38,7 @@ refs:
 7. Add a case for two providers: two specs of the package with different `options.provider` and different stub models, folded over one base, both listed on the root channel and each answering its own turn.
 8. Update `docs/PLUGINS.md` with the package and its config, and note that the API key belongs in the daemon's environment rather than in the session config a client sends.
 9. By hand, once: build, start the daemon with `--plugin ./packages/agent-facio` and a configured endpoint, create a session, and watch one turn answer.
+10. Pin the resume shape task 04 left open: a paused run reopened with `start.resume` is replayed through the mapping while the host also seeds `transcript(id)`, so the same open turn can reach a client twice. Decide and implement which side gives way - the seed omits the open turn, or the replay emits only the session-level request and not the turn's chat actions - and assert it in the end-to-end test with a client that subscribes after the resume and counts the turn once.
 
 ## Validation
 
@@ -47,6 +48,7 @@ refs:
   - a session on `facio` runs one turn to `chat/turnComplete` with the stub model's text.
   - two specs with different providers contribute two backends and neither collides.
   - the loader's range check refuses the package when its `@ahpd/sdk` peer is pointed at a version this SDK is not.
+  - a session resumed while its newest run is paused is answered and continues, and a client that subscribes after the resume sees the open turn once rather than twice.
 - `pnpm test` green, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` builds four packages.
 - By hand: the daemon serves provider `facio` and answers a turn through a real OpenAI-compatible endpoint, and a client needing a confirmation is asked and continues.
 

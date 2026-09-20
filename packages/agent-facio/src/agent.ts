@@ -13,12 +13,13 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createMemoryStore } from '@facio/agents';
+import { createMemoryStore, textOf } from '@facio/agents';
 import type { ModelAdapter, Policy, Store } from '@facio/agents';
 import { openaiCompat } from '@facio/model-openai-compat';
 import { createFileStore } from '@facio/store-file';
-import type { Agent, Bag, Offered } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { facioSession } from './session.js';
+import { turnsOf } from './transcript.js';
 
 /** What an embedder, or a plugin's options, may set. */
 export interface FacioOptions {
@@ -66,6 +67,19 @@ const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
 /**
+ * The line a catalogue row draws for a session.
+ *
+ * The store keeps no title of its own, so the first thing the person said is
+ * the honest one; a session that has said nothing is titled by its id. The
+ * whitespace is folded and the line bounded, because a title is one row and a
+ * first message can be a pasted file.
+ */
+const titleOf = (said: string, fallback: string): string => {
+  const line = said.replace(/\s+/g, ' ').trim();
+  return line === '' ? fallback : line.slice(0, 200);
+};
+
+/**
  * The model a session runs on.
  *
  * The settings a client sent win over the package's own, a caller-passed
@@ -103,6 +117,15 @@ export const storeOf = (options: FacioOptions = {}): Store =>
 export function facioAgent(options: FacioOptions = {}): Agent {
   const provider = options.provider ?? 'facio';
   const displayName = options.displayName ?? 'Facio';
+  /*
+   * One store for the whole backend, built here rather than per session.
+   *
+   * `list()` and `transcript()` read what a session wrote, so the catalogue
+   * and the conversation have to be looking at the same store. A store built
+   * inside `create` answered a different database from the one the turns went
+   * into, which is a catalogue that lists nothing it can open.
+   */
+  const store = storeOf(options);
 
   /**
    * What a session may be told, and what the model is.
@@ -157,10 +180,55 @@ export function facioAgent(options: FacioOptions = {}): Agent {
       commands: [],
     }),
     /*
+     * The sessions this backend already has.
+     *
+     * No workspace is passed to the query: `list()` is asked before any
+     * session exists, and the workspace is a per-session key facio already
+     * holds, so filtering by one here would hide every other conversation the
+     * store has. Each row reports the directory its own session recorded.
+     */
+    list: async (): Promise<Listed[]> => {
+      const records = await store.sessions.list({});
+      const listed: Listed[] = [];
+      for (const record of records) {
+        const messages = await store.sessions.listMessages({ sessionId: record.sessionId });
+        const first = messages.find((one) => one.role === 'user' && one.source === 'input');
+        listed.push({
+          id: record.sessionId,
+          title: first === undefined ? record.sessionId : titleOf(textOf(first), record.sessionId),
+          createdAt: record.createdAt,
+          modifiedAt: record.updatedAt,
+          workingDirectories: record.workspace === undefined ? [] : [`file://${record.workspace}`],
+        });
+      }
+      return listed;
+    },
+    /*
+     * One past conversation, read without starting anything.
+     *
+     * `undefined` is for a session the store does not know, which is what the
+     * contract means by "this backend has no such session". A session it does
+     * know with nothing said answers `[]` instead, and the two must not be
+     * confused: an empty transcript is a row that opens on an empty chat, and
+     * `undefined` is a row the host refuses.
+     */
+    transcript: async (id) => {
+      const record = await store.sessions.get({ sessionId: id });
+      if (record === undefined) return undefined;
+      return await turnsOf(store, id);
+    },
+    /*
      * The session runs a facio agent: a turn becomes `run()`'s event stream
      * and each event becomes the AHP action a client expects. The work is in
      * `session.ts`, `mapping.ts` and `tools.ts`.
+     *
+     * `Start.forkAt` and `Start.rewindAt` are deliberately left unmapped.
+     * facio has the slots a fork and a rewind would cut at - a run's
+     * `inputMessageId` and `lastMessageId` - and turning one into a new
+     * session or a truncation is a task of its own rather than a branch taken
+     * silently through `resume()` here. Until then a request for either is
+     * served as the plain continue it arrives beside.
      */
-    create: (start) => facioSession(options, start),
+    create: (start) => facioSession(options, start, store),
   };
 }

@@ -1,6 +1,6 @@
 ---
 title: The catalogue, the transcript and a resume all read the facio store
-status: todo
+status: done
 depends:
   - task-01-the-package-and-the-provider.md
 layer: packages/agent-facio
@@ -49,4 +49,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`transcript.ts` holds `turnsOf(store, sessionId)`, rebuilding a conversation from `listMessages` and each run's `listEvents`; `agent.ts` creates one store inside `facioAgent` and shares it with every session, adds `list()` and `transcript(id)`, and leaves `forkAt`/`rewindAt` unmapped with a comment; `session.ts` reopens an `awaiting` run through `resume({ afterSeq })` and replays its events so the durable request reaches the client by the path that put it there; `index.ts` exports the transcript helpers.
+`test/agent-facio-store.test.ts` is six tests over a file store under a temporary directory: the listing with its workspace and title, a transcript whose parts are in order with a completed tool call, an unknown session against a known empty one, a paused run reopened without replaying its input, a finished session resumed as a new run under the same id, and a deleted session gone from the listing.
+Verified: `npx vitest run` 758 passed over 52 files, `pnpm typecheck` green, `pnpm boundary` green.
+What facio's store and messages do not carry: message parts have no ids, so transcript part ids are derived from the message and the index; a message has no usage and no model, so per-turn usage comes from the run record and the model stays absent; a tool call has no duration, so its timing rides `_meta`; `Store.requests` has no `list`, so a pending request is found by walking the runs' `pendingRequestId`; an image part has no AHP counterpart and is kept as a system notification; and a `SessionRecord` has no title, so it is derived from the first user message.
+Departures from the plan: `list()` calls `store.sessions.list({})` rather than filtering by one workspace, because `Agent.list()` takes no argument and the workspace is per session, so each row reports its own; a resume defers `begin` on an `opening` promise, because the host calls `create` and `begin` in one turn and a new run would otherwise race the paused run for facio's writer claim; and the transcript carries per-turn usage and duration from the run record, which the objective did not name.
+A fork for task 05: the reopened paused turn is replayed through the mapping while the host also seeds `transcript(id)` into `start.seed`, so a client can be shown the open turn twice, once from the seed and once from the replay. Task 05 gained a step and a case to pin and resolve it, because it is a wire-shape question and not a store one.

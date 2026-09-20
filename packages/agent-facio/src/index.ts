@@ -16,3 +16,5 @@ export { facioSession, sessionIdOf } from './session.js';
 export { mapTurn } from './mapping.js';
 export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';
 export { facioTool, facioTools } from './tools.js';
+export { turnsOf } from './transcript.js';
+export type { TranscriptTurn } from './transcript.js';
