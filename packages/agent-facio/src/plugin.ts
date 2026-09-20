@@ -61,6 +61,8 @@ const optionsOf = (values: Record<string, unknown>): FacioOptions => {
   if (instructions !== undefined) options.instructions = instructions;
   const store = str(values.store);
   if (store !== undefined) options.store = store;
+  const resource = str(values.resource);
+  if (resource !== undefined) options.resource = resource;
 
   if (typeof values.memory === 'boolean') options.memory = values.memory;
 

@@ -45,19 +45,16 @@ const inputOf = (bound: BoundTool): FacioInput => {
  * with the message rather than allowed to end the run: facio catches it into
  * a failed `tool.completed`, and the model hears why.
  *
- * A tool a client runs carries an `owner` and no `run`. Offering it here and
- * failing when it is called is honest: the client-executed path arrives with
- * the approval and question work, and this keeps the tool visible to the
- * model rather than pretending the session was given one it cannot call.
+ * A tool a client runs carries an `owner` and no `run`, and it is never
+ * wrapped: see `facioTools`, which leaves one out. A tool that always fails
+ * is worse than an absent tool, because the model calls it, spends a step and
+ * reports a failure the client never had a chance to run.
  */
 export const facioTool = (bound: BoundTool): Tool<Record<string, unknown>> => createTool<Record<string, unknown>>({
   name: bound.definition.name,
   description: bound.definition.description ?? bound.definition.title ?? bound.definition.name,
   input: inputOf(bound),
   execute: async (input) => {
-    if (bound.owner !== undefined) {
-      throw new Error(`${bound.definition.name} is run by client ${bound.owner}, which is not wired up yet`);
-    }
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);
     }
@@ -65,8 +62,16 @@ export const facioTool = (bound: BoundTool): Tool<Record<string, unknown>> => cr
   },
 });
 
-/** Every tool a session was handed, in the order the host offered them. */
-export const facioTools = (tools: BoundTool[]): Tool<Record<string, unknown>>[] => tools.map(facioTool);
+/**
+ * Every tool a session was handed that this backend can run.
+ *
+ * A `BoundTool` with an `owner` is one a connected client executes, and the
+ * round trip that offers it to the model and waits for that client's result
+ * is not built yet. It is left out rather than offered-and-failing, so the
+ * model is never given a tool nothing here can answer.
+ */
+export const facioTools = (tools: BoundTool[]): Tool<Record<string, unknown>>[] =>
+  tools.filter((bound) => bound.owner === undefined).map(facioTool);
 
 /**
  * The response part a tool call holds in a snapshot.

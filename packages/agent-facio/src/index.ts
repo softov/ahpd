@@ -11,7 +11,7 @@
  * configuration is the whole install.
  */
 
-export { facioAgent, defaultStoreRoot, modelOf, storeOf } from './agent.js';
+export { facioAgent, defaultStoreRoot, modelOf, resourceOf, storeOf } from './agent.js';
 export type { FacioOptions } from './agent.js';
 export { facioSession, sessionIdOf } from './session.js';
 export { mapTurn } from './mapping.js';

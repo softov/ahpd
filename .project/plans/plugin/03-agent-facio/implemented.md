@@ -58,3 +58,13 @@ The rule it implements is [agent-package-only-when-it-brings-a-runtime](../../de
 - A non-streaming adapter (`features.streaming: false`) produces no text, because `model.completed` is not mapped; the shipped `openaiCompat` streams by default.
 - AHP host tool definitions carry no destructive hint, so a pause is configured through the plugin's `policy` option rather than inferred, and a configuration file cannot carry it.
 - `@ahpd/agent-acp` remains the next agent package, and `@deepseek-ai/dsh-acp` is one of the servers it will cover.
+
+## Since built
+
+Three of the items above were closed the same day, after the protocol and the code were read again; the dated list below supersedes the matching line above, and [deferred.md](deferred.md) is where the rest now points.
+
+- A non-streaming adapter now says what it said: `mapping.ts` kept a per-step flag, and `model.completed` appends the step's text and reasoning when no delta carried them, so a turn cannot finish having said nothing. `test/agent-facio-turn.test.ts` pins it with `stream: false`.
+- A tool a client runs is no longer offered: `facioTools` leaves an owner-bound `BoundTool` out, because a tool that always fails is worse than an absent one. The round trip that would put it back is [plan 04](../04-agent-facio-extras/plan.md) task 03.
+- The key stopped being a config key. Reading the protocol, `SessionConfigChanged` is a client action so config is legally mutable, but a bearer token is a credential and the protocol's path for one is `authenticate` against a `ProtectedResourceMetadata` the server advertises. `HostTool` aside, the package now advertises a protected resource (`resourceOf`, the endpoint's origin when it is `https`) and reads the lent token from `Start.credentials`, with the daemon's own `apiKey` option as the fallback. `apiKey` is gone from the session schema.
+- The host-tool effects gap was not fixed here: it changes a public SDK type, so it has a decision, [host-tool-declares-what-it-does](../../decisions/host-tool-declares-what-it-does.md), and [plan 04](../04-agent-facio-extras/plan.md) task 01.
+

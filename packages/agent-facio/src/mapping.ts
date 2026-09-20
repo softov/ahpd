@@ -177,6 +177,16 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, markdownPartId, parts } = options;
   /** One reasoning part per turn, opened the first time the model thinks. */
   let reasoningId: string | undefined;
+  /**
+   * Whether the current step streamed its text and its reasoning.
+   *
+   * An adapter with `features.streaming: false` never emits `model.delta`, so
+   * `model.completed` is the only place its reply exists. These say whether
+   * the deltas already carried it, so the fallback below appends it once and
+   * not twice.
+   */
+  let textStreamed = false;
+  let reasoningStreamed = false;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
   /** Requests a client is being asked about, by the run's request id. */
@@ -237,14 +247,42 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         /*
          * A step boundary. Nothing on the wire means anything to a client: it
          * already sees the deltas, and the step number is facio's bookkeeping.
+         * What it does mean is that the next step has not streamed anything
+         * yet, which is what the `model.completed` fallback reads.
          */
         case 'model.started':
+          textStreamed = false;
+          reasoningStreamed = false;
+          return only([]);
         /*
-         * The step's own usage. The turn's total arrives with `run.finished`,
-         * which is where `chat/usage` is sent from. A usage action per step
-         * would report a running total as if it were the whole turn's.
+         * The step's reply, once it is whole. An adapter that streamed has
+         * already sent every part as a delta, and facio's step usage arrives
+         * with `run.finished` rather than here, so this is empty for one that
+         * streamed. An adapter that did not stream never sent a delta at all,
+         * and this is where its text and its reasoning reach the client -
+         * otherwise the turn would finish having said nothing.
          */
-        case 'model.completed':
+        case 'model.completed': {
+          const actions: Bag[] = [];
+          for (const piece of event.message.parts) {
+            if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
+              const held = thinking();
+              actions.push({ type: 'chat/responsePart', turnId, part: held });
+              held.content = `${String(held.content ?? '')}${piece.text}`;
+              actions.push({ type: 'chat/reasoning', turnId, partId: held.id, content: piece.text });
+            }
+            else if (piece.type === 'text' && !textStreamed && piece.text !== '') {
+              const held = prose();
+              held.content = `${String(held.content ?? '')}${piece.text}`;
+              actions.push({ type: 'chat/delta', turnId, partId: held.id, content: piece.text });
+            }
+          }
+          // The step is told, so a later step that did not stream is not
+          // mistaken for this one having been silent.
+          textStreamed = true;
+          reasoningStreamed = true;
+          return only(actions);
+        }
         /* A steer is already in the transcript the client typed it into. */
         case 'run.steered':
         /* Compaction changes the stored history, which the transcript reads. */
@@ -260,6 +298,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
         case 'model.delta': {
           if (event.kind === 'reasoning') {
+            reasoningStreamed = true;
             const part = thinking();
             const actions: Bag[] = [{ type: 'chat/responsePart', turnId, part }];
             part.content = `${String(part.content ?? '')}${event.text}`;
@@ -271,6 +310,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             actions.push({ type: 'chat/reasoning', turnId, partId: part.id, content: event.text });
             return only(actions);
           }
+          textStreamed = true;
           const part = prose();
           part.content = `${String(part.content ?? '')}${event.text}`;
           return only([{ type: 'chat/delta', turnId, partId: part.id, content: event.text }]);

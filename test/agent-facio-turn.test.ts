@@ -5,8 +5,9 @@ import { expect, it } from 'vitest';
 import { createFakeModel } from '@facio/agents/testing';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@facio/agents';
 import { createHost } from '../packages/sdk/src/host.js';
-import { facioAgent, sessionIdOf } from '../packages/agent-facio/src/index.js';
+import { facioAgent, facioTools, sessionIdOf } from '../packages/agent-facio/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import type { BoundTool } from '../packages/sdk/src/types/agent.js';
 import type { HostTool } from '../packages/sdk/src/types/host.js';
 
 /*
@@ -227,4 +228,36 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
 it('names the facio session id from the AHP URI in one place', () => {
   expect(sessionIdOf('ahp-session:/one')).toBe('one');
   expect(sessionIdOf('ahp-session:/a/b')).toBe('a/b');
+});
+
+it('says what a step said even when the adapter did not stream it', async () => {
+  // No `model.delta` at all: the whole reply arrives with `model.completed`,
+  // and without the fallback this turn would finish having said nothing.
+  const model = createFakeModel({ script: [{ text: 'not streamed', reasoning: 'thought it' }], stream: false });
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => ended(p, chatUri));
+
+  const prose = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/delta')
+    .map((e) => String(e.action.content))
+    .join('');
+  expect(prose).toBe('not streamed');
+  const reasoning = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/reasoning')
+    .map((e) => String(e.action.content))
+    .join('');
+  expect(reasoning).toBe('thought it');
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { content?: string }[] }[] } };
+  };
+  expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('not streamed');
+});
+
+it('does not offer a tool a client runs, because nothing here can answer it', () => {
+  const definition: BoundTool['definition'] = { name: 'lookup', description: 'Looks a word up.', inputSchema: { type: 'object', properties: {} } };
+  const mine: BoundTool = { definition, run: () => 'mine' };
+  const theirs: BoundTool = { definition: { ...definition, name: 'theirs' }, owner: 'client-1' };
+  expect(facioTools([mine, theirs]).map((one) => one.name)).toEqual(['lookup']);
 });

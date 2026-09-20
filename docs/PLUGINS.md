@@ -283,7 +283,8 @@ every session it serves:
 | `instructions` | The system prompt the agent is created with |
 | `store` | Where the facio file store lives, under `XDG_DATA_HOME` when absent |
 | `memory` | `true` to hold the store in memory, for a test |
-| `apiKey` | A key, or a function asked once per request so an expired one is not cached |
+| `apiKey` | The daemon's own key, or a function asked once per request so an expired one is not cached |
+| `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
 | `adapter` | A facio `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
 | `policy` | The run-level policy a pause comes from, facio's own default when absent |
 
@@ -295,15 +296,16 @@ turn runs:
 | --- | --- |
 | `model` | The model id this session runs on. Session-mutable |
 | `baseUrl` | The endpoint this session runs against |
-| `apiKey` | The bearer token sent to that endpoint. Session-mutable |
 | `instructions` | The system prompt for this session |
 
-**A long-lived API key belongs in the daemon's environment, not in a setting a
-client sends.** A session setting is written to the session store and travels
-over the wire, so a key configured there is a key every client and every backup
-carries. Put the real key where the daemon is configured and leave the session
-`apiKey` to a short-lived token a client really has to pass. The schema says
-the same thing where a client reads it.
+**A key is a credential, and it is not a config key.** The backend advertises a
+protected resource, and a client lends a token for it the way the protocol
+says: `authenticate` with that `resource` and the token, once per connection.
+The host passes what it was lent to the session, and the daemon's own `apiKey`
+is what runs when nobody lent one. Keep a long-lived key in the daemon's
+environment or its plugin options rather than sending it from a client: a
+config value is written to the store and travels over the wire, while a token
+pushed with `authenticate` is held per connection and never written down.
 
 A package becomes a plugin by exporting `name` and `apply` from the module its
 `ahpd.entry` names, and `@ahpd/agent-facio` is no different: its `package.json`

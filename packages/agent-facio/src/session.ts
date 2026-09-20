@@ -189,7 +189,7 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
   const agentOf = (values: Record<string, unknown>): FacioAgent => createAgent({
     id: AGENT_ID,
     instructions: instructionsOf(values),
-    model: modelOf(options, values),
+    model: modelOf(options, values, start.credentials ?? {}),
     tools: facioTools(start.tools ?? []),
     store,
     // Absent means facio's own default, which is the policy an approval comes

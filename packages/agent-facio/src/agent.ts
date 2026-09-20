@@ -33,6 +33,15 @@ export interface FacioOptions {
   baseUrl?: string;
   /** The key to send, or a function asked once per request so an expired one is not cached. */
   apiKey?: string | (() => string | Promise<string>);
+  /**
+   * The protected resource a client authenticates against.
+   *
+   * Defaults to the origin of `baseUrl` when that is an `https` URL, and to a
+   * constant naming this backend otherwise. It is advertised on
+   * `AgentInfo.protectedResources`, and the protocol only lets a client push a
+   * token for a resource the host advertised.
+   */
+  resource?: string;
   /** The model id a session that names none runs on. */
   model?: string;
   /** The system prompt the agent is created with. */
@@ -79,6 +88,31 @@ const titleOf = (said: string, fallback: string): string => {
   return line === '' ? fallback : line.slice(0, 200);
 };
 
+/** The resource a client authenticates against when nothing named one. */
+export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-facio';
+
+/**
+ * The protected resource a token for this backend belongs to.
+ *
+ * `resource` when it was named, the origin of an `https` `baseUrl` when there
+ * is one, and a constant otherwise. RFC 9728 wants an `https` URL with no
+ * fragment, which is why the endpoint's origin is used rather than the whole
+ * URL: a token is for the service, not for one path under it.
+ */
+export const resourceOf = (options: FacioOptions = {}): string => {
+  if (options.resource !== undefined) return options.resource;
+  if (options.baseUrl !== undefined) {
+    try {
+      const url = new URL(options.baseUrl);
+      if (url.protocol === 'https:') return url.origin;
+    }
+    catch {
+      // Not a URL at all, so there is nothing to name a resource after.
+    }
+  }
+  return FALLBACK_RESOURCE;
+};
+
 /**
  * The model a session runs on.
  *
@@ -86,14 +120,25 @@ const titleOf = (said: string, fallback: string): string => {
  * adapter wins over both, and a session that named no model on a backend that
  * ships no default is refused here rather than at the first call, because a
  * refusal that names the missing setting is one a person can act on.
+ *
+ * The key is the one a client lent through `authenticate` for this backend's
+ * protected resource, which the host hands to the session as its credentials,
+ * and the daemon's own key when nobody lent one. It is deliberately not a
+ * session setting: a credential in configuration is a credential written to
+ * the session store and carried by every backup.
  */
-export const modelOf = (options: FacioOptions = {}, settings: Record<string, unknown> = {}): ModelAdapter => {
+export const modelOf = (
+  options: FacioOptions = {},
+  settings: Record<string, unknown> = {},
+  credentials: Record<string, string> = {},
+): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
   const model = text(settings.model) ?? options.model;
   if (model === undefined) {
     throw new Error(`${options.provider ?? 'facio'}: no model was chosen and this backend has no default`);
   }
-  const key = text(settings.apiKey) ?? options.apiKey;
+  const lent = credentials[resourceOf(options)];
+  const key = text(lent) ?? options.apiKey;
   return openaiCompat({
     baseUrl: text(settings.baseUrl) ?? options.baseUrl ?? 'http://127.0.0.1:1234/v1',
     model,
@@ -130,9 +175,10 @@ export function facioAgent(options: FacioOptions = {}): Agent {
   /**
    * What a session may be told, and what the model is.
    *
-   * `baseUrl` and `apiKey` are session settings because a client may point a
-   * session at a different endpoint; the key is one the client sends, and the
-   * docs say to keep a long-lived one in the daemon's environment instead.
+   * `model` and `baseUrl` are configuration, which the protocol lets a client
+   * change on a running session through `session/configChanged`. The key is
+   * not here: a bearer token is a credential, and the protocol's path for one
+   * is `authenticate` against a protected resource advertised below.
    */
   const schema = (): Bag => ({
     type: 'object',
@@ -147,12 +193,6 @@ export function facioAgent(options: FacioOptions = {}): Agent {
         type: 'string',
         title: 'Endpoint',
         description: 'An OpenAI-compatible base URL, e.g. https://api.deepseek.com/v1.',
-      },
-      apiKey: {
-        type: 'string',
-        title: 'API key',
-        description: 'Sent as a bearer token. A long-lived key belongs in the daemon environment, not here.',
-        sessionMutable: true,
       },
       instructions: {
         type: 'string',
@@ -172,6 +212,15 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     provider,
     displayName,
     ...(options.description !== undefined ? { description: options.description } : {}),
+    /*
+     * The resource a client may lend a token for.
+     *
+     * `required: false` because the daemon runs as whoever started it and
+     * already holds its own key: a client's token is an override, not a
+     * precondition, and a backend that refused every session until one arrived
+     * would be a backend nobody could use from an automation.
+     */
+    protectedResources: [{ resource: resourceOf(options), resource_name: displayName, required: false }],
     schema,
     defaults,
     probe: async (): Promise<Offered> => ({
