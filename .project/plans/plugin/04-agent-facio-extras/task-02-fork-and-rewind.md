@@ -1,16 +1,20 @@
 ---
 title: A facio conversation forks at a turn and rewinds to one
-status: todo
+status: done
 depends: []
 layer: packages/agent-facio
 refs:
   - code://packages/sdk/src/types/session.ts#L189-L203 - `forkPoint` and `endPoint`, what a host asks a backend for
   - code://packages/sdk/src/types/agent.ts#L106-L121 - `Start.forkAt` and `Start.rewindAt`, what a resumed session arrives with
   - code://packages/agent-facio/src/session.ts - the session and its `create`, which this extends
+  - code://packages/agent-facio/src/agent.ts - `chats: { fork: true }`, the capability a fork is offered through
   - file:///github/facio/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
-  - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, which today start a run from its session's whole history
+  - file:///github/facio/packages/agents/src/store/cut.ts - `selectCut`, the one rule both stores cut by
+  - file:///github/facio/packages/store-file/src/store.ts - `truncate` and `fork`, and the `lastMessageId` an append advances
+  - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, neither of which can start at a message
   - code://packages/agent-claude/src/session.ts - a backend that already answers both
-  - code://.project/decisions/facio-fork-and-rewind-needs-a-cut.md - the proposed decision this task waits on
+  - code://test/agent-facio-fork.test.ts - the cases
+  - code://.project/decisions/facio-fork-and-rewind-needs-a-cut.md - the decision this task implements
 ---
 
 ## Objective
@@ -45,8 +49,14 @@ A facio session answers `forkPoint(turnId)` with the message the turn began at a
 
 ## Resume
 
-Not started, and waiting on [facio-fork-and-rewind-needs-a-cut](../../decisions/facio-fork-and-rewind-needs-a-cut.md), which is proposed.
-Read against facio: `run()` has no argument for the history to run on and `turn.ts` reads the whole session's messages, `Store.sessions` cannot remove messages after one, and a run record's `inputMessageId`/`lastMessageId` are the only cut points it records.
-So a fork is reachable today by seeding a new facio session through the public store calls, and a rewind is not without facio gaining a truncation.
-Step 1 of the task is therefore done as reconnaissance and its outcome is the decision; the implementation waits for which option is chosen.
-One silent wrong path was found while reading it and has already been closed: `start.forkAt` and `start.rewindAt` were ignored, so a fork arrived as a plain continue and appended to the conversation it was meant to preserve. `facioSession` now refuses either by name, and `test/agent-facio-fork.test.ts` pins all three cases - a fork refused, a rewind refused, and an ordinary session still opening. Whichever option is chosen, this task replaces the refusal with the real cut and keeps it for the side that is not implemented.
+Done 2026-09-20.
+`session.ts` answers `forkPoint(turnId)` with the run's `inputMessageId` and `endPoint(turnId)` with its `lastMessageId`, both read from the run record as the turn ends and before the client is told it did; a turn this process did not watch has no entry and answers nothing.
+`create` cuts before the first turn: `start.forkAt` copies the resumed conversation through that message into a new facio session id with `Store.sessions.fork` and leaves the source whole, `start.rewindAt` drops what followed it in place with `Store.sessions.truncate`.
+The cut rides the `opening` chain every turn already waits on.
+A `forkAt` beside a `rewindAt` is refused by name, and a cut the store will not make leaves every turn answered with `chat/error` through the new `failTurn` rather than carrying on from the wrong place.
+`agent.ts` advertises `chats: { fork: true }` and no side chat.
+The cut itself is the change in `/github/facio` the decision chose: `Store.sessions.truncate` and `Store.sessions.fork`, `selectCut` as the one rule both stores cut by, and `appendMessages` advancing a run's `lastMessageId`.
+That last part was found missing while implementing this, because the loop never wrote the slot, and without it a cut would have dropped every run and a fork would have lost the usage and the tool timings of the turns it kept.
+`test/agent-facio-fork.test.ts` is nine cases: a fork through the session with the source still whole and the fork going on as itself, a rewind under the same id with the next turn running rather than refused `writer_busy`, no point for a turn read back off the store, both cuts asked for at once refused, a point the conversation does not hold failing the turn without appending anything, the store-level shape of a fork, a plain session still opening, and the same fork and rewind driven through `createHost` by `createChat` with `source.kind: 'fork'` and by a `chat/truncated` dispatch.
+Verified: the eight facio test files 60 passed, the full suite 790 passed with one pre-existing `host.test.ts` `create-pr` flake that passes alone and is untouched here, `pnpm typecheck` green, `pnpm boundary` green.
+Departures from the plan: a fork cuts at the prompt of the turn rather than at its end, which is what `forkPoint` means and what lets the forked turn be asked again; `start.forkAt` with no `start.resume` is refused rather than forked from nothing; `endPoint` is answered from the store's run record rather than tracked off the events, because the last message a run writes is a tool result, a steer or a cancel marker that no event names, and a guessed point would drop a kept turn's log.

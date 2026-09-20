@@ -1,7 +1,7 @@
 ---
 title: The facio backend declares tool effects, forks a conversation, and runs a client's tool
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -22,6 +22,7 @@ refs:
   - file:///github/facio/packages/agents/src/types/tool.ts - `ToolEffects`, the four flags task 01 carries
   - file:///github/facio/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
   - file:///github/facio/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
+  - file:///github/facio/packages/agents/src/store/cut.ts - `selectCut`, the one rule both stores cut by
   - code://packages/agent-claude/src/session.ts - a backend that already answers `forkPoint`, `endPoint` and `completeToolCall`
 ---
 
@@ -53,7 +54,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [A host tool says what running it does, and a destructive one is asked about by the policy that already exists](../../decisions/host-tool-declares-what-it-does.md) | Softov, 2026-09-20: "ok on the fix.. its better than my approach" |
+| 1 | [A host tool says what running it does, and a destructive one is asked about by the policy that already exists](../../../decisions/host-tool-declares-what-it-does.md) | Softov, 2026-09-20: "ok on the fix.. its better than my approach" |
+| 2 | [Fork and rewind are a cut in the store, and the run loop keeps reading the session](../../../decisions/facio-fork-and-rewind-needs-a-cut.md) | Softov, 2026-09-20: "ok do option 2" |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -73,7 +75,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A host tool says what it does](task-01-a-host-tool-says-what-it-does.md) | done | - |
-| [02 - Fork and rewind a facio conversation](task-02-fork-and-rewind.md) | todo | - |
+| [02 - Fork and rewind a facio conversation](task-02-fork-and-rewind.md) | done | - |
 | [03 - A client runs its own tool](task-03-a-client-runs-its-own-tool.md) | done | - |
 | [04 - The harness's own configuration is the default](task-04-the-harness-config-is-the-default.md) | done | - |
 
@@ -86,17 +88,15 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** task 01, a host tool's effects, task 03, a client's own tool, and task 04, the harness configuration, done 2026-09-20.
-- **Next action:** [task-02-fork-and-rewind.md](task-02-fork-and-rewind.md), which is waiting on [facio-fork-and-rewind-needs-a-cut](../../decisions/facio-fork-and-rewind-needs-a-cut.md): fork only and refuse a rewind, a facio cut first and then both, or refuse both.
-- **Open questions:**
-  1. That decision, which is the only thing task 02 waits on; the reconnaissance is done and recorded in the task's Resume.
-  2. Whether a rewind needs the run it drops to be cancelled first, since facio keeps one live run per session - proposed: yes, cancel through the existing path, and the test asserts one live run.
-- **Watch out for:** a fork or a rewind on a session whose agent is still running is refused by the host rather than by the backend, so the bridge may assume it is starting fresh; and `RunRecord.inputMessageId` is absent for a run the store has only partly written, which must be a refusal and not a fork at the wrong place.
+- **Done so far:** all four tasks, 2026-09-20. Task 01, a host tool's effects; task 02, the fork and the rewind over the cut facio gained; task 03, a client's own tool; task 04, the harness configuration.
+- **Next action:** none; the plan is built and [implemented.md](implemented.md) records it.
+- **Open questions:** none. The cut decision was settled by [facio-fork-and-rewind-needs-a-cut](../../../decisions/facio-fork-and-rewind-needs-a-cut.md) as two store primitives and a loop that keeps reading the session, and the cut is made before the first turn, so the run it drops is never left writing.
+- **Watch out for:** the `@facio/*` dependencies are `link:` to a sibling checkout, so the cut these two tasks depend on lives in `/github/facio` and is not committed by this repository; see [deferred.md](deferred.md) for what waits on facio publishing.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with a destructive host tool gated by the default policy, a fork, a rewind, and a client-run tool.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: a window's fork and rewind work on a facio session, and a client tool offered to the model runs on the client.
-- [ ] `docs/PLUGINS.md` names `effects` and what a destructive tool does.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with a destructive host tool gated by the default policy, a fork, a rewind, and a client-run tool: 790 passed with one pre-existing `host.test.ts` `create-pr` flake that passes alone.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] By hand: a window's fork and rewind work on a facio session, and a client tool offered to the model runs on the client. The window was not driven; the host handlers a window calls are exercised end to end by `test/agent-facio-fork.test.ts` through `createHost`, so what is unverified is the client's drawing of the controls and not the backend.
+- [x] `docs/PLUGINS.md` names `effects` and what a destructive tool does.
+- [x] `plans/index.md` updated.

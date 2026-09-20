@@ -4,10 +4,12 @@ status: accepted
 date: 2026-09-20
 refs:
   - code://.project/plans/plugin/04-agent-facio-extras/task-02-fork-and-rewind.md - the task this decides the shape of
-  - code://packages/agent-facio/src/agent.ts - where the two point methods would live, and where the comment says they are unmapped
+  - code://packages/agent-facio/src/session.ts - the two point methods and the cut `create` makes
   - file:///github/facio/packages/agents/src/run/run.ts - `run()`, which has no argument for the history to run on
   - file:///github/facio/packages/agents/src/run/turn.ts - `store.sessions.listMessages({ sessionId })`, the whole session, read once per turn
-  - file:///github/facio/packages/agents/src/types/store.ts - `Store.sessions`, whose only removal is a whole session
+  - file:///github/facio/packages/agents/src/types/store.ts - `Store.sessions`, whose only removal was a whole session
+  - file:///github/facio/packages/agents/src/store/cut.ts - `selectCut`, the one rule the two stores cut by
+  - file:///github/facio/packages/store-file/src/store.ts - `truncate`, `fork`, and the `lastMessageId` an append advances
   - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, neither of which can start at a message
 ---
 
@@ -16,7 +18,7 @@ refs:
 `@ahpd/agent-facio` leaves `Start.forkAt` and `Start.rewindAt` unmapped, so the window's fork and rewind controls do nothing on a facio session.
 AHP means two different things by them: a fork continues from a turn under a **new** session id and leaves the original whole, while a rewind continues under the **same** id with the turns after the cut dropped.
 
-Facio records the two facts a cut needs - a run's `inputMessageId` and `lastMessageId` - but it has no way to act on them.
+Facio records one of the two facts a cut needs - a run's `inputMessageId` - and documents `lastMessageId` as the other beside it, but nothing wrote the second and the store has no way to act on either.
 `run()` takes no history: `turn.ts` reads `store.sessions.listMessages({ sessionId })`, which is the whole session, and `ResumeArgs` only rejoins a run after a sequence number.
 `Store.sessions` can append, list, claim and release, and delete a whole session; it cannot remove the messages after one.
 
@@ -27,7 +29,7 @@ A rewind is not: the same session id cannot drop a tail, and deleting and recrea
 
 `@facio/agents` gains two store primitives, and the run loop is not touched:
 
-1. `Store.sessions.truncate({ sessionId, throughMessageId })` drops the messages after the given one, and with them the runs, events, steps and requests of the turns that went with them. A run record is kept only when its `inputMessageId` and its `lastMessageId` are both among the messages that remain, so the kept turns keep their usage and their tool timings. It refuses with `writer_busy` while a `running` claim is held, the way `delete` already does, and with `not_found` for a session or a message that is not there. A rewind is this.
+1. `Store.sessions.truncate({ sessionId, throughMessageId })` drops the messages after the given one, and with them the runs, events, steps and requests of the turns that went with them. A run record is kept only when its `inputMessageId` and its `lastMessageId` are both among the messages that remain, so the kept turns keep their usage and their tool timings. `appendMessages` advances `lastMessageId` to the last message written under the run, which is what makes the slot exact for any run the loop drove; it was documented and never written. It refuses with `writer_busy` while a `running` claim is held, the way `delete` already does, and with `not_found` for a session or a message that is not there. A rewind is this.
 2. `Store.sessions.fork({ fromSessionId, throughMessageId, sessionId })` creates the target session and copies the kept messages and their run, event and step records into it, leaving the source untouched. A fork is this, and the new id is what makes the original whole for somebody else to find.
 
 `run()` keeps reading `store.sessions.listMessages({ sessionId })` and gains no history argument: the session is the one place that says what the conversation is, and a history passed per call would let the store and the model's prompt disagree. The cut happens before the run, in the place that owns the conversation.
@@ -37,7 +39,7 @@ Source: Softov, 2026-09-20: "ok do option 2".
 
 Both AHP operations are honoured with the semantics AHP gives them: a fork under a new id with the original untouched, a rewind under the same id with the tail dropped, and neither one losing the record of the turns it keeps.
 The host's two paths already hand the cut point over - `forkPoint` for a fork, `endPoint` for a rewind - so the bridge only has to honour it, and a client that offers the controls gets a working one.
-The loop, the model request and the run record are unchanged, so nothing about a normal turn moves and the change is testable at the store alone.
+The loop and the model request are unchanged, so nothing about a normal turn moves and the change is testable at the store alone; the only record that moves is a run's `lastMessageId`, which gains the value it was always documented to hold.
 A truncation is also the primitive a compaction that replaces a prefix needs, so the store owns one more operation rather than the harness growing a second notion of history.
 The cost is a store contract that both implementations must honour identically, which is what the conformance suite is for.
 
@@ -46,7 +48,7 @@ The cost is a store contract that both implementations must honour identically, 
 - **Fork only, from the bridge, and refuse a rewind.**
   Rejected once the cut was understood: it is asymmetric for no reason, and the host has no separate rewind flag, so the window would offer a fork and no rewind, which is honest but half the feature.
 - **Refuse both.**
-  Rejected: the host's paths exist, `inputMessageId` and `lastMessageId` are already recorded, and the control is something a client draws.
+  Rejected: the host's paths exist, `inputMessageId` is recorded, and the control is something a client draws.
 - **`RunArgs.history`, with the run given the messages to run on.**
   Rejected: two sources of truth for the conversation. The store would hold one history and the prompt another, and every later feature would have to reconcile them.
 - **Seed a new session for a rewind as well**, keeping the id by deleting and recreating the session.
