@@ -1,7 +1,7 @@
 ---
 title: Daemon - what exists today
 domain: daemon
-revalidated: 2026-09-18
+revalidated: 2026-09-20
 ---
 
 The daemon is `packages/server` (`@ahpd/server`, binary `ahpd`): the process a person starts, its command line, its configuration directory, and the record it keeps of itself.
@@ -36,5 +36,5 @@ ahpd [start|stop|status|config] [flags]
 
 ## Known gaps
 
-- The backend list is a literal in `main.ts`; idea [agents as extensions](../../ideas/agents-as-extensions.md).
+- The backend list and every port are a literal in `main.ts`; plan [01 - Plugins load from configuration](../plugin/01-plugins-load-from-configuration/plan.md), which the five steps of idea [agents as extensions](../../ideas/agents-as-extensions.md) then load through.
 - The record the detached daemon keeps about itself holds the port and where the token came from, and not the token, so a connection URL has to be assembled by hand; plan [02 - Connect URL in the record](02-connect-url-in-record/plan.md).

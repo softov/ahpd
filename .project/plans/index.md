@@ -53,7 +53,17 @@ Reference: [00-documentation.md](documentation/00-documentation.md)
 
 Next free number in `documentation`: `02`.
 
+## plugin
+
+Reference: [00-plugin.md](plugin/00-plugin.md)
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - Plugins load from configuration](plugin/01-plugins-load-from-configuration/plan.md) | high | planned 2026-09-20 | - | the agent plugins, which arrive through it |
+
+Next free number in `plugin`: `02`.
+
 ## Domains without a plan
 
-None. `host`, `claude` and `documentation` were the domains listed here, and each has a plan above now.
+None. `host`, `claude`, `documentation` and `plugin` were the domains listed here, and each has a plan above now.
 Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md).
