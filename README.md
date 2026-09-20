@@ -57,21 +57,19 @@ The clients on the left are interchangeable and none of them owns the session. `
 
 ## Install and run the daemon
 
-**Not published yet.** `ahpd` is not on npm, so the install is from source:
+```bash
+npm i -g @ahpd/server
+ahpd --path /work/project
+```
+
+The rest of this README writes `ahpd` for that command.
+
+To run it from source instead, which is what [DEVELOPER.md](DEVELOPER.md) is for, every flag is the same:
 
 ```bash
 git clone https://github.com/softov/ahpd && cd ahpd
 pnpm install && pnpm build
 node packages/server/dist/main.js --path /work/project
-```
-
-The rest of this README writes `ahpd` for `node packages/server/dist/main.js`.
-
-Once it is published this will be the shorter form, and every flag is the same:
-
-```bash
-npm i -g @ahpd/server
-ahpd --path /work/project
 ```
 
 ### Run in the background
@@ -322,8 +320,10 @@ ahpc --host ws://127.0.0.1:9201
 
 ## Development
 
+The workspace, the checks and how a release is published are in [DEVELOPER.md](DEVELOPER.md).
+
 ```bash
-pnpm test        # ~450 tests, no socket and no network
+pnpm test        # ~640 tests, no socket and no network
 pnpm typecheck
 pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```
