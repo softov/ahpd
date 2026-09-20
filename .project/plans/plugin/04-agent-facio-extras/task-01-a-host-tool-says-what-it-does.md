@@ -1,6 +1,6 @@
 ---
 title: A host tool says what it does, so the default policy can ask
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:
@@ -39,4 +39,9 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`ToolEffects` is a new interface in `types/agent.ts`, `HostTool` and `BoundTool` both carry an optional `effects`, `host.ts`'s `boundTools` passes a host tool's effects through to the backend, and `agent-facio`'s `facioTool` hands them to `createTool`, so facio's own default policy asks about a destructive tool.
+`test/agent-facio-approval.test.ts` gained two cases: a destructive host tool pauses with no `policy` configured and has not run, and a tool that says nothing runs.
+`docs/PLUGINS.md` has a "What a tool says about itself" section with the four flags and the example.
+Verified: `pnpm test` facio files 39 passed, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` four packages.
+Departure from the plan: `ToolEffects` was defined in `types/agent.ts` rather than in `types/host.ts`, because `BoundTool` is already there and `host.ts` already imports from it, so the field is added in the direction the dependency already runs.

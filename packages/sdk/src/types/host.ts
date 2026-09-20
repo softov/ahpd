@@ -1,7 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
-import type { Agent } from './agent.js';
+import type { Agent, ToolEffects } from './agent.js';
 import type { HostHandlers } from './events.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
@@ -292,6 +292,15 @@ export interface HostTool {
   definition: ToolDefinition;
   /** What running it does. */
   run(input: Record<string, unknown>, at: ToolCall): Promise<string> | string;
+  /**
+   * What running this tool does to the world.
+   *
+   * The host's own claim, not a guarantee, and nothing when the tool does not
+   * say. A backend that runs it reads this to decide what to ask a person
+   * about: `destructive` is what a policy asks on, and the rest is there for a
+   * changeset or a network policy that wants it.
+   */
+  effects?: ToolEffects;
   /**
    * What to tell the model about when to call it, beyond the description.
    *

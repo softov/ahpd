@@ -54,6 +54,10 @@ export const facioTool = (bound: BoundTool): Tool<Record<string, unknown>> => cr
   name: bound.definition.name,
   description: bound.definition.description ?? bound.definition.title ?? bound.definition.name,
   input: inputOf(bound),
+  // What the host says running it does, so facio's own default policy asks a
+  // person about a destructive tool rather than running it unchecked. A tool
+  // that says nothing keeps facio's defaults.
+  ...(bound.effects !== undefined ? { effects: bound.effects } : {}),
   execute: async (input) => {
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);

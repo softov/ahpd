@@ -8,6 +8,25 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 
 /**
+ * What running a tool does to the world.
+ *
+ * The contribution's own claim rather than a guarantee, and every flag is
+ * optional because a tool that says nothing is a tool as it always was. What
+ * reads it is a policy: a backend that runs the tool decides what to ask a
+ * person about, and `destructive` is the flag the default asks on.
+ */
+export interface ToolEffects {
+  /** It reads something. */
+  reads?: boolean;
+  /** It changes something. */
+  writes?: boolean;
+  /** It reaches the network. */
+  network?: boolean;
+  /** It can destroy something, so a person is asked before it runs by default. */
+  destructive?: boolean;
+}
+
+/**
  * A tool the host contributes, with the session it was contributed to
  * already bound.
  *
@@ -22,6 +41,11 @@ export interface BoundTool {
    * What running it does. Absent for a tool a client runs - see `owner`.
    */
   run?(input: Record<string, unknown>): Promise<string> | string;
+  /**
+   * What running it does to the world, carried from the `HostTool` that
+   * contributed it. A backend reads this to decide whether to ask a person.
+   */
+  effects?: ToolEffects;
   /**
    * The client that runs this one, when it is a client's rather than the host's.
    *

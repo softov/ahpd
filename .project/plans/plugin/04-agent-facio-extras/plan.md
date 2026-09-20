@@ -1,7 +1,7 @@
 ---
 title: The facio backend declares tool effects, forks a conversation, and runs a client's tool
 domain: plugin
-status: planned
+status: active
 priority: medium
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -70,7 +70,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A host tool says what it does](task-01-a-host-tool-says-what-it-does.md) | todo | - |
+| [01 - A host tool says what it does](task-01-a-host-tool-says-what-it-does.md) | done | - |
 | [02 - Fork and rewind a facio conversation](task-02-fork-and-rewind.md) | todo | - |
 | [03 - A client runs its own tool](task-03-a-client-runs-its-own-tool.md) | todo | - |
 
@@ -83,8 +83,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing; the decision and this plan were written 2026-09-20, and the three gaps are the ones plan 03 recorded in `implemented.md` and `deferred.md`.
-- **Next action:** [task-01-a-host-tool-says-what-it-does.md](task-01-a-host-tool-says-what-it-does.md).
+- **Done so far:** task 01, a host tool's effects, done 2026-09-20.
+- **Next action:** [task-02-fork-and-rewind.md](task-02-fork-and-rewind.md).
 - **Open questions:**
   1. Does a rewind need the run it drops to be cancelled first, since facio keeps a run per session and a rewind starts another - proposed: yes, cancel through the existing path and then start at the earlier point, and the test asserts one live run.
 - **Watch out for:** a fork or a rewind on a session whose agent is still running is refused by the host rather than by the backend, so the bridge may assume it is starting fresh; and `RunRecord.inputMessageId` is absent for a run the store has only partly written, which must be a refusal and not a fork at the wrong place.

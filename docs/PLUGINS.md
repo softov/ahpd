@@ -62,6 +62,25 @@ reached as ports, so no key has two spellings.
 A plugin that registers the same port twice, or two agents with one `provider`,
 fails its own `apply` rather than the daemon.
 
+### What a tool says about itself
+
+A `HostTool` may carry `effects`: `reads`, `writes`, `network` and
+`destructive`, each optional and nothing set when the tool does not say.
+
+```ts
+host.registerTool({
+  definition: { name: 'remove_file', description: 'Deletes a file.', inputSchema: { type: 'object', properties: {} } },
+  effects: { writes: true, destructive: true },
+  run: async (input, at) => { … },
+});
+```
+
+It is the host's own claim, not a guarantee, and it is what a backend reads to
+decide whether to ask a person. `@ahpd/agent-facio` passes it to the runtime,
+whose default policy asks about a destructive tool, so a daemon configured only
+from a file can have one gated with no policy of its own. A tool that says
+nothing behaves exactly as it did before the field existed.
+
 ### Read-only context
 
 `PluginHost` also carries what `apply` may read and not change:

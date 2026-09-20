@@ -3566,6 +3566,7 @@ export function createHost(options: HostOptions): Host {
             throw error;
           }
         },
+        ...(one.effects !== undefined ? { effects: one.effects } : {}),
         ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
       }];
     }),

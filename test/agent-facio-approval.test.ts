@@ -15,10 +15,10 @@ import type { HostTool } from '../packages/sdk/src/types/host.js';
  * A facio run that stops for a person, as a client drives it.
  *
  * No network and no real model: the adapter is a script, the store is in
- * memory, and the host is the same `createHost` the daemon uses. The policy
- * is the one seam this file adds to the bridge - facio's own default asks
- * about a destructive tool, and no AHP host tool description carries that
- * hint yet, so a test that needs a pause says which tool asks.
+ * memory, and the host is the same `createHost` the daemon uses. Two paths
+ * raise a pause: a host tool that declares `effects.destructive`, which
+ * facio's own default policy asks about with no policy configured, and a
+ * policy the caller passes for a tool that says nothing.
  *
  * What this checks is the whole round trip: an `approval.requested` becomes
  * a tool call plus a `toolConfirmation` entry, `confirm` takes the entry down
@@ -418,4 +418,32 @@ it('declines a question as a deny rather than an empty answer', async () => {
   expect(result.error?.message).toContain('declined');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
   expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
+});
+
+it('asks about a destructive host tool with no policy configured', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('c1', 'note'), stream: true });
+  // No `policy` option: the pause has to come from the tool's own effects and
+  // facio's default policy, which is what a JSON-configured daemon can reach.
+  const { client, peer: p } = await talking(model, [{ ...writer(ran), effects: { writes: true, destructive: true } }], {});
+  const { uri, chatUri } = await open(client, 'destructive');
+  begin(client, chatUri, 't1', 'write it');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+
+  expect(needed(p, uri, 'toolConfirmation')).toBeDefined();
+  // Asked, so not run, and the turn is not over.
+  expect(ran).toEqual([]);
+  expect(types(p, chatUri)).not.toContain('chat/turnComplete');
+});
+
+it('runs a host tool that says nothing about itself', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('c2', 'plain'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], {});
+  const { uri, chatUri } = await open(client, 'no-effects');
+  begin(client, chatUri, 't1', 'write it');
+  await until(() => ended(p, chatUri));
+
+  expect(needed(p, uri, 'toolConfirmation')).toBeUndefined();
+  expect(ran).toEqual(['plain']);
 });
