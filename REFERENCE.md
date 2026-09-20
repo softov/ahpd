@@ -78,7 +78,10 @@ is the entry: one row per plan, and a reference file per domain
 folder with a `plan.md`, one file per task, and `implemented.md` once it is
 built. Every decision is a file under `decisions/`; a plan only links them,
 and a choice with no file is not a decision. What is not planned yet is one
-file each under `ideas/`, and a plan starts from one of them.
+file each under `ideas/`, and a plan starts from one of them. What is worth
+opening on somebody else's tracker is one file each under `proposals/`, for a
+fault that is upstream rather than here: the target repository, the evidence,
+and the ask.
 
 The format is specai 0.1, and the rules are in the `do-spec` skill under
 [`.agents/skills/do-spec/`](.agents/skills/do-spec/SKILL.md): frontmatter on
