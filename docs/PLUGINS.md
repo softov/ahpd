@@ -329,9 +329,9 @@ harness runs:
 `@ahpd/agent-facio` reads facio's own file,
 `$XDG_CONFIG_HOME/facio/config.json` or `~/.config/facio/config.json`, so a
 person who has already pointed the harness at a provider does not say it again
-in the plugin's options.
-[`facio-config.example.json`](facio-config.example.json) is a complete
-OpenRouter file: copy it to `~/.config/facio/config.json` and put your key in.
+in the plugin's options. An OpenRouter file of your own, which the facio
+repository also carries copyable at `examples/facio-config.example.json`, looks
+like this with your key in place:
 
 ```json
 {

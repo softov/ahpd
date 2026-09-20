@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -97,17 +97,4 @@ it('lets the plugin and the session win over the harness, and refuses a provider
   put(CONFIG);
   expect(modelOf({ model: 'mine' }, { baseUrl: 'https://mine.example/v1' }).modelId).toBe('mine');
   expect(() => modelOf({ model: 'absent/model' })).toThrow(/configures open_router/);
-});
-
-it('ships an OpenRouter sample the reader accepts as it stands', () => {
-  // The documented sample is a file somebody copies, so it is read here rather
-  // than trusted: a sample the backend would drop is worse than none.
-  const sample = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'docs', 'facio-config.example.json'), 'utf8')) as unknown;
-  put(sample);
-  const found = harnessConfig();
-  expect(found.providers).toEqual([
-    { id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-v1-REPLACE_WITH_YOUR_KEY' },
-  ]);
-  expect(found.model).toBe('open_router/deepseek/deepseek-chat');
-  expect(splitModel(String(found.model))).toEqual({ provider: 'open_router', modelId: 'deepseek/deepseek-chat' });
 });
