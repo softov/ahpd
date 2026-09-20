@@ -18,11 +18,12 @@
  *   `responseParts` is what the agent answered.
  */
 
-import { createAgent, resume, run, textOf } from '@facio/agents';
-import type { Agent as FacioAgent, RunCommand, RunEvent, RunHandle, Store } from '@facio/agents';
+import { resolve, sep } from 'node:path';
+import { createAgent, policyOf, resume, run, textOf } from '@facio/agents';
+import type { Agent as FacioAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store } from '@facio/agents';
 import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
-import { modelOf, storeOf } from './agent.js';
+import { PERMISSION_MODES, modelOf, storeOf } from './agent.js';
 import type { FacioOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
@@ -30,6 +31,27 @@ import { mapTurn } from './mapping.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
 import { facioTools } from './tools.js';
 import type { ClientToolRelay } from './tools.js';
+
+/**
+ * Whether a path a tool names stays inside the directory the session works in.
+ *
+ * The workspace boundary is a host fact, which is why the harness takes it as
+ * a predicate rather than a directory: this host's tools are the daemon's and
+ * a client's, and a path is either under the directory the session was opened
+ * in or it is not.
+ */
+const insideDirectory = (workspace: string, path: string): boolean => {
+  const target = resolve(workspace, path);
+  return target === workspace || target.startsWith(workspace.endsWith(sep) ? workspace : `${workspace}${sep}`);
+};
+
+/** The mode a session's settings name, or this backend's own default when they name none. */
+const modeOf = (values: Record<string, unknown>): PermissionMode => {
+  const named = values.permissionMode;
+  return typeof named === 'string' && (PERMISSION_MODES as readonly string[]).includes(named)
+    ? named as PermissionMode
+    : 'auto';
+};
 
 /**
  * The facio agent id.
@@ -321,6 +343,12 @@ export function facioSession(
    * The facio agent a turn runs on, built fresh so the config in force is
    * the config that runs. `createAgent` is a value, not an actor, so building
    * it per turn costs nothing the store does not already hold.
+   *
+   * The policy is the mode's, unless the plugin configured one of its own: an
+   * embedder's policy is the run-level authority, and the mode is not offered
+   * as a control when it is there. What counts as an edit is a tool that says
+   * it writes - this host's tools are the daemon's and a client's, so their
+   * names are not a list this backend can keep.
    */
   const agentOf = (values: Record<string, unknown>): FacioAgent => createAgent({
     id: AGENT_ID,
@@ -328,9 +356,12 @@ export function facioSession(
     model: modelOf(options, values, start.credentials ?? {}, harness),
     tools: facioTools(offered, relay),
     store,
-    // Absent means facio's own default, which is the policy an approval comes
-    // from; this bridge does not keep a second one beside it.
-    ...(options.policy !== undefined ? { policy: options.policy } : {}),
+    policy: options.policy ?? {
+      decide: policyOf(modeOf(values), {
+        inside: (path) => insideDirectory(where, path),
+        isEdit: (tool) => tool.effects.writes === true,
+      }),
+    },
   });
 
   /** Say what it is doing, on both channels, the way a session mirrors its chat. */

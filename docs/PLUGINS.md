@@ -316,6 +316,23 @@ turn runs:
 | `model` | The model id this session runs on. Session-mutable |
 | `baseUrl` | The endpoint this session runs against |
 | `instructions` | The system prompt for this session |
+| `permissionMode` | How tool approvals are handled. Session-mutable, and offered only when the plugin configured no `policy` |
+| `effortLevel` | How hard the model is asked to think. Chat-scoped, and offered only when this backend builds the request |
+
+The approvals mode is one of six, with the meanings the harness gives them:
+`default` asks before a tool that writes, goes online or destroys anything;
+`acceptEdits` lets a write inside the working directory through and asks for
+everything else that a person should see; `plan` refuses anything that writes
+or destroys, so the model can read and propose without changing a file;
+`auto`, the default, asks only about a tool that declares itself destructive;
+`bypassPermissions` runs everything; and `dontAsk` refuses whatever would have
+needed approval. A `policy` passed in the plugin's options is the run-level
+authority, so the mode control is not offered beside it.
+
+The thinking level is `off`, `low`, `medium` or `high`, and it reaches the
+request as `reasoning_effort`; `off` sends no reasoning field at all. Per-model
+thinking levels are not offered, because an OpenAI-compatible catalogue
+publishes no such thing per model.
 
 **A key is a credential, and it is not a config key.** The backend advertises a
 protected resource, and a client lends a token for it the way the protocol

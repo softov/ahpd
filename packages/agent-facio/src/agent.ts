@@ -14,7 +14,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore, textOf } from '@facio/agents';
-import type { ModelAdapter, Policy, Store } from '@facio/agents';
+import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@facio/agents';
 import { openaiCompat } from '@facio/model-openai-compat';
 import { createFileStore } from '@facio/store-file';
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
@@ -92,6 +92,50 @@ const titleOf = (said: string, fallback: string): string => {
 
 /** The resource a client authenticates against when nothing named one. */
 export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-facio';
+
+/**
+ * The approvals modes a session may be put in, in the window's own order.
+ *
+ * The same six the Claude backend advertises, because the labels are what a
+ * person reads and the harness owns the meanings: `policyOf` in
+ * `@facio/agents` is what a mode becomes. `auto` is facio's own default, so
+ * that is what a session that chooses none starts on.
+ */
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const;
+
+/** What each mode is called where a person reads it. */
+export const PERMISSION_LABELS = [
+  'Ask Before Edits',
+  'Edit Automatically',
+  'Plan Mode',
+  'Auto Mode',
+  'Bypass Permissions',
+  "Don't Ask",
+] as const;
+
+/** One line about what each mode does, in this backend's words rather than the Claude SDK's. */
+export const PERMISSION_DESCRIPTIONS = [
+  'Asks before writing, going online or destroying anything.',
+  'Writes inside the working directory without asking, and asks for other tools.',
+  'Reads only: anything that writes or destroys is refused.',
+  'Asks only when a tool says it is destructive.',
+  'Runs every tool without asking.',
+  'Refuses anything that would have needed approval, without asking.',
+] as const;
+
+/** The thinking levels a turn may be given, `off` first. */
+export const EFFORT_LEVELS = ['off', 'low', 'medium', 'high'] as const;
+
+/**
+ * The reasoning effort a session's setting names.
+ *
+ * `off`, a missing value and anything unrecognised all send nothing: an
+ * endpoint is not troubled with a field for a model that was not asked to
+ * think, which is also the only form the adapter's `features.reasoning` lets
+ * through until a level is actually chosen.
+ */
+export const effortOf = (value: unknown): ReasoningEffort | undefined =>
+  value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
 
 /**
  * The protected resource a token for this backend belongs to.
@@ -283,12 +327,19 @@ export const modelOf = (
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
   const connection = connectionOf(options, settings, credentials, harness, true);
+  const effort = effortOf(settings.effortLevel);
   // Strict resolution has answered that a model was chosen.
   return openaiCompat({
     baseUrl: connection.baseUrl,
     model: connection.model as string,
     ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
     ...(connection.headers === undefined ? {} : { headers: connection.headers }),
+    /*
+     * A chosen level turns reasoning on for the request, because the adapter
+     * sends nothing while `features.reasoning` is false - its default - and
+     * off, missing or unrecognised sends nothing at all.
+     */
+    ...(effort === undefined ? {} : { params: { reasoning: { effort } }, features: { reasoning: true } }),
   });
 };
 
@@ -333,6 +384,13 @@ export function facioAgent(options: FacioOptions = {}): Agent {
    * change on a running session through `session/configChanged`. The key is
    * not here: a bearer token is a credential, and the protocol's path for one
    * is `authenticate` against a protected resource advertised below.
+   *
+   * The mode and the effort are the two controls a client draws beyond the
+   * text fields, and each is offered only where this backend can honour it:
+   * the mode when no run-level `policy` was configured, because that policy is
+   * the authority and a picker that changed nothing would be a lie, and the
+   * effort when this backend builds the request, because a caller-passed
+   * adapter keeps its own list.
    */
   const schema = (): Bag => ({
     type: 'object',
@@ -353,6 +411,47 @@ export function facioAgent(options: FacioOptions = {}): Agent {
         title: 'Instructions',
         description: 'The system prompt this agent runs with.',
       },
+      /*
+       * The approvals mode. The names and labels are the ones the window
+       * already draws for Claude, so one session reads the same whichever
+       * backend it is; the default is `auto`, which is facio's own policy,
+       * asking only about a tool that says it is destructive.
+       */
+      ...(options.policy === undefined
+        ? {
+            permissionMode: {
+              scope: 'session',
+              type: 'string',
+              title: 'Approvals',
+              description: 'How the agent handles tool approvals.',
+              enum: [...PERMISSION_MODES],
+              enumLabels: [...PERMISSION_LABELS],
+              enumDescriptions: [...PERMISSION_DESCRIPTIONS],
+              default: 'auto',
+              sessionMutable: true,
+            },
+          }
+        : {}),
+      ...(options.adapter === undefined
+        ? {
+            effortLevel: {
+              scope: 'chat',
+              type: 'string',
+              title: 'Effort',
+              description: 'How hard it thinks before answering.',
+              enum: [...EFFORT_LEVELS],
+              enumLabels: ['Off', 'Low', 'Medium', 'High'],
+              enumDescriptions: [
+                'Answers without extra thinking.',
+                'Thinks briefly.',
+                'Thinks before answering.',
+                'Thinks hard before answering.',
+              ],
+              default: 'off',
+              sessionMutable: true,
+            },
+          }
+        : {}),
     },
   });
 

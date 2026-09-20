@@ -19,7 +19,9 @@ it('answers provider facio with the settings a session may carry', () => {
   expect(agent.displayName).toBe('Facio');
   // No key: a bearer token is a credential, and the protocol's path for one is
   // `authenticate` against the protected resource below, not session config.
-  expect(Object.keys(properties(agent))).toEqual(['model', 'baseUrl', 'instructions']);
+  // The mode and the effort are the two controls a window draws, and the cases
+  // for what each one means are `agent-facio-modes.test.ts`.
+  expect(Object.keys(properties(agent))).toEqual(['model', 'baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
 });
 
 it('advertises the resource a client may lend a token for', () => {

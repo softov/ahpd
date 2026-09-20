@@ -11,7 +11,17 @@
  * configuration is the whole install.
  */
 
-export { facioAgent, defaultStoreRoot, modelOf, resourceOf, storeOf } from './agent.js';
+export {
+  EFFORT_LEVELS,
+  PERMISSION_LABELS,
+  PERMISSION_MODES,
+  facioAgent,
+  defaultStoreRoot,
+  effortOf,
+  modelOf,
+  resourceOf,
+  storeOf,
+} from './agent.js';
 export type { FacioOptions } from './agent.js';
 export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 export type { HarnessConfig, HarnessProvider } from './config.js';
