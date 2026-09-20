@@ -24,7 +24,8 @@ Neither is what ahpd needs to close its gap.
 ## Decision
 
 A plugin is a module whose named export `apply(host: PluginHost, options)` contributes to the same option object the daemon already builds.
-`PluginHost` names the `HostOptions` keys back: `agent`/`agents` and `tool`/`tools` append, `port(key, value)` sets a singleton port, and `log`, `path`, `paths` and `version` are read-only context.
+`PluginHost` names the `HostOptions` keys back through `register*` methods: `registerAgent` and `registerTool` append, and one method sets each of the nine singleton ports, `registerResources` through `registerDiagnostics`. `log`, `path`, `paths` and `version` are read-only context and are not registrations.
+Every registration is checked against the contract it satisfies before it is recorded, so a value the daemon did not write is refused at the boundary rather than failing somewhere inside the host.
 There is no `ctx`, no service registry and no event bus in the first implementation.
 Plugins apply in the order they are configured.
 
@@ -33,6 +34,7 @@ Plugins apply in the order they are configured.
 The contract is one page and a plugin author depends on types alone.
 No dependency is added to the daemon, and an embedder can fold plugins the same way the daemon does.
 Adding a new kind of contribution is the same one-time change with or without a container: a `HostOptions` key and a `PluginHost` method.
+The check on a registration is a few `typeof` tests per contract, not a dependency, and it is the same check for a JavaScript plugin and a TypeScript one because the type is gone by the time either runs.
 
 A plugin cannot observe a host it did not build, and it cannot ask for one that is not there.
 A plugin that wants to watch a running host is a client instead, which the protocol already supports.

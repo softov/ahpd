@@ -31,23 +31,25 @@ This is the list decision [plugin-registration-kinds](../../decisions/plugin-reg
 
 | Kind | `PluginHost` method | Operation | Lands in | Status |
 | --- | --- | --- | --- | --- |
-| agent | `agent()`, `agents()` | append | `HostOptions.agents`, the backend a client names in `createSession` | this plan |
-| tool | `tool()`, `tools()` | append | `HostOptions.tools`, the server tools offered to every session's model | this plan |
-| port | `port(key, value, when?)` | set, closed key | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | this plan |
-| customization | `customization()` | append | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | next plan |
-| MCP server | `mcpServer()` | append | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | next plan |
-| hook | `hook(event, fn)` | listen | a new `HostOptions.hooks`, called where the host already logs | later |
-| configuration key | `config(key, schema, default)` | register, open key | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | later |
-| host method | `method(name, handler)` | register, open key | an extension table beside the request handlers, and a channel beside the declared ones | later, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
-| log sink | `onEvent(fn)` | listen | `HostOptions.onEvent`, which becomes additive rather than a single function | later |
+| agent | `registerAgent(agent)` | append | `HostOptions.agents`, the backend a client names in `createSession` | this plan |
+| tool | `registerTool(tool)` | append | `HostOptions.tools`, the server tools offered to every session's model | this plan |
+| port | `registerResources(store)`, `registerTerminals(store)`, `registerChanges(source)`, `registerDirectories(facts)`, `registerWorktrees(worktrees)`, `registerGithub(pullRequests)`, `registerAutomations(store)`, `registerSessions(store)`, `registerDiagnostics(diagnostics)` | set, closed key | the nine singleton `HostOptions` keys: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics` | this plan |
+| customization | `registerCustomization(customization)` | append | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | next plan |
+| MCP server | `registerMcpServer(server)` | append | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | next plan |
+| event | `on(event, handler)` | listen | a new `HostOptions.events`, called at the moments the host already logs | next plan |
+| configuration key | `registerConfig(key, schema, default)` | register, open key | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | later |
+| host method | `registerMethod(name, handler)` | register, open key | an extension table beside the request handlers, and a channel beside the declared ones | later, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
 
-Methods group by **operation**, not by kind, and that is the whole reason the nine ports share one method while `agent` and `tool` do not.
+Every method that contributes a value is named `register*`, so a registration is told apart at the call site from what a plugin only reads (`path`, `paths`, `version`, `log`). The one exception is `on`, which contributes nothing and attaches a listener to an event the host already fires; `on` is what every event emitter calls that.
+Every registration is checked before it is recorded: the required members the contract names have to be there and be the right kind of thing, and a failure throws one message naming the plugin, the method and the member, which fails that plugin and never reaches `createHost`.
+The check is hand-written, and the test pairs each checker with a complete implementation and with an empty object, so a member added to an interface and not to its checker fails a test rather than reaching a host.
+
+Methods group by **operation**, not by kind, and the operation is what gives them their rules.
 `append` adds one entry to a list.
-`set` installs the single value for a key, which is what lets one conflict rule and one `replace` flag serve all nine ports instead of nine near-identical copies.
-`listen` adds a handler that is never in conflict with another.
+`set` installs the single value for a key: the nine ports are nine names for one operation, so the conflict rule and the `replace` word are written once and shared, and each method is one line over that helper.
+`listen` attaches a listener to an event the host already fires, which is never in conflict with another listener and is the one operation that is not a `register*`.
 `register, open key` adds an entry under a name the plugin invents, so its keys cannot be a written union the way the ports' keys can.
-A key belongs to exactly one operation.
-`PortKey` is the closed set of `set` keys, so it excludes `agents` and `tools` and every other `append`, and there is never both a `tool()` and a `port('tools')`.
+A key belongs to exactly one operation, and the internal `PortKey` union is the closed set of `set` keys: it excludes `agents`, `tools` and every appended kind, so there is no second way to reach one.
 If a kind ever changes operation, which is what `tools` becoming one store rather than a list would be, the old method is removed rather than left beside a second spelling of the same thing.
 
 Four things are deliberately not kinds, so that a plugin does not look for a method that should not exist.
@@ -74,4 +76,4 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 - The backend list and every port are a literal in `main.ts`; plan [01 - Plugins load from configuration](01-plugins-load-from-configuration/plan.md).
 - `@ahpd/sdk` declares no plugin contract; the first task of that plan adds one to it, beside `HostOptions`.
 - Nothing reads another package's `package.json`, so a plugin cannot be listed without being imported.
-- No hook reaches a running host, and the first plan deliberately leaves that to the protocol: a plugin that wants events is a client.
+- No event reaches a plugin; plan [02 - Plugins subscribe to the host's own events](02-plugins-subscribe-to-host-events/plan.md) adds `on`, and a plugin that wants the live stream of a turn stays a client.

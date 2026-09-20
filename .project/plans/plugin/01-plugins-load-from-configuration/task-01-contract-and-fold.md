@@ -5,55 +5,53 @@ depends: []
 layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, whose keys the contract names back
+  - code://packages/sdk/src/types/host.ts#L25-L130 - `DirectoryFacts`, `ResourceStore` and `TerminalStore`, three of the ports
   - code://packages/sdk/src/types/host.ts#L247-L306 - `Diagnostics` and `HostTool`, two of the contributions
-  - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, the contribution a harness plugin makes
+  - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, the contract `registerAgent` checks against
   - code://packages/sdk/src/types/index.ts - the types barrel a `types/plugin.ts` joins
   - code://packages/sdk/src/index.ts - where the contract and the fold join the exports, beside `createHost` and the ports
-  - code://packages/sdk/src/tools.ts - `hostTools()`, the pattern of a concrete implementation exported beside the protocol
-  - code://packages/sdk/src/sessions.ts - `memorySessions()`, the same pattern for a port
   - code://.project/decisions/plugin-contract-lives-in-the-sdk.md - why this is not a package of its own
-  - code://.project/decisions/plugin-contributes-host-options.md - the surface this task makes literal
-  - code://.project/decisions/plugin-registration-kinds.md - the closed set of kinds, of which three are declared here
-  - code://.project/plans/plugin/00-plugin.md - the table those three are the first rows of
+  - code://.project/decisions/plugin-registration-kinds.md - the closed set of kinds and the `register*` naming this task makes literal
+  - code://.project/plans/plugin/00-plugin.md - the table these kinds are the rows of
   - code://test/example.test.ts#L1-L30 - the fake `Agent` the fold test builds a base from
 ---
 
 ## Objective
 
-`@ahpd/sdk` exports the plugin contract as types in `src/types/plugin.ts` and, beside the host builder in `src/plugins.ts`, a pure `pluginHost(by, context)` and `foldHostOptions(base, contributions)` that turn a base `HostOptions` and a list of contributions into one `HostOptions` with additive keys concatenated and singleton ports refused unless replaced, and a test pins every rule.
+`@ahpd/sdk` exports the plugin contract as types in `src/types/plugin.ts` and one pure function, `foldHostOptions`, in `src/plugins.ts`, which turns a base `HostOptions` and a list of contributions into one `HostOptions` with appended kinds concatenated and singleton ports refused unless replaced, and a test pins every rule.
 
 ## Files
 
 - `CREATE: packages/sdk/src/types/plugin.ts` - `PortKey`, `PortOf`, `PluginSpec`, `Plugin`, `PluginHost`, `Contribution`, `Loaded`.
-- `CREATE: packages/sdk/src/plugins.ts` - `pluginHost(by, context)` and `foldHostOptions(base, contributions)`.
+- `CREATE: packages/sdk/src/plugins.ts` - `foldHostOptions(base, contributions)`.
 - `UPDATE: packages/sdk/src/types/index.ts` - re-export `./plugin.js` beside the other type barrels.
-- `UPDATE: packages/sdk/src/index.ts` - export `pluginHost` and `foldHostOptions`, and add one line to the module comment saying a plugin contributes the option object and these compose several.
+- `UPDATE: packages/sdk/src/index.ts` - export `foldHostOptions`, and add one line to the module comment saying a plugin contributes the option object and this composes several.
 - `CREATE: test/plugin-fold.test.ts` - the rules below.
+
+The `PluginHost` implementation and the check on what is registered are task 08; this task writes the shape they fill.
 
 ## Steps
 
 1. In `src/types/plugin.ts`, declare `PortKey` as the union of the singleton keys of `HostOptions`: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics`. It deliberately excludes `agents` and `tools`, which are appended rather than set, so no key can be reached by two operations.
-2. Declare `PortOf<K extends PortKey> = NonNullable<HostOptions[K]>`, so `port('resources', …)` demands a `ResourceStore` and not a bag.
+2. Declare `PortOf<K extends PortKey> = NonNullable<HostOptions[K]>`, so `registerResources` demands a `ResourceStore` and not a bag.
 3. Declare `PluginSpec = string | { name: string; options?: Record<string, unknown>; enabled?: boolean }`, which is both what `config.json` holds and what `--plugin` produces.
-4. Declare `PluginHost` with `agent`, `agents`, `tool`, `tools`, `port<K>(key, value, when?)` where `when` is the literal `'replace'`, and the read-only `path`, `paths`, `version`, `log`. These three are the first three rows of the table in `plans/plugin/00-plugin.md`, so the doc comment says the surface is `HostOptions` named back (decision 1), that the set of kinds is closed (decision 4), and which kinds are not here yet, so an author reads the whole surface from the first release. The comment on `port` says in as many words that it is the one generic method, that its key is the written-out `PortKey` union rather than a `string`, and that it is not the open bag decision 4 rejects.
+4. Declare `PluginContext` with the read-only `path`, `paths`, `version` and `log`, and `PluginHost extends PluginContext` adding `registerAgent`, `registerTool`, and one method for each `PortKey`: `registerResources`, `registerTerminals`, `registerChanges`, `registerDirectories`, `registerWorktrees`, `registerGithub`, `registerAutomations`, `registerSessions`, `registerDiagnostics`, each taking `PortOf<thatKey>` and an optional `'replace'`. Every method is named `register*`, so a registration is told apart from the host a plugin reads. The doc comment says the surface is `HostOptions` named back (decision 1), that the set of kinds is closed and each registration is checked by task 08 (decision 4), and which kinds are not here yet.
 5. Declare `Plugin` with required `name` and `apply(host, options)`, and optional `title` and `defaults`, and say in a comment that a default export is deliberately not consulted, citing the deepseek-harness postmortem the plan refs.
 6. Declare `Contribution` as what one `apply` produced: `by` (the plugin's name), `agents`, `tools`, and `ports` as a partial record of `PortKey` to `{ value: unknown; replace: boolean }`. Declare `Loaded` as `{ spec, url, path, name, title?, options, plugin }`.
 7. Keep `src/types/plugin.ts` free of runtime imports, so the file is a contract and the barrel rule holds.
-8. In `src/plugins.ts`, write `pluginHost(by, context)` returning `{ host, contribution }`: `agent`/`agents` and `tool`/`tools` push, `port` records `{ value, replace: when === 'replace' }` and pushes a problem when the same plugin sets the same key twice, and `path`, `paths`, `version` and `log` come from `context`.
-9. Write `foldHostOptions(base, contributions)` returning `{ options, problems }`: copy the base once, append `agents` and `tools` in contribution order, and for each port either set it or push a problem naming the plugin that set it and the one that claimed it again, unless the later one carries `replace: true`.
-10. Treat a plugin port that lands on a base port as a collision with `the daemon`, so a plugin that supplies its own `resources` passes `'replace'` and one that forgets it is told, rather than winning by order.
-11. Return a fresh object and fresh arrays, never mutating `base`, and push a problem rather than throwing, so the loader can report every collision at once.
-12. Export the types from `src/types/index.ts` and `pluginHost` and `foldHostOptions` from `src/index.ts`.
+8. In `src/plugins.ts`, write `foldHostOptions(base, contributions)` returning `{ options, problems }`: copy the base once, append `agents` and `tools` in contribution order, and for each port either set it or push a problem naming the plugin that set it and the one that claimed it again, unless the later one carries `replace: true`.
+9. Treat a plugin port that lands on a base port as a collision with `the daemon`, so a plugin that supplies its own `resources` passes `'replace'` and one that forgets it is told, rather than winning by order.
+10. Return a fresh object and fresh arrays, never mutating `base`, and push a problem rather than throwing, so the loader can report every collision at once.
+11. Export the types from `src/types/index.ts` and `foldHostOptions` from `src/index.ts`.
 
 ## Validation
 
 - `test/plugin-fold.test.ts`, with a base built from a fake `Agent` the way `test/example.test.ts` builds one:
-  - two contributions append their agents and tools in order, and `base.agents` is unchanged afterwards.
+  - contributions from two plugins append their agents and tools in order, and `base.agents` is unchanged afterwards.
   - a contribution whose agent `provider` repeats the base's is reported once, naming the provider and the plugin.
   - two plugins setting `resources` without `replace` produce one problem naming both, and `options.resources` stays the base's.
   - the second plugin with `replace: true` wins, and there is no problem.
   - a plugin setting a port the base does not have, such as `automations`, needs no `replace`.
-  - `pluginHost` refuses a second `port` for the same key from the same plugin immediately, naming the key.
 - `pnpm test` green, `pnpm typecheck` green.
 - `pnpm boundary` green and unchanged: the SDK declares no new dependency, because the fold imports only its own types.
 - `pnpm build` still builds three packages.

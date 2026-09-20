@@ -67,6 +67,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
   -> base: HostOptions built from the literal that is there today
   -> loadPlugins(specs, { configDir, cwd, log })
        -> resolvePlugin(spec) -> import(url) -> readManifest -> apply(host, options)
+            each register* checks its value, and a failure fails this plugin only
   -> foldHostOptions(base, contributions) -> one HostOptions
   -> createHost(folded) -> listen()
   -> stdout: `ahpd on ws://...`, `automations ...`, `${from}`, `plugins @ahpd/plugin-facio`
@@ -94,6 +95,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 | What | Source | Task |
 | --- | --- | --- |
 | `agents` and `tools` concatenate; a singleton port claimed twice is an error naming both unless the later plugin asks for `replace` | decision 1 | 01 |
+| What a `register*` is given is checked before it is recorded, and a failed check fails that plugin and not the daemon | decision 4, and doop's `plugin-asserts.ts` | 08 |
 | A bare spec resolves through `createRequire` against the configuration directory, so `npm i` there is the install | [agents as extensions](../../../ideas/agents-as-extensions.md) | 02 |
 | A plugin that fails to resolve, import or apply is reported and skipped, and a duplicate `provider` refuses at startup naming both | [agents as extensions](../../../ideas/agents-as-extensions.md) | 03, 05 |
 | `--plugin` is repeatable and `--no-plugins` switches the whole set off | decision 1, and the flag shape `--path` and `--automations` already use | 04 |
@@ -103,7 +105,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 
 ## Proposed architecture
 
-- **Data flow** - specs from `config.json` and then the command line become loaded plugin records, each record's `apply` contributes to a `PluginHost`, and the contributions fold into the one `HostOptions` that `createHost` receives.
+- **Data flow** - specs from `config.json` and then the command line become loaded plugin records, each record's `apply` registers through a `PluginHost` that checks every value before it records it, and the contributions fold into the one `HostOptions` that `createHost` receives.
 - **Event flow** - none in this plan, because the loader runs once before the host exists; a plugin that wants events adopts one of the two forms `ideas/plugins.md` records and neither needs a change here.
 - **State flow** - none beyond `config.json`; the loader writes nothing, and the only record it consults is the plugin's own `package.json`.
 - **Layer responsibilities** - packages/sdk: the contract types in `types/plugin.ts`, the pure `pluginHost` and `foldHostOptions` in `plugins.ts`, and one exported `runtime()` so the resolver reuses the detection `listen.ts` already owns · packages/server/src/plugins.ts: resolution, import, manifest reading, failure policy and `loadPlugins` · packages/server/src/main.ts: what is named, the base options, one call, and the startup line.
@@ -115,11 +117,12 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 | --- | --- | --- |
 | [01 - The contract and the fold](task-01-contract-and-fold.md) | todo | - |
 | [02 - A spec becomes an importable URL](task-02-resolve-a-spec.md) | todo | 01 |
-| [03 - A module is imported, checked and applied](task-03-load-and-apply.md) | todo | 02 |
+| [03 - A module is imported, checked and applied](task-03-load-and-apply.md) | todo | 02, 08 |
 | [04 - The daemon names plugins in configuration and on the command line](task-04-config-and-flags.md) | todo | 01 |
 | [05 - The daemon builds its host through the loader](task-05-main-builds-through-the-loader.md) | todo | 03, 04 |
 | [06 - A backend arrives by configuration, end to end](task-06-a-backend-arrives-by-configuration.md) | todo | 05 |
 | [07 - `ahpd plugin list` reads manifests without importing](task-07-plugin-list.md) | todo | 03 |
+| [08 - Every register method checks what it is given](task-08-validate-registrations.md) | todo | 01 |
 
 ## Risks and tradeoffs
 
@@ -130,6 +133,8 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 - The contract sitting in the SDK means a change to `HostOptions` changes the plugin surface in the same release - which is true of a package of its own too, and is the reason there is not one.
 - `daemon.ts` reads the startup lines back with regular expressions, so the plugins line is added as its own line and never folded into the `sessions in` line the parser depends on.
 - A plugin can make the daemon refuse to start by colliding on `provider`, which is intended, but it must never do so silently - task 03 collects every collision and reports all of them before the host is built.
+- The checkers are hand-written, so one can miss a member a later interface change adds - task 08's test pairs each checker with a complete implementation and with an empty object, so a new required member fails a test rather than reaching a host.
+- A plugin cannot decorate the port it replaces, because `PluginHost` exposes no accessor to what is beneath it - replacing is the whole of what this plan offers, and reading the port beneath is a deferred decision rather than a flag forgotten here.
 
 ## Resume state
 
@@ -139,6 +144,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
   1. Does a plugin contribute a root configuration key in this plan - proposed: no, `ROOT_CONFIG_SCHEMA` becomes a `HostOptions` field in a later plan and this one only proves the loading.
   2. Does the contract go in `types/host.ts` or a `types/plugin.ts` of its own - proposed: its own file, so `host.ts` stays the option object and the whole plugin surface is one import.
   3. Does `ahpd plugin list` ship in this plan - proposed: yes as task 07, because it is the only consumer of the manifest decision and the manifest is otherwise unjustified until then.
+  4. Can a plugin read the port it is replacing, so that a decorator is possible - proposed: no in this plan, because an accessor is a second kind of contribution and a plugin that replaces is enough to prove the loading.
 - **Watch out for:** the `createHost` object is currently built after `await pty()` and before `listen`, so the fold happens there and `loadPlugins` has to be awaited; the base object keeps every existing port so a daemon with no plugins behaves exactly as it does today.
 
 ## Final verification checklist

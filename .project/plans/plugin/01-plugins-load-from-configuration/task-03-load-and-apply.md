@@ -3,6 +3,7 @@ title: A plugin module is imported, checked and applied, and a bad one costs a l
 status: todo
 depends:
   - task-02-resolve-a-spec.md
+  - task-08-validate-registrations.md
 layer: packages/server
 refs:
   - code://packages/server/src/plugins.ts - where `resolvePlugin` already lives and `loadPlugins` joins it
@@ -33,7 +34,7 @@ refs:
 1. Write `readManifest(entry: string)`, walking up from the resolved file's directory to the nearest `package.json` exactly as `version.ts` does, parsing only the `ahpd` object and returning `{ name?, title?, entry? }`; return nothing when there is no manifest or no key.
 2. Detect the drift decision 2 names: when `ahpd.entry` is present and differs from the file the package would resolve to, push a problem naming both, and load the manifest's entry only when the caller resolved the package rather than a file.
 3. Write `checkShape(module, url)` returning a problem when `typeof module.apply !== 'function'`, in pi's words adapted to a named export: `"<url> does not export an apply function"`. Do not consult a default export, and say so in a comment with the reason.
-4. Take the host and the contribution from `pluginHost(name, context)` in `@ahpd/sdk` rather than writing the recording rules a second time in the server: the SDK owns what a contribution is, and the loader owns only when one is made.
+4. Take the host and the contribution from `pluginHost(name, context)` in `@ahpd/sdk` rather than writing the recording rules a second time in the server: the SDK owns what a contribution is and checks every value as it is registered (task 08), and the loader owns only when one is made, so this try is the one failure path for a bad registration.
 5. Write `loadOne(resolved, { base, log, version, path, paths })` that imports `resolved.url`, checks the shape, resolves the display name from the module's `name` falling back to the manifest's `name` and then the spec, calls `apply` inside a try, and returns the `Loaded` record or a problem.
 6. Catch everything around import and `apply` and turn it into one problem line naming the plugin and the message, because a plugin that throws must not take the daemon with it.
 7. Write `loadPlugins(specs, options)` that walks the specs in order, skips a spec with `enabled: false`, records a problem per failure, then appends every contribution's agents and tools and ports, and finally scans `base.agents` plus every contributed agent for a repeated `provider`, reporting one problem per collision naming both parties.

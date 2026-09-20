@@ -57,18 +57,18 @@ interface PluginHost {
   readonly paths: string[]                     // every served directory
   readonly version: string                     // the daemon's version
   log(line: string): void
-  agent(agent: Agent): void                    // additive
-  agents(list: Agent[]): void                  // additive
-  tool(tool: HostTool): void                   // additive
-  tools(list: HostTool[]): void                // additive
-  port<K extends PortKey>(key: K, value: PortOf<K>): void   // singleton keys
-  hook<E extends keyof Hooks>(event: E, fn: Hooks[E]): void // phase two
-  service<T>(name: string, value: T): void     // phase two
-  use<T>(name: string): T                      // phase two
+  registerAgent(agent: Agent): void            // append, checked before it is recorded
+  registerTool(tool: HostTool): void           // append, checked
+  registerResources(store: PortOf<'resources'>): void   // set, checked
+  registerTerminals(store: PortOf<'terminals'>): void   // set, checked
+  // one set method for each of the nine ports
+  on(event: string, handler: unknown): void    // subscribe, the one method not named register*
+  registerConfig(key: string, schema: unknown, fallback: unknown): void  // later
 }
 ```
 
-`PortKey` is exactly the singleton half of `HostOptions`: `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations`, `sessions`, `diagnostics`.
+Every method is named `register*`, so a registration is told apart from what a plugin only reads, and every one checks its value against the required members of the contract it satisfies before it records it.
+`PortKey` stays the internal closed set of the nine ports and `PortOf` still types each method, so the nine methods and the fold cannot drift from `HostOptions`.
 Nothing here is a new concept to learn, because the surface is the option object that already exists.
 `needs` and `provides` are the one addition with no precedent in ahpd, and they are what lets a harness name a store package instead of importing it.
 Their ordering rule is the one facio already uses in `packages/commands/src/registry.ts`: resolve by dependency, refuse a missing one at startup, refuse a cycle by name.
@@ -129,38 +129,39 @@ A `provider` collision is the exception and refuses at startup, naming both plug
 `agents` and `tools` concatenate, since a host with two backends is the case the list was written for.
 A singleton port claimed by two plugins is an error naming both, unless the later one asked for `{ replace: true }` on that key.
 The daemon's own ports are the base layer under every plugin, so a plugin that wants `fileResources()` gone says so rather than winning by order.
-A plugin added after another can build on it without replacing it by taking the value it was given, which is what makes a wrapping resources store or a chained changeset source ordinary rather than a special case.
+A plugin that supplies a port replaces what is beneath it and cannot read what it replaced, because `PluginHost` exposes no accessor to it, so a decorating store waits for a later decision rather than being half-supported here.
 Composition helpers for the ports that can honestly merge are their own later piece; the first cut is concatenate or refuse, and refusing loudly is the ahpd answer.
 
 ## Options and config
 
 A plugin declares `defaults`, the daemon merges `plugins[i].options` over them and hands the result to `apply`.
-No host-side schema validator is added for this.
-ahpd has no runtime dependency and `Agent.schema()` already settled that validation is the thing's own business, so a plugin that wants to refuse a bad option exports its own `resolve(options)` and does it before `apply`.
+Two different things are validated, and only one of them by the host.
+A registration is checked before it is recorded, because it is the value the daemon did not write.
+An option is the plugin's own business: ahpd has no runtime dependency and `Agent.schema()` already settled that a schema belongs to the thing that takes it, so a plugin that wants to refuse a bad option exports its own `resolve(options)` and does it before `apply`.
 
 Two other things called config are not the same thing.
 Session config is already extensible, because it is composed from the invited backend's `schema()` plus the host-owned keys, so a plugin that contributes an agent gets its controls for free and needs nothing new.
 Root config is not: `ROOT_CONFIG_SCHEMA` inside `host.ts` is a fixed literal with `defaultShell` in it.
 A plugin that adds a root key wants that schema to become a `HostOptions` field merged the same way session config is, rather than a plugin reaching into the host to write one.
 
-## Hooks on sessions
+## Events a plugin subscribes to
 
-Three ways, and the first two need no change to `@ahpd/sdk`.
+A plugin subscribes with `on`, in pi's shape:
 
-A plugin is a client.
-`createPeer(wire)` plus `receive` builds an in-process peer and `host.accept(peer)` serves it, so a hook that watches turns subscribes to a session or chat channel exactly as `ahpc` does, sees every state action the protocol already carries, and can dispatch one back.
-That is the most ahpd-shaped hook there is: the protocol is the API, and the host was built for several clients all along.
+```ts
+export function apply(host: PluginHost) {
+  host.on('session_start', (event, ctx) => { … })
+  host.on('turn_end', async (event, ctx) => { … })
+}
+```
 
-A plugin wraps what it contributes.
-A contributed `HostTool` decides before it runs, which is a permission gate with no new mechanism.
-A contributed port can delegate to the one beneath it.
-A plugin that wraps `accept` sees every frame in both directions, which is enough for a log, a rate limit or a redaction.
-
-What none of those reach is the host's own bookkeeping: the read and archived flags, config resolution, a store write, and the closing of a session nobody opened.
-Those want a typed `hooks` option on `HostOptions` and one call at the sites that already call `log()`, which is about fifty lines and no new file.
-Proposed names: `sessionOpened`, `sessionDisposed`, `turnStarted`, `turnCompleted`, `clientConnected`, `clientGone`, `authenticated`, `automationFired`, `resourceWritten`, `terminalOpened`.
-Observation first.
-A hook that may refuse a turn is a second decision, and the permission case is already covered by the tool wrapper above.
+`on` is the one method that is not `register*`, because it adds no contribution to `HostOptions`: it attaches a listener to something the host already does, and `on` is what every event emitter in the ecosystem calls that.
+Handlers are collected into a new `HostOptions.events` and called where `createHost` already calls `log()` and emits a state action, so an event is one of the host's own moments rather than a protocol frame.
+The first set is `session_start`, `session_end`, `turn_start`, `turn_end`, `message`, `tool_call`, `client_connect`, `client_disconnect`, `authenticated`, `automation_fire`, `resource_write`, `terminal_open`, and `log` for the lines the host already writes.
+Observation only in the first cut: a handler returns nothing, so it cannot change what the host does, and the permission case stays with a `HostTool` that decides before it runs.
+Handlers run in registration order and are awaited, each inside a try, so one that throws is reported against its plugin and does not stop the others or the turn.
+This is a plan of its own, because it grows call sites in the host rather than anything in the loader.
+A plugin that wants every token of a turn rather than its boundaries is a client instead: the protocol already carries each delta, and a per-token callback is not a host moment.
 
 ## Versioning
 
@@ -181,5 +182,5 @@ It wants `needs`/`provides` because the durable store is `@facio/store-file`, a 
 No DI container, no `ctx` proxy, no `jiti`: a plugin is one function and the types it already knows, and loading TypeScript directly stays a dev affordance rather than the mechanism.
 No hot reload in the first cut: a changed plugin module needs a restart, the same as a changed daemon, and pretending otherwise is how a half-loaded plugin becomes a bug report.
 No sandbox, because there cannot be one: a plugin is code in the daemon's process with the daemon's permissions, so installing one is the trust decision and the config file is owner-readable for the same reason the token file is.
-No plan yet.
-This file is the shape; `agents-as-extensions.md` is still the order for the agent half, and the port and hook halves want their own plan once the first two steps land.
+Plan [01](../plans/plugin/01-plugins-load-from-configuration/plan.md) covers loading: a plugin named in configuration contributes agents, tools and ports, and every registration is checked.
+The events above and the customization half want their own plans, and `agents-as-extensions.md` is still the order for the agent half.

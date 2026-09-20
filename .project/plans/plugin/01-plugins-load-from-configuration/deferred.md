@@ -8,14 +8,16 @@ title: Deferred from plugins load from configuration
   It waits because it is a new `HostOptions.customizations` merged into each session and into an agent's `probe()`, which is an SDK change and not a loader one, and it is the next plan in this domain.
 - **The required-config gate.** A plugin whose manifest names a required option the configuration does not set lists as `unconfigured` and `apply` is not called, which is what doop does before `register()`.
   It waits on the manifest carrying the options schema, which decision 2 leaves until `needs` and `provides` arrive.
+- **Reading the port beneath.** A plugin that wants to decorate the store it replaces rather than replace it, so a logging or caching wrapper is possible.
+  It waits because `PluginHost` exposes no accessor to what is already set, and an accessor is a different kind of contribution from a registration.
+  It goes wherever a wrapping decision goes, and it is not a flag forgotten here.
 - **A plugin test runtime.** doop ships `testing/plugin-test-runtime.ts`, a fake host a plugin is tested against without the daemon.
   It waits until there is a contract worth testing against.
 - **`needs` and `provides` ordering.** A plugin that names a store another plugin provides, which `@facio/store-file` is the first real case of.
   It waits because ordering is only worth implementing once two plugins depend on each other, and this plan proves the loading first.
   It goes in `packages/sdk` beside `Plugin`, with the resolution rule `packages/commands/src/registry.ts` in facio already uses: resolve by declared dependency, refuse a missing one at startup and refuse a cycle by name.
-- **Hooks into a running host.** `sessionOpened`, `turnStarted`, `clientConnected` and the rest.
-  It waits because the protocol already serves two of the three forms a hook can take, the in-process client and the contribution wrapper, and neither needs a change here.
-  It goes in `packages/sdk/src/types/host.ts` as a `hooks` option with one call at each site that already logs, and it wants its own decision because a hook that may refuse is a different thing from one that may only watch.
+- **Events a plugin subscribes to.** `on('session_start', …)`, `on('turn_end', …)` and the rest.
+  It is plan [02 - Plugins subscribe to the host's own events](../02-plugins-subscribe-to-host-events/plan.md) now, because it grows call sites in the host rather than anything in the loader.
 - **`ahpd plugin add` and `ahpd plugin remove`.** Installing into the configuration directory and writing the `plugins` key.
   It waits because `npm i` in `~/.config/ahpd` is the install and the configuration file is editable by hand, and an installer is a convenience over that rather than a mechanism.
   It goes in the `plugin` domain after the loader is real, and it should follow deepseek-harness's `install-spec.ts` shapes if it does.

@@ -60,8 +60,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - Plugins load from configuration](plugin/01-plugins-load-from-configuration/plan.md) | high | planned 2026-09-20 | - | the agent plugins, which arrive through it |
+| [02 - Plugins subscribe to the host's own events](plugin/02-plugins-subscribe-to-host-events/plan.md) | high | planned 2026-09-20 | plugin 01 | - |
 
-Next free number in `plugin`: `02`.
+Next free number in `plugin`: `03`.
 
 ## Domains without a plan
 

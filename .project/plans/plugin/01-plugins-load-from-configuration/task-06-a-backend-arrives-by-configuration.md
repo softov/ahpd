@@ -19,7 +19,7 @@ A test loads a plugin from a path spec, folds it over a base with no agents of i
 ## Files
 
 - `CREATE: test/fixtures/plugin-echo/package.json` - a manifest with `name`, `type: "module"` and an `ahpd` key naming `./index.ts`, and no dependencies.
-- `CREATE: test/fixtures/plugin-echo/index.ts` - a plugin exporting `name = "echo-plugin"` and an `apply` that calls `host.agent(echo({ path: host.path }))` from `../../../examples/echo/agent.js`.
+- `CREATE: test/fixtures/plugin-echo/index.ts` - a plugin exporting `name = "echo-plugin"` and an `apply` that calls `host.registerAgent(echo({ path: host.path }))` from `../../../examples/echo/agent.js`.
 - `CREATE: test/plugin-end-to-end.test.ts` - the test.
 
 ## Steps
