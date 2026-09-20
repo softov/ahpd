@@ -5,7 +5,7 @@ title: Deferred from plugins load from configuration
 ## What waits
 
 - **Customizations, and MCP servers through them.** A plugin contributing skills, prompts, slash commands, rules or an MCP server to every session.
-  It waits because it is a new `HostOptions.customizations` merged into each session and into an agent's `probe()`, which is an SDK change and not a loader one, and it is the next plan in this domain.
+  It waits because it is a new `HostOptions.customizations` merged into each session and into an agent's `probe()`, which is an SDK change and not a loader one, and it is not planned yet: plan 02 is events, and this follows it.
 - **The required-config gate.** A plugin whose manifest names a required option the configuration does not set lists as `unconfigured` and `apply` is not called, which is what doop does before `register()`.
   It waits on the manifest carrying the options schema, which decision 2 leaves until `needs` and `provides` arrive.
 - **Reading the port beneath.** A plugin that wants to decorate the store it replaces rather than replace it, so a logging or caching wrapper is possible.
