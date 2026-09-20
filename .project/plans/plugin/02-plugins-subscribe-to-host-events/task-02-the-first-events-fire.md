@@ -1,6 +1,6 @@
 ---
 title: The first events fire at the host's own moments
-status: todo
+status: done
 depends:
   - task-01-event-option-and-on.md
 layer: packages/sdk
@@ -52,4 +52,10 @@ Each event in the union is raised at the host moment it names, with the payload 
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/sdk/src/host.ts` gains `fire` beside `log`, and every event in the union is now raised: `log` from `log()`, `session_start` at the end of `openSession`, `session_end` after `removeSession` removes the entry, `turn_start`/`turn_end` where the agent's `emit` dispatches the three turn actions, `message` where a client's `chat/turnStarted` reaches the running or resumed path, `tool_call` around the bound host tool's `run`, `client_connect` where an id is set by `initialize` or `reconnect`, `client_disconnect` in `accept`'s `close`, `authenticated` where a pushed token is stored, `automation_fire` in `startForAutomation`, `resource_write` after the store accepted a write, and `terminal_open` after the terminal is in the map.
+`test/plugin-events-fire.test.ts` is one case per event, including a paced turn that streams deltas and fires `message`, `turn_start` and `turn_end` once each.
+Verified: 384 tests across the plugin, host, example and automation suites, `pnpm typecheck` green.
+Departure from the plan: `fire` catches and reports a throwing handler already in this task rather than in task 03, so no commit leaves a handler able to reject the host's action; task 03 adds the log recursion guard and the order, awaiting and isolation tests. Every call site uses `void fire(...)`, because the host's dispatch core is synchronous and threading promises through `log` and `dispatch` was not worth it; handlers are still called in order and each is awaited before the next, so the ordering the decision fixes holds, while a synchronous host moment does not block on a slow one.
+The event carries the host's own chat URI, which is not always the alias a client addressed: a client that names `ahp-chat:/x` gets the host's canonical `ahp-chat://default/<id>` on the event, and that is the identity every host structure uses.
+`client_connect` is raised where the client gives its id rather than where the socket is accepted, because before `initialize` there is no id to name and a connection nobody introduced is not a client this host can speak of.

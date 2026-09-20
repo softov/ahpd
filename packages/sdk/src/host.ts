@@ -36,6 +36,8 @@ import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
+import type { EventName, HostEvent } from './types/events.js';
+import type { PluginContext } from './types/plugin.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -774,8 +776,37 @@ export function createHost(options: HostOptions): Host {
     ],
   });
   const startedAt = new Date().toISOString();
+  /**
+   * Call every listener of one event, in the order they were registered.
+   *
+   * Each is awaited before the next, so two plugins that both watch a moment
+   * see it in the order the configuration listed them. A handler that throws
+   * is reported against its plugin through `onEvent` directly and not through
+   * `log`, because `log` is itself an event and reporting a failed `log`
+   * listener through `log` is a recursion. The return value is ignored: a
+   * handler observes and cannot change what the host does.
+   *
+   * The listener carries the read-only context its plugin's `apply` was
+   * handed, so a handler reads the same directories and the same log.
+   */
+  const fire = async (name: EventName, event: HostEvent): Promise<void> => {
+    const listeners = options.events?.[name];
+    if (listeners === undefined || listeners.length === 0) return;
+    for (const listener of listeners) {
+      try {
+        await (listener.handle as (one: HostEvent, context: PluginContext) => void | Promise<void>)(event, listener.context);
+      }
+      catch (error) {
+        options.onEvent?.(`${listener.by} failed at ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
   const log = (message: string): void => {
     options.onEvent?.(message);
+    // The line is also an event, raised from the one place every notable line
+    // already passes through, so a plugin reads the log without a second
+    // mechanism and without having to be the embedder.
+    if (options.events?.log !== undefined) void fire('log', { type: 'log', line: message });
     /*
      * OTLP/JSON, verbatim, because the protocol says so: the payload is an
      * `ExportLogsServiceRequest` and AHP deliberately does not redeclare the
@@ -2272,6 +2303,21 @@ export function createHost(options: HostOptions): Host {
       seedCustomizations: about(agent.provider).seeds,
       emit: (channel, action) => {
         dispatch(channel === 'chat' ? chatUri : uri, action);
+        // The two ends of a turn, as the host sees them: the backend saying it
+        // began, and saying it finished or was stopped. A per-token delta is
+        // not an event, because a plugin that wants the stream is a client.
+        if (action.type === 'chat/turnStarted') {
+          void fire('turn_start', { type: 'turn_start', session: uri, chat: chatUri, turn: String(action.turnId ?? '') });
+        }
+        else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
+          void fire('turn_end', {
+            type: 'turn_end',
+            session: uri,
+            chat: chatUri,
+            turn: String(action.turnId ?? ''),
+            status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
+          });
+        }
         /*
          * The session's list of chats, when one of them has moved.
          *
@@ -2895,6 +2941,8 @@ export function createHost(options: HostOptions): Host {
       })();
     }
     sessions.delete(uri);
+    // Gone from the map first, so a handler asking about it is told the truth.
+    void fire('session_end', { type: 'session_end', session: uri, reason: 'disposed' });
     /*
      * And the run that started it, which is now holding a URI that
      * opens onto nothing.
@@ -3477,7 +3525,27 @@ export function createHost(options: HostOptions): Host {
       const definition = shapedDefinition(one, uri);
       return definition === undefined ? [] : [{
         definition,
-        run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
+        // The call and its outcome are one event, raised after the tool is
+        // done, so a handler knows whether it answered and not only that it
+        // ran. Raising it before would report an attempt as a result.
+        run: async (input: Record<string, unknown>): Promise<string> => {
+          try {
+            const answer = await one.run(input, toolContext(uri, chatUri));
+            void fire('tool_call', { type: 'tool_call', session: uri, chat: chatUri, tool: definition.name, ok: true });
+            return answer;
+          }
+          catch (error) {
+            void fire('tool_call', {
+              type: 'tool_call',
+              session: uri,
+              chat: chatUri,
+              tool: definition.name,
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        },
         ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
       }];
     }),
@@ -4000,6 +4068,8 @@ export function createHost(options: HostOptions): Host {
     dispatch(uri, { type: 'session/ready' });
     sessionAdded(uri);
     activeSessionsMoved();
+    // Named and in the map, which is the moment a handler can act on it.
+    void fire('session_start', { type: 'session_start', session: uri, provider });
   };
 
   /**
@@ -4025,6 +4095,11 @@ export function createHost(options: HostOptions): Host {
       where,
       wanted.origin,
     );
+    // The only place that knows a session was started by a clock rather than a
+    // person, and the run it belongs to.
+    if (wanted.origin !== undefined) {
+      void fire('automation_fire', { type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
+    }
     const chatUri = chatUriFor(uri);
     byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
     return uri;
@@ -4216,6 +4291,7 @@ export function createHost(options: HostOptions): Host {
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
           // Met, so a later `reconnect` under this id is answerable.
           known.add(connection.clientId);
+          void fire('client_connect', { type: 'client_connect', client: connection.clientId });
           // Introduced. Said after the version is agreed, so a client this
           // host cannot speak to is not one it has shaken hands with.
           handshook = true;
@@ -4330,6 +4406,7 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
           }
           connection.clientId = clientId;
+          void fire('client_connect', { type: 'client_connect', client: connection.clientId });
           // The other way in. A client that dropped resumes with this rather
           // than a fresh `initialize`, and it is as much an introduction.
           handshook = true;
@@ -4810,6 +4887,7 @@ export function createHost(options: HostOptions): Host {
             },
           });
           terminals.set(uri, terminal);
+          void fire('terminal_open', { type: 'terminal_open', terminal: uri, cwd: asked });
           log(`opened ${uri} in ${asked}`);
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
           return {};
@@ -4958,6 +5036,7 @@ export function createHost(options: HostOptions): Host {
             token,
             ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
           });
+          void fire('authenticated', { type: 'authenticated', client: connection.clientId || 'anonymous', resource });
           if (expiresIn !== undefined) expire(resource);
           log(`${connection.clientId || 'a client'} authenticated for ${resource}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
           // A GitHub token is a reason to ask GitHub again: a lookup that
@@ -5054,6 +5133,7 @@ export function createHost(options: HostOptions): Host {
             ...(params.createOnly === true ? { createOnly: true } : {}),
             ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
           });
+          void fire('resource_write', { type: 'resource_write', uri });
           log(`${connection.clientId} wrote ${uri}`);
           return {};
         },
@@ -6223,6 +6303,13 @@ export function createHost(options: HostOptions): Host {
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;
+            void fire('message', {
+              type: 'message',
+              session: named,
+              chat: chatUriFor(named),
+              turn: String(action.turnId ?? ''),
+              text: String(message.text ?? ''),
+            });
             session.begin(String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model));
           })();
           return;
@@ -6273,6 +6360,9 @@ export function createHost(options: HostOptions): Host {
               : {}) as Record<string, unknown>;
             const text = String(message.text ?? '');
             const turnId = String(action.turnId ?? '');
+            // Before it is started or queued, so a handler sees it once
+            // whether or not the backend is free to run it this moment.
+            void fire('message', { type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
             /*
              * `!ls` is a command, and everything else is a question.
              *
@@ -6987,6 +7077,7 @@ export function createHost(options: HostOptions): Host {
         close() {
           const was = [...connection.watching];
           connections.delete(connection);
+          void fire('client_disconnect', { type: 'client_disconnect', client: connection.clientId || 'anonymous' });
           // The tokens went with the connection; so do their clocks.
           for (const resource of [...expiring.keys()]) forgetExpiry(resource);
           // And the watches it was keeping for other clients: the channel was

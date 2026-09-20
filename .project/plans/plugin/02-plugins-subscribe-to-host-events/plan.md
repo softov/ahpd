@@ -88,7 +88,7 @@ plugin apply -> host.on('session_start', handler)
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The event option and `on`](task-01-event-option-and-on.md) | done | - |
-| [02 - The first events fire](task-02-the-first-events-fire.md) | todo | 01 |
+| [02 - The first events fire](task-02-the-first-events-fire.md) | done | 01 |
 | [03 - Order, awaiting, and a handler that throws](task-03-order-and-error-isolation.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -101,8 +101,8 @@ plugin apply -> host.on('session_start', handler)
 
 ## Resume state
 
-- **Done so far:** task 01, the option and `on`, done 2026-09-20.
-- **Next action:** [task-02-the-first-events-fire.md](task-02-the-first-events-fire.md).
+- **Done so far:** task 01, the option and `on`, and task 02, the events firing at every host moment, done 2026-09-20.
+- **Next action:** [task-03-order-and-error-isolation.md](task-03-order-and-error-isolation.md).
 - **Open questions:**
   1. Does an event carry the host's own sequence number - proposed: no, because it is not a protocol frame and ordering within one host process is call order.
   2. Does `onEvent` survive beside `events` - proposed: yes, as the embedder's one-line shortcut for `events.log`; a plugin has no use for it because `on('log', …)` is the same thing with a `by` on it. Removing it would be one name and four call sites, and it is a separate decision from this one.
