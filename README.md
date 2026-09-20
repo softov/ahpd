@@ -104,7 +104,7 @@ ahpd --plugin @ahpd/agent-facio --plugin ./my-plugin
 { "plugins": ["@ahpd/agent-facio", { "name": "./my-plugin", "enabled": false }] }
 ```
 
-Naming a plugin **runs its code in the daemon's process with the daemon's permissions**, so installing one is the trust decision. `ahpd plugin list` says what the configuration names and what a run would load, without importing any of it. See [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs).
+Naming a plugin **runs its code in the daemon's process with the daemon's permissions**, so installing one is the trust decision. `ahpd plugin list` says what the configuration names and what a run would load, without importing any of it. See [docs/PLUGINS.md](docs/PLUGINS.md) for writing one and [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs) for running one.
 
 ### Catalogue more than one directory
 

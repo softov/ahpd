@@ -155,6 +155,8 @@ states are `ready`, `incompatible`, `unconfigured`, `disabled`, `missing` and
 `error`, and a plugin that would throw on load still lists as `ready`, which is
 the reason the `ahpd` key lives in `package.json` at all.
 
+Writing one is [PLUGINS.md](PLUGINS.md).
+
 ## Configuration
 
 XDG: `$XDG_CONFIG_HOME/ahpd/config.json`, or `~/.config/ahpd/config.json`.
