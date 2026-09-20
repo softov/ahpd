@@ -37,3 +37,4 @@ ahpd [start|stop|status|config] [flags]
 ## Known gaps
 
 - The backend list is a literal in `main.ts`; idea [agents as extensions](../../ideas/agents-as-extensions.md).
+- The record the detached daemon keeps about itself holds the port and where the token came from, and not the token, so a connection URL has to be assembled by hand; plan [02 - Connect URL in the record](02-connect-url-in-record/plan.md).

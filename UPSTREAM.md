@@ -4,6 +4,38 @@ What VS Code's agent host changed since this host was last read against it, and 
 
 How a pass is made is in [REFERENCE.md](REFERENCE.md). The short of it: `git -C /github/externals/vscode fetch --depth=200 origin main && git merge --ff-only origin/main`, then `git log <last>..HEAD -- src/vs/platform/agentHost`, reading `common/state/protocol/` first because that is the wire, then `node/claude/`, `node/protocolServerHandler.ts`, and the workbench client under `src/vs/workbench/contrib/chat/browser/agentSessions/agentHost`, which is what VS Code *sends* to a host. The `.md` files were reflowed to one-line paragraphs upstream, so read them with `--word-diff`.
 
+## Pass 4 - 2026-09-19, the first pass with the client in the clone
+
+VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commits and 230 files under `src/vs/sessions`. **The wire did not move** - `common/state/protocol/` is unchanged and `.ahp-version` is still `fd0471d4` - and the protocol repository moved one commit, `a21274d` to `8549827`, which adds a `CODEOWNERS` file. The full record, with every reference and the local file each item would change, is [`.project/review/2026-09-19-upstream-pass-4.md`](.project/review/2026-09-19-upstream-pass-4.md).
+
+`src/vs/sessions` - the Sessions window, the reference client now - had been missing from the clone's sparse set, so a whole client was invisible to a pass. It is in the set now, here and in the other repository.
+
+### The tools an agent is given
+
+- [ ] **`add_artifact_or_reference` promotes a reference to an artifact in place, keeping its id.** `packages/sdk/src/artifacttools.ts:180-182`.
+- [ ] **Artifact tool answers are `<status>: <id>`.** `packages/sdk/src/artifacttools.ts:184,189,215`.
+- [ ] **The pull request `create-pr` opens or reuses is recorded as a session artifact.** `packages/sdk/src/changes.ts:565,573`. This re-opens a box Pass 3 ticked: a pull request made by `prepare-pull-request` is one of these artifacts, and nothing here writes one.
+- [ ] **A round that ends with no text and no tool calls is announced as `responseRoundEnded`.** `packages/agent-claude/src/session.ts`; what the Claude stream offers as the signal for it is Left open in the review.
+
+### What the agent's own tools cost it
+
+- [ ] **The tools named in the first-turn instruction are always loaded.** `packages/agent-claude/src/session.ts`.
+- [ ] **Declare `artifactToolsCompactPrompts` in the root config.** `packages/sdk/src/host.ts:3358`.
+
+### What a client is told about a session
+
+- [ ] **A chat keeps the title it was given, across a restart.** `packages/sdk/src/host.ts:3302`.
+- [ ] **`deferredTitleGeneration`, and a `rename_chat` shaped by the session's title strategy.** `packages/sdk/src/sessiontools.ts:497`.
+
+### What the Claude backend reports as a customization
+
+- [ ] **Plugins as top-level containers, their contributions out of the per-scope lists, and builtins in a container with real URIs.** `packages/agent-claude/src/session.ts`.
+
+### Read and not taken
+
+- Dev Containers as an extension surface, `setAgentMergeEnabled`, the central session catalog, the turn tracker and its telemetry, `vscode.modelCall`, the Copilot and Codex surfaces, the terminal auto-approval rule engine, the transport's client side, and the window's own UI. Each with the reference it was read against, in the review.
+- The Left open list, which is where the Dev Container decision, the `?tkn=` in the announced URL, the artifact answer shape, and the session-owned pull request baseline are written down.
+
 ## Pass 3 - 2026-09-13, the "not taken" list re-evaluated
 
 Same revisions as Pass 2. The list below was Pass 2's "Read and not taken", re-read with a different question: not "does the protocol require it" but "does VS Code's agent window draw or offer it from a host". Softov works in that window with this host behind it, so what the window can do from a host is what this host should provide, under the names VS Code uses, so that prompts and skills written for the reference host work here unchanged. The order is the order of work: the tap first, because every item after it is checked against a capture from a real window rather than against source read by eye.
