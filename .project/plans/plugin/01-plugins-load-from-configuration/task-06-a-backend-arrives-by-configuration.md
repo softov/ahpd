@@ -1,6 +1,6 @@
 ---
 title: A backend arrives by configuration, end to end
-status: todo
+status: done
 depends:
   - task-05-main-builds-through-the-loader.md
 layer: test
@@ -40,4 +40,9 @@ A test loads a plugin from a path spec, folds it over a base with no agents of i
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`test/fixtures/plugin-echo/` is a manifest with an `ahpd` key and an `index.ts` exporting `name = "echo-plugin"` and an `apply` that registers the example's `echo`, and `test/plugin-end-to-end.test.ts` loads it from a path spec, reads the title off the manifest, builds the host from the folded options, sees `base` and `echo` in the root channel, drives one turn to the echoed text, and repeats with the spec disabled to find one agent.
+Verified: `pnpm test` 701 passed, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` three packages.
+By hand: `node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo` prints `plugin echo-plugin from …` and `plugins echo-plugin`, and a WebSocket client that initializes against it is offered `claude, echo`.
+Departure from the plan: the fixture's `echo` is given `pace: 0` so one turn answers at once rather than streaming, and its import names `agent.ts` rather than `agent.js` because Node does not remap a `.js` specifier to a `.ts` one at runtime; that needs `allowImportingTsExtensions` in the root checker config, which emits nothing and does not reach the package builds.
+The fixture is not in the `build` script and the runner imports its `.ts` directly, which is what the checker config change is for.

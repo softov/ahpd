@@ -3,6 +3,11 @@
   "compilerOptions": {
     "noEmit": true,
     "baseUrl": ".",
+    // A test fixture that a plugin loader imports at runtime has to name the
+    // real `.ts` file: Node does not remap a `.js` specifier to a `.ts` one, so
+    // the fixture matches what the runtime resolves. Only the checker is
+    // affected, and it emits nothing.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@ahpd/sdk": ["packages/sdk/src/index.ts"],
       "@ahpd/agent-claude": ["packages/agent-claude/src/index.ts"]
