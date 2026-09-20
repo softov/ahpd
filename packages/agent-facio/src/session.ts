@@ -123,6 +123,19 @@ export function facioSession(
   sharedStore?: Store,
   harness: HarnessConfig = harnessConfig(),
 ): Session {
+  /*
+   * A cut this backend cannot make is refused rather than served as a plain
+   * continue: a fork that appended to the original would change the
+   * conversation it was meant to preserve, and a rewind that did nothing
+   * would keep the turns it was asked to drop. Both wait on a cut in
+   * `@facio/agents`; see the proposal in `.project/decisions/`.
+   */
+  if (start.forkAt !== undefined || start.rewindAt !== undefined) {
+    throw new Error(
+      'facio cannot cut a conversation yet: fork and rewind wait on a cut in @facio/agents, '
+      + 'so this session was refused rather than continued as though neither was asked',
+    );
+  }
   const provider = options.provider ?? 'facio';
   /** The configured facio id, or the URI's when this is a fresh session. */
   const sessionId = start.resume ?? sessionIdOf(start.uri);
