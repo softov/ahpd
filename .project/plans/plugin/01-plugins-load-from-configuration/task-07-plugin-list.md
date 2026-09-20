@@ -1,6 +1,6 @@
 ---
 title: `ahpd plugin list` reads manifests without importing
-status: todo
+status: done
 depends:
   - task-03-load-and-apply.md
 layer: packages/server
@@ -49,4 +49,11 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/server/src/plugins.ts` gains `PluginState`, `PluginRow`, `describePlugin` and `pluginLine`; `main.ts` gains the `plugin list` verb, which parses its own flags with the same `parse` a run uses and prints a row per spec without importing or building a host.
+`test/plugin-list.test.ts` covers the `ahpd` manifest read, a package with no `ahpd` key, a single file with no manifest above it, a spec that does not resolve, a module that throws on import still listing as `ready`, `enabled: false`, a required manifest option the configuration does not set, an incompatible range whose entry is never imported, and a manifest that does not parse.
+Fixtures added for it: `test/fixtures/plugin-plain`, `plugin-configurable` and `plugin-explodes`.
+Verified: `pnpm test` 710 passed, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` three packages.
+By hand: `ahpd plugin list` says `plugins: none named`; `ahpd plugin list --plugin ./test/fixtures/plugin-echo --plugin ./test/fixtures/plugin-hello --plugin ./test/fixtures/plugin-plain` prints three `ready` lines with the path, the name and the title the manifest gives; `--no-plugins` says nothing is listed; `ahpd plugin` exits 2 with `plugin takes list, and nothing else`.
+The plan's by-hand line put `--plugin` before the verb, which the current dispatch reads as a run rather than a verb; the listing is reached as `ahpd plugin list --plugin …`, and the flags after the verb are what `parse` reads.
+`PluginRow` carries a `state`, which the file list did not name, because the six states are decided where the manifest is read and a caller that had to re-read it would be a second reader.

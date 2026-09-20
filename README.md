@@ -90,6 +90,22 @@ ahpd config                  # where the configuration is, and what it says
 
 When a newer `@ahpd/server` is on npm, `start` and `status` say so on one more line, read from a file the daemon refreshes in the background six hours apart; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` or `"updateCheck": false` in the configuration switch it off. See [docs/DAEMON.md](docs/DAEMON.md).
 
+### Load a plugin
+
+A plugin is an installed package that contributes a backend, a port, a server tool or a configuration default, named on the command line or in the configuration file:
+
+```bash
+ahpd --plugin @ahpd/agent-facio --plugin ./my-plugin
+```
+
+`--plugin` can be repeated and `--no-plugins` loads none, whatever the file says. The same list goes in the configuration:
+
+```json
+{ "plugins": ["@ahpd/agent-facio", { "name": "./my-plugin", "enabled": false }] }
+```
+
+Naming a plugin **runs its code in the daemon's process with the daemon's permissions**, so installing one is the trust decision. `ahpd plugin list` says what the configuration names and what a run would load, without importing any of it. See [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs).
+
 ### Catalogue more than one directory
 
 `--path` names a directory on the **host machine** and can be repeated:

@@ -21,6 +21,8 @@ ahpd start [options]        run it in the background and let go of it
 ahpd stop                   stop the one running in the background
 ahpd status                 say whether one is, and where
 ahpd config                 say where the configuration is, and what it says
+ahpd plugin list            what the configuration names, and what a run would
+                            load, without loading any of it
 ```
 
 `start` re-runs this same program with the rest of the line and detaches, so
@@ -44,6 +46,8 @@ anything has been let go of.
 | `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits and a session's settings go |
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
+| `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
+| `--no-plugins` | Load none, whatever the configuration file says |
 | `--no-update-check` | Never ask npm whether a newer version exists. See below |
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
@@ -105,6 +109,52 @@ Off with `--no-update-check`, with `NO_UPDATE_NOTIFIER` or `CI` set to
 anything in the environment, or with `"updateCheck": false` in the file. The
 daemon has no terminal, so the file is the one that matters.
 
+### `--plugin`, and what naming one runs
+
+A plugin is an installed package that contributes to the host the daemon
+builds: a backend, one of its ports, a server tool or a configuration default.
+It is named on the command line or in the configuration file.
+
+```bash
+ahpd --plugin @ahpd/agent-facio --plugin ./my-plugin
+```
+
+`--plugin` is repeatable and the plugins apply in the order they are named.
+`--no-plugins` loads none, whatever the file says, and passing it beside a
+`--plugin` is refused as contradictory. A command line `--plugin` **replaces**
+the file's `plugins` list rather than adding to it, the way `--path` replaces
+`paths`.
+
+A spec is a package name, a path to a directory or a file, or an object naming
+one with the options `apply` receives and whether it is on:
+
+```json
+{
+  "plugins": [
+    "@ahpd/agent-facio",
+    { "name": "./my-plugin", "options": { "token": "…" }, "enabled": false }
+  ]
+}
+```
+
+A bare name is resolved from the configuration directory's own `node_modules`,
+so `npm i` there is the install. A relative path is tried against the working
+directory and then the configuration directory, and the absolute path that ran
+is on the log.
+
+Naming a plugin **runs its code in this process with this process's
+permissions**, so the configuration file is the trust boundary here the way the
+token is the port's. A plugin that does not resolve, whose manifest is wrong,
+or that throws is reported on stdout and skipped; the one failure that refuses
+the start is two plugins claiming the same agent `provider`, because a host
+built over that answers a turn with the wrong backend.
+
+`ahpd plugin list` prints one line per spec - its state, where it resolves, and
+the name and title its manifest declares - without importing any of it. The
+states are `ready`, `incompatible`, `unconfigured`, `disabled`, `missing` and
+`error`, and a plugin that would throw on load still lists as `ready`, which is
+the reason the `ahpd` key lives in `package.json` at all.
+
 ## Configuration
 
 XDG: `$XDG_CONFIG_HOME/ahpd/config.json`, or `~/.config/ahpd/config.json`.
@@ -120,11 +170,12 @@ Every flag can be a key instead, spelled without the dashes:
 ```
 
 A flag beats the file, because a flag is this run and a file is every run until
-somebody edits it. `paths` is the one exception worth knowing: a `--path` on the
-command line **replaces** the list rather than adding to it, so a file naming
-two and a flag naming a third serves one, not three. `updateCheck` is the one
-key with no value to give: `false` is `--no-update-check`, and anything else
-is the default.
+somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
+`--path` or a `--plugin` on the command line **replaces** its list rather than
+adding to it, so a file naming two and a flag naming a third loads one, not
+three. `updateCheck` is the one key with no value to give: `false` is
+`--no-update-check`, and anything else is the default. `--no-plugins` is the one
+flag with no key: leaving `plugins` out is already the off.
 
 `ahpd config` prints the path it read and what was in it.
 

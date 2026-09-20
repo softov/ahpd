@@ -127,7 +127,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 | [04 - The daemon names plugins in configuration and on the command line](task-04-config-and-flags.md) | done | 01 |
 | [05 - The daemon builds its host through the loader](task-05-main-builds-through-the-loader.md) | done | 03, 04 |
 | [06 - A backend arrives by configuration, end to end](task-06-a-backend-arrives-by-configuration.md) | done | 05 |
-| [07 - `ahpd plugin list` reads manifests without importing](task-07-plugin-list.md) | todo | 03 |
+| [07 - `ahpd plugin list` reads manifests without importing](task-07-plugin-list.md) | done | 03 |
 | [08 - Every register method checks what it is given](task-08-validate-registrations.md) | done | 01 |
 
 ## Risks and tradeoffs

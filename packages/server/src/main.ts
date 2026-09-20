@@ -5,7 +5,7 @@ import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
-import { loadPlugins } from './plugins.js';
+import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
 import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
@@ -100,6 +100,8 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   ahpd stop                   stop the one running in the background
   ahpd status                 say whether one is, and where
   ahpd config                 say where the configuration is, and what it says
+  ahpd plugin list            what the configuration names, and what a run
+                              would load, without loading any of it
 
   --port <n>                    Listen here. Default 9187; 0 picks a free one.
   --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
@@ -368,6 +370,28 @@ if (verb !== undefined) {
     process.stdout.write(rows.length === 0
       ? '  (nothing set)\n'
       : `${rows.map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`).join('\n')}\n`);
+    process.exit(0);
+  }
+  if (verb === 'plugin') {
+    /*
+     * A listing, and the reason the `ahpd` key exists: what a run would load,
+     * what cannot be found, what needs configuring and what is switched off,
+     * on one screen and before anything runs. The specs come from the same
+     * `parse` the run uses, so `--plugin` and `--no-plugins` mean here what
+     * they mean there, and nothing below imports a plugin or builds a host.
+     */
+    if (rest[0] !== 'list') {
+      process.stderr.write('plugin takes list, and nothing else.\n');
+      process.exit(2);
+    }
+    const parsed = parse(rest.slice(1));
+    if (parsed.noPlugins) process.stdout.write('plugins: --no-plugins, so nothing is listed\n');
+    else if (parsed.plugins.length === 0) process.stdout.write('plugins: none named\n');
+    else {
+      for (const spec of parsed.plugins) {
+        process.stdout.write(`${pluginLine(await describePlugin(spec, { configDir: configDir(), cwd: process.cwd() }))}\n`);
+      }
+    }
     process.exit(0);
   }
   process.stderr.write(`No command called ${verb}. Try --help.\n`);

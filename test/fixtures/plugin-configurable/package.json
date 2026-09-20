@@ -1,0 +1,11 @@
+{
+  "name": "plugin-configurable",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "ahpd": {
+    "entry": "./index.ts",
+    "title": "Configurable",
+    "options": { "token": { "required": true }, "mode": { "required": false } }
+  }
+}

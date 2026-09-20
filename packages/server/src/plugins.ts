@@ -483,3 +483,117 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   problems.push(...folded.problems);
   return { options: folded.options, contributions, problems, loaded };
 }
+
+/**
+ * What a listing says about one spec.
+ *
+ * The states are doop's, adapted to a command that does not load: `ready` for
+ * one that resolves and whose manifest parses, `incompatible` for a `@ahpd/sdk`
+ * range the running SDK does not satisfy, `unconfigured` for a manifest that
+ * names a required option the configuration does not set, `disabled` for a
+ * spec turned off, `missing` for one that does not resolve, and `error` for a
+ * manifest that does not parse or does not hold.
+ */
+export type PluginState = 'ready' | 'incompatible' | 'unconfigured' | 'disabled' | 'missing' | 'error';
+
+/** One spec, as a listing shows it. */
+export interface PluginRow {
+  /** What was named, as it was named. */
+  spec: PluginSpec;
+  /** Which of the six states this spec is in. */
+  state: PluginState;
+  /** The URL a load would import, when a spec resolved. */
+  url?: string;
+  /** The file a load would import, when there is one. */
+  path?: string;
+  /** The name the module or the manifest declares. */
+  name?: string;
+  /** The title the manifest declares. */
+  title?: string;
+  /** The one line explaining a state that is not `ready`. */
+  problem?: string;
+}
+
+/** Whether a manifest's `ahpd.options` entry says the option must be given. */
+const required = (value: unknown): boolean =>
+  value === true || (typeof value === 'object' && value !== null && (value as Record<string, unknown>).required === true);
+
+/**
+ * Describe one spec without running anything.
+ *
+ * Resolve, then read the manifest from the resolved path, and nothing else: no
+ * `import`, no `apply`. That is the whole reason the `ahpd` key exists - a
+ * listing of installed plugins must not run third-party code - and it is why a
+ * plugin that would throw on import still lists.
+ */
+export async function describePlugin(
+  spec: PluginSpec,
+  options: { configDir: string; cwd: string },
+  version: string = sdkVersion(),
+): Promise<PluginRow> {
+  if (typeof spec !== 'string' && spec.enabled === false) return { spec, state: 'disabled' };
+
+  let resolved: Resolved;
+  try {
+    resolved = resolvePlugin(spec, options);
+  }
+  catch (error) {
+    return { spec, state: 'missing', problem: messageOf(error) };
+  }
+
+  const row: PluginRow = { spec, state: 'ready', url: resolved.url };
+  if (resolved.path !== undefined) row.path = resolved.path;
+
+  const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
+  if (packageDir === undefined) return row;
+
+  const manifest = readManifest(packageDir);
+  if (manifest.problem !== undefined) return { ...row, state: 'error', problem: manifest.problem };
+  const bad = checkManifest(manifest, packageDir);
+  if (bad !== undefined) return { ...row, state: 'error', problem: bad };
+  if (manifest.name !== undefined) row.name = manifest.name;
+  if (manifest.title !== undefined) row.title = manifest.title;
+
+  if (manifest.sdkRange !== undefined) {
+    let satisfied = false;
+    let why = `${manifest.sdkRange} is not satisfied by ${version}`;
+    try {
+      satisfied = satisfies(version, manifest.sdkRange);
+    }
+    catch (error) {
+      why = messageOf(error);
+    }
+    if (!satisfied) return { ...row, state: 'incompatible', problem: why };
+  }
+
+  const inside = manifest.ahpd as Record<string, unknown> | undefined;
+  const wanted = inside?.options;
+  if (typeof wanted === 'object' && wanted !== null && !Array.isArray(wanted)) {
+    const given = typeof spec === 'object' && spec !== null ? (spec.options ?? {}) : {};
+    const absent = Object.entries(wanted)
+      .filter(([key, value]) => required(value) && given[key] === undefined)
+      .map(([key]) => key);
+    if (absent.length > 0) return { ...row, state: 'unconfigured', problem: `needs ${absent.join(', ')}` };
+  }
+
+  return row;
+}
+
+/**
+ * One row as the line a person reads.
+ *
+ * Pulled out of the verb so it can be tested without starting `main.ts`: the
+ * verb itself is untestable, and the shape of the line - a state, the spec, the
+ * path and who the manifest says it is - is the decision worth pinning.
+ */
+export const pluginLine = (row: PluginRow): string => {
+  const where = row.path ?? row.url ?? '-';
+  const label = row.name !== undefined || row.title !== undefined
+    ? `(${[row.name ?? '?', ...(row.title === undefined ? [] : [row.title])].join(', ')})`
+    : row.state === 'disabled' ? '(turned off)'
+      : row.state === 'missing' ? '(not resolved)'
+        : row.state === 'error' ? '(bad manifest)'
+          : '(no manifest)';
+  const why = row.problem === undefined ? '' : `: ${row.problem}`;
+  return `${row.state} ${nameOf(row.spec)} -> ${where} ${label}${why}`;
+};
