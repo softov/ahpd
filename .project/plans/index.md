@@ -49,7 +49,7 @@ Reference: [00-documentation.md](documentation/00-documentation.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - The stale prose matches the code again](documentation/01-correct-the-stale-prose/plan.md) | low | planned 2026-09-19 | - | - |
+| [01 - The stale prose matches the code again](documentation/01-correct-the-stale-prose/plan.md) | low | built 2026-09-20 ([implemented.md](documentation/01-correct-the-stale-prose/implemented.md)) | - | - |
 
 Next free number in `documentation`: `02`.
 

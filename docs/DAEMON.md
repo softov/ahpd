@@ -42,7 +42,10 @@ anything has been let go of.
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
+| `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits and a session's settings go |
+| `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
 | `--no-update-check` | Never ask npm whether a newer version exists. See below |
+| `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
 
 ### `--automations`, and what memory costs

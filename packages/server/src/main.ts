@@ -94,8 +94,8 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 accept from other machines, which needs a token.
   --path <dir>                  A directory this host serves. Repeatable; the
                                 first is the default a client gets when it
-                                names none, and a directory not named here is
-                                refused. Default: where the daemon started.
+                                names none, and the catalogue is the union of
+                                all of them. Default: where the daemon started.
   --connection-token <secret>   Require this secret on every connection.
   --connection-token-file <p>   Require the secret in this file. A fresh one is
                                 written if the file is not there.
@@ -149,10 +149,7 @@ function parse(argv: string[]): Options {
       case '--port': options.port = Number(argv[++i]); break;
       case '--host': options.host = String(argv[++i]); break;
       // Repeatable. One host over two projects is one catalogue and one
-      // process, which is the case a second `--path` is for; a directory this
-      // host was not told about is refused rather than served, because a host
-      // that ran the agent wherever it was told is one anybody who can reach
-      // the port can point at any directory on the machine.
+      // process, which is the case a second `--path` is for.
       case '--path': options.paths.push(String(argv[++i])); break;
       case '--connection-token': options.token = String(argv[++i]); break;
       case '--connection-token-file': options.tokenFile = String(argv[++i]); break;

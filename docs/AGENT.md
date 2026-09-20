@@ -119,7 +119,7 @@ session channel. A session never needs to know either URI to do it.
 | the turn | `begin(turnId, text, model?)`, `cancel(turnId)` |
 | the queue and the draft | `queue(id, text, model?)`, `unqueue(id)`, `reorder(order)`, `setDraft(text)` |
 | being asked | `confirm(toolCallId, approved)`, `answer(requestId, accepted, answers)` |
-| the controls | `setModel`, `setPermissionMode`, `setEffort`, `setOutputStyle`, `setConfig`, `settings()` |
+| the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
 | the end | `close()` |
 

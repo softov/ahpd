@@ -1,7 +1,7 @@
 ---
 title: The stale prose matches the code again
 domain: documentation
-status: planned
+status: built
 priority: low
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -90,7 +90,7 @@ a person reads USAGE or docs/DAEMON.md or docs/AGENT.md
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Correct the stale prose](task-01-correct-the-stale-prose.md) | todo | - |
+| [01 - Correct the stale prose](task-01-correct-the-stale-prose.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -101,18 +101,18 @@ a person reads USAGE or docs/DAEMON.md or docs/AGENT.md
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its task file were written 2026-09-19.
-- **Next action:** [task-01-correct-the-stale-prose.md](task-01-correct-the-stale-prose.md).
+- **Done so far:** all six corrections are in, with the advertised and accepted permission-mode lists both at six; the two test assertions moved with the enum. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Is the permission-mode fix prose or code? - proposed: code, advertise `dontAsk` and make both lists six.
-- **Watch out for:** the six are unrelated and are six steps; do not merge them, and do not fold the detached-worktrees comment in as a seventh.
+  1. Is the permission-mode fix prose or code? - answered: code; `dontAsk` is advertised and both lists are six.
+- **Watch out for:** each correction was made against the line read at the time, because every cited number had moved since the plan was written; the detached-worktrees comment was left alone as the plan requires.
 
 ## Final verification checklist
 
-- [ ] `grep -n "is refused\|refused rather than served" packages/server/src/main.ts` returns no `--path` claim.
-- [ ] `docs/DAEMON.md`'s options table names `--sessions`, `--wire` and `--version`.
-- [ ] `docs/AGENT.md` lists only `setConfig` among the control setters it names.
-- [ ] The `resource*` comment and the `source` comment say what the code serves.
-- [ ] `claude.ts` and `session.ts` agree on six permission modes and the two test assertions match.
-- [ ] `pnpm test` green; `pnpm typecheck` and `pnpm boundary` green.
-- [ ] `plans/index.md` updated.
+- [x] `grep -n "is refused\|refused rather than served" packages/server/src/main.ts` returns no `--path` claim; the one hit is the unrelated bad-option line.
+- [x] `docs/DAEMON.md`'s options table names `--sessions`, `--wire` and `--version`.
+- [x] `docs/AGENT.md` lists only `setConfig` among the control setters it names.
+- [x] The `resource*` comment and the `source` comment say what the code serves.
+- [x] `claude.ts` and `session.ts` agree on six permission modes and the two test assertions match.
+- [x] `pnpm test` green; `pnpm typecheck` and `pnpm boundary` green.
+- [x] `plans/index.md` updated.

@@ -1,6 +1,6 @@
 ---
 title: The six stale places in the prose and the code match again
-status: todo
+status: done
 depends: []
 layer: docs
 refs:
@@ -61,4 +61,7 @@ The six prose sites named in the plan match the code beside them again, with the
 
 ## Resume
 
-Empty until started.
+Done.
+All six steps were taken against the current lines rather than the plan's numbers: the `--path` USAGE row and its parse comment lost the fence, the daemon options table gained `--sessions`, `--wire` and `--version`, the AGENT controls row names only `setConfig(key, value)` and `settings()`, the two host comments now say what the code serves, and the advertised permission-mode enum gained `dontAsk` with its label and description.
+The two test assertions moved with the enum, and the permission-mode counts in the two comments beside them now say six.
+`test/fixtures/wire.jsonl` was rewritten by `test/wire.test.ts` on the test run and carries the six-mode enum, which is a generated output and not a seventh finding.

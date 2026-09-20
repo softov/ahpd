@@ -4741,11 +4741,13 @@ export function createHost(options: HostOptions): Host {
         /*
          * The host's filesystem, as far as a client is allowed to see it.
          *
-         * Read-only on purpose. The write half of `resource*` exists and is
-         * not served: a host that let any connected client write anywhere is
-         * a different thing from one that lets it read the project it is
-         * working on, and this daemon is meant to be reachable from another
-         * machine. A client that asks gets `-32601` rather than silence.
+         * Both halves are served. The read half answers any connection; the
+         * write half - `resourceWrite`, `resourceDelete`, `resourceMkdir`,
+         * `resourceMove` and `resourceCopy` - is served too, and each of them
+         * is gated by a `resourceRequest` grant. A write with no grant is
+         * refused with `-32009`, which carries the `resourceRequest` that
+         * would make the same call work; only a host with no store that
+         * writes answers `-32601`.
          */
         /**
          * A shell on this machine.
@@ -5338,9 +5340,10 @@ export function createHost(options: HostOptions): Host {
          * A second conversation in one session.
          *
          * Same backend, same directory, same config - which is what makes the
-         * chats peers rather than one being the other's child. `source` is not
-         * served: forking a chat from a turn needs the backend to resume at
-         * that turn, and this one resumes whole sessions.
+         * chats peers rather than one being the other's child. `source` is
+         * accepted: a `fork` resumes at the turn and seeds the copy from the
+         * source transcript, and a `sideChat` copies nothing and carries that
+         * turn's text on its first prompt.
          */
         createChat: async (params) => {
           const uri = String(params.channel ?? '');

@@ -106,7 +106,7 @@ export function claude(options: ClaudeOptions): Agent {
     type: 'object',
     properties: {
       /*
-       * One axis, and the CLI's own five values.
+       * One axis, and the CLI's own six values.
        *
        * The protocol's config schema is generic and a backend advertises what
        * it has - VS Code's own hosts advertise different properties for
@@ -120,20 +120,22 @@ export function claude(options: ClaudeOptions): Agent {
        *
        * The wording is that host's too, so one session reads the same however
        * it is opened. `auto` was missing here and is a real mode the CLI
-       * takes: the agent deciding, per call, whether it needs to ask.
+       * takes: the agent deciding, per call, whether it needs to ask. `dontAsk`
+       * was missing too, and is the SDK's other mode.
        */
       permissionMode: {
         scope: 'session',
         type: 'string',
         title: 'Approvals',
         description: 'How the agent handles tool approvals.',
-        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'],
         enumLabels: [
           'Ask Before Edits',
           'Edit Automatically',
           'Plan Mode',
           'Auto Mode',
           'Bypass Permissions',
+          "Don't Ask",
         ],
         enumDescriptions: [
           'Asks before editing files.',
@@ -141,6 +143,7 @@ export function claude(options: ClaudeOptions): Agent {
           'Creates a plan before making changes.',
           'Decides whether to ask for each tool operation.',
           'Runs all tools without asking.',
+          'Denies anything not already approved, without asking.',
         ],
         default: 'default',
         sessionMutable: true,

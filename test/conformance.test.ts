@@ -653,7 +653,7 @@ it('still refuses something that is not a URI at all', async () => {
  */
 const { permissionFor } = await import('../packages/agent-claude/src/session.js');
 
-it('advertises the five modes the CLI has, under the name it has them', async () => {
+it('advertises the six modes the CLI has, under the name it has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
     schema: { properties: Record<string, { enum?: string[] }> };
@@ -668,7 +668,7 @@ it('advertises the five modes the CLI has, under the name it has them', async ()
   expect(Object.keys(cfg.schema.properties)).not.toContain('autoApprove');
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
   expect(cfg.schema.properties.permissionMode?.enum)
-    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
 });
 
 it('maps the keys a client sends onto the mode this harness takes', () => {

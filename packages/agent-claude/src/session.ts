@@ -398,7 +398,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
 /**
  * A permission mode a client asked for in somebody else's vocabulary.
  *
- * This backend advertises `permissionMode` and its own four values, which is
+ * This backend advertises `permissionMode` and its own six values, which is
  * what the protocol asks a backend to do - the config schema is deliberately
  * generic, and VS Code's own hosts advertise different properties for Copilot
  * and for Claude. So the schema stays this harness's.
@@ -2257,7 +2257,7 @@ export function createSession(options: SessionOptions): Session {
        * The mode this backend advertises, and the two conventional names for
        * the same axis.
        *
-       * `permissionMode` is the schema's own property and its five values are
+       * `permissionMode` is the schema's own property and its six values are
        * the CLI's. `autoApprove` and `mode` are what a client sends whatever a
        * host advertises, and `permissionFor` maps them onto the same axis.
        */

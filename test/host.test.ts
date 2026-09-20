@@ -1750,7 +1750,7 @@ describe('choosing a model', () => {
     expect(keys).toContain('permissionMode');
     expect(keys).toContain('effortLevel');
     expect(keys).toContain('thinking');
-    expect(cfg.schema.properties.permissionMode?.enum).toContain('plan');
+    expect(cfg.schema.properties.permissionMode?.enum).toContain('dontAsk');
     expect(cfg.values.permissionMode).toBe('default');
   });
 
