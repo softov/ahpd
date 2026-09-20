@@ -380,6 +380,13 @@ node packages/server/dist/main.js --port 0 --plugin ./packages/agent-facio
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
 ```
 
+Load a package by its directory, not by its `src/index.ts`: the manifest names
+the build, and a source file lists as `ready` without being imported, but a
+load of it fails because its own `./agent.js` imports do not exist beside the
+`.ts` sources. `pnpm build` is what makes the directory loadable, and
+`ahpd plugin list --plugin ./packages/agent-facio` is how to check it without
+starting a daemon.
+
 `plugin-echo` contributes the example's `echo` backend and is the one to use to
 watch a contributed backend serve a whole turn; `plugin-hello` contributes a
 backend and a tool and refuses to create sessions. The others exist to pin a
