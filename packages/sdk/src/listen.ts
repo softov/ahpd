@@ -12,7 +12,15 @@ import type { Connected, Listener, ListenOptions, OnConnect, Runtime, Tap } from
  * another one is a case added here.
  */
 
-const runtimeOf = (): Runtime => {
+/**
+ * Which runtime this is.
+ *
+ * The knowledge stays in this module rather than moving to a second detector:
+ * `listen` is still the only place that knows, and the plugin loader that has
+ * to answer a bare spec differently on Deno calls this rather than copying it,
+ * so the two can never disagree.
+ */
+export const runtime = (): Runtime => {
   const g = globalThis as { Bun?: unknown; Deno?: unknown };
   if (g.Bun !== undefined) return 'bun';
   if (g.Deno !== undefined) return 'deno';
@@ -71,7 +79,7 @@ const tapping = (tap: Tap | undefined, peer: number): {
 });
 
 export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
-  const runtime = runtimeOf();
+  const here = runtime();
   const host = options.host ?? '127.0.0.1';
   let accepted = 0;
   const token = options.token;
@@ -79,7 +87,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   const allowed = (url: string | undefined, authorization: string | null): boolean =>
     token === undefined || same(token, presented(url, authorization) ?? '');
 
-  if (runtime === 'bun') {
+  if (here === 'bun') {
     const Bun = (globalThis as unknown as { Bun: {
       serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void; port: number };
     } }).Bun;
@@ -125,10 +133,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         },
       },
     });
-    return { runtime, host, port: server.port, guarded: token !== undefined, close: () => server.stop(true) };
+    return { runtime: here, host, port: server.port, guarded: token !== undefined, close: () => server.stop(true) };
   }
 
-  if (runtime === 'deno') {
+  if (here === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
       serve(options: { port: number; hostname: string }, handler: (r: Request_) => Response): {
         shutdown(): Promise<void>;
@@ -165,7 +173,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       return response;
     });
     return {
-      runtime,
+      runtime: here,
       host,
       port: server.addr.port,
       guarded: token !== undefined,
@@ -218,7 +226,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     server.once('error', (error) => reject(error instanceof Error ? error : new Error(String(error))));
   });
   return {
-    runtime,
+    runtime: here,
     host,
     // What was bound, not what was asked for: port 0 means the OS chooses.
     port: server.address()?.port ?? options.port,

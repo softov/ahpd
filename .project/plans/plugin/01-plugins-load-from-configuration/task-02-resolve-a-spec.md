@@ -1,6 +1,6 @@
 ---
 title: A spec becomes an importable URL, on all three runtimes
-status: todo
+status: done
 depends:
   - task-01-contract-and-fold.md
 layer: packages/server
@@ -55,4 +55,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/sdk/src/listen.ts` exports the detector as `runtime` (the local was renamed `here` so the export is not shadowed), and `packages/sdk/src/index.ts` re-exports it.
+`packages/server/src/plugins.ts` holds `nameOf`, `hasScheme`, `denoMessage`, `entryOf` and `resolvePlugin`, with `Resolved` carrying `spec`, `url` and optional `path` and `packageDir`.
+`test/plugin-resolve.test.ts` covers a bare name through the configuration directory, a missing relative path naming both places, a scheme passed through, an uninstalled scoped name, the four manifest entries in order, a directory with none of them, an entry that escapes its package, and the `index.js` fallback when the manifest does not parse; the Deno branch is checked through `denoMessage` because the suite runs on Node.
+Verified: `pnpm test` 658 passed, `pnpm typecheck` green, `pnpm boundary` unchanged.
+Departure from the plan: `Resolved.path` is optional rather than required, because the validation asks for no `path` on a spec with a scheme of its own and there is no file to name for one.
+`entryOf` treats an unreadable `package.json` as a manifest with no fields and still falls back to `index.js`, so a broken manifest is named by task 03's check before `import()` rather than at resolve time.
