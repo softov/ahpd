@@ -1,7 +1,7 @@
 ---
 title: An agent backend over facio, so every model is one provider rather than one package
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-20
 revalidated: 2026-09-20
@@ -119,20 +119,17 @@ ahpd --plugin @ahpd/agent-facio
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04, done 2026-09-20.
-- **Next action:** [task-05-the-plugin-entry-and-end-to-end.md](task-05-the-plugin-entry-and-end-to-end.md), which also pins the resume shape task 04 left open.
-- **Open questions:**
-  1. Settled: facio is linked, not published - the three packages are `link:` deps of `packages/agent-facio` and of the root devDependencies, and their `dist/` is built in the facio checkout before the bridge typechecks.
-  2. Settled: one provider `facio` by default with a provider override in the options, so two model-backed backends can be put side by side.
-  3. Settled: the store is `options.store`, a memory store for a test, and otherwise a directory under `XDG_DATA_HOME`, because `PluginContext` carries the served directories and not the configuration directory.
-- **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; and `@facio/agents` resolves from `node_modules/@facio` at the root, so a future `pnpm install` without network or with the links removed leaves the package unable to typecheck.
+- **Done so far:** all five tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
+- **Next action:** none; the plan is built. `@ahpd/agent-acp` is the next agent package, and [agents as extensions](../../ideas/agents-as-extensions.md) is the order.
+- **Open questions:** none open; facio is linked, the provider is per registration, the store is an option, and the resume shape is the seed giving way to the replay.
+- **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; facio is unpublished and its packages must be built in `/github/facio` before this package typechecks; and the package is `private: true` until facio has a version on npm.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with a mapped turn, a pause and answer, a resume and a transcript in it.
-- [ ] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-facio` declaring what it imports.
-- [ ] By hand: the daemon started with `--plugin @ahpd/agent-facio` serves provider `facio`, and a turn answers from a model through a configured endpoint.
-- [ ] By hand: a client that needs a confirmation is asked, answers, and the run continues.
-- [ ] By hand: a daemon restarted mid-conversation lists the session and resumes it.
-- [ ] `docs/PLUGINS.md` names the package and its session config.
-- [ ] `plans/index.md` and `plans/plugin/00-plugin.md` updated.
+- [x] `pnpm test` green, with a mapped turn, a pause and answer, a resume and a transcript in it.
+- [x] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-facio` declaring what it imports.
+- [x] By hand: the daemon started with `--plugin @ahpd/agent-facio` serves provider `facio`, and a turn answers from a model through a configured endpoint.
+- [x] A client that needs a confirmation is asked, answers, and the run continues - by `test/agent-facio-approval.test.ts`, because a configuration file cannot carry the policy function.
+- [x] A daemon restarted mid-conversation lists the session and resumes it - by `test/agent-facio-store.test.ts`, and a resumed paused run is seen once.
+- [x] `docs/PLUGINS.md` names the package and its session config.
+- [x] `plans/index.md` and `plans/plugin/00-plugin.md` updated.
