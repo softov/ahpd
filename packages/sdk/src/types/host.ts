@@ -2,6 +2,7 @@
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent } from './agent.js';
+import type { HostHandlers } from './events.js';
 import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write as WriteContent } from './resources.js';
 import type { Terminal, TerminalOptions } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
@@ -241,6 +242,16 @@ export interface HostOptions {
   diagnostics?: Diagnostics;
   /** Called with one line per notable event, for a log. */
   onEvent?(message: string): void;
+  /**
+   * What plugins subscribed to, by event, in registration order.
+   *
+   * Each handler is called with the event and the read-only context its plugin
+   * was handed, awaited in turn, and a handler that throws is reported against
+   * its plugin and does not stop the next one or the action being observed.
+   * `onEvent` above stays the embedder's one-line writer; `log` is also an
+   * event, and the two are raised from the same place.
+   */
+  events?: HostHandlers;
 }
 
 /** What a host knows about itself, for the window's diagnostics. */

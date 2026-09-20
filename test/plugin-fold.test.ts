@@ -42,6 +42,7 @@ const contribution = (
   agents: parts.agents ?? [],
   tools: parts.tools ?? [],
   ports: parts.ports ?? {},
+  events: {},
 });
 
 const port = (value: unknown, replace = false): PortContribution => ({ value, replace });

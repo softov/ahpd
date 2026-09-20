@@ -1,6 +1,6 @@
 ---
 title: The event option and the `on` subscription exist
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:
@@ -50,4 +50,11 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/sdk/src/types/events.ts` holds `EventName`, one payload interface per event, `HostEvent`, `HostEventOf`, `EventHandler`, `EventListener` and `HostHandlers`.
+`types/plugin.ts` gains `PluginHost.on` and `Contribution.events`; `types/host.ts` gains `HostOptions.events`; `plugins.ts` gains `pluginHost`'s `on` and the fold's merge, base listeners first and then each plugin's in configuration order; `types/index.ts` exports the new types.
+`test/plugin-events-wiring.test.ts` covers one listener recorded against its plugin, two plugins on one event in configuration order, a base listener kept ahead of the plugins', and a plugin that subscribed to nothing adding no record at all.
+Verified: the plugin suites pass, `pnpm typecheck` and `pnpm boundary` green.
+Departure from the plan: `EventListener` carries the `context` captured at registration as well as `by` and `handle`. The host does not know every directory the daemon serves - `HostOptions` has one `path` and `paths` lives in the loader - so rebuilding the context at fire time would hand a handler a one-directory lie on a daemon started with two `--path`.
+The handler's `ctx.log` is the loader's writer, the same one `apply` was handed, so it does not raise a host `log` event; task 03 still guards the log raise, and its test pins that a handler which logs does not cause a second `log`.
+`on` stores listeners in a loose record and narrows to `HostHandlers` through the contribution, because the mapped type gives each event its own handler signature and TypeScript will not accept the correlated union through a plain index.

@@ -13,6 +13,7 @@
  */
 
 import type { Agent } from './agent.js';
+import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
 
 /**
@@ -117,6 +118,15 @@ export interface PluginHost extends PluginContext {
   registerSessions(store: PortOf<'sessions'>, when?: 'replace'): void;
   /** Set `HostOptions.diagnostics`, or take the daemon's over with `'replace'`. */
   registerDiagnostics(diagnostics: PortOf<'diagnostics'>, when?: 'replace'): void;
+  /**
+   * Subscribe to one of the host's own moments.
+   *
+   * The one method not named `register*`, because it contributes nothing to
+   * `HostOptions`: it attaches a listener to something the host already does.
+   * The handler's return value is ignored and it cannot refuse or rewrite what
+   * it observes, and it is awaited before the next listener runs.
+   */
+  on<K extends EventName>(event: K, handler: EventHandler<K>): void;
 }
 
 /**
@@ -166,6 +176,14 @@ export interface Contribution {
   tools: HostTool[];
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
+  /**
+   * The listeners this plugin attached, by event.
+   *
+   * Empty when it subscribed to nothing, so the fold can add it without a
+   * case, and never merged with another plugin's except in configuration
+   * order.
+   */
+  events: HostHandlers;
 }
 
 /** One plugin that was resolved and imported, before or after it was applied. */

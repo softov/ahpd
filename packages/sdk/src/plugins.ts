@@ -12,6 +12,7 @@
  */
 
 import type { Agent } from './types/agent.js';
+import type { EventHandler, EventListener, EventName, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
 import { checkAgent, checkPort, checkTool, miss } from './validate.js';
@@ -125,6 +126,28 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   const tools = [...(base.tools ?? []), ...contributions.flatMap((contribution) => contribution.tools)];
   if (tools.length > 0 || base.tools !== undefined) options.tools = tools;
 
+  /*
+   * The event listeners, the base's first and then each plugin's, in the order
+   * the plugins were configured. A plugin that subscribed to nothing adds no
+   * key, and a host with no listeners at all keeps `events` absent rather than
+   * carrying an empty record.
+   */
+  const events: Record<string, EventListener[]> = {};
+  for (const [name, list] of Object.entries(base.events ?? {})) {
+    if (list !== undefined && list.length > 0) events[name] = [...list] as unknown as EventListener[];
+  }
+  for (const contribution of contributions) {
+    for (const [name, list] of Object.entries(contribution.events)) {
+      if (list === undefined || list.length === 0) continue;
+      // A listener typed for one event is a listener for that event: the
+      // mapped type gives each name its own handler signature, and the record
+      // is what a name is looked up in at fire time.
+      const held = list as unknown as EventListener[];
+      events[name] = [...(events[name] ?? []), ...held];
+    }
+  }
+  if (Object.keys(events).length > 0) options.events = events as unknown as HostHandlers;
+
   for (const [key, value] of set) {
     (options as unknown as Record<string, unknown>)[key] = value;
   }
@@ -151,7 +174,20 @@ export interface HostRecording {
  * is the fold's problem, because only the fold can see both.
  */
 export function pluginHost(by: string, context: PluginContext): HostRecording {
-  const contribution: Contribution = { by, agents: [], tools: [], ports: {} };
+  /*
+   * The listeners, keyed by event. Held as a loose record and narrowed to
+   * `HostHandlers` through the contribution, because the mapped type gives
+   * each event its own listener type and a generic `on` writes one key at a
+   * time.
+   */
+  const events: Record<string, EventListener[]> = {};
+  const contribution: Contribution = {
+    by,
+    agents: [],
+    tools: [],
+    ports: {},
+    events: events as unknown as HostHandlers,
+  };
   const providers = new Set<string>();
   const tools = new Set<string>();
 
@@ -191,6 +227,12 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
     registerAutomations: (store, when) => { setPort('automations', 'registerAutomations', store, when); },
     registerSessions: (store, when) => { setPort('sessions', 'registerSessions', store, when); },
     registerDiagnostics: (diagnostics, when) => { setPort('diagnostics', 'registerDiagnostics', diagnostics, when); },
+    on(event, handle) {
+      // The context is captured, not rebuilt when the event fires: it is the
+      // same read-only one `apply` was handed, and the host does not otherwise
+      // know every directory the daemon was told to serve.
+      (events[event] ??= []).push({ by, context, handle: handle as unknown as EventHandler });
+    },
   };
 
   return { host, contribution };
