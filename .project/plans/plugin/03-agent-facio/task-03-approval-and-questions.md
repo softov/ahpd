@@ -1,6 +1,6 @@
 ---
 title: Approval and questions pause the run and are answered back into it
-status: todo
+status: done
 depends:
   - task-02-a-turn-becomes-the-chat-actions.md
 layer: packages/agent-facio
@@ -50,4 +50,11 @@ A facio run that pauses for an approval or a question becomes a `session/inputNe
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`mapping.ts` maps the pause and resolution events instead of throwing: `approval.requested` moves a held call to `pending-confirmation` and sets a `toolConfirmation` entry under `approval:<requestId>`, `input.requested` sets a `chatInput` entry under `input:<requestId>`, `approval.resolved`/`input.resolved`/`input.declined`/`run.resumed` settle the entry once, `run.paused` is the marker with no action, and the `awaiting` outcome leaves the turn open.
+`session.ts` tracks the pending requests by `requestId` and by `callId`, sets `Status.InputNeeded`, exposes what is waiting on the session snapshot, and routes `confirm`/`answer` back through `submit` on a resumed handle; `agent.ts` gains an optional `policy` carried into `createAgent`, absent meaning facio's own default.
+`test/agent-facio-approval.test.ts` is six tests over the real host: the pause shape with no completion, a wrong call id settling nothing, approve running the tool and finishing the turn, deny carrying the reason to the action and the model, two approvals answered by their own id, and a question answered and a question declined.
+Verified: `npx vitest run` 752 passed over 51 files, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` four packages.
+What facio does not carry: `approval.requested` has no invocation sentence, so the row's message is the prompt or a synthesised one; `input.requested` has no request-level message; AHP's `confirm` is two-valued, so facio's `alwaysApprove` is unreachable and is not wired; and AHP's answer objects are not facio's `AskAnswers`, so `answer` unwraps them.
+Departure from the plan: two open approvals cannot happen inside one session, because facio keeps one pending request per run, so the independence case runs two sessions against one host and the single-session case pins that a wrong call id settles nothing.
+An answer can only be delivered by rejoining the frozen run with `resume({ afterSeq })`, because that is the call that installs the handle's command channel; task 04 needs the same call to reopen a run paused before a restart.

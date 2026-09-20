@@ -14,7 +14,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore } from '@facio/agents';
-import type { ModelAdapter, Store } from '@facio/agents';
+import type { ModelAdapter, Policy, Store } from '@facio/agents';
 import { openaiCompat } from '@facio/model-openai-compat';
 import { createFileStore } from '@facio/store-file';
 import type { Agent, Bag, Offered } from '@ahpd/sdk';
@@ -42,6 +42,14 @@ export interface FacioOptions {
   memory?: boolean;
   /** A model adapter to use instead of `openaiCompat`; for a test or an embedder. */
   adapter?: ModelAdapter;
+  /**
+   * The run-level policy an approval decision comes from.
+   *
+   * Absent means facio's own default, which asks about a destructive tool and
+   * allows the rest; this bridge carries a policy through rather than
+   * inventing a second default beside it.
+   */
+  policy?: Partial<Policy>;
 }
 
 /**

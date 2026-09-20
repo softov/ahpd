@@ -14,5 +14,5 @@ export { facioAgent, defaultStoreRoot, modelOf, storeOf } from './agent.js';
 export type { FacioOptions } from './agent.js';
 export { facioSession, sessionIdOf } from './session.js';
 export { mapTurn } from './mapping.js';
-export type { TurnMapping, TurnMappingOptions } from './mapping.js';
+export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';
 export { facioTool, facioTools } from './tools.js';

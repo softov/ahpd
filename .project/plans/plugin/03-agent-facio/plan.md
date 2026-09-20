@@ -104,7 +104,7 @@ ahpd --plugin @ahpd/agent-facio
 | --- | --- | --- |
 | [01 - The package, the provider and its config](task-01-the-package-and-the-provider.md) | done | - |
 | [02 - A turn becomes the chat actions](task-02-a-turn-becomes-the-chat-actions.md) | done | 01 |
-| [03 - Approval and questions pause the run and come back](task-03-approval-and-questions.md) | todo | 02 |
+| [03 - Approval and questions pause the run and come back](task-03-approval-and-questions.md) | done | 02 |
 | [04 - The catalogue, the transcript and resume](task-04-catalogue-transcript-and-resume.md) | todo | 01 |
 | [05 - The plugin entry, and a daemon that serves it](task-05-the-plugin-entry-and-end-to-end.md) | todo | 02, 03, 04 |
 
@@ -119,8 +119,8 @@ ahpd --plugin @ahpd/agent-facio
 
 ## Resume state
 
-- **Done so far:** task 01, the package and the provider, and task 02, the turn and its actions, done 2026-09-20.
-- **Next action:** [task-03-approval-and-questions.md](task-03-approval-and-questions.md).
+- **Done so far:** tasks 01 to 03, done 2026-09-20.
+- **Next action:** [task-04-catalogue-transcript-and-resume.md](task-04-catalogue-transcript-and-resume.md).
 - **Open questions:**
   1. Settled: facio is linked, not published - the three packages are `link:` deps of `packages/agent-facio` and of the root devDependencies, and their `dist/` is built in the facio checkout before the bridge typechecks.
   2. Settled: one provider `facio` by default with a provider override in the options, so two model-backed backends can be put side by side.

@@ -6,46 +6,55 @@
  * edit in one file. `session.ts` iterates the run's stream and sends what
  * this returns; it makes no choices of its own about an event.
  *
- * Three things are deliberately not mapped yet, and throw rather than pass
- * silently: an approval request, a question, and the `run.paused` that
- * follows either. Task 03 turns those into `session/inputNeededSet` and a
- * route back into the run's `submit`. A test that reaches one must fail
- * loudly, because a paused run reported complete is a turn nobody can
- * continue.
+ * A pause is a pair of things: a `session/inputNeededSet` a client can draw
+ * and answer, and a marker that the run is waiting. The set is what the
+ * session tracks, the answer comes back through `RunHandle.submit`, and the
+ * resolution events take the entry down again. Nothing here reports a pause
+ * as a finished turn, because a run nobody can continue is a conversation
+ * that has stopped without saying so.
  */
 
-import type { RunEvent, Usage } from '@facio/agents';
+import type { AskQuestion, RunEvent, Usage } from '@facio/agents';
 import type { Bag } from '@ahpd/sdk';
 import { toolCallPart, toolCompleteAction, toolReadyAction, toolStartAction } from './tools.js';
 
-/** The event types that wait for a person, and so belong to task 03. */
-const PAUSING = [
-  'approval.requested',
-  'approval.resolved',
-  'input.requested',
-  'input.resolved',
-  'input.declined',
-  'run.paused',
-  'run.resumed',
-] as const;
-
-/** One of the events that waits for a person rather than meaning something on the wire. */
-type PausingEvent = Extract<RunEvent, { type: typeof PAUSING[number] }>;
-
 /**
- * Whether this event is a pause.
+ * A request a client has to answer, as the session must hold it.
  *
- * A type predicate rather than a plain check, so the switch below narrows to
- * the events that are left. That is what makes a new facio event a compile
- * error here rather than a silent drop.
+ * The mapping makes one when a pause arrives and hands it over with the
+ * actions; the session keeps it until `confirm` or `answer` routes a decision
+ * back. Two requests are two of these, so answering one cannot settle the
+ * other.
  */
-const isPausing = (event: RunEvent): event is PausingEvent =>
-  (PAUSING as readonly string[]).includes(event.type);
+export interface OpenRequest {
+  /** The run's own id for the request, which is what `submit` names. */
+  requestId: string;
+  /** `approval` for a tool call, `input` for a question. */
+  kind: 'approval' | 'input';
+  /** The tool call an approval is about, when the pause named one. */
+  callId?: string;
+  /** The entry id a client was told, carried by the set and the removal. */
+  entryId: string;
+  /** The entry itself, held so a subscription snapshot can repeat it. */
+  entry: Bag;
+}
+
+/** What one event means: the actions to send, and the request it opened or closed. */
+export interface MappedEvent {
+  /** The actions this event means, in the order they must be sent. */
+  actions: Bag[];
+  /** The request this event opened; the session tracks it until it is answered. */
+  opened?: OpenRequest;
+  /** The request this event settled; the session drops it. */
+  settled?: string;
+}
 
 /** What one turn's mapping was told, and what it reads as the turn runs. */
 export interface TurnMappingOptions {
   /** The turn the client began. */
   turnId: string;
+  /** The session's own chat URI, which every entry and request names. */
+  chatUri: string;
   /**
    * The markdown part opened when the turn began.
    *
@@ -74,8 +83,18 @@ export interface TurnMappingOptions {
 
 /** One turn's event translation. */
 export interface TurnMapping {
-  /** The actions one event means, in the order they must be sent. */
-  actions(event: RunEvent): Bag[];
+  /** What one event means. */
+  actions(event: RunEvent): MappedEvent;
+  /**
+   * Take a request down, once.
+   *
+   * The session calls this when a client answers, so the entry leaves the
+   * client's screen at the moment of the answer rather than a resume later.
+   * Nothing is returned for a request that is already gone, which is what
+   * keeps the removal from being sent twice when the resolution event
+   * follows.
+   */
+  settle(requestId: string): Bag | undefined;
 }
 
 /** facio's token counts, in the protocol's spelling. */
@@ -110,9 +129,49 @@ interface OpenCall {
   input: unknown;
   /** Whether `chat/toolCallReady` has gone out yet. */
   readied: boolean;
+  /**
+   * Whether the call was held for a person's decision.
+   *
+   * The ready action that follows an approved call has to say it was approved
+   * by a person rather than needing no approval, or the client draws an
+   * allowed call as one that was never asked about.
+   */
+  awaited: boolean;
+  /** The sentence the approval carried, so the resumed call keeps it. */
+  invocation: string | undefined;
   /** The part held in the turn's snapshot, updated as the call moves. */
   part: Bag;
 }
+
+/**
+ * One question as AHP's composer wants it.
+ *
+ * facio's option is a label and a line about it; the protocol wants both an
+ * id and a label, and the label is what comes back as the answer. A question
+ * with no options is free text, and one that allows a free-text answer beside
+ * its options says so.
+ */
+const questionOf = (question: AskQuestion): Bag => {
+  const title = question.header === undefined ? {} : { title: question.header };
+  if (question.options === undefined || question.options.length === 0) {
+    return { id: question.id, kind: 'text', message: question.question, required: true, ...title };
+  }
+  return {
+    id: question.id,
+    kind: question.multiSelect === true ? 'multi-select' : 'single-select',
+    message: question.question,
+    required: true,
+    options: question.options.map((one) => ({
+      id: one.label,
+      label: one.label,
+      ...(one.description !== undefined ? { description: one.description } : {}),
+    })),
+    // facio takes free text unless the question said otherwise, and the
+    // protocol's default is the same, so the flag is only sent when it is no.
+    ...(question.allowOther === false ? { allowFreeformInput: false } : {}),
+    ...title,
+  };
+};
 
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, markdownPartId, parts } = options;
@@ -120,6 +179,8 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   let reasoningId: string | undefined;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
+  /** Requests a client is being asked about, by the run's request id. */
+  const requests = new Map<string, OpenRequest>();
 
   const partOf = (id: string): Bag | undefined => parts.find((held) => held.id === id);
 
@@ -144,20 +205,27 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
     return part;
   };
 
-  return {
-    actions(event: RunEvent): Bag[] {
-      /*
-       * The pausing events. Named one by one rather than matched by a prefix,
-       * so a new pausing event in facio is a compile error here and not a
-       * silent turn end.
-       */
-      if (isPausing(event)) {
-        throw new Error(
-          `facio ${event.type} is not mapped yet: approval and questions arrive with task 03, `
-          + 'and a paused run must not be reported complete',
-        );
-      }
+  /**
+   * Take a request down, once.
+   *
+   * The entry id is the one the set used, so a client matches the two by it;
+   * a request that is already gone answers nothing, which is what stops the
+   * session's own removal and the resolution event's from being two.
+   */
+  const settle = (requestId: string): Bag | undefined => {
+    const held = requests.get(requestId);
+    if (held === undefined) return undefined;
+    requests.delete(requestId);
+    return { type: 'session/inputNeededRemoved', id: held.entryId };
+  };
 
+  /** The actions one event means, with nothing else. */
+  const only = (actions: Bag[]): MappedEvent => ({ actions });
+
+  return {
+    settle,
+
+    actions(event: RunEvent): MappedEvent {
       switch (event.type) {
         /*
          * `run.started` is already said: the session emits `chat/turnStarted`
@@ -181,7 +249,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'run.steered':
         /* Compaction changes the stored history, which the transcript reads. */
         case 'context.compacted':
-          return [];
+        /*
+         * `run.paused` is the marker that the run is waiting on a person, and
+         * the request itself already told the client what was wanted. There is
+         * no action for "still waiting", so this is deliberately empty - and
+         * deliberately not a completion.
+         */
+        case 'run.paused':
+          return only([]);
 
         case 'model.delta': {
           if (event.kind === 'reasoning') {
@@ -194,11 +269,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              * delta naming a reasoning part is dropped.
              */
             actions.push({ type: 'chat/reasoning', turnId, partId: part.id, content: event.text });
-            return actions;
+            return only(actions);
           }
           const part = prose();
           part.content = `${String(part.content ?? '')}${event.text}`;
-          return [{ type: 'chat/delta', turnId, partId: part.id, content: event.text }];
+          return only([{ type: 'chat/delta', turnId, partId: part.id, content: event.text }]);
         }
 
         case 'tool.proposed': {
@@ -207,24 +282,136 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             name: event.name,
             input: event.input,
             readied: false,
+            awaited: false,
+            invocation: undefined,
             part: toolCallPart(event.callId, event.name, displayName),
           };
           open.set(event.callId, held);
           parts.push(held.part);
-          return [toolStartAction(turnId, event.callId, event.name, displayName)];
+          return only([toolStartAction(turnId, event.callId, event.name, displayName)]);
+        }
+
+        /*
+         * A tool call the policy picked out for a person to allow.
+         *
+         * The call is moved to `pending-confirmation` and said back with a
+         * ready action that carries no `confirmed`, which is the reducer's
+         * word for "waiting on somebody". The entry beside it is what a
+         * client that is not watching this chat answers from.
+         */
+        case 'approval.requested': {
+          const displayName = options.displayNameOf(event.name);
+          const prompt = event.prompt ?? `Run ${displayName}?`;
+          const held = open.get(event.callId);
+          const call: Bag = held === undefined
+            ? { toolCallId: event.callId, toolName: event.name, displayName }
+            : held.part.toolCall as Bag;
+          call.status = 'pending-confirmation';
+          call.confirmationTitle = prompt;
+          call.invocationMessage = prompt;
+          delete call.confirmed;
+          const written = event.input === undefined ? undefined : JSON.stringify(event.input);
+          if (written !== undefined) call.toolInput = written;
+
+          const actions: Bag[] = [];
+          /*
+           * A call the run never proposed, which should not happen but would
+           * otherwise be an entry naming a row no client has.
+           */
+          if (held === undefined) {
+            parts.push({ id: event.callId, kind: 'toolCall', toolCall: call });
+            actions.push(toolStartAction(turnId, event.callId, event.name, displayName));
+          } else {
+            held.awaited = true;
+            held.invocation = prompt;
+          }
+          actions.push({
+            type: 'chat/toolCallReady',
+            turnId,
+            toolCallId: event.callId,
+            invocationMessage: prompt,
+            confirmationTitle: prompt,
+            ...(written !== undefined ? { toolInput: written } : {}),
+          });
+
+          const entryId = `approval:${event.requestId}`;
+          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
+          const opened: OpenRequest = {
+            requestId: event.requestId,
+            kind: 'approval',
+            callId: event.callId,
+            entryId,
+            entry,
+          };
+          requests.set(event.requestId, opened);
+          actions.push({ type: 'session/inputNeededSet', request: entry });
+          return { actions, opened };
+        }
+
+        /*
+         * The ask tool's questions, which are not about a tool call a client
+         * confirms but about what somebody types. The entry carries the
+         * questions and their options, so a composer draws the form from the
+         * session channel alone.
+         */
+        case 'input.requested': {
+          const entryId = `input:${event.requestId}`;
+          const request: Bag = {
+            id: event.requestId,
+            message: 'The agent has a question',
+            questions: event.questions.map(questionOf),
+          };
+          const entry: Bag = { id: entryId, chat: options.chatUri, kind: 'chatInput', request };
+          const opened: OpenRequest = {
+            requestId: event.requestId,
+            kind: 'input',
+            callId: event.callId,
+            entryId,
+            entry,
+          };
+          requests.set(event.requestId, opened);
+          return { actions: [{ type: 'session/inputNeededSet', request: entry }], opened };
+        }
+
+        /*
+         * The ways a pause ends: the decision arrived, the question was
+         * answered or declined, and the run said it was carrying on. Each
+         * takes the entry down if it is still up; the tool actions that
+         * follow are what a client draws, and `run.resumed` has none of its
+         * own because the run's next events already say what continues.
+         */
+        case 'approval.resolved':
+        case 'input.resolved':
+        case 'input.declined':
+        case 'run.resumed': {
+          const removal = settle(event.requestId);
+          return removal === undefined ? only([]) : { actions: [removal], settled: event.requestId };
         }
 
         case 'tool.started': {
           const held = open.get(event.callId);
-          if (held === undefined) return [];
+          if (held === undefined) return only([]);
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.name;
-          call.confirmed = 'not-needed';
+          call.invocationMessage = held.invocation ?? held.name;
+          call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = held.input === undefined ? undefined : JSON.stringify(held.input);
           if (written !== undefined) call.toolInput = written;
-          return [toolReadyAction(turnId, event.callId, event.name, held.input)];
+          /*
+           * Built here rather than through `toolReadyAction`, because an
+           * approved call has to keep saying a person allowed it: the same
+           * action with `not-needed` would draw the approval as one nobody
+           * was ever asked for.
+           */
+          return only([{
+            type: 'chat/toolCallReady',
+            turnId,
+            toolCallId: event.callId,
+            invocationMessage: held.invocation ?? held.name,
+            confirmed: held.awaited ? 'user-action' : 'not-needed',
+            ...(written !== undefined ? { toolInput: written } : {}),
+          }]);
         }
 
         case 'tool.completed': {
@@ -238,7 +425,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
           }
-          return [toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError)];
+          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError)]);
         }
 
         /*
@@ -254,7 +441,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * client to close. The refusal still reaches the model as the tool
            * result facio appends; it is not a row a client was ever shown.
            */
-          if (held === undefined) return [];
+          if (held === undefined) return only([]);
           open.delete(event.callId);
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
@@ -267,27 +454,23 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             ? []
             : [toolReadyAction(turnId, event.callId, event.name, held.input)];
           actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true));
-          return actions;
+          return only(actions);
         }
 
         case 'run.finished': {
           const outcome = event.outcome;
           /*
-           * The awaiting outcome is a pause: the request and `run.paused`
-           * events have already thrown above, and this is the belt to that
-           * pair of braces. `chat/turnComplete` here would tell a client the
-           * turn was over when the run is actually waiting on a person.
+           * The awaiting outcome is the pause itself: the request events
+           * above have already told the client what is wanted, and the run is
+           * waiting rather than over. `chat/turnComplete` here would end a
+           * turn somebody still has to answer.
            */
-          if (outcome.status === 'awaiting') {
-            throw new Error(
-              'facio run.finished carries the awaiting outcome, which task 03 maps: a paused run is not complete',
-            );
-          }
+          if (outcome.status === 'awaiting') return only([]);
           const cancelled = outcome.status === 'cancelled' || options.cancelled();
           const actions: Bag[] = [];
           if (cancelled) {
             actions.push({ type: 'chat/turnCancelled', turnId, duration: Date.now() - options.startedAt });
-            return actions;
+            return only(actions);
           }
           actions.push({ type: 'chat/usage', turnId, usage: usageOf(outcome.usage, options.model) });
           const duration = Date.now() - options.startedAt;
@@ -299,7 +482,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              * in the snapshot and nowhere on the stream.
              */
             actions.push({ type: 'chat/error', turnId, duration, part: failurePart(outcome.error.message) });
-            return actions;
+            return only(actions);
           }
           /*
            * `stopped` as well as `completed`: the run ended on purpose at a
@@ -307,7 +490,16 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * deliberate stop. The turn is over either way.
            */
           actions.push({ type: 'chat/turnComplete', turnId, duration });
-          return actions;
+          return only(actions);
+        }
+
+        default: {
+          /*
+           * A new facio event is a compile error here rather than a silent
+           * drop, which is the property this file exists to keep.
+           */
+          const unhandled: never = event;
+          throw new Error(`facio event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
         }
       }
     },

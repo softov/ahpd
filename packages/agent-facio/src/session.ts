@@ -18,14 +18,14 @@
  *   `responseParts` is what the agent answered.
  */
 
-import { createAgent, run } from '@facio/agents';
-import type { Agent as FacioAgent, RunEvent, RunHandle } from '@facio/agents';
+import { createAgent, resume, run } from '@facio/agents';
+import type { Agent as FacioAgent, RunCommand, RunEvent, RunHandle } from '@facio/agents';
 import { Status } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { modelOf, storeOf } from './agent.js';
 import type { FacioOptions } from './agent.js';
 import { mapTurn } from './mapping.js';
-import type { TurnMapping } from './mapping.js';
+import type { OpenRequest, TurnMapping } from './mapping.js';
 import { facioTools } from './tools.js';
 
 /**
@@ -43,6 +43,41 @@ const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+
+/** What a person is told the model was told when they turn a tool down. */
+const DECLINED = 'The person declined this action';
+
+/**
+ * The answers a client sent, in the shape facio's questions want.
+ *
+ * AHP carries each answer as `{ state, value: { kind, value } }` and facio
+ * wants the value itself, keyed by question id and a list only where the
+ * question allows many. The value sits two levels in, and a value that is
+ * already a string or a list is taken as it is, so a caller that hands over
+ * facio's own shape is not unwrapped into nothing.
+ */
+const answersOf = (answers: Bag): Record<string, string | string[]> => {
+  /** One value as facio reads it, or nothing for a shape it would refuse. */
+  const valueOf = (value: unknown): string | string[] | undefined => {
+    const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return strings(value);
+    const answer = bag(value);
+    const inner = bag(answer.value);
+    const raw = inner.value ?? answer.value;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) return strings(raw);
+    return undefined;
+  };
+  const said: Record<string, string | string[]> = {};
+  for (const [id, value] of Object.entries(answers)) {
+    const one = valueOf(value);
+    // A skipped or shapeless answer is left out rather than sent empty, which
+    // facio's own validation would refuse the whole form for.
+    if (one !== undefined) said[id] = one;
+  }
+  return said;
+};
 
 /**
  * The facio session id an AHP session URI names.
@@ -76,6 +111,26 @@ export function facioSession(options: FacioOptions, start: Start): Session {
   let active: Bag | undefined;
   /** The run behind `active`, so a cancel has something to stop. */
   let handle: RunHandle | undefined;
+  /** The agent the active run was built from, so a rejoin continues on the same one. */
+  let liveAgent: FacioAgent | undefined;
+  /** The active turn's mapping, so an answer can settle the entries it opened. */
+  let activeMapping: TurnMapping | undefined;
+  /**
+   * What a client is being asked about, by the run's own request id.
+   *
+   * One row per request rather than one for the turn, because a run can pause
+   * again after each answer and the second request must not overwrite the
+   * first while it is still open.
+   */
+  const pending = new Map<string, OpenRequest>();
+  /**
+   * Where the run stopped waiting, when it is paused rather than finished.
+   *
+   * A paused run closes the handle that started it, so the answer has to
+   * rejoin the run from this sequence rather than submit to a handle with
+   * nothing left to receive it.
+   */
+  let paused: { runId: string; seq: number } | undefined;
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   let cancelRequested = false;
   let title = 'Facio session';
@@ -122,6 +177,9 @@ export function facioSession(options: FacioOptions, start: Start): Session {
     model: modelOf(options, values),
     tools: facioTools(start.tools ?? []),
     store,
+    // Absent means facio's own default, which is the policy an approval comes
+    // from; this bridge does not keep a second one beside it.
+    ...(options.policy !== undefined ? { policy: options.policy } : {}),
   });
 
   /** Say what it is doing, on both channels, the way a session mirrors its chat. */
@@ -132,8 +190,13 @@ export function facioSession(options: FacioOptions, start: Start): Session {
     start.emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
   };
 
-  /** `SessionStatus`: 8 is in progress, 1 is idle. */
-  const status = (): number => (active !== undefined ? Status.InProgress : Status.Idle);
+  /**
+   * `SessionStatus`: 8 is in progress, 1 is idle, and 24 is waiting on a
+   * person and carries the 8.
+   */
+  const status = (): number => (pending.size > 0 ? Status.InputNeeded
+    : active !== undefined ? Status.InProgress
+      : Status.Idle);
 
   /** Move the running turn into the history, once the stream has ended. */
   const settleTurn = (ending: 'complete' | 'cancelled' | 'error'): void => {
@@ -144,6 +207,12 @@ export function facioSession(options: FacioOptions, start: Start): Session {
     turns.push(turn);
     active = undefined;
     handle = undefined;
+    liveAgent = undefined;
+    activeMapping = undefined;
+    paused = undefined;
+    // An ending turn cannot still be waiting on an answer; a request left
+    // here would keep the session reporting `InputNeeded` over nothing.
+    pending.clear();
     cancelRequested = false;
     touch();
     // Somebody stopping a turn is stopping this conversation; a queued message
@@ -155,9 +224,8 @@ export function facioSession(options: FacioOptions, start: Start): Session {
    * Read a run to its end.
    *
    * Every action comes from `mapping.ts`, including the one that ends the
-   * turn. A mapping error is not caught: a pause arriving here must fail
-   * loudly rather than be answered with a turn end nobody asked for. Task 03
-   * gives those events their own actions and a route back into the run.
+   * turn. A pause is not an ending: the awaiting outcome leaves the turn open
+   * and records where the run stopped, so an answer can rejoin it.
    */
   const read = (live: RunHandle, mapping: TurnMapping): void => {
     /** Whether this run has already said how it ended. */
@@ -165,13 +233,31 @@ export function facioSession(options: FacioOptions, start: Start): Session {
     /** One event's actions, and the ending if it carried one. */
     const send = (event: RunEvent): void => {
       if (event.type === 'run.finished') doing(undefined);
-      for (const action of mapping.actions(event)) {
-        start.emit('chat', action);
-        const type = str(action.type);
+      const mapped = mapping.actions(event);
+      for (const action of mapped.actions) {
+        const type = str(action.type) ?? '';
+        /*
+         * A pause lives on the session channel and a turn on the chat
+         * channel; the action's own name is what says which, so a client
+         * watching the catalogue alone still learns somebody is being asked.
+         */
+        start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
         if (type === 'chat/turnComplete' || type === 'chat/turnCancelled' || type === 'chat/error') {
           settled = true;
           settleTurn(type === 'chat/turnCancelled' ? 'cancelled' : type === 'chat/error' ? 'error' : 'complete');
         }
+      }
+      if (mapped.opened !== undefined) pending.set(mapped.opened.requestId, mapped.opened);
+      if (mapped.settled !== undefined) pending.delete(mapped.settled);
+      /*
+       * The awaiting outcome is a pause, not an ending: the handle is closed
+       * and the turn stays open until somebody answers. This read is over, so
+       * the fallback below must not report the pause as a turn that ended,
+       * and the sequence is kept so the answer rejoins rather than replays.
+       */
+      if (event.type === 'run.finished' && event.outcome.status === 'awaiting') {
+        settled = true;
+        paused = { runId: event.runId, seq: event.seq };
       }
     };
     void (async () => {
@@ -196,6 +282,61 @@ export function facioSession(options: FacioOptions, start: Start): Session {
         });
       }
     })();
+  };
+
+  /**
+   * Rejoin a run this process paused, so it can take a command again.
+   *
+   * facio's `run()` returns a handle with no command channel; only `resume()`
+   * installs one. The sequence the pause ended at is passed so the rejoined
+   * stream carries what happens next rather than everything the client has
+   * already seen.
+   */
+  const rejoin = (): RunHandle | undefined => {
+    const waiting = paused;
+    const agent = liveAgent;
+    if (waiting === undefined || agent === undefined) return undefined;
+    paused = undefined;
+    const rejoined = resume({ agent, sessionId, runId: waiting.runId, afterSeq: waiting.seq });
+    handle = rejoined;
+    if (activeMapping !== undefined) read(rejoined, activeMapping);
+    return rejoined;
+  };
+
+  /**
+   * Send a decision back into the run that is waiting on it.
+   *
+   * A run that has not paused still holds a live handle and takes the command
+   * directly; one that paused is rejoined first. The answer is fire and
+   * forget, the way a steer is: whether it was taken is known here, and a
+   * refusal is facio's to log rather than a turn to fail.
+   */
+  const route = (command: RunCommand): void => {
+    const live = paused === undefined ? handle : rejoin();
+    if (live === undefined) return;
+    void live.submit(command).catch(() => {});
+  };
+
+  /**
+   * Stop the run, answering anything it is waiting on.
+   *
+   * A paused run has already closed its handle, so stopping it means
+   * rejoining it and cancelling that: facio's own cancel denies the open
+   * request and ends the run, which is the one path that leaves no promise
+   * nobody can settle.
+   */
+  const stop = (reason: string): void => {
+    if (paused !== undefined) {
+      for (const held of [...pending.values()]) {
+        const removal = activeMapping?.settle(held.requestId);
+        if (removal !== undefined) start.emit('session', removal);
+      }
+      pending.clear();
+      const rejoined = rejoin();
+      rejoined?.cancel({ reason });
+      return;
+    }
+    handle?.cancel({ reason });
   };
 
   /**
@@ -251,6 +392,7 @@ export function facioSession(options: FacioOptions, start: Start): Session {
 
     const mapping = mapTurn({
       turnId,
+      chatUri: start.chatUri,
       markdownPartId: String(part.id),
       parts: active.responseParts as Bag[],
       startedAt: began,
@@ -258,8 +400,11 @@ export function facioSession(options: FacioOptions, start: Start): Session {
       cancelled: () => cancelRequested,
       ...(chosen !== undefined ? { model: chosen } : {}),
     });
+    activeMapping = mapping;
 
-    const live = run({ agent: agentOf(values), session: sessionId, workspace: where, input: text });
+    const agent = agentOf(values);
+    liveAgent = agent;
+    const live = run({ agent, session: sessionId, workspace: where, input: text });
     handle = live;
     read(live, mapping);
     touch();
@@ -316,6 +461,12 @@ export function facioSession(options: FacioOptions, start: Start): Session {
       workingDirectories: [`file://${where}`],
       customizations: start.seedCustomizations ?? [],
       ...(activity !== undefined ? { activity } : {}),
+      /*
+       * What a client is being asked, so a session channel a client
+       * subscribed to before the pause still shows the form and the status
+       * that carries it. The entries are the ones the set actions carried.
+       */
+      ...(pending.size > 0 ? { inputNeeded: [...pending.values()].map((held) => held.entry) } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits.
@@ -346,12 +497,11 @@ export function facioSession(options: FacioOptions, start: Start): Session {
      * exactly once. This must not send one of its own, or a client sees two.
      */
     cancel: (turnId) => {
-      const live = handle;
       const turn = active;
-      if (live === undefined || turn === undefined) return;
+      if (turn === undefined) return;
       if (turnId !== String(turn.id)) return;
       cancelRequested = true;
-      live.cancel({ reason: 'the client stopped the turn' });
+      stop('the client stopped the turn');
     },
 
     /**
@@ -419,16 +569,65 @@ export function facioSession(options: FacioOptions, start: Start): Session {
       start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
     },
 
-    /*
-     * Nothing here asks anything yet: a paused run and its answers arrive
-     * with task 03, and these are only reachable from one. Throwing says so
-     * rather than accepting a decision with nowhere to go.
+    /**
+     * Answer a tool call the run is waiting on.
+     *
+     * Found by the call's own id rather than assumed to be the only request:
+     * with two open, comparing against whichever was held last is a person
+     * pressing Approve and nothing at all happening. The entry leaves by the
+     * same id it arrived with, the decision is said back because nothing in a
+     * client applies its own dispatch, and the answer goes into the run.
      */
-    confirm: () => {
-      throw new Error(`${provider}: tool confirmation arrives with task 03; nothing pauses a run yet`);
+    confirm: (toolCallId, approved) => {
+      const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
+      if (held === undefined) return;
+      pending.delete(held.requestId);
+      const removal = activeMapping?.settle(held.requestId);
+      if (removal !== undefined) start.emit('session', removal);
+
+      /*
+       * The row in this session's own snapshot moves with the decision.
+       *
+       * Nothing applies what a client dispatched, so a call approved here
+       * would stay `pending-confirmation` for anybody who subscribes next.
+       */
+      const part = (active?.responseParts as Bag[] | undefined)?.find((one) => one.id === held.callId);
+      if (part !== undefined) {
+        const call = bag(part.toolCall);
+        call.status = approved ? 'running' : 'cancelled';
+        if (approved) call.confirmed = 'user-action';
+        part.toolCall = call;
+      }
+      start.emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: active?.id,
+        toolCallId,
+        approved,
+        ...(approved ? { confirmed: 'user-action' } : { reason: DECLINED }),
+      });
+      route(approved
+        ? { type: 'approve', requestId: held.requestId }
+        : { type: 'deny', requestId: held.requestId, reason: DECLINED });
+      touch();
     },
-    answer: () => {
-      throw new Error(`${provider}: questions arrive with task 03; nothing pauses a run yet`);
+
+    /**
+     * Answer a question the run is waiting on.
+     *
+     * A declined question is a deny rather than an empty answer, because
+     * facio's own validation refuses a form with nothing in it and the model
+     * is owed the reason either way.
+     */
+    answer: (requestId, accepted, answers) => {
+      const held = pending.get(requestId);
+      if (held === undefined || held.kind !== 'input') return;
+      pending.delete(requestId);
+      const removal = activeMapping?.settle(requestId);
+      if (removal !== undefined) start.emit('session', removal);
+      route(accepted
+        ? { type: 'answer', requestId, answers: answersOf(answers) }
+        : { type: 'deny', requestId, reason: DECLINED });
+      touch();
     },
 
     /*
@@ -456,7 +655,7 @@ export function facioSession(options: FacioOptions, start: Start): Session {
 
     close: () => {
       closed = true;
-      handle?.cancel({ reason: 'the session closed' });
+      stop('the session closed');
     },
   };
 }
