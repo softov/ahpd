@@ -276,8 +276,13 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const actions: Bag[] = [];
           for (const piece of event.message.parts) {
             if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
+              // Opened here only if a delta never did: a later step whose
+              // adapter did not stream still appends to the part the turn
+              // already has, rather than announcing a second one.
+              if (reasoningId === undefined) {
+                actions.push({ type: 'chat/responsePart', turnId, part: { ...thinking() } });
+              }
               const held = thinking();
-              actions.push({ type: 'chat/responsePart', turnId, part: held });
               held.content = `${String(held.content ?? '')}${piece.text}`;
               actions.push({ type: 'chat/reasoning', turnId, partId: held.id, content: piece.text });
             }
@@ -309,8 +314,23 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'model.delta': {
           if (event.kind === 'reasoning') {
             reasoningStreamed = true;
+            const actions: Bag[] = [];
+            /*
+             * The thinking part is announced once, when it is opened, and every
+             * delta after that is an append to it.
+             *
+             * Announcing it again on each delta is the same part to a client
+             * that appends on `chat/responsePart`, and it draws the whole
+             * thinking block again for every delta that arrives - four blocks
+             * where the snapshot, built from the transcript, has one. The
+             * announcement is a *copy*, because the object the deltas keep
+             * writing into is the one the announcement would otherwise carry:
+             * a client that applied both would read the text twice.
+             */
+            if (reasoningId === undefined) {
+              actions.push({ type: 'chat/responsePart', turnId, part: { ...thinking() } });
+            }
             const part = thinking();
-            const actions: Bag[] = [{ type: 'chat/responsePart', turnId, part }];
             part.content = `${String(part.content ?? '')}${event.text}`;
             /*
              * `chat/reasoning`, not `chat/delta`: the reducer pairs each

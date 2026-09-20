@@ -5,6 +5,8 @@ import { expect, it } from 'vitest';
 import { createFakeModel } from '@facio/agents/testing';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@facio/agents';
 import { createHost } from '../packages/sdk/src/host.js';
+import { chatReducer } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { facioAgent, facioTools, sessionIdOf } from '../packages/agent-facio/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import type { BoundTool } from '../packages/sdk/src/types/agent.js';
@@ -129,6 +131,71 @@ it('sends a reasoning delta as chat/reasoning and not as response text', async (
   const prose = actions(p, chatUri).filter((e) => e.action.type === 'chat/delta');
   expect(prose.map((e) => String(e.action.content)).join('')).toBe('the answer');
   expect(prose.map((e) => String(e.action.content)).join('')).not.toContain('weighing it up');
+});
+
+it('opens the thinking part once, so a client folds one block however many deltas arrive', async () => {
+  /*
+   * A thinking model that streams in three pieces. `createFakeModel` yields its
+   * reasoning as one delta, and the bug this covers needs more than one: each
+   * delta used to announce the part again, and a client appends on that.
+   */
+  let ids = 0;
+  const message = (): ModelReply['message'] => ({
+    id: `m${++ids}`,
+    role: 'assistant',
+    source: 'model',
+    createdAt: new Date().toISOString(),
+    parts: [
+      { type: 'reasoning', text: 'weighing it up' },
+      { type: 'text', text: 'the answer' },
+    ],
+  });
+  const thinker: ModelAdapter = {
+    id: 'thinker',
+    modelId: 'thinker',
+    features: { tools: true, streaming: true, images: false, structuredOutput: false, reasoning: true },
+    complete: async () => ({ message: message(), usage: { inputTokens: 1, outputTokens: 1 }, finish: 'stop' }),
+    stream: async function* (): AsyncIterable<ModelStreamEvent> {
+      yield { type: 'reasoning.delta', text: 'weighing ' };
+      yield { type: 'reasoning.delta', text: 'it ' };
+      yield { type: 'reasoning.delta', text: 'up' };
+      yield { type: 'text.delta', text: 'the answer' };
+      yield { type: 'done', reply: { message: message(), usage: { inputTokens: 1, outputTokens: 1 }, finish: 'stop' } };
+    },
+  };
+  const { client, peer: p, chatUri } = await talking(thinker);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => ended(p, chatUri));
+
+  // One announcement, not one per delta: `chat/responsePart` *appends*.
+  const announcements = actions(p, chatUri).filter((e) => e.action.type === 'chat/responsePart'
+    && (e.action.part as { kind?: string } | undefined)?.kind === 'reasoning');
+  expect(announcements).toHaveLength(1);
+  // And it is empty: the deltas after it are what fill it, so a client that
+  // applies both does not read the first piece twice.
+  expect((announcements[0]?.action.part as { content?: string }).content).toBe('');
+
+  /*
+   * The client's own fold, which is what the screen is drawn from. Before this
+   * was fixed the transcript drew one thinking block per delta while the
+   * snapshot - built by the host from the transcript - had one.
+   */
+  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
+  for (const one of actions(p, chatUri)) {
+    state = chatReducer(state, one.action as ChatAction);
+  }
+  const parts = state.turns.flatMap((turn) => turn.responseParts)
+    .filter((part) => part.kind === 'reasoning');
+  expect(parts).toHaveLength(1);
+  expect((parts[0] as { content: string }).content).toBe('weighing it up');
+  /*
+   * The markdown part is announced the same way - once, before the run, empty -
+   * and only its count is asserted here. This peer sees the *live* object the
+   * deltas keep writing into, where a socket sees the announcement as it was
+   * when it was sent; the count is the same on both.
+   */
+  expect(state.turns.flatMap((turn) => turn.responseParts)
+    .filter((part) => part.kind === 'markdown')).toHaveLength(1);
 });
 
 it('reports a host tool call as three actions and gives its result back to the model', async () => {
