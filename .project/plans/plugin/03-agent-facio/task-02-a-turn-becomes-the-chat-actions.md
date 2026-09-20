@@ -1,6 +1,6 @@
 ---
 title: A turn becomes the chat actions a client already knows
-status: todo
+status: done
 depends:
   - task-01-the-package-and-the-provider.md
 layer: packages/agent-facio
@@ -50,4 +50,12 @@ A session created by `facioAgent` runs a facio agent: `begin` calls `run({ agent
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/agent-facio/src/session.ts` holds `facioSession(options, start)` and `sessionIdOf(uri)`; `mapping.ts` holds `mapTurn`, the one place a `RunEvent` becomes `chat/*`; `tools.ts` holds `facioTool`/`facioTools`, a `BoundTool` as a facio `Tool` through `createTool`; `agent.ts`'s `create` returns the session; `index.ts` exports the session and the mapping.
+`test/agent-facio-turn.test.ts` is seven tests driving the real `createHost` with `@facio/agents/testing`'s fake model: text in the required order, a delta as a plain action, reasoning as `chat/reasoning`, a host tool called and its result returned to the model, two turns under one facio session, and a cancelled turn.
+Verified: `pnpm test` 746 passed over 50 files, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` builds four packages.
+`test/host.test.ts`'s `create-pr` cases flaked once in a full run and once alone, and passed on the next run and in the run after; the plugin and facio code does not touch that path, and the timing sensitivity is pre-existing.
+What facio does not carry, found while mapping: `run.finished` has no duration, so the turn's duration is measured from `begin`; `tool.started` has no input, so the input is held from `tool.proposed`; `tool.denied` can arrive for a tool that was never proposed, which has no client row and is dropped; `RunOutcome.stopped` carries a reason with no AHP action, so it ends as complete; and `model.completed` carries the assembled reply, so an adapter with `features.streaming: false` would produce no text at all, which is left for a later task because the shipped `openaiCompat` streams by default.
+Departures from the plan: `chat/turnStarted` is emitted from `begin` before `run()` rather than mapped from `run.started`, because the host has already dispatched the action and AHP requires it before any part or delta, so mapping it again would announce one turn twice; `model.completed` is ignored and usage rides `run.finished`'s outcome, because a per-step usage action would report a running total as the whole turn's; a `failed` outcome ends with `chat/error` rather than `chat/turnComplete`; and `tool.denied` closes a proposed call as failed rather than leaving it open.
+Left for task 03: `approval.*`, `input.*`, `run.paused`, `run.resumed` and the `awaiting` outcome throw from `mapping.ts`, and `confirm`/`answer` throw, so a pause is loud rather than a silent turn end.
+Left for task 04: `storeOf` is called per session, so two sessions of one backend do not share a store, and `list()`/`transcript()` will want one store created once in the `facioAgent` closure; `resume`, `forkPoint` and `endPoint` are absent.

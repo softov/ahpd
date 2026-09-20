@@ -18,6 +18,7 @@ import type { ModelAdapter, Store } from '@facio/agents';
 import { openaiCompat } from '@facio/model-openai-compat';
 import { createFileStore } from '@facio/store-file';
 import type { Agent, Bag, Offered } from '@ahpd/sdk';
+import { facioSession } from './session.js';
 
 /** What an embedder, or a plugin's options, may set. */
 export interface FacioOptions {
@@ -148,11 +149,10 @@ export function facioAgent(options: FacioOptions = {}): Agent {
       commands: [],
     }),
     /*
-     * Task 02 replaces this with the session that runs a facio agent. It is a
-     * refusal and not an empty session on purpose: a backend that answered a
-     * turn with nothing would be a session a client cannot tell from a model
-     * that said nothing.
+     * The session runs a facio agent: a turn becomes `run()`'s event stream
+     * and each event becomes the AHP action a client expects. The work is in
+     * `session.ts`, `mapping.ts` and `tools.ts`.
      */
-    create: () => { throw new Error(`${provider}: the facio session is not built yet`); },
+    create: (start) => facioSession(options, start),
   };
 }
