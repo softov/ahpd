@@ -300,7 +300,7 @@ every session it serves:
 | `model` | The model id a session that names none runs on |
 | `baseUrl` | The OpenAI-compatible endpoint a session that names none uses |
 | `instructions` | The system prompt the agent is created with |
-| `store` | Where the facio file store lives, under `XDG_DATA_HOME` when absent |
+| `store` | Where the facio file store lives: `$XDG_DATA_HOME/ahpd/facio`, or `~/.local/share/ahpd/facio` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/facio/config.json` |
 | `memory` | `true` to hold the store in memory, for a test |
 | `apiKey` | The daemon's own key, or a function asked once per request so an expired one is not cached |
 | `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
@@ -329,23 +329,36 @@ harness runs:
 `@ahpd/agent-facio` reads facio's own file,
 `$XDG_CONFIG_HOME/facio/config.json` or `~/.config/facio/config.json`, so a
 person who has already pointed the harness at a provider does not say it again
-in the plugin's options:
+in the plugin's options.
+[`facio-config.example.json`](facio-config.example.json) is a complete
+OpenRouter file: copy it to `~/.config/facio/config.json` and put your key in.
 
 ```json
 {
   "providers": [
-    { "id": "open_router", "baseUrl": "https://openrouter.ai/api/v1", "apiKey": "…" }
+    {
+      "id": "open_router",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "sk-or-v1-…"
+    }
   ],
-  "model": "open_router/~deepseek/deepseek-flash-latest",
+  "model": "open_router/deepseek/deepseek-chat",
   "instructions": "You are a careful assistant working in the user's project."
 }
 ```
 
 A model written `<provider>/<model>` selects that provider's endpoint, key and
 headers from the file - the split is at the first slash, so a model id that
-itself contains slashes is left whole. Only `providers`, `model` and
-`instructions` are read; the theme, the shell and the permissions belong to the
-harness and are not interpreted here.
+itself contains slashes is left whole. That is why
+`open_router/deepseek/deepseek-chat` names provider `open_router` and the
+OpenRouter model `deepseek/deepseek-chat`, and a model id of your own is
+selected by replacing everything after that first slash. A provider may carry
+extra headers, which is where OpenRouter's optional attribution ones go:
+`"headers": { "HTTP-Referer": "https://example.com", "X-Title": "ahpd" }`.
+Only `providers`, `model` and `instructions` are read; the theme, the shell and
+the permissions belong to the harness and are not interpreted here. The file is
+read once when the backend is built, so a daemon picks up an edit at its next
+start.
 
 Where a value comes from, highest first:
 
