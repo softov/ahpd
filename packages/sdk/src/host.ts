@@ -4297,17 +4297,25 @@ export function createHost(options: HostOptions): Host {
           const all = live ? live.chat.allTurns() : await past(idOf(sessionFor(channel)));
           if (!all)
             throw new RpcError(-32001, `No agent for session ${channel}`);
-          const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
+          const asked = typeof params.cursor === 'string' ? params.cursor : undefined;
           // No cursor means "load whatever is next", which is the page before
           // the one the snapshot carried.
-          const page = cursor === undefined
-            ? older(all, String(tail(all).turnsNextCursor ?? 0))
-            : older(all, cursor);
+          const from = asked ?? tail(all).turnsNextCursor;
+          if (from === undefined) {
+            // A session whose state holds every retained turn has no older
+            // page and no cursor to carry. The protocol asks for that page
+            // "if any", so there being none is an answer and not a refusal.
+            return {};
+          }
+          const page = older(all, from);
           if (!page) {
+            // An omitted cursor can only fail here on a transcript that moved
+            // under the read, which is still an answer of "nothing older".
+            if (asked === undefined) return {};
             // Guessing at a cursor this host did not issue would answer a
             // question about old turns with new ones, and the client would
             // page for ever without noticing.
-            throw new RpcError(-32602, `Unrecognised cursor ${String(cursor)}`);
+            throw new RpcError(-32602, `Unrecognised cursor ${String(asked)}`);
           }
           dispatch(channel, {
             type: 'chat/turnsLoaded',

@@ -2130,13 +2130,17 @@ describe('paging a long history', () => {
     expect(pages()[0]?.turns[49]?.message.text).toBe('said 69');
   });
 
-  it('does not page a history that fits', async () => {
-    const { chat, client } = await opened(10);
+  it('answers nothing older, without refusing, when the history fits', async () => {
+    const { chat, client, pages } = await opened(10);
     expect(chat.turns).toHaveLength(10);
     expect(chat.turnsNextCursor).toBeUndefined();
-    // Nothing older to ask for, so asking is a mistake and is said to be one.
+    // "Load the next older page, if any": there is none, so nothing is sent
+    // and nothing is refused. Refusing here is what reached a reader as
+    // `RPC error -32602: Unrecognised cursor undefined` at the top of a
+    // transcript that was already whole.
     await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long' } }))
-      .rejects.toMatchObject({ code: -32602 });
+      .resolves.toEqual({});
+    expect(pages()).toHaveLength(0);
   });
 
   it('refuses a cursor it did not issue', async () => {
