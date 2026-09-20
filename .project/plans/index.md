@@ -63,8 +63,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [02 - Plugins subscribe to the host's own events](plugin/02-plugins-subscribe-to-host-events/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/02-plugins-subscribe-to-host-events/implemented.md)) | plugin 01 | - |
 | [03 - An agent backend over facio](plugin/03-agent-facio/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/03-agent-facio/implemented.md)) | - | every model-backed provider, and the ACP plan after it |
 | [04 - The facio extras](plugin/04-agent-facio-extras/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/04-agent-facio-extras/implemented.md)) | plugin 03 | - |
+| [05 - The endpoint's models](plugin/05-endpoint-models/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/05-endpoint-models/implemented.md)) | plugin 04 | - |
 
-Next free number in `plugin`: `05`.
+Next free number in `plugin`: `06`.
 
 ## Domains without a plan
 
