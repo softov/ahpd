@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
+import { asSpec, automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
-import type { Tap } from '@ahpd/sdk';
+import type { PluginSpec, Tap } from '@ahpd/sdk';
 import { createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
@@ -74,6 +74,17 @@ interface Options {
    * because the file grows by every token of every reply.
    */
   wire?: string;
+  /**
+   * Plugins to load, in the order they apply.
+   *
+   * A package name, a path, or an object naming one with its options. Naming a
+   * plugin runs its code in this process with this process's permissions, so
+   * this list is the trust boundary the configuration file's ownership is
+   * about.
+   */
+  plugins: PluginSpec[];
+  /** Load none, whatever the configuration file names. */
+  noPlugins: boolean;
   help: boolean;
   /** Say the version and stop. */
   version: boolean;
@@ -114,6 +125,13 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 file as JSON lines: { at, from, peer, frame }.
                                 pnpm wire -- <file> checks it against the
                                 protocol schema.
+  --plugin <spec>               A package, a path, or a package installed in
+                                the configuration directory, loaded at startup.
+                                Repeatable, and applied in the order named.
+                                Naming one runs its code in this process with
+                                this process's permissions: installing a plugin
+                                is the trust decision.
+  --no-plugins                  Load none, whatever the configuration file says.
   --no-update-check             Never ask npm whether a newer version exists.
                                 NO_UPDATE_NOTIFIER or CI in the environment,
                                 or updateCheck: false in the file, say the same.
@@ -122,8 +140,11 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
-connectionTokenFile, withoutConnectionToken, automations, sessions, wire, updateCheck. A flag beats the file, because a
-flag is this run and a file is every run until somebody edits it.
+connectionTokenFile, withoutConnectionToken, automations, sessions, wire,
+updateCheck, plugins. A flag beats the file, because a
+flag is this run and a file is every run until somebody edits it. "plugins" is
+a list of the same specs --plugin takes, and --no-plugins is the one flag with
+no key: leaving plugins out is already the off.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
 Authorization: Bearer <secret> header.
@@ -140,6 +161,8 @@ function parse(argv: string[]): Options {
     automations: 'file',
     sessions: 'file',
     open: false,
+    plugins: [],
+    noPlugins: false,
     help: false,
     version: false,
     updateCheck: true,
@@ -168,6 +191,16 @@ function parse(argv: string[]): Options {
         break;
       }
       case '--wire': options.wire = String(argv[++i]); break;
+      // Repeatable, and a list rather than a switch: plugins apply in the
+      // order they are named, and one that another depends on has to run first.
+      case '--plugin': {
+        const said = String(argv[++i]);
+        const spec = asSpec(said);
+        if (spec !== undefined) options.plugins.push(spec);
+        else stop(`--plugin takes a name or a path, not ${said}.`);
+        break;
+      }
+      case '--no-plugins': options.noPlugins = true; break;
       case '--no-update-check': options.updateCheck = false; break;
       case '--help': case '-h': options.help = true; break;
       case '--version': case '-v': options.version = true; break;
@@ -202,6 +235,29 @@ function parse(argv: string[]): Options {
   }
   if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
+
+  /*
+   * The plugins, under the flags.
+   *
+   * A command line `--plugin` replaces the file's list rather than adding to
+   * it, the way `--path` does: a flag is this run and the file is every run,
+   * and a person who names one plugin meant that one. `--no-plugins` is the
+   * explicit off, and passing it beside a `--plugin` is refused rather than
+   * resolved, because nobody means both.
+   */
+  if (options.noPlugins && options.plugins.length > 0) {
+    stop('--no-plugins contradicts the --plugin you also passed.');
+  }
+  if (options.plugins.length === 0 && !options.noPlugins && Array.isArray(file.plugins)) {
+    file.plugins.forEach((entry: unknown, index: number) => {
+      const spec = asSpec(entry);
+      if (spec !== undefined) {
+        options.plugins.push(spec);
+        return;
+      }
+      stop(`${options.configFile ?? configPath()} has plugins[${String(index)}] = ${JSON.stringify(entry)}, which is not a plugin spec.`);
+    });
+  }
 
   if (options.paths.length === 0) options.paths.push(process.cwd());
   return options;

@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { PluginSpec } from '@ahpd/sdk';
 
 /** What a config file may say. Every key is what a flag would have said. */
 export interface Config {
@@ -32,6 +33,16 @@ export interface Config {
   sessions?: 'file' | 'memory';
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
+  /**
+   * The plugins to load, in the order they apply.
+   *
+   * Every entry is a package or a path, and naming one runs its code in this
+   * process with this process's permissions. That makes this the one key whose
+   * value is code rather than a setting, which is why the file holding it is
+   * owner-readable for the same reason the token file is, and why a malformed
+   * entry refuses the start rather than being skipped.
+   */
+  plugins?: PluginSpec[];
   /**
    * Ask npm whether a newer version exists, six hours apart. `false` never
    * asks. The daemon has no terminal, so this key is how it is switched off
@@ -138,3 +149,28 @@ export function loadConfig(named?: string): Config {
     throw new Error(`${path} could not be read: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
+
+/**
+ * One configuration entry as a `PluginSpec`, or nothing when it is not one.
+ *
+ * A string is the specifier on its own; an object names one and may carry the
+ * options `apply` receives and whether the plugin is switched on. Anything
+ * else answers `undefined` rather than a half-built spec, so the caller can
+ * refuse the start with a message naming the entry instead of loading
+ * something nobody wrote.
+ */
+export const asSpec = (value: unknown): PluginSpec | undefined => {
+  if (typeof value === 'string') return value.trim() === '' ? undefined : value;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const held = value as Record<string, unknown>;
+  if (typeof held.name !== 'string' || held.name.trim() === '') return undefined;
+  if (held.options !== undefined && (typeof held.options !== 'object' || held.options === null || Array.isArray(held.options))) {
+    return undefined;
+  }
+  if (held.enabled !== undefined && typeof held.enabled !== 'boolean') return undefined;
+
+  const spec: PluginSpec = { name: held.name };
+  if (held.options !== undefined) spec.options = held.options as Record<string, unknown>;
+  if (held.enabled !== undefined) spec.enabled = held.enabled;
+  return spec;
+};

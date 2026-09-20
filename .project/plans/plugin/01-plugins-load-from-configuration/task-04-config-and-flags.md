@@ -1,6 +1,6 @@
 ---
 title: The daemon names plugins in configuration and on the command line
-status: todo
+status: done
 depends:
   - task-01-contract-and-fold.md
 layer: packages/server
@@ -48,4 +48,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`config.ts` gains `Config.plugins` and exports `asSpec`, the normaliser; it lives there rather than in `main.ts` because the daemon domain records that no test starts `main.ts`, and the normaliser is the part with a decision in it.
+`main.ts` gains `Options.plugins` and `Options.noPlugins`, the `--plugin` and `--no-plugins` cases, the merge under the flags, and the two `USAGE` entries with the sentence that naming a plugin runs its code in this process.
+`test/plugin-spec.test.ts` covers the strings and objects that pass and the empty, numeric, nameless and wrongly-kinded ones that do not.
+Verified: `pnpm test` 697 passed, `pnpm typecheck` green, `pnpm boundary` green.
+By hand: `--plugin x --no-plugins` exits 2 with the contradiction, a config whose `plugins[0]` is `7` exits 2 naming the file and the entry, and `ahpd config` prints the array it read.
+A command line `--plugin` replaces the file's list by construction, since the file is only read when `options.plugins` is still empty.
