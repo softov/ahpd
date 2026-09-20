@@ -182,7 +182,9 @@ it('opens the thinking part once, so a client folds one block however many delta
    */
   let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
   for (const one of actions(p, chatUri)) {
-    state = chatReducer(state, one.action as ChatAction);
+    // The notes hold whatever the host dispatched, so the fold gets the
+    // protocol's action union spelled out where it is handed over.
+    state = chatReducer(state, one.action as unknown as ChatAction);
   }
   const parts = state.turns.flatMap((turn) => turn.responseParts)
     .filter((part) => part.kind === 'reasoning');
