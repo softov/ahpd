@@ -26,7 +26,7 @@ The key is optional and carries only what must be known before the module is imp
 
 ```json
 {
-  "name": "@ahpd/plugin-facio",
+  "name": "@ahpd/agent-facio",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
   "peerDependencies": { "@ahpd/sdk": "^0.6" },

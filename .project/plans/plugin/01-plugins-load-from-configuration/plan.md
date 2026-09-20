@@ -62,7 +62,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ### Runtime path
 
 ```
-ahpd --plugin @ahpd/plugin-facio [--no-plugins]
+ahpd --plugin @ahpd/agent-facio [--no-plugins]
   -> main.ts: parse() reads config.json under the flags, so plugins come from both sources
   -> base: HostOptions built from the literal that is there today
   -> loadPlugins(specs, { configDir, cwd, log })
@@ -70,7 +70,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
             each register* checks its value, and a failure fails this plugin only
   -> foldHostOptions(base, contributions) -> one HostOptions
   -> createHost(folded) -> listen()
-  -> stdout: `ahpd on ws://...`, `automations ...`, `${from}`, `plugins @ahpd/plugin-facio`
+  -> stdout: `ahpd on ws://...`, `automations ...`, `${from}`, `plugins @ahpd/agent-facio`
 ```
 
 ### Gaps

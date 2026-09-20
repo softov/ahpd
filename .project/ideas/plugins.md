@@ -40,7 +40,7 @@ What is missing is only that the daemon hands `createHost` the literal instead o
 A module with named exports, in the same idiom as an `Agent`.
 
 ```ts
-export const name = '@ahpd/plugin-facio'
+export const name = '@ahpd/agent-facio'
 export const needs = ['store']                 // optional, phase two
 export const provides = ['store']              // optional, phase two
 export const defaults = { model: 'gpt-5' }     // optional
@@ -77,10 +77,13 @@ Their ordering rule is the one facio already uses in `packages/commands/src/regi
 
 Three ways in, narrowest last.
 
+A plugin that is a backend is named `@ahpd/agent-<name>`, matching the `@ahpd/agent-claude` that ships, and the idea file for the rest already names `@ahpd/agent-acp` and `@ahpd/agent-openai`.
+A plugin that is not a backend has no convention in this repository yet, so it takes its author's scope, or `@ahpd/plugin-<name>` where the author is this repository, and the loader never reads the name for anything but a listing.
+
 Install it where the daemon can resolve it, which is the config directory:
 
 ```bash
-cd ~/.config/ahpd && npm i @ahpd/plugin-facio
+cd ~/.config/ahpd && npm i @ahpd/agent-facio
 ```
 
 Name it in `config.json` beside `port` and `paths`:
@@ -88,8 +91,8 @@ Name it in `config.json` beside `port` and `paths`:
 ```json
 {
   "plugins": [
-    "@ahpd/plugin-facio",
-    { "name": "@ahpd/plugin-openai", "options": { "baseUrl": "http://127.0.0.1:11434/v1" } },
+    "@ahpd/agent-facio",
+    { "name": "@ahpd/agent-openai", "options": { "baseUrl": "http://127.0.0.1:11434/v1" } },
     { "name": "./scratch/thing.js", "enabled": false }
   ]
 }
@@ -98,7 +101,7 @@ Name it in `config.json` beside `port` and `paths`:
 Or name it for one run only:
 
 ```bash
-ahpd --plugin @ahpd/plugin-facio --plugin ./scratch/thing.js
+ahpd --plugin @ahpd/agent-facio --plugin ./scratch/thing.js
 ahpd --no-plugins
 ```
 
@@ -172,7 +175,7 @@ A plugin pinned to an old `@ahpd/sdk` fails to install rather than failing at a 
 
 ## The first plugin, which is facio
 
-`@ahpd/plugin-facio` is an `Agent` over `@facio/agents`, and it is the case that stresses the design.
+`@ahpd/agent-facio` is an `Agent` over `@facio/agents`, and it is the case that stresses the design.
 `provider: 'facio'`, `schema()` from the agent's own parameters, `probe()` from its models and tools, and `create(start)` mapping `run()`'s `RunEvent`s onto the `chat/*` actions `@ahpd/agent-claude` already shows how to emit.
 A `policy.decide` answering `ask` becomes `session/inputNeededSet` plus `confirm`, `resume()` re-attaches a paused run, and `transcript()` reads a `Store`.
 It wants `needs`/`provides` because the durable store is `@facio/store-file`, a package of its own, and a harness that names it is more honest than one that imports it and forbids a second store.
