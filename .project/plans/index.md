@@ -64,8 +64,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [03 - An agent backend over facio](plugin/03-agent-facio/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/03-agent-facio/implemented.md)) | - | every model-backed provider, and the ACP plan after it |
 | [04 - The facio extras](plugin/04-agent-facio-extras/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/04-agent-facio-extras/implemented.md)) | plugin 03 | - |
 | [05 - The endpoint's models](plugin/05-endpoint-models/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/05-endpoint-models/implemented.md)) | plugin 04 | - |
+| [06 - A mode and an effort control](plugin/06-permission-modes/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/06-permission-modes/implemented.md)) | plugin 05 | - |
 
-Next free number in `plugin`: `06`.
+Next free number in `plugin`: `07`.
 
 ## Domains without a plan
 
