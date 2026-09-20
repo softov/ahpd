@@ -9,7 +9,7 @@ refs:
   - code://packages/server/src/version.ts#L20-L37 - `manifest()`, the nearest-manifest walk the reader in task 03 mirrors
   - code://packages/sdk/src/listen.ts#L15-L19 - `runtimeOf()`, the one place the runtime is known, which this task exports rather than copies
   - code://packages/sdk/src/index.ts - where the exported runtime joins the SDK's surface
-  - code://packages/plugin/src/types/plugin.ts - `PluginSpec`, which this task takes as input
+  - code://packages/sdk/src/types/plugin.ts - `PluginSpec`, which this task takes as input
   - file:///github/deepseek-harness/packages/boot/plugin-manager/src/install-spec.ts - the spec shapes accepted there: registry range, absolute `file:` path, tarball, git shorthand
   - code://test/update.test.ts#L1-L40 - the temporary `XDG_CONFIG_HOME` pattern the resolver test follows
 ---
@@ -21,7 +21,6 @@ refs:
 ## Files
 
 - `CREATE: packages/server/src/plugins.ts` - `resolvePlugin` and the `Resolved` shape it returns.
-- `UPDATE: packages/server/package.json:45-48` - declare `"@ahpd/plugin": "workspace:^"` beside `@ahpd/sdk`, because the boundary check reads declarations and not resolutions.
 - `UPDATE: packages/sdk/src/listen.ts:15-L19` - export `runtimeOf` as `runtime`, with a comment saying the knowledge stays in this module rather than moving to a second detector.
 - `UPDATE: packages/sdk/src/index.ts` - export `runtime` beside `listen`.
 - `CREATE: test/plugin-resolve.test.ts` - the cases below.
@@ -45,7 +44,7 @@ refs:
   - `resolvePlugin('npm:fixture-plugin', …)` returns the spec unchanged, with no `path`.
   - `resolvePlugin('@scope/missing', …)` refuses with a message naming the spec, not a raw Node error.
   - On Node and Bun the bare spec resolves; the Deno branch is checked by calling the message builder directly, since the suite runs on Node.
-- `pnpm test` green, `pnpm typecheck` green, `pnpm boundary` green with `@ahpd/server` declaring `@ahpd/plugin`.
+- `pnpm test` green, `pnpm typecheck` green, `pnpm boundary` green and unchanged, because the resolver imports `@ahpd/sdk`, which `@ahpd/server` already declares.
 
 ## Resume
 

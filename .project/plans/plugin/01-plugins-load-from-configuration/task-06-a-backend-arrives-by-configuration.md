@@ -25,7 +25,7 @@ A test loads a plugin from a path spec, folds it over a base with no agents of i
 ## Steps
 
 1. Write the fixture manifest so the `ahpd` key is exercised for real rather than mocked, with `{ "ahpd": { "entry": "./index.ts", "title": "Echo plugin" } }`.
-2. Write the fixture plugin against the published contract only: import `type { Plugin }` from `@ahpd/plugin` if a type for the module shape exists, and otherwise export `name` and `apply` with no default export, importing `echo` by relative path.
+2. Write the fixture plugin against the published contract only: import `type { Plugin }` from `@ahpd/sdk`, and otherwise export `name` and `apply` with no default export, importing `echo` by relative path.
 3. In the test, call `loadPlugins(['./test/fixtures/plugin-echo'], { base, configDir, cwd: REPO, log })` with a `base` that has one fake agent and no ports, and assert `loaded[0].title` reads from the manifest.
 4. Build the host with `createHost(folded.options)` and drive it the way `test/example.test.ts` does: initialize, subscribe to the root channel, assert two agents are listed with `echo` among the providers.
 5. Create a session on the `echo` provider, send one turn, and assert the chat channel carries `chat/turnStarted` followed by the echoed text, which proves the contributed backend is served exactly as a literal one is.

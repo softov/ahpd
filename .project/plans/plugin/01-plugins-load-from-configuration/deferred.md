@@ -6,7 +6,7 @@ title: Deferred from plugins load from configuration
 
 - **`needs` and `provides` ordering.** A plugin that names a store another plugin provides, which `@facio/store-file` is the first real case of.
   It waits because ordering is only worth implementing once two plugins depend on each other, and this plan proves the loading first.
-  It goes in `packages/plugin` beside `Plugin`, with the resolution rule `packages/commands/src/registry.ts` in facio already uses: resolve by declared dependency, refuse a missing one at startup and refuse a cycle by name.
+  It goes in `packages/sdk` beside `Plugin`, with the resolution rule `packages/commands/src/registry.ts` in facio already uses: resolve by declared dependency, refuse a missing one at startup and refuse a cycle by name.
 - **Hooks into a running host.** `sessionOpened`, `turnStarted`, `clientConnected` and the rest.
   It waits because the protocol already serves two of the three forms a hook can take, the in-process client and the contribution wrapper, and neither needs a change here.
   It goes in `packages/sdk/src/types/host.ts` as a `hooks` option with one call at each site that already logs, and it wants its own decision because a hook that may refuse is a different thing from one that may only watch.

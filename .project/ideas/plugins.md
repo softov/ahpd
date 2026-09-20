@@ -114,7 +114,7 @@ Saying that is better than a resolver that half works on one of the three runtim
 ## Loading, and what a bad plugin costs
 
 The loader lives in `@ahpd/server`, because it reads files, imports and knows the config file, and `main.ts` already owns all three.
-The contract types and the pure fold live in a new `@ahpd/plugin`, so an author depends on types alone and an embedder can reuse the fold without the daemon.
+The contract types and the pure fold live in `@ahpd/sdk` beside `HostOptions`, so an author depends on types alone and an embedder can reuse the fold without the daemon, and the loader stays in the daemon because it is the half that reads a filesystem and imports code.
 
 The order is: read the config, expand the specs, resolve each to a URL, `import` each, check the shape, `apply` each in order, fold every contribution into one `HostOptions`, `createHost`, `listen`.
 `main.ts` then shrinks to its own ports as the base layer, one call into the loader, and the two calls it already ends with.
@@ -166,7 +166,7 @@ A hook that may refuse a turn is a second decision, and the permission case is a
 
 No runtime `apiVersion`, because neither reference has one and both are right not to.
 A plugin declares `peerDependencies: { "@ahpd/sdk": "^0.6" }`, and the contract is the exported types.
-`@ahpd/plugin` existing as its own package is what gives those types one name and one version to point a range at.
+`@ahpd/sdk` is that one name and one version, and it is the package a plugin needs anyway to implement an `Agent` or a port.
 A plugin pinned to an old `@ahpd/sdk` fails to install rather than failing at a call site, which is the failure worth having.
 
 ## The first plugin, which is facio

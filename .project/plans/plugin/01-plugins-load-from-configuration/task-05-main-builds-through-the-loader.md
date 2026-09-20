@@ -24,7 +24,7 @@ refs:
 - `UPDATE: packages/server/src/main.ts:342-L433` - the literal becomes `const base: HostOptions = { … }` with the same keys and the same comments.
 - `UPDATE: packages/server/src/main.ts:320-341` - the `loadPlugins` call, the problem lines and the refusal over a duplicate `provider`.
 - `UPDATE: packages/server/src/main.ts:457-L477` - a `plugins …` line beside the automations line.
-- `UPDATE: packages/server/src/main.ts:1-L30` - the `@ahpd/plugin` import and the `HostOptions` type import.
+- `UPDATE: packages/server/src/main.ts:1-L30` - the `loadPlugins` import and the `HostOptions` type import from `@ahpd/sdk`.
 - `CREATE: test/plugin-host.test.ts` - the folded options drive a real host.
 
 ## Steps

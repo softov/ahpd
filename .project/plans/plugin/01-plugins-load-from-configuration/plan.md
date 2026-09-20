@@ -11,6 +11,7 @@ creates: []
 decisions:
   - decisions/plugin-contributes-host-options.md
   - decisions/plugin-manifest-is-package-json.md
+  - decisions/plugin-contract-lives-in-the-sdk.md
 refs:
   - code://packages/server/src/main.ts#L342-L433 - the `createHost` literal, the one place composition happens today
   - code://packages/server/src/main.ts#L320-L341 - the flow between `parse` and `createHost`, where the fold is inserted
@@ -22,11 +23,10 @@ refs:
   - code://packages/server/src/version.ts#L20-L37 - `manifest()`, the walk up to a nearest `package.json` the manifest reader mirrors
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, the surface a plugin contributes to and the fold consumes
   - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, whose `provider` is the field a collision refuses over
-  - code://packages/sdk/src/index.ts - what `@ahpd/sdk` exports, which `@ahpd/plugin` takes its types from
+  - code://packages/sdk/src/index.ts - where `createHost` and the ports are exported, and where the contract and the fold join them
+  - code://packages/sdk/src/types/index.ts - the types barrel a `types/plugin.ts` joins, so the contract is importable from the one package a plugin already depends on
   - code://packages/sdk/src/listen.ts#L15-L19 - `runtimeOf()`, the runtime detection the resolver reuses for the Deno case
-  - code://tsconfig.json#L5-L10 - the path aliases a new package joins so the checker sees source
-  - code://vitest.config.ts#L15-L17 - the runner aliases, which have to agree with them
-  - code://scripts/boundary.mjs#L60-L82 - the check that every package declares what it imports, which `@ahpd/plugin` has to satisfy
+  - code://scripts/boundary.mjs#L60-L82 - the check that every package declares what it imports, which the SDK's new export does not disturb
   - code://test/example.test.ts#L1-L30 - the fake-peer pattern the end-to-end plugin test reuses
   - code://.project/ideas/plugins.md - the shape this plan implements
   - code://.project/ideas/agents-as-extensions.md - the decision that a backend is a configuration key, that a bare spec resolves through `createRequire` against the configuration directory, that a failing plugin is skipped and that a duplicate `provider` refuses
@@ -50,8 +50,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - `rg -n "createHost\(" packages examples test` - one caller in `main.ts`, one per example; the daemon's is the literal this plan folds into, and the examples are the pattern a fixture plugin reuses.
 - `rg -n "^function parse|^const options = parse" packages/server/src/main.ts` - `parse` at 135 and applied at 320, so a flag is one `case` and one field on `Options`.
-- `rg -n "packages/\*" pnpm-workspace.yaml` - `packages/*` already covers a new package, so the workspace file needs no change.
-- `rg -n "@ahpd/sdk" tsconfig.json vitest.config.ts` - two alias lists, one for the checker and one for the runner, and a new package joins both.
+- `rg -n "packages/\*" pnpm-workspace.yaml` - `packages/*` already covers every package, and no new one is added, so the workspace file does not change.
+- `rg -n "@ahpd/sdk" tsconfig.json vitest.config.ts` - two alias lists, one for the checker and one for the runner, and neither changes because the contract lands in the package both already name.
 - `rg -n "plugin" packages docs` - only the protocol's `Customization.type` vocabulary in `agent-claude` and prose; nothing in ahpd is named a plugin yet.
 - `rg -n "readFileSync\(join\(at, 'package.json'" packages` - one reader, `version.ts`, which walks up from its own module to the nearest manifest; the plugin manifest reader does the same from a resolved entry.
 - `Not found: any test that starts main.ts - searched "main.js" and "spawn" in test/; the daemon domain says the verbs are covered by hand, so the loader is tested as a function and is not spawned.`
@@ -72,7 +72,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 
 ### Gaps
 
-- No package holds the plugin contract, so there is no `Plugin` or `PluginHost` type and no pure fold to test.
+- `@ahpd/sdk` holds no plugin contract: there is no `Plugin` or `PluginHost` type and no pure fold to test, though every type they are built from is already there.
 - `Options` and `Config` have no `plugins` key and `parse()` has no case for `--plugin`, so a plugin can be neither named nor switched off.
 - The `createHost` object is built inline, so there is no point between the flags and the host where a contribution can be inserted.
 - Nothing turns a spec into something importable, so no rule exists for where an installed package is found or what a bad spec does.
@@ -85,6 +85,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 | --- | --- | --- |
 | 1 | [A plugin contributes the host's own options, and there is no service container](../../../decisions/plugin-contributes-host-options.md) | Softov, asked 2026-09-20: "A plugin does not register only agents. it could be used to register more things. like resources, store, config, options, hook to sessions, etc." |
 | 2 | [The plugin manifest is an `ahpd` key in package.json, and the module is still the contract](../../../decisions/plugin-manifest-is-package-json.md) | Softov, asked 2026-09-20: "Can we use a manifest.json or the package.json as manifest for the plugin?" |
+| 3 | [The plugin contract lives in `@ahpd/sdk`, and only the loader is machine-touching](../../../decisions/plugin-contract-lives-in-the-sdk.md) | Softov, asked 2026-09-20: "instead a new package. packages/plugin, would not be better to insert plugin data inside sdk?" |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -100,8 +101,8 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 - **Data flow** - specs from `config.json` and then the command line become loaded plugin records, each record's `apply` contributes to a `PluginHost`, and the contributions fold into the one `HostOptions` that `createHost` receives.
 - **Event flow** - none in this plan, because the loader runs once before the host exists; a plugin that wants events adopts one of the two forms `ideas/plugins.md` records and neither needs a change here.
 - **State flow** - none beyond `config.json`; the loader writes nothing, and the only record it consults is the plugin's own `package.json`.
-- **Layer responsibilities** - packages/plugin: the contract types and the pure `foldHostOptions` · packages/server/src/plugins.ts: resolution, import, manifest reading, failure policy and `loadPlugins` · packages/server/src/main.ts: what is named, the base options, one call, and the startup line · packages/sdk: its types are the surface, plus one exported `runtime()` so the resolver reuses the detection `listen.ts` already owns instead of copying it.
-- **Source-of-truth files** - `code://packages/plugin/src/`, `code://packages/server/src/plugins.ts`, `code://packages/server/src/main.ts`, `code://packages/server/src/config.ts`.
+- **Layer responsibilities** - packages/sdk: the contract types in `types/plugin.ts`, the pure `pluginHost` and `foldHostOptions` in `plugins.ts`, and one exported `runtime()` so the resolver reuses the detection `listen.ts` already owns · packages/server/src/plugins.ts: resolution, import, manifest reading, failure policy and `loadPlugins` · packages/server/src/main.ts: what is named, the base options, one call, and the startup line.
+- **Source-of-truth files** - `code://packages/sdk/src/types/plugin.ts`, `code://packages/sdk/src/plugins.ts`, `code://packages/server/src/plugins.ts`, `code://packages/server/src/main.ts`, `code://packages/server/src/config.ts`.
 
 ## Tasks
 
@@ -121,7 +122,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 - A relative spec means the working directory decides what runs - the resolver tries the working directory and then the configuration directory, and always logs the resolved absolute path, so what ran is in the log.
 - `createRequire` does not exist on Deno - task 02 detects the runtime the way `listen.ts#L15-L19` does, passes `npm:` and URL forms through untouched, and documents that a bare name on Deno is written as `npm:`, rather than pretending one resolver serves all three.
 - Node below type-stripping cannot import a `.ts` plugin - the loader imports what it is given and a failure is reported like any other, and the README says to install a built plugin rather than a source one.
-- `@ahpd/plugin` imports `@ahpd/sdk` for types only, which the boundary check still counts as a dependency - task 01 declares it, so the check passes rather than being relaxed.
+- The contract sitting in the SDK means a change to `HostOptions` changes the plugin surface in the same release - which is true of a package of its own too, and is the reason there is not one.
 - `daemon.ts` reads the startup lines back with regular expressions, so the plugins line is added as its own line and never folded into the `sessions in` line the parser depends on.
 - A plugin can make the daemon refuse to start by colliding on `provider`, which is intended, but it must never do so silently - task 03 collects every collision and reports all of them before the host is built.
 
@@ -131,7 +132,7 @@ ahpd --plugin @ahpd/plugin-facio [--no-plugins]
 - **Next action:** [task-01-contract-and-fold.md](task-01-contract-and-fold.md).
 - **Open questions:**
   1. Does a plugin contribute a root configuration key in this plan - proposed: no, `ROOT_CONFIG_SCHEMA` becomes a `HostOptions` field in a later plan and this one only proves the loading.
-  2. Is `@ahpd/plugin` published with the rest - proposed: yes, because it is the version a plugin names in `peerDependencies`, and an unpublished contract is a range nothing can point at.
+  2. Does the contract go in `types/host.ts` or a `types/plugin.ts` of its own - proposed: its own file, so `host.ts` stays the option object and the whole plugin surface is one import.
   3. Does `ahpd plugin list` ship in this plan - proposed: yes as task 07, because it is the only consumer of the manifest decision and the manifest is otherwise unjustified until then.
 - **Watch out for:** the `createHost` object is currently built after `await pty()` and before `listen`, so the fold happens there and `loadPlugins` has to be awaited; the base object keeps every existing port so a daemon with no plugins behaves exactly as it does today.
 

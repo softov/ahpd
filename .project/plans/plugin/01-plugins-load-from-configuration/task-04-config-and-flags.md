@@ -10,7 +10,7 @@ refs:
   - code://packages/server/src/main.ts#L30-L82 - `Options`, which gains the fields
   - code://packages/server/src/main.ts#L84-L133 - `USAGE`, which documents them
   - code://packages/server/src/main.ts#L193-L210 - the `paths` merge, which is the shape a command line `--plugin` follows: it replaces the file's list rather than adding to it
-  - code://packages/plugin/src/types/plugin.ts#L33-L40 - `PluginSpec`, which is the field's type
+  - code://packages/sdk/src/types/plugin.ts - `PluginSpec`, which is the field's type
   - code://.project/decisions/plugin-manifest-is-package-json.md - the two spec forms a person may write
 ---
 
@@ -28,7 +28,7 @@ refs:
 
 ## Steps
 
-1. Add `plugins?: PluginSpec[]` to `Config` in `config.ts`, importing the type from `@ahpd/plugin`, and write the comment that this is the one key whose value is code and that the file is therefore owner-readable for the same reason the token file is.
+1. Add `plugins?: PluginSpec[]` to `Config` in `config.ts`, importing the type from `@ahpd/sdk`, and write the comment that this is the one key whose value is code and that the file is therefore owner-readable for the same reason the token file is.
 2. Add `plugins: PluginSpec[] = []` and `noPlugins = false` to the `Options` literal in `parse()`, and document both on the interface.
 3. Add `case '--plugin'` pushing `String(argv[++i])` and `case '--no-plugins'` setting `noPlugins = true`, matching the existing switch.
 4. Extract a small `asSpec(value: unknown): PluginSpec | undefined` that accepts a non-empty string or an object with a string `name` and an optional `options` object and `enabled` boolean, and refuses anything else with a message naming the entry, so a typo in the configuration is refused at startup rather than at load.
