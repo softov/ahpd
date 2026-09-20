@@ -6,8 +6,9 @@
  * createHost({ path, agents: [facioAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' })] });
  * ```
  *
- * The plugin entry that lets the daemon load it from configuration arrives in
- * task 05; this is the backend an embedder uses directly.
+ * The same module is the plugin the daemon loads: `apply` and `name` are what
+ * the manifest's `ahpd.entry` resolves to, so naming the package in a
+ * configuration is the whole install.
  */
 
 export { facioAgent, defaultStoreRoot, modelOf, storeOf } from './agent.js';
@@ -18,3 +19,4 @@ export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from '
 export { facioTool, facioTools } from './tools.js';
 export { turnsOf } from './transcript.js';
 export type { TranscriptTurn } from './transcript.js';
+export { apply, name } from './plugin.js';

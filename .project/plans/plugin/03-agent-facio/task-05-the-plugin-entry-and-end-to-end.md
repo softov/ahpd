@@ -1,6 +1,6 @@
 ---
 title: The plugin entry, and a daemon that serves provider `facio`
-status: todo
+status: done
 depends:
   - task-02-a-turn-becomes-the-chat-actions.md
   - task-03-approval-and-questions.md
@@ -54,4 +54,12 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`plugin.ts` exports `name`, `title` and `apply(host: PluginHost, options)`; `index.ts` re-exports them so the module the manifest names is the plugin, with no default export; `docs/PLUGINS.md` gains the package as the worked example, its options and its session settings, and the warning that a long-lived key belongs in the daemon's environment.
+`test/agent-facio-plugin.test.ts` is five cases: the loader loads the source file spec, folds it and serves one turn to `chat/turnComplete`; `describePlugin` answers `ready` for the package directory with the manifest's name and title without importing; two specs with two providers do not collide; an incompatible peer range is refused; and a paused run resumed through `start.resume` is answered, continues, and is seen once by a client that subscribes after the resume.
+Verified: `pnpm test` 763 passed over 53 files, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` four packages.
+By hand: a real daemon started from a `config.json` naming the package with a `store` option loaded `@ahpd/agent-facio`, offered `claude, facio` on the root channel, and answered a session on `facio` through a local OpenAI-compatible endpoint with `hello from facio` as streamed `chat/delta` and then `chat/turnComplete`.
+Two cross-cutting fixes were needed. `loadOne` applied a manifest's `ahpd.entry` over the file a spec had resolved to even for a file spec, which contradicts plan 01's task 03 step 5 ("load the manifest's entry only when the caller resolved the package rather than a file"); it now keys that override and the drift report on `resolved.packageDir`, and keeps the walked-up directory for reading and checking the manifest. And `packages/agent-facio` resolved `@ahpd/sdk` to the published `0.6.0` because the workspace SDK was only a peer, so `PluginHost` did not exist for the package build; a `devDependencies: { "@ahpd/sdk": "workspace:*" }` fixed the link and the entry is typed against the real contract.
+Resume fork resolved: the seed gives way. `reopen` removes the recorded copy of the open turn from `turns` before the replay rebuilds it as the live `active` turn, because the live object is what later deltas and the completion move, while a seeded copy would read as finished and never move; a test counts the turn once and was confirmed to count two when the drop is disabled.
+Departure from the plan: the loader case uses the source file spec rather than `loadPlugins(['./packages/agent-facio'])`, because the manifest names the build and `pnpm test` does not build; the directory is exercised through `describePlugin`, and the built entry is what the by-hand daemon loaded.
+Substituted for by hand: a confirmation asked and answered is proved by `test/agent-facio-approval.test.ts`, and a restart listing and resuming a session by `test/agent-facio-store.test.ts`, because a configuration file is JSON and cannot carry the policy function the pause comes from.

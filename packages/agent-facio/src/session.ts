@@ -507,6 +507,21 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
     const began = input === undefined ? Date.now() : Date.parse(input.createdAt);
     const startedAt = new Date(Number.isFinite(began) ? began : Date.now()).toISOString();
     /*
+     * The seed gives way to the replay.
+     *
+     * The host seeds `transcript(id)` into `start.seed`, and that transcript
+     * already carries this run's open turn as a finished one, because AHP's
+     * turn states have no `awaiting`. The replay below rebuilds the very same
+     * turn as the live `active` one, with the parts the next deltas append to,
+     * so keeping the seeded copy would show the open turn twice in every
+     * subscription snapshot - once in `turns` and once as `activeTurn`. The
+     * seed is the side that gives way, because only this session knows the run
+     * is about to be replayed; the transcript still carries the turn for the
+     * catalogue row a client browses without continuing it.
+     */
+    const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
+    if (seeded >= 0) turns.splice(seeded, 1);
+    /*
      * The same opening as a live turn: the markdown part exists before the
      * replay, so a text delta from a replayed event has a part to append to
      * exactly as it did when the turn first ran.

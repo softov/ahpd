@@ -323,12 +323,12 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   const problems: string[] = [];
   const spec = resolved.spec;
   const said = nameOf(spec);
-  const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
+  const manifestDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
 
   let manifest: Manifest | undefined;
-  if (packageDir !== undefined) {
-    manifest = readManifest(packageDir);
-    const bad = checkManifest(manifest, packageDir);
+  if (manifestDir !== undefined) {
+    manifest = readManifest(manifestDir);
+    const bad = checkManifest(manifest, manifestDir);
     if (bad !== undefined) return { problems: [bad] };
     if (manifest.sdkRange !== undefined) {
       let satisfied = false;
@@ -349,15 +349,21 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   }
 
   /*
-   * Where the module actually is. The manifest wins for resolution when the
-   * caller named a package rather than a file, and a mismatch between the two
-   * is reported rather than chosen silently - decision
-   * `plugin-manifest-is-package-json`.
+   * Where the module actually is.
+   *
+   * The manifest wins for resolution only when the caller resolved the
+   * *package* rather than a file - decision `plugin-manifest-is-package-json`.
+   * A spec that named a file is served as that file even when a manifest
+   * walked up from it names a build beside it, because the caller said which
+   * file to run and the walk only found the package the file lives in. So the
+   * override and the drift it reports belong to `resolved.packageDir`; the
+   * walked-up directory above stays in use for reading and checking the
+   * manifest.
    */
   let target = resolved.path;
   let url = resolved.url;
-  if (packageDir !== undefined && manifest?.entry !== undefined) {
-    target = resolve(packageDir, manifest.entry);
+  if (resolved.packageDir !== undefined && manifest?.entry !== undefined) {
+    target = resolve(resolved.packageDir, manifest.entry);
     if (resolved.path !== undefined && target !== resolved.path) {
       problems.push(`${manifest.path} names ${manifest.entry}, but ${said} resolved to ${resolved.path}`);
     }

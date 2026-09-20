@@ -106,7 +106,7 @@ ahpd --plugin @ahpd/agent-facio
 | [02 - A turn becomes the chat actions](task-02-a-turn-becomes-the-chat-actions.md) | done | 01 |
 | [03 - Approval and questions pause the run and come back](task-03-approval-and-questions.md) | done | 02 |
 | [04 - The catalogue, the transcript and resume](task-04-catalogue-transcript-and-resume.md) | done | 01 |
-| [05 - The plugin entry, and a daemon that serves it](task-05-the-plugin-entry-and-end-to-end.md) | todo | 02, 03, 04 |
+| [05 - The plugin entry, and a daemon that serves it](task-05-the-plugin-entry-and-end-to-end.md) | done | 02, 03, 04 |
 
 ## Risks and tradeoffs
 

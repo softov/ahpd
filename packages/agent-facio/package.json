@@ -28,6 +28,9 @@
   "peerDependencies": {
     "@ahpd/sdk": "^0.6"
   },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
   "dependencies": {
     "@facio/agents": "link:../../../facio/packages/agents",
     "@facio/model-openai-compat": "link:../../../facio/packages/model-openai-compat",

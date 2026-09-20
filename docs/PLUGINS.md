@@ -240,14 +240,86 @@ missing ./gone -> - (not resolved): Plugin ./gone is not there: tried /work/gone
 A plugin that would throw on load still lists as `ready`, which is the whole
 reason the `ahpd` key exists: a listing must not run third-party code.
 
+## A worked example: `@ahpd/agent-facio`
+
+The repository ships a real backend as a plugin. `@ahpd/agent-facio` wraps the
+facio agent runtime as provider `facio`, so every model an OpenAI-compatible
+endpoint serves is a model inside one provider rather than a package of its
+own. It is the same package an embedder imports and the same one the daemon
+loads when it is named, which is the point: a plugin is not a second kind of
+backend.
+
+```bash
+ahpd --plugin @ahpd/agent-facio
+```
+
+Or in the configuration file, with the backend's own options as defaults for
+every session it serves:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@ahpd/agent-facio",
+      "options": {
+        "provider": "facio",
+        "displayName": "Facio",
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "store": "/var/lib/ahpd/facio"
+      }
+    }
+  ]
+}
+```
+
+| Option | |
+| --- | --- |
+| `provider` | The AHP provider id, `facio` when absent. Two specs with two providers are two backends |
+| `displayName` | What a client draws, `Facio` when absent |
+| `description` | One line about the backend |
+| `model` | The model id a session that names none runs on |
+| `baseUrl` | The OpenAI-compatible endpoint a session that names none uses |
+| `instructions` | The system prompt the agent is created with |
+| `store` | Where the facio file store lives, under `XDG_DATA_HOME` when absent |
+| `memory` | `true` to hold the store in memory, for a test |
+| `apiKey` | A key, or a function asked once per request so an expired one is not cached |
+| `adapter` | A facio `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
+| `policy` | The run-level policy a pause comes from, facio's own default when absent |
+
+A session still chooses for itself. The backend publishes the choices as
+config keys, and a `session/configChanged` on any of them changes what the next
+turn runs:
+
+| Session setting | |
+| --- | --- |
+| `model` | The model id this session runs on. Session-mutable |
+| `baseUrl` | The endpoint this session runs against |
+| `apiKey` | The bearer token sent to that endpoint. Session-mutable |
+| `instructions` | The system prompt for this session |
+
+**A long-lived API key belongs in the daemon's environment, not in a setting a
+client sends.** A session setting is written to the session store and travels
+over the wire, so a key configured there is a key every client and every backup
+carries. Put the real key where the daemon is configured and leave the session
+`apiKey` to a short-lived token a client really has to pass. The schema says
+the same thing where a client reads it.
+
+A package becomes a plugin by exporting `name` and `apply` from the module its
+`ahpd.entry` names, and `@ahpd/agent-facio` is no different: its `package.json`
+carries the `ahpd` key and the `@ahpd/sdk` peer range shown under
+[The manifest](#the-manifest), and its `apply` registers one backend built from
+the options above.
+
 ## Trying one today
 
-No plugin is published yet. From a checkout, the fixtures under
-[`test/fixtures/`](../test/fixtures/) are real plugins and are what the tests
-load:
+No plugin is published yet. From a checkout, `@ahpd/agent-facio` and the
+fixtures under [`test/fixtures/`](../test/fixtures/) are real plugins and are
+what the tests load:
 
 ```bash
 pnpm build
+node packages/server/dist/main.js --port 0 --plugin ./packages/agent-facio
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
 ```
 
