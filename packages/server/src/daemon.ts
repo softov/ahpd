@@ -7,7 +7,13 @@ import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
 /** What a detached daemon records about itself. */
 export interface Running {
   pid: number;
+  /** The origin it listens on, without the token. What every verb prints. */
   url: string;
+  /**
+   * The origin with the token in the query, for a person to copy out of the
+   * 0600 record. This field carries the secret and `url` does not.
+   */
+  connectUrl: string;
   paths: string[];
   startedAt: string;
   /**
@@ -37,6 +43,9 @@ const alive = (pid: number): boolean => {
  * A stale record is cleared rather than reported: a `daemon.json` left behind
  * by a crash would otherwise have `start` refuse for ever, on the strength of
  * a process that is not there.
+ *
+ * This is the one reader of the record, and a caller printing one takes `url`:
+ * `connectUrl` carries the secret and belongs on no line.
  */
 export function running(): Running | undefined {
   let found: Running;
@@ -53,13 +62,60 @@ export function running(): Running | undefined {
 }
 
 /**
+ * The URL a person connects with: the announced origin, with the token in the
+ * query when there is one.
+ *
+ * The one place the query is appended, and the only function that puts the
+ * secret into a URL. `url` on the record stays the token-free origin, because
+ * the verbs print it and stdout is a log.
+ */
+export function readyUrl(origin: string, token?: string): string {
+  const base = `${origin.endsWith('/') ? origin.slice(0, -1) : origin}/`;
+  // Encoded, because a token read from a file may hold anything.
+  return token === undefined ? base : `${base}?tkn=${encodeURIComponent(token)}`;
+}
+
+/**
+ * The record built from what the child announced.
+ *
+ * Pure, so the shape it writes is testable without spawning anything. The
+ * origin and the directories come off its own announcement rather than off the
+ * command line, because the directories may have come from the configuration
+ * file and a record built from argv would name none of them.
+ */
+export function recordOf(announced: string, pid: number, token?: string): Running {
+  const url = /ws:\/\/[^\s,]+/.exec(announced)?.[0] ?? announced;
+  const automations = /^automations (.+)$/m.exec(announced)?.[1]?.trim();
+  return {
+    pid,
+    url,
+    connectUrl: readyUrl(url, token),
+    paths: (/sessions in (.+)/.exec(announced)?.[1] ?? '')
+      .trim().split(',').map((one) => one.trim()).filter((one) => one !== ''),
+    startedAt: new Date().toISOString(),
+    ...(automations !== undefined ? { automations } : {}),
+  };
+}
+
+/**
+ * The one line `status` prints about a running daemon.
+ *
+ * Built from `url` alone, which is the token-free origin: a record dump would
+ * print `connectUrl` and with it the secret. The line is a function so a test
+ * can hold it to that.
+ */
+export function statusLine(record: Running): string {
+  return `ahpd on ${record.url} (pid ${String(record.pid)}), started ${record.startedAt}`;
+}
+
+/**
  * Start one in the background, and wait until it says where it is.
  *
  * Detached and with its streams let go, so it outlives the shell that started
  * it - which is the whole point, and the difference between this and running
  * `ahpd` in a terminal you then have to keep open.
  */
-export async function start(argv: string[], self: string): Promise<Running> {
+export async function start(argv: string[], self: string, token?: string): Promise<Running> {
   const already = running();
   if (already) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
 
@@ -99,7 +155,7 @@ export async function start(argv: string[], self: string): Promise<Running> {
    */
   /** What it said about itself, so the record is its answer and not a guess. */
   let announced = '';
-  const url = await new Promise<string>((answer, fail) => {
+  await new Promise<string>((answer, fail) => {
     const gaveUp = Date.now() + 20_000;
     const look = (): void => {
       let said = '';
@@ -129,18 +185,7 @@ export async function start(argv: string[], self: string): Promise<Running> {
   // It announced where it was listening, so it started; this is for the type
   // rather than for the case, and `0` must never reach the record.
   if (child.pid === undefined) throw new Error('it started but has no process id');
-  const automations = /^automations (.+)$/m.exec(announced)?.[1]?.trim();
-  const record: Running = {
-    pid: child.pid,
-    url,
-    // Off its own announcement rather than off the command line: the
-    // directories may have come from the configuration file, and a record
-    // built from argv would name none of them.
-    paths: (/sessions in (.+)/.exec(announced)?.[1] ?? '')
-      .trim().split(',').map((one) => one.trim()).filter((one) => one !== ''),
-    startedAt: new Date().toISOString(),
-    ...(automations !== undefined ? { automations } : {}),
-  };
+  const record = recordOf(announced, child.pid, token);
   writeFileSync(daemonPath(), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;
 }

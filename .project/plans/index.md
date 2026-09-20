@@ -16,7 +16,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
-| [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | planned 2026-09-19 | - | - |
+| [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 
 Next free number in `daemon`: `03`.
 

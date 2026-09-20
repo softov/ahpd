@@ -1,6 +1,6 @@
 ---
 title: The daemon record carries a ready connect URL with the token in it
-status: todo
+status: done
 depends: []
 layer: packages/server
 refs:
@@ -47,4 +47,7 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done.
+`Running` carries `connectUrl`, `readyUrl` and `recordOf` build it, and `start` takes the token the `start` verb derives with `secret(parsed)`.
+The record is still written at 0600, and `test/daemon.test.ts` covers the two URL builders and the read-back through `running()`.
+Task 02 still has to hold every printer of the record to `url`.

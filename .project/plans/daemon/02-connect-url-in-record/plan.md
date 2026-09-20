@@ -1,7 +1,7 @@
 ---
 title: The ready connect URL lives in the daemon record and never on stdout
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -88,8 +88,8 @@ stdout of the child -> `ahpd on ws://host:port`, `automations ...`, `token: from
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Record the ready URL](task-01-record-the-ready-url.md) | todo | - |
-| [02 - Status stays token free](task-02-status-stays-token-free.md) | todo | 01 |
+| [01 - Record the ready URL](task-01-record-the-ready-url.md) | done | - |
+| [02 - Status stays token free](task-02-status-stays-token-free.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -102,16 +102,16 @@ stdout of the child -> `ahpd on ws://host:port`, `automations ...`, `token: from
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its two task files were written 2026-09-19.
-- **Next action:** [task-01-record-the-ready-url.md](task-01-record-the-ready-url.md).
+- **Done so far:** both tasks are done; the record carries `connectUrl`, the `start` verb passes the token, and every printer of the record stays on the token-free `url`. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Does `connectUrl` exist when there is no token? - proposed: yes, and it is the origin with a trailing slash and no query, so the field is always present and always copyable.
+  1. Does `connectUrl` exist when there is no token? - answered: yes; `readyUrl` answers the origin with a trailing slash and no query, so the field is always present and always copyable.
 - **Watch out for:** `url` must stay token-free because `start`, `stop` and `status` print it; the token belongs in `connectUrl` alone, and nothing but a person reading the file consumes that field.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the daemon record cases in it.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: `ahpd start --connection-token <secret>` writes `daemon.json` at mode 600 with `connectUrl` carrying `?tkn=<secret>` and `url` without it.
-- [ ] By hand: `ahpd status` prints no part of the token.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with the daemon record cases in it.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] By hand: `ahpd start --connection-token <secret>` writes `daemon.json` at mode 600 with `connectUrl` carrying `?tkn=<secret>` and `url` without it.
+- [x] By hand: `ahpd status` prints no part of the token.
+- [x] `plans/index.md` updated.

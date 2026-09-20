@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { automationsPath, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
 import { manifest, version } from './version.js';
-import { running, start, stop as stopDaemon } from './daemon.js';
+import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { claude } from '@ahpd/agent-claude';
 import type { Tap } from '@ahpd/sdk';
@@ -275,8 +275,11 @@ if (verb !== undefined) {
     // Parsed here as well as by the child, so a bad option is refused now
     // rather than by something that has already been let go of.
     const parsed = parse(rest);
+    // Derived here too, so the record the parent writes carries the ready URL
+    // and the child is told nothing it did not already know.
+    const { token } = secret(parsed);
     try {
-      const begun = await start(rest, process.argv[1] as string);
+      const begun = await start(rest, process.argv[1] as string, token);
       process.stdout.write(`ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`);
       if (begun.automations !== undefined) process.stdout.write(`automations ${begun.automations}\n`);
       if (checkingUpdates(parsed.updateCheck)) process.stdout.write(updateLine(manifest()) ?? '');
@@ -295,7 +298,7 @@ if (verb !== undefined) {
   if (verb === 'status') {
     const found = running();
     if (!found) { process.stdout.write('None running.\n'); process.exit(1); }
-    process.stdout.write(`ahpd on ${found.url} (pid ${String(found.pid)}), started ${found.startedAt}\n`);
+    process.stdout.write(`${statusLine(found)}\n`);
     if (found.paths.length > 0) process.stdout.write(`sessions in ${found.paths.join(', ')}\n`);
     // Absent from a record written by an older daemon, which is the one case
     // where saying nothing is better than guessing which store it was given.

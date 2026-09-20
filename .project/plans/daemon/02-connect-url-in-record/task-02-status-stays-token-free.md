@@ -1,6 +1,6 @@
 ---
 title: Every printer of the daemon record stays token free, status included
-status: todo
+status: done
 depends: [task-01-record-the-ready-url.md]
 layer: packages/server
 refs:
@@ -41,4 +41,7 @@ Every reader of the daemon record is checked, and `start`, `stop` and `status` p
 
 ## Resume
 
-Empty until started.
+Done.
+`statusLine(record)` builds the `status` line from `url`, `pid` and `startedAt` alone, and the `status` verb prints it.
+`grep -n "connectUrl" packages/server/src/main.ts` finds nothing, so no printer names the field that carries the token.
+`test/daemon.test.ts` holds `statusLine` to the origin line with neither the token nor `connectUrl` in it, and holds a record read back with a token-carrying `connectUrl` to a token-free `url`.
