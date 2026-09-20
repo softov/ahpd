@@ -129,10 +129,21 @@ const questions = async (agent: Agent, id: string): Promise<(string | undefined)
 const waitTurns = async (agent: Agent, id: string, count: number): Promise<void> =>
   untilAsync(async () => (await agent.transcript?.(id))?.length === count);
 
+/**
+ * A point the session watched run, or a failed case.
+ *
+ * `forkPoint` and `endPoint` are optional and answer nothing for a turn this
+ * process did not watch; a case about a cut is about a point that is there, so
+ * the absence is a broken test rather than a value to pass on.
+ */
+const pointOf = (value: string | undefined): string => {
+  if (value === undefined) throw new Error('the session recorded no point for the turn this case cuts at');
+  return value;
+};
+
 it('forks at a turn into a conversation of its own and leaves the source whole', async () => {
   const { agent, one, sweep } = await threeTurns();
-  const point = one.session.forkPoint?.('t2');
-  expect(point).toBeDefined();
+  const point = pointOf(one.session.forkPoint?.('t2'));
   const source = String(one.session.agentId());
 
   // The host forks a chat by resuming the conversation it copies and naming
@@ -154,8 +165,7 @@ it('forks at a turn into a conversation of its own and leaves the source whole',
 it('rewinds the same conversation to a turn, dropping what followed', async () => {
   const { agent, one, sweep } = await threeTurns();
   const id = String(one.session.agentId());
-  const at = one.session.endPoint?.('t2');
-  expect(at).toBeDefined();
+  const at = pointOf(one.session.endPoint?.('t2'));
 
   const rewound = open(agent, 'one', sweep, { resume: id, rewindAt: at });
   expect(String(rewound.session.agentId())).toBe(id);
@@ -186,8 +196,8 @@ it('refuses a session asked to fork and rewind at once', async () => {
   const { agent, one, sweep } = await threeTurns();
   const both = open(agent, 'one', sweep, {
     resume: String(one.session.agentId()),
-    forkAt: one.session.forkPoint?.('t2'),
-    rewindAt: one.session.endPoint?.('t2'),
+    forkAt: pointOf(one.session.forkPoint?.('t2')),
+    rewindAt: pointOf(one.session.endPoint?.('t2')),
   });
   await runTurn(both, 't4', 'question four');
   const failure = both.view.failure();
@@ -221,7 +231,7 @@ it('copies the kept turns with their records, not just their text', async () => 
     'question one', 'answer one', 'question two', 'answer two', 'question three', 'answer three',
   ]);
 
-  const forked = open(agent, 'one', sweep, { resume: id, forkAt: one.session.forkPoint?.('t2') });
+  const forked = open(agent, 'one', sweep, { resume: id, forkAt: pointOf(one.session.forkPoint?.('t2')) });
   const target = String(forked.session.agentId());
   // The target session does not exist until the fork lands, and asking for its
   // messages before that is `not_found` rather than an empty list.
