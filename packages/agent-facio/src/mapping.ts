@@ -16,7 +16,7 @@
 
 import type { AskQuestion, RunEvent, Usage } from '@facio/agents';
 import type { Bag } from '@ahpd/sdk';
-import { toolCallPart, toolCompleteAction, toolReadyAction, toolStartAction } from './tools.js';
+import { contributorOf, toolCallPart, toolCompleteAction, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -71,6 +71,14 @@ export interface TurnMappingOptions {
   model?: string;
   /** The name a client draws for a tool, off the definition the host offered. */
   displayNameOf(name: string): string;
+  /**
+   * The client that runs a tool, when one does.
+   *
+   * Off the same bound definitions the host offered, so a call is reported
+   * with the owner the tool was announced under. Undefined for a tool this
+   * host runs itself, which is what keeps the contributor off its actions.
+   */
+  ownerOf(name: string): string | undefined;
   /**
    * Whether the client has asked to stop this turn.
    *
@@ -127,6 +135,8 @@ const failurePart = (message: string): Bag => ({
 interface OpenCall {
   name: string;
   input: unknown;
+  /** The client that runs it, when one does; undefined for a host tool. */
+  owner: string | undefined;
   /** Whether `chat/toolCallReady` has gone out yet. */
   readied: boolean;
   /**
@@ -318,17 +328,19 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
         case 'tool.proposed': {
           const displayName = options.displayNameOf(event.name);
+          const owner = options.ownerOf(event.name);
           const held: OpenCall = {
             name: event.name,
             input: event.input,
+            owner,
             readied: false,
             awaited: false,
             invocation: undefined,
-            part: toolCallPart(event.callId, event.name, displayName),
+            part: toolCallPart(event.callId, event.name, displayName, owner),
           };
           open.set(event.callId, held);
           parts.push(held.part);
-          return only([toolStartAction(turnId, event.callId, event.name, displayName)]);
+          return only([toolStartAction(turnId, event.callId, event.name, displayName, owner)]);
         }
 
         /*
@@ -343,8 +355,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const displayName = options.displayNameOf(event.name);
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
+          const owner = held?.owner ?? options.ownerOf(event.name);
           const call: Bag = held === undefined
-            ? { toolCallId: event.callId, toolName: event.name, displayName }
+            ? { toolCallId: event.callId, toolName: event.name, displayName, ...contributorOf(owner) }
             : held.part.toolCall as Bag;
           call.status = 'pending-confirmation';
           call.confirmationTitle = prompt;
@@ -360,7 +373,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            */
           if (held === undefined) {
             parts.push({ id: event.callId, kind: 'toolCall', toolCall: call });
-            actions.push(toolStartAction(turnId, event.callId, event.name, displayName));
+            actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner));
           } else {
             held.awaited = true;
             held.invocation = prompt;
@@ -371,6 +384,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             toolCallId: event.callId,
             invocationMessage: prompt,
             confirmationTitle: prompt,
+            ...contributorOf(owner),
             ...(written !== undefined ? { toolInput: written } : {}),
           });
 
@@ -450,6 +464,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             toolCallId: event.callId,
             invocationMessage: held.invocation ?? held.name,
             confirmed: held.awaited ? 'user-action' : 'not-needed',
+            ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
           }]);
         }
@@ -492,7 +507,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, event.name, held.input)];
+            : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner)];
           actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true));
           return only(actions);
         }

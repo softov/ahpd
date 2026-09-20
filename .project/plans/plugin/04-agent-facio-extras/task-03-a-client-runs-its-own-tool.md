@@ -1,6 +1,6 @@
 ---
 title: A tool a client runs is offered, called, and waited for
-status: todo
+status: done
 depends: []
 layer: packages/agent-facio
 refs:
@@ -44,4 +44,10 @@ A `BoundTool` with an `owner` is offered to the model, its call is reported with
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`tools.ts` gains `ClientToolCall`/`ClientToolRelay`, wraps an owner-bound tool whose `execute` hands the call over and returns the promise the session settles, and carries `contributor` on the start and ready actions and on the snapshot part; `session.ts` holds the waiting calls, implements `toolCallOwner`, `completeToolCall` and `clientGone`, and releases held calls on cancel, close and turn end; `mapping.ts` gained `ownerOf` and attaches the contributor; `index.ts` exports the two new types.
+`test/agent-facio-client-tool.test.ts` is six cases: the call is offered with its owner and not run here, the owner may stream into it and another client may not, the owner's `chat/toolCallComplete` settles it and the model's next step carries the text, another client's completion is refused with the call still waiting, `clientGone` fails it and the run finishes, and a tool with neither an owner nor a `run` is still not offered.
+The shape was read rather than invented: `chat/toolCallStart` and `chat/toolCallReady` both carry `contributor: { kind: 'client', clientId }`, and `confirmed: 'not-needed'` is about approval rather than execution, so the call reaches `running` where the owning client begins; the host routes the client's completion to `completeToolCall` and deliberately does not echo the action.
+Verified: the six facio test files 45 passed, `pnpm typecheck` green, `pnpm boundary` green, and a full run passed 776 tests after one unrelated `worktrees.test.ts` flake that passed alone and is untouched here.
+Departure from the plan: `setTools` was implemented even though the task named only three members. It is a prerequisite: the host re-declares a running session's tools through it when a client announces `session/activeClientSet`, so without it an announced client tool never reaches `Start.tools` and can never be offered.
+`facioTools` still leaves an owner-bound tool out when it is called with no relay, because a tool whose every call would hang is worse than one that is not offered; the session always passes a relay.

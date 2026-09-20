@@ -21,12 +21,13 @@
 import { createAgent, resume, run, textOf } from '@facio/agents';
 import type { Agent as FacioAgent, RunCommand, RunEvent, RunHandle, Store } from '@facio/agents';
 import { Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { modelOf, storeOf } from './agent.js';
 import type { FacioOptions } from './agent.js';
 import { mapTurn } from './mapping.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
 import { facioTools } from './tools.js';
+import type { ClientToolRelay } from './tools.js';
 
 /**
  * The facio agent id.
@@ -90,6 +91,23 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
 export const sessionIdOf = (uri: string): string => uri.replace(/^ahp-session:\//, '');
 
 /**
+ * A tool call a connected client is running, as the session holds it.
+ *
+ * The owner is what `completeToolCall` checks a result against and what
+ * `clientGone` matches on; the name is what a call failed by a lost client
+ * says it was. `resolve` and `reject` are the two halves of the promise the
+ * owner-bound tool's `execute` awaits, and exactly one of them must run for
+ * every entry, or the turn waits on a promise nothing can settle.
+ */
+interface WaitingCall {
+  owner: string;
+  name: string;
+  input: unknown;
+  resolve(text: string): void;
+  reject(reason: Error): void;
+}
+
+/**
  * One conversation over a facio agent.
  *
  * `options` is the backend's identity and wiring: the provider it was
@@ -111,6 +129,15 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
    * is public - gets one of its own, which is what a single session had.
    */
   const store = sharedStore ?? storeOf(options);
+  /**
+   * The tools the model is offered.
+   *
+   * Mutable because a client announces what it provides after the session is
+   * built, and the host re-declares the whole set through `setTools`. An
+   * agent is built per turn from this, so a tool announced mid-turn is
+   * offered from the turn after it.
+   */
+  let offered: BoundTool[] = start.tools ?? [];
 
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
@@ -166,6 +193,41 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
    */
   const settings: Record<string, unknown> = { ...start.settings };
 
+  /**
+   * The calls a connected client is running, by the id of the model's call.
+   *
+   * Nothing on this host executes an owner-bound tool, so this map is the
+   * whole of its execution: a call is held here from the moment facio tries
+   * to run the tool until the owning client settles it through
+   * `completeToolCall`, or goes away and `clientGone` fails it. Every path
+   * that takes an entry out also settles its promise, because a run waiting
+   * on one nothing can settle is a turn that hangs for ever.
+   */
+  const waiting = new Map<string, WaitingCall>();
+
+  /** Fail every held call, or one client's, and forget each one's promise. */
+  const releaseCalls = (why: string, whose?: string): void => {
+    for (const [callId, held] of [...waiting.entries()]) {
+      if (whose !== undefined && held.owner !== whose) continue;
+      waiting.delete(callId);
+      held.reject(new Error(why));
+    }
+  };
+
+  /**
+   * The session side of a client-run call, used by `facioTool`.
+   *
+   * The entry is registered synchronously, in the promise executor, so a
+   * client's answer that arrives on a later turn of the loop always finds
+   * something to settle even though the model's step was only opened a
+   * moment before.
+   */
+  const relay: ClientToolRelay = {
+    call: (call) => new Promise<string>((resolve, reject) => {
+      waiting.set(call.callId, { owner: call.owner, name: call.name, input: call.input, resolve, reject });
+    }),
+  };
+
   const touch = (): void => { modified = new Date().toISOString(); };
 
   /**
@@ -190,7 +252,7 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
     id: AGENT_ID,
     instructions: instructionsOf(values),
     model: modelOf(options, values, start.credentials ?? {}),
-    tools: facioTools(start.tools ?? []),
+    tools: facioTools(offered, relay),
     store,
     // Absent means facio's own default, which is the policy an approval comes
     // from; this bridge does not keep a second one beside it.
@@ -353,6 +415,13 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
    * nobody can settle.
    */
   const stop = (reason: string): void => {
+    /*
+     * A client-run call is settled here too, even though a stopped turn's
+     * abort means the model will not read the result: the entry must not
+     * outlive the turn, or `toolCallOwner` keeps claiming a call that is over
+     * and a later answer would settle a promise nobody is waiting on.
+     */
+    releaseCalls(reason);
     if (paused !== undefined) {
       for (const held of [...pending.values()]) {
         const removal = activeMapping?.settle(held.requestId);
@@ -423,7 +492,8 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
       markdownPartId: String(part.id),
       parts: active.responseParts as Bag[],
       startedAt: began,
-      displayNameOf: (name) => start.tools?.find((one) => one.definition.name === name)?.definition.title ?? name,
+      displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
+      ownerOf: (name) => offered.find((one) => one.definition.name === name)?.owner,
       cancelled: () => cancelRequested,
       ...(chosen !== undefined ? { model: chosen } : {}),
     });
@@ -541,7 +611,8 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
       markdownPartId: String(part.id),
       parts: active.responseParts as Bag[],
       startedAt: Number.isFinite(began) ? began : Date.now(),
-      displayNameOf: (name) => start.tools?.find((one) => one.definition.name === name)?.definition.title ?? name,
+      displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
+      ownerOf: (name) => offered.find((one) => one.definition.name === name)?.owner,
       cancelled: () => false,
     });
     activeMapping = mapping;
@@ -783,6 +854,76 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
         ? { type: 'answer', requestId, answers: answersOf(answers) }
         : { type: 'deny', requestId, reason: DECLINED });
       touch();
+    },
+
+    /**
+     * The tools on offer, replaced whole.
+     *
+     * The host calls this when a client announces what it provides or stops
+     * being active, which is the only thing that moves this list after the
+     * session is built. Replacing is what makes a tool taken away able to go.
+     * It always answers true: there is no declaration to re-send, because an
+     * agent is built per turn from this list, so the next turn simply gets
+     * the new one.
+     */
+    setTools: async (tools) => {
+      offered = [...tools];
+      return true;
+    },
+
+    /**
+     * The client running a tool call, for a call that is one client's to run.
+     *
+     * Nothing for a call this host is running itself, which is what the host
+     * checks before letting a client stream into one.
+     */
+    toolCallOwner: (toolCallId) => waiting.get(toolCallId)?.owner,
+
+    /**
+     * What a client says one of its own tool calls did.
+     *
+     * Only the client the call was reported against may settle it: the
+     * protocol makes that one responsible for the call, and a result from
+     * anybody else is a client answering for work it did not do. False either
+     * way - for a call nobody is waiting on and for a client that does not
+     * own it - because both are a client out of step and the host says which.
+     *
+     * Nothing is emitted here. The result goes back into facio, which writes
+     * the tool result, and the run's own `tool.completed` reports the
+     * completion to every client from that - the same path every other tool
+     * call takes. A completion emitted here as well would be the same row
+     * finished twice.
+     */
+    completeToolCall: (toolCallId, clientId, result) => {
+      const held = waiting.get(toolCallId);
+      if (held === undefined || held.owner !== clientId) return false;
+      waiting.delete(toolCallId);
+      /*
+       * The client's word is the tool's result: its text when it worked and
+       * its message when it did not. A failure is thrown rather than
+       * returned, which is what facio records as a failed `tool.completed`
+       * and what makes the model read the message as the reason.
+       */
+      if (result.ok) held.resolve(result.text);
+      else held.reject(new Error(result.text === '' ? 'The tool failed' : result.text));
+      return true;
+    },
+
+    /**
+     * A client that was running tool calls here has gone.
+     *
+     * Its outstanding calls are failed rather than left open: the run is
+     * awaiting a promise that nothing can settle any more, and a turn that
+     * hangs for ever is worse than a tool that says the client went. The
+     * message is the tool result the model reads, which is why it names the
+     * tool as well as the client.
+     */
+    clientGone: (clientId) => {
+      for (const [callId, held] of [...waiting.entries()]) {
+        if (held.owner !== clientId) continue;
+        waiting.delete(callId);
+        held.reject(new Error(`The client ${clientId} that was running ${held.name} is no longer here`));
+      }
     },
 
     /*

@@ -72,7 +72,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | --- | --- | --- |
 | [01 - A host tool says what it does](task-01-a-host-tool-says-what-it-does.md) | done | - |
 | [02 - Fork and rewind a facio conversation](task-02-fork-and-rewind.md) | todo | - |
-| [03 - A client runs its own tool](task-03-a-client-runs-its-own-tool.md) | todo | - |
+| [03 - A client runs its own tool](task-03-a-client-runs-its-own-tool.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,8 +83,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** task 01, a host tool's effects, done 2026-09-20.
-- **Next action:** [task-02-fork-and-rewind.md](task-02-fork-and-rewind.md).
+- **Done so far:** task 01, a host tool's effects, and task 03, a client's own tool, done 2026-09-20.
+- **Next action:** [task-02-fork-and-rewind.md](task-02-fork-and-rewind.md), which is waiting on whether facio gains a cut-at-a-message call or the capability is refused.
 - **Open questions:**
   1. Does a rewind need the run it drops to be cancelled first, since facio keeps a run per session and a rewind starts another - proposed: yes, cancel through the existing path and then start at the earlier point, and the test asserts one live run.
 - **Watch out for:** a fork or a rewind on a session whose agent is still running is refused by the host rather than by the backend, so the bridge may assume it is starting fresh; and `RunRecord.inputMessageId` is absent for a run the store has only partly written, which must be a refusal and not a fork at the wrong place.
