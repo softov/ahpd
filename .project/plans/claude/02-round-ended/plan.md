@@ -1,7 +1,7 @@
 ---
 title: A response round that ends empty is announced, or the gap is recorded
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -79,7 +79,7 @@ No decision file: the item is either reachable or it is dropped, and a choice be
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The empty round is announced](task-01-emit-round-ended.md) | todo | - |
+| [01 - The empty round is announced](task-01-emit-round-ended.md) | dropped | - |
 
 ## Risks and tradeoffs
 
@@ -90,16 +90,16 @@ No decision file: the item is either reachable or it is dropped, and a choice be
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its task file were written 2026-09-19.
-- **Next action:** [task-01-emit-round-ended.md](task-01-emit-round-ended.md), which begins with the investigation.
+- **Done so far:** the task's opening investigation is done and its Answer is no; the task is dropped and the client gap is recorded. See [implemented.md](implemented.md) and [deferred.md](deferred.md).
+- **Next action:** none; every task is done or dropped and the plan is built.
 - **Open questions:**
-  1. Does the Claude SDK expose a round that ended with no content and no tool calls? - proposed: unknown until the research is run, and a "no" answer drops the task.
-- **Watch out for:** the task is conditional; do not emit a notification off an unrelated frame such as `result`, and do not mark the task done without the research Answer filled.
+  1. Does the Claude SDK expose a round that ended with no content and no tool calls? - answered: no; `@anthropic-ai/claude-agent-sdk@0.3.278` has no such event, so the task is dropped.
+- **Watch out for:** the gap is real and unplanned; it needs an SDK event that does not exist today, and it must not be faked from `result` or from the transport's `message_stop`.
 
 ## Final verification checklist
 
-- [ ] The research file's Answer is filled with the outcome of the method it states.
-- [ ] If the answer is yes: `pnpm test` green with the empty-round case, and the wire capture shows the part.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] If the answer is no: the task's status is `dropped`, `deferred.md` records the client gap, and no code changed.
-- [ ] `plans/index.md` updated.
+- [x] The research file's Answer is filled with the outcome of the method it states.
+- [x] If the answer is yes: `pnpm test` green with the empty-round case, and the wire capture shows the part. - not applicable; the answer is no.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] If the answer is no: the task's status is `dropped`, `deferred.md` records the client gap, and no code changed.
+- [x] `plans/index.md` updated.

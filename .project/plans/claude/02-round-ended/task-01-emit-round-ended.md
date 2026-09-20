@@ -1,6 +1,6 @@
 ---
 title: An empty model round settles the client, or the task is dropped with the gap recorded
-status: todo
+status: dropped
 depends: []
 layer: packages/agent-claude
 refs:
@@ -45,4 +45,6 @@ When the Claude stream ends a model response round with neither text nor tool ca
 
 ## Resume
 
-Empty until started.
+Dropped.
+The investigation in `.project/research/response-round-ended-signal.md` found that `@anthropic-ai/claude-agent-sdk@0.3.278` exposes no event for a model response round that ended with neither text nor tool calls, so there is no frame to hang the notification on and `session.ts` was left untouched.
+What a client loses is recorded in [deferred.md](deferred.md).
