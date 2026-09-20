@@ -1,6 +1,6 @@
 ---
 title: A customization keeps the plugin or builtin it came from, as far as the SDK attributes it
-status: todo
+status: done
 depends: []
 layer: packages/agent-claude
 refs:
@@ -43,4 +43,7 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done.
+The investigation in `.project/research/claude-customization-attribution.md` ran a live probe and found the SDK attributes a plugin's children by namespacing their names as `<plugin>:<name>`, so that branch was taken rather than the fallback.
+`customizationsOf` projects each reported plugin as a top-level `plugin` container with its real path, name and version, moves a namespaced skill, prompt or agent under it with the namespace taken off the display name, and leaves everything else in the per-kind directory containers.
+`describe()` and `probe()` call `reloadPlugins()` beside `reloadSkills()` and pass its plugin list in; no builtin container was added because no builtin source is attributable.

@@ -120,6 +120,38 @@ const describe = (one: Artifact): string => {
   return `${one.id} (${one.type}, ${noun(one.isArtifact)}) ${one.label}${value ? ` \u2014 ${value}` : ''}`;
 };
 
+/** One `add` outcome: the list as it now stands, the entry it is about, and how it was answered. */
+export interface Recorded {
+  held: Artifact[];
+  artifact: Artifact;
+  status: string;
+}
+
+/*
+ * The reference's `addOrPromoteArtifact`, copied rather than redesigned.
+ *
+ * A value the session already holds as a reference is promoted to an artifact
+ * in place and keeps the id it had; a new value is added under a minted id;
+ * anything else is already recorded. An artifact arriving as a reference is
+ * never downgraded, which is the half a duplicate answer has to protect.
+ */
+export const recordArtifact = (held: Artifact[], one: Omit<Artifact, 'id'>, mintId: () => string): Recorded => {
+  const same = held.find((other) => valueOf(other) === valueOf(one));
+  if (same === undefined) {
+    const made: Artifact = { id: mintId(), ...one };
+    return { held: [...held, made], artifact: made, status: `Added ${noun(one.isArtifact)}` };
+  }
+  if (same.isArtifact === false && one.isArtifact === true) {
+    const artifact: Artifact = { id: same.id, ...one };
+    return {
+      held: held.map((other) => (other === same ? artifact : other)),
+      artifact,
+      status: 'Promoted artifact',
+    };
+  }
+  return { held, artifact: same, status: 'Already recorded' };
+};
+
 /** The recorded list, as a store holds it; a malformed entry is left out rather than drawn wrong. */
 export const artifactsIn = (held: Bag[] | undefined): Artifact[] => (held ?? []).flatMap((raw) => {
   if (typeof raw.id !== 'string' || typeof raw.label !== 'string' || typeof raw.type !== 'string' || !(TYPES as readonly string[]).includes(raw.type)) return [];
@@ -170,23 +202,24 @@ export const artifactTools = (): HostTool[] => [
       annotations: { readOnlyHint: false },
     },
     instruction: ARTIFACT_TOOLS_INSTRUCTION,
+    /*
+     * The reference's rule: the add tool the instruction names is never
+     * deferred, and remove and list are, since the model reaches them through
+     * the discovery the instruction points at.
+     */
+    deferLoading: false,
     run: (input, at) => {
       const wanted = parseArtifacts(input, ADD);
       for (const one of wanted) {
         if (one.uri !== undefined && /^agent-host-session:/i.test(one.uri))
           throw new Error(`Invalid ${ADD} input: sessions and chats created with session-management tools must not be recorded as artifacts or references.`);
       }
-      const held = artifactsIn(at.artifacts());
       const said: string[] = [];
+      let held = artifactsIn(at.artifacts());
       for (const one of wanted) {
-        const same = held.find((other) => valueOf(other) === valueOf(one));
-        if (same !== undefined) {
-          said.push(`Already recorded: ${describe(same)}`);
-          continue;
-        }
-        const made: Artifact = { id: crypto.randomUUID(), ...one };
-        held.push(made);
-        said.push(`Added ${noun(made.isArtifact)}: ${describe(made)}`);
+        const recorded = recordArtifact(held, one, () => crypto.randomUUID());
+        held = recorded.held;
+        said.push(`${recorded.status}: ${recorded.artifact.id}`);
       }
       at.setArtifacts(held as unknown as Bag[]);
       return said.join('\n');
@@ -204,6 +237,7 @@ export const artifactTools = (): HostTool[] => [
       },
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
+    deferLoading: true,
     run: (input, at) => {
       const id = input.id;
       if (typeof id !== 'string' || id.length === 0) throw new Error(`Invalid ${REMOVE} input: id must be a non-empty string.`);
@@ -211,7 +245,7 @@ export const artifactTools = (): HostTool[] => [
       const gone = held.find((one) => one.id === id);
       if (gone === undefined) return `No artifact or reference with id ${id}.`;
       at.setArtifacts(held.filter((one) => one !== gone) as unknown as Bag[]);
-      return `${gone.isArtifact ? 'Removed artifact' : 'Removed reference'}: ${describe(gone)}`;
+      return `${gone.isArtifact ? 'Removed artifact' : 'Removed reference'}: ${gone.id}`;
     },
   },
   {
@@ -222,6 +256,7 @@ export const artifactTools = (): HostTool[] => [
       inputSchema: { type: 'object', properties: {} },
       annotations: { readOnlyHint: true },
     },
+    deferLoading: true,
     run: (_input, at) => {
       const held = artifactsIn(at.artifacts());
       return held.length === 0 ? 'No artifacts or references recorded for this session.' : held.map(describe).join('\n');

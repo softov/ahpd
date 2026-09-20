@@ -26,7 +26,7 @@ Reference: [00-host.md](host/00-host.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - Artifact tools promote in place and record a pull request](host/01-artifact-tools/plan.md) | high | planned 2026-09-19 | - | host 03, whose promotion runs inside its new recording step |
+| [01 - Artifact tools promote in place and record a pull request](host/01-artifact-tools/plan.md) | high | built 2026-09-20 ([implemented.md](host/01-artifact-tools/implemented.md)) | - | host 03, whose promotion runs inside its new recording step |
 | [02 - The root config grows two keys, and a chat keeps its title](host/02-session-config-and-titles/plan.md) | medium | planned 2026-09-19 | - | - |
 | [03 - The session pull request baseline is sent](host/03-pull-request-baseline/plan.md) | medium | planned 2026-09-19 | host 01 | ahpc screen/04, whose filter reads the two keys |
 
@@ -38,7 +38,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - Host tools load when the instruction says so, and a customization keeps its source](claude/01-host-tools-and-customizations/plan.md) | high | planned 2026-09-19 | research/claude-customization-attribution.md | - |
+| [01 - Host tools load when the instruction says so, and a customization keeps its source](claude/01-host-tools-and-customizations/plan.md) | high | built 2026-09-20 ([implemented.md](claude/01-host-tools-and-customizations/implemented.md)) | research/claude-customization-attribution.md | - |
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | planned 2026-09-19 | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification |
 
 Next free number in `claude`: `03`.

@@ -68,6 +68,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       initializationResult: async () => ({}),
       mcpServerStatus: async () => [],
       reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
       close: () => { fake.closed = true; fake.wake?.(); },

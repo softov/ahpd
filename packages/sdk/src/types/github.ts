@@ -8,6 +8,8 @@ export interface PullRequest {
   url: string;
   /** Open, closed without merging, or merged. */
   state: 'open' | 'closed' | 'merged';
+  /** Its title, when the answer carried one; a port is not required to. */
+  title?: string;
 }
 
 /**

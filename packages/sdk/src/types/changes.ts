@@ -217,6 +217,15 @@ export interface ChangesetOperationResult {
     content: { uri: string; sizeHint?: number; contentType?: string; nonce?: string };
     external?: boolean;
   };
+  /**
+   * Something the session should hold afterwards, when the operation produced it.
+   *
+   * A pull request an operation opened or found again is the case: the host
+   * records it as a session artifact and associates its URL with the branch.
+   * The source names the branch it landed on, since only it knows which remote
+   * branch it pushed to.
+   */
+  pullRequest?: { url: string; title: string; branch: string };
 }
 
 /**

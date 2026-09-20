@@ -75,6 +75,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       }),
       mcpServerStatus: async () => [{ name: 'notes', status: 'connected' }],
       reloadSkills: async () => ({ skills: [{ name: 'writing', description: 'How to write' }] }),
+      reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [{ model: 'claude-opus-5', displayName: 'Opus 5' }],
       streamInput: async () => {},
       close: () => { fake.closed = true; fake.wake?.(); },

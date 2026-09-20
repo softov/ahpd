@@ -1,6 +1,6 @@
 ---
 title: The artifact tools carry a load policy, and the one the instruction names is eager
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:
@@ -46,4 +46,6 @@ The host's tools carry a per-tool `deferLoading`, `artifactTools()` marks add fa
 
 ## Resume
 
-Empty until started.
+Done.
+`HostTool` and `BoundTool` carry `deferLoading`, `boundTools()` passes it on, `artifactTools()` marks add false and remove and list true, and `contributed()` turns a defined value into `_meta['anthropic/alwaysLoad']`.
+`test/toolpolicy.test.ts` asserts the raw SDK definitions and `test/artifacttools.test.ts` asserts the policy on the tools themselves.

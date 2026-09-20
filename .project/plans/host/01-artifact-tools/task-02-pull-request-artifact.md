@@ -1,6 +1,6 @@
 ---
 title: create-pr records the opened or reused pull request and associates its URL with the branch
-status: todo
+status: done
 depends: [task-01-promote-and-answers.md]
 layer: packages/sdk
 refs:

@@ -154,7 +154,7 @@ function resultText(content: unknown): string | undefined {
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = []): Bag[] {
   const out: Bag[] = [];
 
   /*
@@ -190,6 +190,44 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       writable: true,
       children,
     });
+  /*
+   * The plugins the SDK reported, each as its own top-level container.
+   *
+   * The SDK attributes a plugin's children through their names, which it
+   * namespaces as `<plugin>:<name>` for both a skill and an agent. A child
+   * with no such namespace cannot be attributed, so it stays in the directory
+   * container for its kind rather than being moved under a plugin the SDK
+   * never said it came from. The container's URI is the real plugin root the
+   * SDK reported, and its name and version are the plugin's own.
+   */
+  const reportedPlugins = list(plugins)
+    .map((raw) => bag(raw))
+    .filter((one) => (str(one.name) ?? '') !== '' && (str(one.path) ?? '') !== '');
+  const pluginOf = (name: string): Bag | undefined =>
+    reportedPlugins.find((plugin) => name.startsWith(`${str(plugin.name) ?? ''}:`));
+  /** The SDK's name with the plugin's namespace taken off it. */
+  const bare = (plugin: Bag, name: string): string => {
+    const prefix = `${str(plugin.name) ?? ''}:`;
+    return name.startsWith(prefix) ? name.slice(prefix.length) : name;
+  };
+  const pluginContainers = new Map<string, Bag>();
+  for (const plugin of reportedPlugins) {
+    const name = str(plugin.name) as string;
+    if (pluginContainers.has(name)) continue;
+    pluginContainers.set(name, {
+      type: 'plugin',
+      id: `plugin:${name}`,
+      uri: str(plugin.path) as string,
+      name,
+      ...(str(plugin.version) !== undefined ? { version: str(plugin.version) as string } : {}),
+      children: [],
+    });
+  }
+  /** Put one attributed child under the plugin that namespaced it. */
+  const under = (plugin: Bag, child: Bag): void => {
+    const held = pluginContainers.get(str(plugin.name) as string);
+    if (held !== undefined) (held.children as Bag[]).push(child);
+  };
   const asSkills: Bag[] = [];
   const asPrompts: Bag[] = [];
   const asAgents: Bag[] = [];
@@ -216,11 +254,12 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const command = offered.get(name);
     const described = str(skill.description) ?? str(bag(command).description);
     const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
-    asSkills.push({
+    const plugin = pluginOf(name);
+    const leaf: Bag = {
       type: 'skill',
       id: `skill:${name}`,
-      name,
-      uri: `${folder('skills')}/${name}`,
+      name: plugin === undefined ? name : bare(plugin, name),
+      uri: plugin === undefined ? `${folder('skills')}/${name}` : `${str(plugin.path) ?? ''}/skills/${bare(plugin, name)}`,
       enabled: true,
       ...(command ? {} : { disableUserInvocation: true }),
       ...(described ? { description: described } : {}),
@@ -228,35 +267,47 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       // declares `description` and the two `disable*` flags and nothing else,
       // so an argument hint sent beside them is this host's own extension.
       ...(hint ? { _meta: { argumentHint: hint } } : {}),
-    });
+    };
+    if (plugin === undefined) asSkills.push(leaf);
+    else under(plugin, leaf);
   }
 
   for (const [name, command] of offered) {
     if (loaded.has(name)) continue;
-    asPrompts.push({
+    const plugin = pluginOf(name);
+    const leaf: Bag = {
       type: 'prompt',
       id: `command:${name}`,
-      name,
-      uri: `${folder('commands')}/${name}.md`,
+      name: plugin === undefined ? name : bare(plugin, name),
+      uri: plugin === undefined ? `${folder('commands')}/${name}.md` : `${str(plugin.path) ?? ''}/commands/${bare(plugin, name)}.md`,
       enabled: true,
       ...(str(command.description) ? { description: str(command.description) as string } : {}),
       ...(str(command.argumentHint) ? { argumentHint: str(command.argumentHint) as string } : {}),
-    });
+    };
+    if (plugin === undefined) asPrompts.push(leaf);
+    else under(plugin, leaf);
   }
 
   for (const raw of list(init.agents)) {
     const found = bag(raw);
     const name = str(found.name);
     if (!name) continue;
-    asAgents.push({
+    const plugin = pluginOf(name);
+    const leaf: Bag = {
       type: 'agent',
       id: `agent:${name}`,
-      name,
-      uri: `${folder('agents')}/${name}.md`,
+      name: plugin === undefined ? name : bare(plugin, name),
+      uri: plugin === undefined ? `${folder('agents')}/${name}.md` : `${str(plugin.path) ?? ''}/agents/${bare(plugin, name)}.md`,
       enabled: true,
       ...(str(found.description) ? { description: str(found.description) as string } : {}),
-    });
+    };
+    if (plugin === undefined) asAgents.push(leaf);
+    else under(plugin, leaf);
   }
+
+  // The plugins first, each with the children that named it; then the
+  // per-kind directories, which hold everything the SDK attributed to nobody.
+  for (const plugin of pluginContainers.values()) out.push(plugin);
 
   for (const found of [
     container('skills', 'skill', asSkills),
@@ -447,6 +498,13 @@ const contributed = (
       name: one.definition.name,
       description: one.definition.description ?? one.definition.title ?? one.definition.name,
       inputSchema: shape,
+      /*
+       * A raw SDK definition, not the SDK's `tool()` helper, so the eager flag
+       * rides `_meta`. Passed only when the host defined it: `false` is the
+       * SDK's own default, and an undefined one must pass nothing so every
+       * other host and client tool keeps that default.
+       */
+      ...(one.deferLoading !== undefined ? { _meta: { 'anthropic/alwaysLoad': !one.deferLoading } } : {}),
       ...(one.definition.annotations ? { annotations: one.definition.annotations } : {}),
       handler: async (input: Record<string, unknown>) => {
         /*
@@ -1795,12 +1853,20 @@ export function createSession(options: SessionOptions): Session {
     (id.startsWith('mcp:') ? id.slice(4) : undefined);
 
   const describe = async (): Promise<void> => {
-    const [init, mcp, skills] = await Promise.all([
+    const [init, mcp, skills, plugins] = await Promise.all([
       handle.initializationResult().then((r) => bag(r as unknown)).catch(() => ({} as Bag)),
       handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]),
       // The only way to know which commands are skills. It re-reads them from
       // disk, which at the start of a session is what one wants anyway.
       handle.reloadSkills().then((r) => list(bag(r as unknown).skills)).catch(() => [] as unknown[]),
+      /*
+       * The plugins, which `initializationResult()` does not report.
+       *
+       * Its own reload, re-read from disk beside the skills, and only its
+       * plugin list is used: it re-reads commands and agents too, and those
+       * are already answered above.
+       */
+      handle.reloadPlugins().then((r) => list(bag(r as unknown).plugins)).catch(() => [] as unknown[]),
     ]);
     offered = list(init.models)
       .map((raw) => {
@@ -1828,7 +1894,7 @@ export function createSession(options: SessionOptions): Session {
       settings.outputStyle = running;
     }
     await discover(mcp);
-    customizations = customizationsOf(init, mcp, skills, wanted);
+    customizations = customizationsOf(init, mcp, skills, wanted, plugins);
     if (customizations.length > 0) {
       emit('session', { type: 'session/customizationsChanged', customizations });
     }

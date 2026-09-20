@@ -562,14 +562,20 @@ export function gitChanges(): ChangesetSource {
       : ['origin', branch];
     const pushed = await run(dir, ['push', ...(upstream === undefined ? ['-u'] : []), remote, `${branch}:${head}`]);
     if (!pushed.ok) throw new Error(`Failed to push branch '${branch}': ${pushed.err}`);
+    const said = await words(dir, subject, { branch, base: at.base });
     const existing = (await github.ask.forBranch(repo, head, github.token, dir)).find((one) => one.state === 'open');
     if (existing !== undefined) {
       return {
         message: `Pushed ${branch}; its pull request is ${existing.url}`,
         followUp: { content: { uri: existing.url, contentType: 'text/html' }, external: true },
+        pullRequest: {
+          url: existing.url,
+          // The port's title when it has one, the form's next, the subject's last.
+          title: existing.title ?? (typeof asked?.title === 'string' ? asked.title : undefined) ?? said.title,
+          branch: head,
+        },
       };
     }
-    const said = await words(dir, subject, { branch, base: at.base });
     const opened = await github.ask.create(repo, {
       title: typeof asked?.title === 'string' ? asked.title : said.title,
       body: typeof asked?.description === 'string' ? asked.description : said.description,
@@ -580,6 +586,11 @@ export function gitChanges(): ChangesetSource {
     return {
       message: `Opened ${opened.url}`,
       followUp: { content: { uri: opened.url, contentType: 'text/html' }, external: true },
+      pullRequest: {
+        url: opened.url,
+        title: opened.title ?? (typeof asked?.title === 'string' ? asked.title : undefined) ?? said.title,
+        branch: head,
+      },
     };
   };
 

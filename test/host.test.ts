@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import { Status } from '../packages/sdk/src/catalog.js';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * This checkout, as an absolute path.
@@ -114,6 +117,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       initializationResult: async () => sdk.init,
       mcpServerStatus: async () => sdk.mcp,
       reloadSkills: async () => ({ skills: sdk.skills }),
+      reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
       close: () => { fake.closed = true; fake.wake?.(); },
@@ -135,6 +139,7 @@ const { gitBranches } = await import('../packages/sdk/src/git.js');
 const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 const { claude } = await import('../packages/agent-claude/src/claude.js');
 const { hostTools } = await import('../packages/sdk/src/tools.js');
+const { gitChanges } = await import('../packages/sdk/src/changes.js');
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
 const ETX = String.fromCharCode(3);
@@ -6298,7 +6303,7 @@ describe('what a session recorded', () => {
     const { client, peer: p, uri } = await withTools();
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
-    expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: /);
+    expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: [0-9a-f-]+$/);
     const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
     const meta = moved?.action._meta as Record<string, unknown> | undefined;
     const held = meta?.[KEY] as { id: string; label: string }[] | undefined;
@@ -6328,5 +6333,151 @@ describe('what a session recorded', () => {
     const before = actions(p, uri).length;
     await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'nobody' } });
     expect(actions(p, uri).length).toBe(before);
+  });
+});
+
+describe('the pull request a create-pr recorded', () => {
+  /*
+   * `create-pr` answers what it opened or found again, and the host records it
+   * as a session artifact before asking GitHub about the branch. A real
+   * repository is used because the operation is git: it branches, commits and
+   * pushes. GitHub is faked, since what is under test is what the host does
+   * with the operation's own answer.
+   */
+  const KEY = 'agentHost/sessionArtifacts';
+  const URL = 'https://github.com/softov/ahpd/pull/1';
+  const here: string[] = [];
+  afterEach(() => {
+    for (const dir of here) rmSync(dir, { recursive: true, force: true });
+    here.length = 0;
+  });
+
+  const git = (dir: string, ...args: string[]): string =>
+    execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' }).toString().trim();
+
+  /** A repository with a bare `origin` beside it, on `main`, with one commit. */
+  const repository = (): string => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-host-pr-'));
+    here.push(root);
+    const origin = join(root, 'origin.git');
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+    const dir = join(root, 'work');
+    execFileSync('git', ['clone', '-q', origin, dir], { stdio: 'pipe' });
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    git(dir, 'checkout', '-q', '-b', 'main');
+    writeFileSync(join(dir, 'tracked.txt'), 'one\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'first');
+    git(dir, 'push', '-q', '-u', 'origin', 'main');
+    git(dir, 'remote', 'set-head', 'origin', 'main');
+    return dir;
+  };
+
+  /**
+   * GitHub, as far as the host and the operation ask it.
+   *
+   * Nothing is open until `create` opens it, which is what makes the operation
+   * take the opened path and the host's later refresh agree with it.
+   */
+  const lookup = (url: string) => {
+    const asked: { branch: string; token: string | undefined }[] = [];
+    let opened: { url: string; state: 'open'; title: string } | undefined;
+    return {
+      asked,
+      port: {
+        resource: { resource: 'https://api.github.com/repos', resource_name: 'GitHub Repository', authorization_servers: ['https://github.com/login/oauth'], required: false },
+        forBranch: async (_repo: unknown, branch: string, token: string | undefined) => {
+          asked.push({ branch, token });
+          return opened === undefined ? [] : [opened];
+        },
+        create: async (_repo: unknown, wanted: { title: string }) => {
+          opened = { url, state: 'open' as const, title: wanted.title };
+          return opened;
+        },
+      },
+    };
+  };
+
+  /** The directory's git facts, with a GitHub remote the local clone does not have. */
+  const facts = (dir: string) => ({
+    meta: () => ({
+      git: {
+        branchName: git(dir, 'rev-parse', '--abbrev-ref', 'HEAD'),
+        hasGitHubRemote: true,
+        githubOwner: 'softov',
+        githubRepo: 'ahpd',
+      },
+    }),
+    refresh: async () => false,
+  });
+
+  /** A host on a real repository, its changes source and the fake GitHub, with tools. */
+  async function withRepo() {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    const fake = lookup(URL);
+    const host = createHost({
+      path: dir,
+      agents: [claude({ paths: [dir] })],
+      ...machine(),
+      directories: facts(dir),
+      github: fake.port,
+      changes: gitChanges(),
+      tools: hostTools(),
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/pr';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    await settle(8);
+    return { dir, fake, client, peer: p, uri, changeset: `${uri}/changeset/uncommitted` };
+  }
+
+  const toolsOf = () => Object.fromEntries(
+    ((sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).ahp?.tools ?? [])
+      .map((one) => [one.name, one]),
+  );
+
+  const create = async (client: { handle(r: { method: string; params: unknown }): unknown }, dir: string, changeset: string) => {
+    await client.handle({ method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${dir}`, write: true } });
+    return await client.handle({
+      method: 'invokeChangesetOperation',
+      params: { channel: changeset, operationId: 'create-pr', _meta: { 'vscode.pullRequest': { title: 'Fix the thing', description: 'Because.' } } },
+    }) as { followUp?: { content: { uri: string } } };
+  };
+
+  it('records it as an artifact and puts its URL on the branch', async () => {
+    const { dir, fake, client, peer: p, uri, changeset } = await withRepo();
+    const done = await create(client, dir, changeset);
+    expect(done.followUp?.content.uri).toBe(URL);
+    expect(fake.asked.length).toBeGreaterThan(0);
+    await settle(8);
+
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as Record<string, unknown> | undefined;
+    const held = meta?.[KEY] as { type: string; isArtifact: boolean; link: string }[] | undefined;
+    expect(held).toHaveLength(1);
+    expect(held?.[0]).toMatchObject({ type: 'pullRequest', isArtifact: true, link: URL });
+    expect((meta?.github as { pullRequestUrls?: string[] } | undefined)?.pullRequestUrls?.[0]).toBe(URL);
+  });
+
+  it('promotes a reference the session already held, keeping its id', async () => {
+    const { dir, client, peer: p, uri, changeset } = await withRepo();
+    const added = await toolsOf()['add_artifact_or_reference']?.handler({
+      items: [{ type: 'pullRequest', label: 'The fix', isArtifact: false, link: URL }],
+    });
+    const id = /^Added reference: ([0-9a-f-]+)$/.exec(String(added?.content[0]?.text))?.[1];
+    expect(id).toBeDefined();
+    await create(client, dir, changeset);
+    await settle(8);
+
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const held = (moved?.action._meta as Record<string, unknown> | undefined)?.[KEY] as { id: string; isArtifact: boolean; link: string }[] | undefined;
+    expect(held).toHaveLength(1);
+    expect(held?.[0]).toMatchObject({ id, isArtifact: true, link: URL });
   });
 });

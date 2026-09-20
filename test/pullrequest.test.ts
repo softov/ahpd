@@ -139,6 +139,12 @@ describe('creating a pull request', () => {
     expect(fake.asked).toEqual([{ branch: 'agent/port-the-kqueue-build', token: 'gho_x' }]);
     expect(fake.opened).toEqual([{ title: 'Port the kqueue build', body: 'Because libkqueue.', head: 'agent/port-the-kqueue-build', base: 'main', draft: true }]);
     expect(said?.followUp).toEqual({ content: { uri: 'https://github.com/softov/ahpd/pull/1', contentType: 'text/html' }, external: true });
+    // And what the host records: the page, the form's title and the branch it landed on.
+    expect(said?.pullRequest).toEqual({
+      url: 'https://github.com/softov/ahpd/pull/1',
+      title: 'Port the kqueue build',
+      branch: 'agent/port-the-kqueue-build',
+    });
   });
 
   it('answers the request the branch already has rather than opening a second', async () => {
@@ -150,6 +156,13 @@ describe('creating a pull request', () => {
     const said = await invoke(dir, 'create-pr', withGithub(fake));
     expect(fake.opened).toEqual([]);
     expect(said?.followUp?.content.uri).toBe('https://github.com/softov/ahpd/pull/7');
+    // The reused path still says what to record, with the subject's title as
+    // the fallback because the port reported none.
+    expect(said?.pullRequest).toEqual({
+      url: 'https://github.com/softov/ahpd/pull/7',
+      title: 'Port it',
+      branch: 'fix/kqueue',
+    });
   });
 
   it('refuses what this host cannot do, in the reference host\'s words', async () => {

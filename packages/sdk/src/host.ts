@@ -27,7 +27,7 @@ import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
-import { ARTIFACTS_META } from './artifacttools.js';
+import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from './artifacttools.js';
 import { debugLogs, hostLogPath } from './debuglogs.js';
 import type { LogFile } from './debuglogs.js';
 import { lookup } from 'node:dns/promises';
@@ -2098,6 +2098,44 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * Record the pull request an operation opened or found again, and say so.
+   *
+   * The same promotion the add tool runs, since a reference to the same URL is
+   * upgraded rather than duplicated. The association is written before
+   * `refreshFacts` asks GitHub, so the operation's own answer is already there
+   * and GitHub's later answer is the one that survives.
+   */
+  const recordPullRequest = (uri: string, dir: string, pullRequest: { url: string; title: string; branch: string }): void => {
+    const recorded = recordArtifact(artifactsIn(kept.artifacts(idOf(uri))), {
+      type: 'pullRequest',
+      label: pullRequest.title,
+      isArtifact: true,
+      link: pullRequest.url,
+      isGitHub: isGitHubLink(pullRequest.url),
+    }, () => crypto.randomUUID());
+    setArtifacts(uri, recorded.held as unknown as Bag[]);
+
+    const held = githubFacts.get(dir) ?? {};
+    const urls = Array.isArray(held.pullRequestUrls)
+      ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string')
+      : [];
+    const now: Bag = {
+      ...held,
+      pullRequestUrls: [pullRequest.url, ...urls.filter((one) => one !== pullRequest.url)],
+      pullRequestBranchName: pullRequest.branch,
+    };
+    // The state is kept only while it names the URL being associated.
+    delete now.pullRequestState;
+    delete now.pullRequestStateUrl;
+    if (held.pullRequestStateUrl === pullRequest.url) {
+      now.pullRequestState = held.pullRequestState;
+      now.pullRequestStateUrl = held.pullRequestStateUrl;
+    }
+    githubFacts.set(dir, now);
+    metaMoved(dir);
+  };
+
+  /**
    * Ask git again, and tell everyone if the answer moved.
    *
    * A branch changes underneath a session - somebody checks one out in a
@@ -3330,6 +3368,7 @@ export function createHost(options: HostOptions): Host {
   const boundTools = (uri: string, chatUri: string): BoundTool[] => [...clientTools(uri), ...contributing.map((one): BoundTool => ({
     definition: one.definition,
     run: (input: Record<string, unknown>) => one.run(input, toolContext(uri, chatUri)),
+    ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
   }))];
   /** What the host's tools want the model told, in the order the tools are offered. */
   const instructions = (): string[] => contributing.flatMap((one) => (one.instruction === undefined ? [] : [one.instruction]));
@@ -5011,6 +5050,8 @@ export function createHost(options: HostOptions): Host {
             });
             inFlight.delete(key);
             dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+            // Before the refresh, so GitHub's later answer is what survives.
+            if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
             // Something wrote to the tree, so every changeset of this session
             // is now describing a directory that has moved. The catalogue
             // first, because `refresh` is what makes the next read fresh.

@@ -27,6 +27,7 @@ const sdk = vi.hoisted(() => {
   }
   return {
     mcp: [{ name: 'desk', status: 'connected' }] as Record<string, unknown>[],
+    plugins: [] as Record<string, unknown>[],
     queries: [] as Fake[],
   };
 });
@@ -69,6 +70,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       initializationResult: async () => ({}),
       mcpServerStatus: async () => sdk.mcp,
       reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: sdk.plugins }),
       supportedModels: async () => [],
       streamInput: async () => {},
       close: () => { fake.closed = true; fake.wake?.(); },
@@ -108,9 +110,10 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
 const uri = 'ahp-session:/auth';
 const chatUri = 'ahp-chat:/auth';
 
-async function running() {
+async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;
   sdk.mcp = [{ name: 'desk', status: 'connected' }];
+  sdk.plugins = plugins;
   const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
   const p = peer();
   const client = host.accept(p);
@@ -222,4 +225,19 @@ it('leaves the harness\'s own tools alone, because no server is behind them', as
 
   await becomes(client, 'needs-auth');
   expect(actions(p).filter((one) => one.action.type === 'chat/toolCallAuthRequired')).toEqual([]);
+});
+
+it('reads the plugins the control protocol reports, and projects one as a container', async () => {
+  // `initializationResult()` carries no plugins, so the session has to ask
+  // `reloadPlugins()` for them; a session that did not would list a plugin's
+  // children as if the person had written them under `~/.claude`.
+  const { peer: p } = await running([{ name: 'acme', path: '/plugins/acme', version: '1.0.0' }]);
+  await settle(10);
+  const changed = actions(p).filter((one) => one.action.type === 'session/customizationsChanged').at(-1);
+  const customizations = changed?.action.customizations as { type: string; uri: string; name: string; version?: string }[] | undefined;
+  expect(customizations?.find((one) => one.type === 'plugin')).toMatchObject({
+    uri: '/plugins/acme',
+    name: 'acme',
+    version: '1.0.0',
+  });
 });

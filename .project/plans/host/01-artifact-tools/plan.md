@@ -1,7 +1,7 @@
 ---
 title: Artifact tools promote in place and record a pull request
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -100,8 +100,8 @@ add_artifact_or_reference -> match on value -> a reference re-added as an artifa
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The answers and the promotion](task-01-promote-and-answers.md) | todo | - |
-| [02 - The pull request artifact](task-02-pull-request-artifact.md) | todo | 01 |
+| [01 - The answers and the promotion](task-01-promote-and-answers.md) | done | - |
+| [02 - The pull request artifact](task-02-pull-request-artifact.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -113,16 +113,16 @@ add_artifact_or_reference -> match on value -> a reference re-added as an artifa
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its two task files were written 2026-09-19.
-- **Next action:** [task-01-promote-and-answers.md](task-01-promote-and-answers.md).
+- **Done so far:** both tasks are done; the promotion rule, the status-and-id answers and the pull request artifact are in place and verified. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Does the window or a skill assert on the answer bytes beyond the status and the id? - proposed: no; the tests assert the status word and the id, which is what decision 1 fixed.
+  1. Does the window or a skill assert on the answer bytes beyond the status and the id? - answered: no; the tests assert the status word and the id, which is what decision 1 fixed.
 - **Watch out for:** a duplicate artifact stays `Already recorded`, and only a reference arriving as an artifact is promoted; the removal answer names the id and not the entry.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the new cases in `test/artifacttools.test.ts`, `test/pullrequest.test.ts` and `test/host.test.ts`.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: re-adding a value already held as a reference answers `Promoted artifact: <id>` and the list holds one entry under the id it had.
-- [ ] By hand: `create-pr` on a branch whose pull request is already open records one artifact and puts its URL on `_meta.github`.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with the new cases in `test/artifacttools.test.ts`, `test/pullrequest.test.ts` and `test/host.test.ts`.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] By hand: re-adding a value already held as a reference answers `Promoted artifact: <id>` and the list holds one entry under the id it had.
+- [x] By hand: `create-pr` on a branch whose pull request is already open records one artifact and puts its URL on `_meta.github`.
+- [x] `plans/index.md` updated.

@@ -1,6 +1,6 @@
 ---
 title: The artifact tools answer the reference's status and id, and promote a reference in place
-status: todo
+status: done
 depends: []
 layer: packages/sdk
 refs:

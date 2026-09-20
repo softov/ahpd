@@ -32,6 +32,14 @@ export interface BoundTool {
    * waits for it to say what happened.
    */
   owner?: string;
+  /**
+   * Whether the harness may defer this tool behind tool search.
+   *
+   * The host's `HostTool.deferLoading`, carried here so a backend does not have
+   * to read it off the published definition - which never holds it. Undefined
+   * means the harness's own default applies.
+   */
+  deferLoading?: boolean;
 }
 
 /**

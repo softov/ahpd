@@ -67,23 +67,54 @@ describe('the three tools', () => {
       { type: 'pullRequest', label: 'The fix', isArtifact: true, link: 'https://github.com/softov/ahpd/pull/1' },
       { type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com/docs' },
     ] }, at);
-    expect(said).toMatch(/^Added artifact: [0-9a-f-]+ \(pullRequest, artifact\) The fix \u2014 https:\/\/github\.com\/softov\/ahpd\/pull\/1\nAdded reference: [0-9a-f-]+ \(website, reference\) Docs \u2014 https:\/\/example\.com\/docs$/);
+    expect(said).toMatch(/^Added artifact: [0-9a-f-]+\nAdded reference: [0-9a-f-]+$/);
     expect(held()).toHaveLength(2);
     expect(held()[0]).toMatchObject({ type: 'pullRequest', isGitHub: true });
     const again = await tool('add_artifact_or_reference').run({ type: 'website', label: 'Documentation', isArtifact: false, link: 'https://example.com/docs' }, at);
-    expect(again).toMatch(/^Already recorded: /);
+    expect(again).toMatch(/^Already recorded: [0-9a-f-]+$/);
     expect(held()).toHaveLength(2);
     await expect(async () => tool('add_artifact_or_reference').run({ type: 'resource', label: 'x', isArtifact: true, uri: 'agent-host-session://claude/abc' }, at))
       .rejects.toThrow('sessions and chats created with session-management tools must not be recorded');
+  });
+
+  it('promotes a reference in place, keeping its id, and never downgrades an artifact', async () => {
+    const { at, held } = holding();
+    const added = await tool('add_artifact_or_reference').run({
+      items: [{ type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com/docs' }],
+    }, at);
+    const id = /^Added reference: ([0-9a-f-]+)$/.exec(added)?.[1];
+    expect(id).toBeDefined();
+    const promoted = await tool('add_artifact_or_reference').run({
+      items: [{ type: 'website', label: 'The docs', isArtifact: true, link: 'https://example.com/docs' }],
+    }, at);
+    expect(promoted).toBe(`Promoted artifact: ${id}`);
+    expect(held()).toHaveLength(1);
+    expect(held()[0]).toMatchObject({ id, label: 'The docs', isArtifact: true });
+    // An artifact arriving as a reference is a duplicate, not a downgrade.
+    const down = await tool('add_artifact_or_reference').run({
+      items: [{ type: 'website', label: 'Docs once more', isArtifact: false, link: 'https://example.com/docs' }],
+    }, at);
+    expect(down).toBe(`Already recorded: ${id}`);
+    expect(held()).toHaveLength(1);
+    expect(held()[0]).toMatchObject({ id, label: 'The docs', isArtifact: true });
   });
 
   it('lists with ids, and removes by one', async () => {
     const { at, held } = holding([{ id: 'one', type: 'file', label: 'Plan', isArtifact: true, uri: 'file:///tmp/plan.md' }]);
     expect(await tool('list_artifacts_and_references').run({}, at)).toBe('one (file, artifact) Plan \u2014 file:///tmp/plan.md');
     expect(await tool('remove_artifact_or_reference').run({ id: 'nobody' }, at)).toBe('No artifact or reference with id nobody.');
-    expect(await tool('remove_artifact_or_reference').run({ id: 'one' }, at)).toBe('Removed artifact: one (file, artifact) Plan \u2014 file:///tmp/plan.md');
+    expect(await tool('remove_artifact_or_reference').run({ id: 'one' }, at)).toBe('Removed artifact: one');
     expect(held()).toEqual([]);
     expect(await tool('list_artifacts_and_references').run({}, at)).toBe('No artifacts or references recorded for this session.');
     await expect(async () => tool('remove_artifact_or_reference').run({}, at)).rejects.toThrow('id must be a non-empty string.');
+  });
+
+  it('keeps the add tool eager and lets remove and list be discovered', () => {
+    const marked = Object.fromEntries(artifactTools().map((one) => [one.definition.name, one.deferLoading]));
+    expect(marked).toEqual({
+      add_artifact_or_reference: false,
+      remove_artifact_or_reference: true,
+      list_artifacts_and_references: true,
+    });
   });
 });

@@ -281,6 +281,15 @@ export interface HostTool {
    * nothing asks for is worth calling on the model's own initiative.
    */
   instruction?: string;
+  /**
+   * A host-side hint that the harness may hide this tool behind tool search.
+   *
+   * The host sets it and the published `ToolDefinition` never carries it: a
+   * backend reads it to decide whether the model must be offered the tool up
+   * front, while a client drawing the tool's row has no interest in it.
+   * Undefined leaves the harness's own default in force.
+   */
+  deferLoading?: boolean;
 }
 
 /**

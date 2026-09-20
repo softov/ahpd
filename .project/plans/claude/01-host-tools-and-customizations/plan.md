@@ -1,7 +1,7 @@
 ---
 title: Host tools load when the instruction says so, and a customization keeps its source
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-09-19
 revalidated: 2026-09-19
@@ -95,8 +95,8 @@ No decision file: neither item forks on a choice where both options work.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The artifact tools carry a load policy](task-01-eager-artifact-tools.md) | todo | - |
-| [02 - A customization keeps its source](task-02-customization-containers.md) | todo | - |
+| [01 - The artifact tools carry a load policy](task-01-eager-artifact-tools.md) | done | - |
+| [02 - A customization keeps its source](task-02-customization-containers.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -109,16 +109,16 @@ No decision file: neither item forks on a choice where both options work.
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its two task files were written 2026-09-19.
-- **Next action:** [task-01-eager-artifact-tools.md](task-01-eager-artifact-tools.md).
+- **Done so far:** both tasks are done; the load policy reaches the SDK and a plugin is projected as its own container. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:**
-  1. Does the SDK attribute a plugin-contributed skill or agent, or only the plugin itself? - proposed: only the plugin, so children stay in the directory containers.
-- **Watch out for:** `initializationResult()` carries no plugins; the plugin list comes from `reloadPlugins()` or the message stream's init, and `probe.ts` needs the same source as a session.
+  1. Does the SDK attribute a plugin-contributed skill or agent, or only the plugin itself? - answered: it attributes a child by namespacing its name as `<plugin>:<name>`, so a namespaced skill, prompt or agent moves under its plugin container and an unattributed entry stays in its directory container.
+- **Watch out for:** `initializationResult()` carries no plugins; the plugin list comes from `reloadPlugins()`, and `probe.ts` reads the same source as a session.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the load-policy cases and the customization-projection cases in it.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: the `ahp` MCP server's tool list carries `anthropic/alwaysLoad` true on add and false on remove and list.
-- [ ] By hand: a session with a plugin installed lists it under a `plugin` container whose URI is the plugin's real path.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm test` green, with the load-policy cases and the customization-projection cases in it.
+- [x] `pnpm typecheck` and `pnpm boundary` green.
+- [x] By hand: the `ahp` MCP server's tool list carries `anthropic/alwaysLoad` true on add and false on remove and list.
+- [x] By hand: a session with a plugin installed lists it under a `plugin` container whose URI is the plugin's real path.
+- [x] `plans/index.md` updated.
