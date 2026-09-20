@@ -159,6 +159,7 @@ export function apply(host: PluginHost) {
 ```
 
 `on` is the one method that is not `register*`, because it adds no contribution to `HostOptions`: it attaches a listener to something the host already does, and `on` is what every event emitter in the ecosystem calls that.
+It returns nothing, where pi's returns an unsubscribe: a plugin is never unloaded here, so a disposer would be a function nobody can call, and the handlers go when the process does.
 Handlers are collected into a new `HostOptions.events` and called where `createHost` already calls `log()` and emits a state action, so an event is one of the host's own moments rather than a protocol frame.
 The first set is `session_start`, `session_end`, `turn_start`, `turn_end`, `message`, `tool_call`, `client_connect`, `client_disconnect`, `authenticated`, `automation_fire`, `resource_write`, `terminal_open`, and `log` for the lines the host already writes.
 Observation only in the first cut: a handler returns nothing, so it cannot change what the host does, and the permission case stays with a `HostTool` that decides before it runs.
