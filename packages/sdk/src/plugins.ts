@@ -13,7 +13,8 @@
 
 import type { Agent } from './types/agent.js';
 import type { HostOptions } from './types/host.js';
-import type { Contribution, PortContribution, PortKey } from './types/plugin.js';
+import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
+import { checkAgent, checkPort, checkTool, miss } from './validate.js';
 
 /**
  * Every key a `set` registration may name.
@@ -119,4 +120,68 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   }
 
   return { options, problems };
+}
+
+/** What one `apply` is handed, and what it recorded. */
+export interface HostRecording {
+  /** The surface a plugin calls `register*` on. */
+  host: PluginHost;
+  /** Everything it registered, kept apart until the fold sees it. */
+  contribution: Contribution;
+}
+
+/**
+ * The `PluginHost` one plugin's `apply` is handed.
+ *
+ * Every method checks what it is given before it records it, so a bad
+ * registration throws out of `apply` and the loader discards that plugin's
+ * whole contribution rather than keeping the part registered before the bad
+ * one. A registration made twice by the same plugin is refused here, because
+ * that is one `apply` making a mistake; the same port claimed by two plugins
+ * is the fold's problem, because only the fold can see both.
+ */
+export function pluginHost(by: string, context: PluginContext): HostRecording {
+  const contribution: Contribution = { by, agents: [], tools: [], ports: {} };
+  const providers = new Set<string>();
+  const tools = new Set<string>();
+
+  const setPort = <K extends PortKey>(key: K, method: string, value: PortOf<K>, when?: 'replace'): void => {
+    checkPort(key, value, by);
+    if (contribution.ports[key] !== undefined) {
+      throw new Error(miss(by, method, key, 'registered only once'));
+    }
+    contribution.ports[key] = { value, replace: when === 'replace' };
+  };
+
+  const host: PluginHost = {
+    ...context,
+    registerAgent(agent) {
+      checkAgent(agent, by);
+      if (providers.has(agent.provider)) {
+        throw new Error(miss(by, 'registerAgent', agent.provider, 'a provider no other agent in this plugin uses'));
+      }
+      providers.add(agent.provider);
+      contribution.agents.push(agent);
+    },
+    registerTool(tool) {
+      checkTool(tool, by);
+      const name = tool.definition.name;
+      if (tools.has(name)) {
+        throw new Error(miss(by, 'registerTool', name, 'a name no other tool in this plugin uses'));
+      }
+      tools.add(name);
+      contribution.tools.push(tool);
+    },
+    registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
+    registerTerminals: (store, when) => { setPort('terminals', 'registerTerminals', store, when); },
+    registerChanges: (source, when) => { setPort('changes', 'registerChanges', source, when); },
+    registerDirectories: (facts, when) => { setPort('directories', 'registerDirectories', facts, when); },
+    registerWorktrees: (worktrees, when) => { setPort('worktrees', 'registerWorktrees', worktrees, when); },
+    registerGithub: (pullRequests, when) => { setPort('github', 'registerGithub', pullRequests, when); },
+    registerAutomations: (store, when) => { setPort('automations', 'registerAutomations', store, when); },
+    registerSessions: (store, when) => { setPort('sessions', 'registerSessions', store, when); },
+    registerDiagnostics: (diagnostics, when) => { setPort('diagnostics', 'registerDiagnostics', diagnostics, when); },
+  };
+
+  return { host, contribution };
 }

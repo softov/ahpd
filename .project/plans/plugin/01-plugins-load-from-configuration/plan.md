@@ -128,7 +128,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 | [05 - The daemon builds its host through the loader](task-05-main-builds-through-the-loader.md) | todo | 03, 04 |
 | [06 - A backend arrives by configuration, end to end](task-06-a-backend-arrives-by-configuration.md) | todo | 05 |
 | [07 - `ahpd plugin list` reads manifests without importing](task-07-plugin-list.md) | todo | 03 |
-| [08 - Every register method checks what it is given](task-08-validate-registrations.md) | todo | 01 |
+| [08 - Every register method checks what it is given](task-08-validate-registrations.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -145,8 +145,8 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
 
 ## Resume state
 
-- **Done so far:** task 01, the contract and the fold, and task 02, the resolver, done 2026-09-20.
-- **Next action:** [task-08-validate-registrations.md](task-08-validate-registrations.md).
+- **Done so far:** task 01, the contract and the fold, task 02, the resolver, and task 08, the registration checks, all done 2026-09-20.
+- **Next action:** [task-03-load-and-apply.md](task-03-load-and-apply.md).
 - **Open questions:**
   1. Does a plugin contribute a root configuration key in this plan - proposed: no, `ROOT_CONFIG_SCHEMA` becomes a `HostOptions` field in a later plan and this one only proves the loading.
   2. Does the contract go in `types/host.ts` or a `types/plugin.ts` of its own - proposed: its own file, so `host.ts` stays the option object and the whole plugin surface is one import.

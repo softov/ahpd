@@ -24,8 +24,8 @@
  */
 
 export { createHost, ROOT } from './host.js';
-export { foldHostOptions } from './plugins.js';
-export type { FoldedOptions } from './plugins.js';
+export { foldHostOptions, pluginHost } from './plugins.js';
+export type { FoldedOptions, HostRecording } from './plugins.js';
 export { sdkVersion } from './version.js';
 export { listen, runtime } from './listen.js';
 export {

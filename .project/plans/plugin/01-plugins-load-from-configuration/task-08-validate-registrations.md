@@ -1,6 +1,6 @@
 ---
 title: Every register method checks what it is given before it records it
-status: todo
+status: done
 depends:
   - task-01-contract-and-fold.md
 layer: packages/sdk
@@ -60,4 +60,10 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-20.
+`packages/sdk/src/validate.ts` holds `miss`, `checkAgent`, `checkTool`, `checkPort` and the `PORT_MEMBERS` and `PORT_METHOD` tables keyed by `PortKey`.
+`packages/sdk/src/plugins.ts` gains `pluginHost(by, context)` returning `{ host, contribution }`, and `packages/sdk/src/index.ts` exports both it and the `HostRecording` type.
+`test/plugin-validate.test.ts` covers a complete `Agent`, `HostTool` and all nine ports, then the empty and incomplete values for `provider`, `create`, `name`, `run`, `list`, `create` and `chatTitle`, empty `diagnostics` and a probe-less `Agent`, a port registered twice by one plugin, and a repeated provider inside one plugin against the fold's handling of it across two.
+Verified: `pnpm test` 667 passed, `pnpm typecheck` green, `pnpm boundary` green.
+Departure from the plan: `checkAgent` checks each optional member by the kind the interface declares rather than "each present member is a function", because `description` is a string and `chats` an object; `checkPort` also checks `github.resource`, which the interface requires and the plan's shorthand omitted.
+The checkers are hand-written, so the test pairs each with a complete implementation and with an empty one, which is what makes a later required member fail here rather than reach a host.
