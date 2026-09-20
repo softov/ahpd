@@ -6,8 +6,8 @@ depends:
 layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/plugin.ts - `PluginHost`, the surface this task implements and checks
-  - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, the required members `checkAgent` tests for
-  - code://packages/sdk/src/types/host.ts#L270-L306 - `HostTool`, the required members `checkTool` tests for
+  - code://packages/sdk/src/types/agent.ts#L158-L300 - `Agent`, the required members `checkAgent` tests for
+  - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, the required members `checkTool` tests for
   - code://packages/sdk/src/types/host.ts#L25-L130 - `ResourceStore`, `TerminalStore` and `DirectoryFacts`
   - code://packages/sdk/src/types/changes.ts - `ChangesetSource`
   - code://packages/sdk/src/types/worktrees.ts - `Worktrees`

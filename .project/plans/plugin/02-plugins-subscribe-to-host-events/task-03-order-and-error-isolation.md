@@ -6,7 +6,7 @@ depends:
 layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/events.ts - `EventListener.by`, which is what a failure is reported against
-  - code://packages/sdk/src/host.ts#L775-L780 - `log()`, which is also the only channel a failure can be reported on
+  - code://packages/sdk/src/host.ts#L777-L783 - `log()`, which is also the only channel a failure can be reported on
   - code://.project/decisions/plugin-events-are-observed-not-answered.md - order, awaiting and isolation
   - file:///github/pi/packages/coding-agent/src/core/extensions/runner.ts#L885-L914 - how pi isolates a throwing handler and reports it through `onError`
 ---

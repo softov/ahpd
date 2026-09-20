@@ -6,8 +6,8 @@ layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, whose keys the contract names back
   - code://packages/sdk/src/types/host.ts#L25-L130 - `DirectoryFacts`, `ResourceStore` and `TerminalStore`, three of the ports
-  - code://packages/sdk/src/types/host.ts#L247-L306 - `Diagnostics` and `HostTool`, two of the contributions
-  - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, the contract `registerAgent` checks against
+  - code://packages/sdk/src/types/host.ts#L247-L332 - `Diagnostics` and `HostTool`, two of the contributions
+  - code://packages/sdk/src/types/agent.ts#L158-L300 - `Agent`, the contract `registerAgent` checks against
   - code://packages/sdk/src/types/index.ts - the types barrel a `types/plugin.ts` joins
   - code://packages/sdk/src/index.ts - where the contract, the fold and `sdkVersion()` join the exports, beside `createHost` and the ports
   - code://packages/server/src/version.ts#L20-L37 - the walk up to the nearest manifest that `sdkVersion()` mirrors

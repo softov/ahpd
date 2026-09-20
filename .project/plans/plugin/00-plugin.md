@@ -17,8 +17,8 @@ What exists is everything the mechanism is built on, and it is all in `@ahpd/sdk
 ## Contracts
 
 - `code://packages/sdk/src/types/host.ts#L132-L245` - `HostOptions`, the whole contribution surface: `agents`, `tools`, and the ports `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations` and `sessions`.
-- `code://packages/sdk/src/types/host.ts#L270-L306` - `HostTool`, what a plugin contributes to every session's model.
-- `code://packages/sdk/src/types/agent.ts#L158-L292` - `Agent`, what a harness plugin implements, and `types/session.ts#L160` for the `Session` it returns.
+- `code://packages/sdk/src/types/host.ts#L279-L332` - `HostTool`, what a plugin contributes to every session's model.
+- `code://packages/sdk/src/types/agent.ts#L158-L300` - `Agent`, what a harness plugin implements, and `types/session.ts#L160` for the `Session` it returns.
 - `code://.project/decisions/plugin-contributes-host-options.md` - what a plugin is allowed to contribute and what it is not.
 - `code://.project/decisions/plugin-manifest-is-package-json.md` - where a plugin declares its entry and its title.
 - `code://.project/decisions/plugin-contract-lives-in-the-sdk.md` - where the contract lives, and why it is not a package of its own.

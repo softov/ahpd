@@ -6,12 +6,12 @@ depends:
 layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/events.ts - the union this task raises
-  - code://packages/sdk/src/host.ts#L775-L780 - `log()`, where `log` is raised and every notable line already passes
-  - code://packages/sdk/src/host.ts#L3800-L3830 - `openSession`, where `session_start` is raised
-  - code://packages/sdk/src/host.ts#L2810-L2825 - where a session is disposed, for `session_end`
-  - code://packages/sdk/src/host.ts#L4007 - the request handlers, where `resource_write`, `terminal_open` and `authenticated` are raised
-  - code://packages/sdk/src/host.ts#L5290-L5310 - `createTerminal`, for `terminal_open`
-  - code://packages/sdk/src/host.ts#L6750-L6795 - `accept`, where `client_connect` and `client_disconnect` are raised
+  - code://packages/sdk/src/host.ts#L777-L783 - `log()`, where `log` is raised and every notable line already passes
+  - code://packages/sdk/src/host.ts#L3946-L4011 - `openSession`, where `session_start` is raised
+  - code://packages/sdk/src/host.ts#L2929-L2935 - where a session is disposed, for `session_end`
+  - code://packages/sdk/src/host.ts#L4194 - the request handlers, where `resource_write`, `terminal_open` and `authenticated` are raised
+  - code://packages/sdk/src/host.ts#L4761-L4816 - `createTerminal`, for `terminal_open`
+  - code://packages/sdk/src/host.ts#L4076-L4092 - `accept`, where `client_connect` and `client_disconnect` are raised
   - code://.project/decisions/plugin-events-are-observed-not-answered.md - an event carries what a handler cannot get elsewhere
 ---
 

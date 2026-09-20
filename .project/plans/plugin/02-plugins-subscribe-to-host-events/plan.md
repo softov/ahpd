@@ -12,15 +12,15 @@ creates: []
 decisions:
   - decisions/plugin-events-are-observed-not-answered.md
 refs:
-  - code://.project/ideas/plugins.md#L147-L164 - the shape this plan implements
+  - code://.project/ideas/plugins.md#L150-L170 - the shape this plan implements
   - code://.project/decisions/plugin-registration-kinds.md - `on` is the one method that is not a `register*`
   - code://.project/plans/plugin/01-plugins-load-from-configuration/plan.md - the loader this plan's handlers fold through
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, which gains `events`
   - code://packages/sdk/src/types/plugin.ts - `PluginHost`, which gains `on`
   - code://packages/sdk/src/plugins.ts - `foldHostOptions`, which merges the handlers
-  - code://packages/sdk/src/host.ts#L775-L780 - `log()`, the one place every notable host line already passes through
-  - code://packages/sdk/src/host.ts#L3800-L3830 - `openSession`, where a session starts
-  - code://packages/sdk/src/host.ts#L2810-L2825 - where a session is disposed
+  - code://packages/sdk/src/host.ts#L777-L783 - `log()`, the one place every notable host line already passes through
+  - code://packages/sdk/src/host.ts#L3946-L4011 - `openSession`, where a session starts
+  - code://packages/sdk/src/host.ts#L2929-L2935 - where a session is disposed
   - file:///github/pi/packages/coding-agent/src/core/extensions/types.ts#L1257-L1324 - `pi.on`, the subscription this mirrors
   - file:///github/deepseek-harness/docs/cookbook/extension-cookbook.md - the per-feature listener map a harness keeps
 ---

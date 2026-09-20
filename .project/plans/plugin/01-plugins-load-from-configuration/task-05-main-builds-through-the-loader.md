@@ -9,7 +9,7 @@ refs:
   - code://packages/server/src/main.ts#L342-L433 - the `createHost` literal, which becomes a `base` value plus a fold
   - code://packages/server/src/main.ts#L320-L341 - the flow between `parse` and `createHost`, where `loadPlugins` is awaited
   - code://packages/server/src/main.ts#L457-L477 - the startup lines, one of which becomes the plugins line
-  - code://packages/server/src/daemon.ts#L130-L150 - the stdout parser that reads `sessions in` and the automations line, which must not be disturbed
+  - code://packages/server/src/daemon.ts#L88-L100 - the stdout parser that reads `sessions in` and the automations line, which must not be disturbed
   - code://packages/server/src/plugins.ts - `loadPlugins`, which this task calls
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, the type of the `base` value
   - code://.project/decisions/plugin-contributes-host-options.md - a plugin contributes this object and nothing else

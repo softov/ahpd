@@ -26,7 +26,7 @@ refs:
   - code://packages/server/src/update.ts#L28-L68 - `parse` and `newer`, the version comparison a plugin's range is checked with rather than a semver package
   - code://.project/decisions/plugin-compat-is-checked-before-import.md - the manifest check a path spec gets before its code is imported
   - code://packages/sdk/src/types/host.ts#L132-L245 - `HostOptions`, the surface a plugin contributes to and the fold consumes
-  - code://packages/sdk/src/types/agent.ts#L158-L292 - `Agent`, whose `provider` is the field a collision refuses over
+  - code://packages/sdk/src/types/agent.ts#L158-L300 - `Agent`, whose `provider` is the field a collision refuses over
   - code://packages/sdk/src/index.ts - where `createHost` and the ports are exported, and where the contract and the fold join them
   - code://packages/sdk/src/types/index.ts - the types barrel a `types/plugin.ts` joins, so the contract is importable from the one package a plugin already depends on
   - code://packages/sdk/src/listen.ts#L15-L19 - `runtimeOf()`, the runtime detection the resolver reuses for the Deno case
@@ -153,6 +153,7 @@ ahpd --plugin @ahpd/agent-facio [--no-plugins]
   3. Does `ahpd plugin list` ship in this plan - proposed: yes as task 07, because it is the only consumer of the manifest decision and the manifest is otherwise unjustified until then.
   4. Can a plugin read the port it is replacing, so that a decorator is possible - proposed: no in this plan, because an accessor is a second kind of contribution and a plugin that replaces is enough to prove the loading.
 - **Watch out for:** the `createHost` object is currently built after `await pty()` and before `listen`, so the fold happens there and `loadPlugins` has to be awaited; the base object keeps every existing port so a daemon with no plugins behaves exactly as it does today.
+  Another session commits to this checkout, so re-read a file before editing it, stage explicit paths, and refuse to sweep its work into yours; the `code://` line anchors were last checked 2026-09-20 and a moved line is worth re-finding rather than trusting.
 
 ## Final verification checklist
 
