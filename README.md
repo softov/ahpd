@@ -62,15 +62,21 @@ npm i -g @ahpd/server
 ahpd --path /work/project
 ```
 
-The rest of this README writes `ahpd` for that command.
-
-To run it from source instead, which is what [DEVELOPER.md](DEVELOPER.md) is for, every flag is the same:
+```bash
+# Or using npx on the fly
+npx @ahpd/server --path /work/project
+```
 
 ```bash
+# To run it from source instead
 git clone https://github.com/softov/ahpd && cd ahpd
 pnpm install && pnpm build
 node packages/server/dist/main.js --path /work/project
 ```
+
+The rest of this README writes `ahpd` for that command, the flags and options are the same whether installed globally, run with npx, or from source.
+
+See [DEVELOPER.md](DEVELOPER.md) and [REFERENCE.md](REFERENCE.md) for implementation details.
 
 ### Run in the background
 ```bash
@@ -251,20 +257,15 @@ fail silently rather than loudly.
 | [docs/AGENT.md](docs/AGENT.md) | The `Agent` and `Session` contracts, for writing a backend |
 | [docs/AHP.md](docs/AHP.md) | Compatibility area by area, emitted actions, and the rules that fail silently |
 | [REFERENCE.md](REFERENCE.md) | The specification and the reference host, and what each has settled |
+| [DEVELOPER.md](DEVELOPER.md) | How to run and develop the project from source |
 
 ## Layout
 
-Three packages in one repository, on pnpm. The boundary is real - `@ahpd/sdk`
-imports nothing that runs an agent, and the check for that is that it compiles
-with nothing in its `node_modules` but the protocol package: no backend, no
-agent SDK, no zod. It did not, at first - `catalogue` reached for the SDK's
-session listing from inside the host - and pnpm is why that is now hard to
-reintroduce. npm hoists every dependency in the workspace to one directory, so
-any package can import anything installed anywhere and it resolves; pnpm links
-only what a package declares, so an undeclared import fails where it is written
-rather than in somebody else's install.
+Three packages in one repository, on pnpm: the protocol library, one backend, and the daemon that serves them. The root manifest is private and holds the workspace together.
 
 ### `@ahpd/sdk` - the protocol, and the parts to build a host
+
+The library. It implements the protocol and everything a host needs except the agent, which is passed in. [`@ahpd/sdk` on npm](https://www.npmjs.com/package/@ahpd/sdk).
 
 | | |
 | --- | --- |
@@ -284,6 +285,8 @@ rather than in somebody else's install.
 
 ### `@ahpd/agent-claude` - one backend
 
+Claude Code, behind the one seam a host knows: `Agent`. [`@ahpd/agent-claude` on npm](https://www.npmjs.com/package/@ahpd/agent-claude).
+
 | | |
 | --- | --- |
 | [packages/agent-claude/src/claude.ts](packages/agent-claude/src/claude.ts)         | The `Agent`: what this harness is and how to start one. |
@@ -293,6 +296,8 @@ rather than in somebody else's install.
 | [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |
 
 ### `ahpd` - the daemon
+
+The server: argv, the configuration file, and the record it keeps of itself. [`@ahpd/server` on npm](https://www.npmjs.com/package/@ahpd/server).
 
 | | |
 | --- | --- |
@@ -320,22 +325,14 @@ ahpc --host ws://127.0.0.1:9201
 
 ## Development
 
-The workspace, the checks and how a release is published are in [DEVELOPER.md](DEVELOPER.md).
-
 ```bash
 pnpm test        # ~640 tests, no socket and no network
 pnpm typecheck
 pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```
 
-To see what a client and this host actually say to each other, start the daemon with `--wire <file>` (or `wire` in the configuration file). Every frame in both directions is appended as one JSON line, `{ at, from, peer, frame }`, `from` being `client` or `host` and `peer` numbering the connection; `pnpm wire -- <file>` runs the capture through the strict schema, and `jq` reads it. `scripts/tee.mjs` is the same recording as a proxy, for a host that cannot be restarted with the flag.
+The workspace, the checks, recording the wire and how a release is published are in [DEVELOPER.md](DEVELOPER.md).
 
-The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
+## License
 
-[`test/conformance.test.ts`](test/conformance.test.ts): it drives the host and then replays every action it emitted through the protocol package's **own reducers** - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote. A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.
-
-That checks the state a real AHP client would see rather than validating `ahpd` against snapshots produced by `ahpd` itself.
-
-[`test/wire.test.ts`](test/wire.test.ts) checks the other half: not whether a client can read what this host sends, but whether the protocol *declares* it. `tools/schema.mjs` generates a strict schema out of the package's own types - every object closed, which the shipped `state.schema.json` is not - and every frame goes through it, so an undeclared key or a missing required one fails the build. A reducer cannot see either, and neither can TypeScript: a conditional spread is not excess-property-checked, which is how three undeclared fields reached the wire from code typed against the package.
-
-The check that cannot be done here is driving it with a client that was not written against it. `ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree. A drive against VS Code found two bugs that were invisible from the source; both are in `git log`, and what they cost is written up in [docs/AHP.md](docs/AHP.md).
+MIT.

@@ -53,8 +53,30 @@ Every check below runs in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.
 | `pnpm wire -- <capture>` | Check a `--wire` recording against that schema. |
 | `pnpm build` | The three packages compile, into what `files` would publish. |
 
-[`test/conformance.test.ts`](test/conformance.test.ts) replays every action the host emits through the protocol package's own reducers rather than reading a snapshot back out of the host, and [`test/wire.test.ts`](test/wire.test.ts) checks that the protocol *declares* what is sent.
-Both are worth reading before changing the wire.
+### The boundary between the packages
+
+`@ahpd/sdk` declares no runtime `dependencies` at all. Its one peer is `@microsoft/agent-host-protocol`, and its only other packages are optional - `ws`, which it imports only on Node, and `node-pty`, which a Node host may hand in - so a host on Bun or Deno never installs them. There is no backend, no agent SDK and no `zod` in it, which is what stops the library that implements the protocol from quietly becoming a library that runs Claude. `@ahpd/agent-claude` is where those live, and the daemon is the one package that depends on both.
+
+That boundary is enforced twice. npm hoists every dependency in a workspace into one `node_modules` at the root, so any package can import anything installed anywhere and it resolves, including something it never declared. pnpm links each package only what its own `package.json` declares, so `packages/sdk/node_modules` holds its peer and its two optionals and nothing else, and an undeclared import fails where it is written rather than in somebody else's install. `pnpm boundary` is the second check and the one CI runs first: it reads every import in each package's `src/`, compares it with what that package declares, and reports the package, the import it did not declare, and the files that import it.
+
+It is static, so it needs no install to be in any particular shape and cannot be fooled by one - it asks what the code says rather than what resolved today. `devDependencies` are deliberately treated as undeclared, because they are absent for anybody who installs the package, so a `src/` importing one works here and breaks there.
+
+This is not hypothetical. `catalogue`, the listing of a backend's sessions on disk, was once written inside the host and reached for the Claude Agent SDK's `listSessions`, which compiled only because hoisting resolved it. It now lives in [`packages/agent-claude/src/catalog.ts`](packages/agent-claude/src/catalog.ts), and the host learns a listing through the backend seam; [`packages/sdk/src/catalog.ts`](packages/sdk/src/catalog.ts) is what is left on the host's side, how a session is named and what its status bits are worth.
+
+### The conformance and wire checks
+
+[`test/conformance.test.ts`](test/conformance.test.ts) drives the host and replays every action it emitted through the protocol package's own reducers - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote.
+A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.
+
+[`test/wire.test.ts`](test/wire.test.ts) checks the other half: not whether a client can read what the host sends, but whether the protocol *declares* it.
+`tools/schema.mjs` generates a strict schema out of the package's own types - every object closed, which the shipped `state.schema.json` is not - and every frame goes through it, so an undeclared key or a missing required one fails the build.
+A reducer cannot see either, and neither can TypeScript: a conditional spread is not excess-property-checked, which is how three undeclared fields reached the wire from code typed against the package.
+
+The check that cannot be done here is driving it with a client that was not written against it.
+`ahpc` is lenient in places - a `chat/reasoning` bug in this host went unnoticed for exactly that reason, because no screen ever showed what a conformant client would have - so the reducers above are the strict reader, and VS Code is the one that has to agree.
+A drive against VS Code found two bugs that were invisible from the source; both are in `git log`, and what they cost is written up in [docs/AHP.md](docs/AHP.md).
+
+The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
 
 The two repositories share one file: `test/fixtures/resource-write.json` is identical in [`ahpc`](https://github.com/softov/ahpc), and each repository's CI compares its copy against the other's `main`.
 Change it in both.
