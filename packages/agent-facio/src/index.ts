@@ -13,6 +13,8 @@
 
 export { facioAgent, defaultStoreRoot, modelOf, resourceOf, storeOf } from './agent.js';
 export type { FacioOptions } from './agent.js';
+export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
+export type { HarnessConfig, HarnessProvider } from './config.js';
 export { facioSession, sessionIdOf } from './session.js';
 export { mapTurn } from './mapping.js';
 export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';

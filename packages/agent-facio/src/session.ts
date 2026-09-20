@@ -24,6 +24,8 @@ import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { modelOf, storeOf } from './agent.js';
 import type { FacioOptions } from './agent.js';
+import { harnessConfig } from './config.js';
+import type { HarnessConfig } from './config.js';
 import { mapTurn } from './mapping.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
 import { facioTools } from './tools.js';
@@ -115,7 +117,12 @@ interface WaitingCall {
  * feed. `start` is what this particular session was told. Everything after
  * this is the turn lifecycle.
  */
-export function facioSession(options: FacioOptions, start: Start, sharedStore?: Store): Session {
+export function facioSession(
+  options: FacioOptions,
+  start: Start,
+  sharedStore?: Store,
+  harness: HarnessConfig = harnessConfig(),
+): Session {
   const provider = options.provider ?? 'facio';
   /** The configured facio id, or the URI's when this is a fresh session. */
   const sessionId = start.resume ?? sessionIdOf(start.uri);
@@ -238,7 +245,7 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
    * nothing asks for worth calling.
    */
   const instructionsOf = (values: Record<string, unknown>): string => {
-    const own = str(values.instructions) ?? options.instructions ?? DEFAULT_INSTRUCTIONS;
+    const own = str(values.instructions) ?? options.instructions ?? harness.instructions ?? DEFAULT_INSTRUCTIONS;
     const fromHost = (start.instructions ?? []).filter((one) => one.trim() !== '');
     return [own, ...fromHost].join('\n\n');
   };
@@ -251,7 +258,7 @@ export function facioSession(options: FacioOptions, start: Start, sharedStore?: 
   const agentOf = (values: Record<string, unknown>): FacioAgent => createAgent({
     id: AGENT_ID,
     instructions: instructionsOf(values),
-    model: modelOf(options, values, start.credentials ?? {}),
+    model: modelOf(options, values, start.credentials ?? {}, harness),
     tools: facioTools(offered, relay),
     store,
     // Absent means facio's own default, which is the policy an approval comes

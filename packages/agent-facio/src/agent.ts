@@ -18,6 +18,8 @@ import type { ModelAdapter, Policy, Store } from '@facio/agents';
 import { openaiCompat } from '@facio/model-openai-compat';
 import { createFileStore } from '@facio/store-file';
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
+import { harnessConfig, splitModel } from './config.js';
+import type { HarnessConfig, HarnessProvider } from './config.js';
 import { facioSession } from './session.js';
 import { turnsOf } from './transcript.js';
 
@@ -94,16 +96,19 @@ export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-facio';
 /**
  * The protected resource a token for this backend belongs to.
  *
- * `resource` when it was named, the origin of an `https` `baseUrl` when there
- * is one, and a constant otherwise. RFC 9728 wants an `https` URL with no
- * fragment, which is why the endpoint's origin is used rather than the whole
- * URL: a token is for the service, not for one path under it.
+ * `resource` when it was named, the origin of an `https` endpoint when one is
+ * known - the plugin's own `baseUrl`, or the endpoint the harness
+ * configuration's model names - and a constant otherwise. RFC 9728 wants an
+ * `https` URL with no fragment, which is why the endpoint's origin is used
+ * rather than the whole URL: a token is for the service, not for one path
+ * under it.
  */
-export const resourceOf = (options: FacioOptions = {}): string => {
+export const resourceOf = (options: FacioOptions = {}, harness: HarnessConfig = harnessConfig()): string => {
   if (options.resource !== undefined) return options.resource;
-  if (options.baseUrl !== undefined) {
+  const named = options.baseUrl ?? endpointOf(options, harness)?.baseUrl;
+  if (named !== undefined) {
     try {
-      const url = new URL(options.baseUrl);
+      const url = new URL(named);
       if (url.protocol === 'https:') return url.origin;
     }
     catch {
@@ -114,35 +119,66 @@ export const resourceOf = (options: FacioOptions = {}): string => {
 };
 
 /**
+ * The configuration provider a model reference names, when it names one.
+ *
+ * A reference is `<provider>/<model>`; a plain model id, or one whose provider
+ * the file does not carry, selects nothing and the caller falls back to the
+ * explicit endpoint or the first provider.
+ */
+const endpointOf = (
+  options: FacioOptions,
+  harness: HarnessConfig,
+  ref?: string,
+): HarnessProvider | undefined => {
+  const model = ref ?? options.model ?? harness.model;
+  if (model === undefined) return undefined;
+  const named = splitModel(model);
+  if (named === undefined) return undefined;
+  return harness.providers.find((one) => one.id === named.provider);
+};
+
+/**
  * The model a session runs on.
  *
- * The settings a client sent win over the package's own, a caller-passed
- * adapter wins over both, and a session that named no model on a backend that
- * ships no default is refused here rather than at the first call, because a
- * refusal that names the missing setting is one a person can act on.
+ * The settings a client sent win over the package's own, which win over the
+ * harness configuration, and a caller-passed adapter wins over all three. A
+ * model written `<provider>/<model>` selects that provider's endpoint and key
+ * from the harness file, which is the whole point of reading it: a person who
+ * has already pointed facio at a provider does not say it again here, and no
+ * token has to be lent for the common case.
  *
  * The key is the one a client lent through `authenticate` for this backend's
- * protected resource, which the host hands to the session as its credentials,
- * and the daemon's own key when nobody lent one. It is deliberately not a
- * session setting: a credential in configuration is a credential written to
- * the session store and carried by every backup.
+ * protected resource, then the package's own, then the named provider's. It is
+ * deliberately not a session setting: a credential in configuration is a
+ * credential written to the session store and carried by every backup.
  */
 export const modelOf = (
   options: FacioOptions = {},
   settings: Record<string, unknown> = {},
   credentials: Record<string, string> = {},
+  harness: HarnessConfig = harnessConfig(),
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
-  const model = text(settings.model) ?? options.model;
-  if (model === undefined) {
-    throw new Error(`${options.provider ?? 'facio'}: no model was chosen and this backend has no default`);
+  const ref = text(settings.model) ?? options.model ?? harness.model;
+  if (ref === undefined) {
+    throw new Error(`${options.provider ?? 'facio'}: no model was chosen, this backend has no default, and ${harness.path} names none`);
   }
-  const lent = credentials[resourceOf(options)];
-  const key = text(lent) ?? options.apiKey;
+  const named = splitModel(ref);
+  const provider = endpointOf(options, harness, ref);
+  const explicitBase = text(settings.baseUrl) ?? options.baseUrl;
+  if (named !== undefined && provider === undefined && explicitBase === undefined) {
+    const known = harness.providers.map((one) => one.id);
+    throw new Error(`${options.provider ?? 'facio'}: model "${ref}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
+  }
+  const model = named === undefined ? ref : named.modelId;
+  const baseUrl = explicitBase ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl ?? 'http://127.0.0.1:1234/v1';
+  const lent = credentials[resourceOf(options, harness)];
+  const key = text(lent) ?? options.apiKey ?? provider?.apiKey ?? harness.providers[0]?.apiKey;
   return openaiCompat({
-    baseUrl: text(settings.baseUrl) ?? options.baseUrl ?? 'http://127.0.0.1:1234/v1',
+    baseUrl,
     model,
     ...(key === undefined ? {} : { apiKey: key }),
+    ...(provider?.headers !== undefined ? { headers: provider.headers } : {}),
   });
 };
 
@@ -171,6 +207,14 @@ export function facioAgent(options: FacioOptions = {}): Agent {
    * into, which is a catalogue that lists nothing it can open.
    */
   const store = storeOf(options);
+  /*
+   * The harness configuration, read once for this backend.
+   *
+   * It is the same file the harness reads, so a person who has already chosen
+   * a provider and a model does not say it again in the plugin's options, and
+   * the backend's own defaults and advertised resource follow from it.
+   */
+  const harness = harnessConfig();
 
   /**
    * What a session may be told, and what the model is.
@@ -202,9 +246,14 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     },
   });
 
-  /** Only what the package was actually given: no default is invented for a model it cannot reach. */
+  /**
+   * What a session starts at: the package's own, under the harness file's.
+   *
+   * Only what was actually configured, because a default invented for a model
+   * nobody can reach is a session that fails at the first call.
+   */
   const defaults = (): Record<string, unknown> => ({
-    ...(options.model !== undefined ? { model: options.model } : {}),
+    ...(options.model !== undefined ? { model: options.model } : harness.model !== undefined ? { model: harness.model } : {}),
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
   });
 
@@ -216,18 +265,22 @@ export function facioAgent(options: FacioOptions = {}): Agent {
      * The resource a client may lend a token for.
      *
      * `required: false` because the daemon runs as whoever started it and
-     * already holds its own key: a client's token is an override, not a
-     * precondition, and a backend that refused every session until one arrived
-     * would be a backend nobody could use from an automation.
+     * already holds its own key - its options or the harness file - so a
+     * client's token is an override, not a precondition, and a backend that
+     * refused every session until one arrived would be a backend nobody could
+     * use from an automation.
      */
-    protectedResources: [{ resource: resourceOf(options), resource_name: displayName, required: false }],
+    protectedResources: [{ resource: resourceOf(options, harness), resource_name: displayName, required: false }],
     schema,
     defaults,
-    probe: async (): Promise<Offered> => ({
-      models: options.model === undefined ? [] : [{ id: options.model, name: options.model }],
-      customizations: [],
-      commands: [],
-    }),
+    probe: async (): Promise<Offered> => {
+      const configured = options.model ?? harness.model;
+      return {
+        models: configured === undefined ? [] : [{ id: configured, name: configured }],
+        customizations: [],
+        commands: [],
+      };
+    },
     /*
      * The sessions this backend already has.
      *
@@ -278,6 +331,6 @@ export function facioAgent(options: FacioOptions = {}): Agent {
      * silently through `resume()` here. Until then a request for either is
      * served as the plain continue it arrives beside.
      */
-    create: (start) => facioSession(options, start, store),
+    create: (start) => facioSession(options, start, store, harness),
   };
 }

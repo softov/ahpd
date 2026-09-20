@@ -320,11 +320,47 @@ turn runs:
 **A key is a credential, and it is not a config key.** The backend advertises a
 protected resource, and a client lends a token for it the way the protocol
 says: `authenticate` with that `resource` and the token, once per connection.
-The host passes what it was lent to the session, and the daemon's own `apiKey`
-is what runs when nobody lent one. Keep a long-lived key in the daemon's
-environment or its plugin options rather than sending it from a client: a
-config value is written to the store and travels over the wire, while a token
-pushed with `authenticate` is held per connection and never written down.
+The host passes what it was lent to the session. For the common case nothing
+has to be lent at all, because the backend already reads where and how the
+harness runs:
+
+### The harness configuration is the default
+
+`@ahpd/agent-facio` reads facio's own file,
+`$XDG_CONFIG_HOME/facio/config.json` or `~/.config/facio/config.json`, so a
+person who has already pointed the harness at a provider does not say it again
+in the plugin's options:
+
+```json
+{
+  "providers": [
+    { "id": "open_router", "baseUrl": "https://openrouter.ai/api/v1", "apiKey": "…" }
+  ],
+  "model": "open_router/~deepseek/deepseek-flash-latest",
+  "instructions": "You are a careful assistant working in the user's project."
+}
+```
+
+A model written `<provider>/<model>` selects that provider's endpoint, key and
+headers from the file - the split is at the first slash, so a model id that
+itself contains slashes is left whole. Only `providers`, `model` and
+`instructions` are read; the theme, the shell and the permissions belong to the
+harness and are not interpreted here.
+
+Where a value comes from, highest first:
+
+| Source | |
+| --- | --- |
+| A session setting | `model`, `baseUrl`, `instructions` chosen for one session |
+| The plugin's `options` | The same keys, as defaults for every session |
+| The harness file | The provider and model the harness was configured with |
+| The built-in default | `http://127.0.0.1:1234/v1`, a local endpoint |
+
+A token a client lent with `authenticate` beats every key above it; then the
+plugin's own `apiKey`, then the named provider's key from the file, then the
+first provider's. A missing harness file is not an error, so a machine that has
+never run the harness reads an empty one and the plugin options are the only
+source.
 
 A package becomes a plugin by exporting `name` and `apply` from the module its
 `ahpd.entry` names, and `@ahpd/agent-facio` is no different: its `package.json`

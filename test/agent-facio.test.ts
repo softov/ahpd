@@ -86,7 +86,9 @@ it('sends the token a client lent, and the daemon key when nobody did', async ()
 });
 
 it('refuses a model nobody chose and no default covers', () => {
-  expect(() => modelOf({})).toThrow(/no model/);
+  // An explicit empty harness, so the case does not depend on whether the
+  // machine running the suite has a facio configuration of its own.
+  expect(() => modelOf({}, {}, {}, { providers: [], path: 'test' })).toThrow(/no model|names none/);
 });
 
 it('builds a store that can hold a session', () => {
