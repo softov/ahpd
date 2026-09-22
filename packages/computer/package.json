@@ -1,0 +1,74 @@
+{
+  "name": "@ahpd/computer",
+  "version": "0.6.3",
+  "type": "module",
+  "description": "A computer: resource provider for ahpd: machines reported read-only from a runtime, and host tools that make, use and release one",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "plugin",
+    "resource",
+    "computer",
+    "docker",
+    "container",
+    "sandbox"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/computer"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": "^0.6"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "Computer",
+    "options": {
+      "runtime": { "required": false },
+      "command": { "required": false },
+      "args": { "required": false },
+      "env": { "required": false },
+      "image": { "required": false },
+      "cpus": { "required": false },
+      "memory": { "required": false },
+      "max": { "required": false },
+      "label": { "required": false }
+    }
+  }
+}

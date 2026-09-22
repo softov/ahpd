@@ -1,9 +1,8 @@
 # A disposable computer
 
-The machine a `computer:` resource would be about: one container, started when
-somebody asks for one and thrown away after.
-Nothing in `@ahpd/*` starts it - this is the operator's half, and the script here
-is what a provider would eventually drive.
+The machine `@ahpd/computer` makes and reports, and the operator's half of it:
+the package starts one when a session's model asks, and the script below starts
+one by hand when nobody did.
 Docker is available on this machine; `/dev/kvm` is readable once the account is
 in the `kvm` group and has started a new session, so the first section is the
 once-per-machine part.
@@ -79,6 +78,11 @@ none of them installed on this machine.
 
 ## The script
 
+`@ahpd/computer` is the path an agent takes: it serves `computer:` and its
+`request_disposable_computer` tool starts one. This script is the path a person
+takes, for a machine no agent asked for, and both label what they made
+`ahpd.computer=1`, so a `computer://` listing shows either.
+
 `scripts/computer.mjs` owns one container by name and labels it
 `ahpd.computer=1`, so `list` shows only what it made.
 
@@ -115,10 +119,10 @@ node scripts/computer.mjs start --mount type=bind,src=/github/ahpd,dst=/work
 
 ## What this is not
 
-- **It is not the `computer:` provider.** Plan
-  [`plugin/08`](../.project/plans/plugin/08-resource-providers/plan.md) built the
-  scheme and a read-only fixture; a provider that starts one of these, and the
-  master it would ask, is not written.
+- **It is not a master.** `@ahpd/computer` starts a machine itself, by Docker.
+  The research that opened this work wanted a master to authorize the request and
+  hand one back; when that exists it replaces the runtime behind the same three
+  tools, and nothing a client or an agent says changes.
 - **It is not a sandbox.** The container is separate from the host's files, not
   from the network, and a bind mount is the host's files by definition.
 - **It is not durable.** `rm` is the point, and nothing here survives it.

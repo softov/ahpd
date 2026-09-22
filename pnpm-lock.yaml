@@ -93,6 +93,12 @@ importers:
         specifier: workspace:*
         version: link:../sdk
 
+  packages/computer:
+    devDependencies:
+      '@ahpd/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+
   packages/sdk:
     devDependencies:
       '@microsoft/agent-host-protocol':

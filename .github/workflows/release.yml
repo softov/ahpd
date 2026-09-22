@@ -1,7 +1,7 @@
 name: Release
 
 # A pushed tag is the whole gesture: `git tag v0.6.2 && git push --tags`.
-# The five packages move together, so one tag releases all of them.
+# The six packages move together, so one tag releases all of them.
 on:
   push:
     tags: ['v*']
@@ -45,7 +45,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The tag is a claim about what is in the manifests, and these five
+      # The tag is a claim about what is in the manifests, and these six
       # versions move together. A tag that disagrees with any of them publishes
       # a version nobody asked for, so it is checked before anything is built.
       - name: The tag says what every package says
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -eu
           tagged=${GITHUB_REF_NAME#v}
-          for package in sdk agent-claude agent-cofold agent-acp server; do
+          for package in sdk agent-claude agent-cofold agent-acp server computer; do
             found=$(node -p "require('./packages/$package/package.json').version")
             if [ "$tagged" != "$found" ]; then
               echo "The tag says $tagged and packages/$package says $found."
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -u
           failed=' '
-          for package in sdk agent-claude agent-cofold agent-acp server; do
+          for package in sdk agent-claude agent-cofold agent-acp server computer; do
             full=$(node -p "require('./packages/$package/package.json').name")
             version=$(node -p "require('./packages/$package/package.json').version")
             stem=$(printf '%s' "$full" | sed 's/^@//; s|/|-|')
@@ -167,6 +167,7 @@ jobs:
           echo "  https://www.npmjs.com/package/@ahpd/agent-cofold"
           echo "  https://www.npmjs.com/package/@ahpd/agent-acp"
           echo "  https://www.npmjs.com/package/@ahpd/server"
+          echo "  https://www.npmjs.com/package/@ahpd/computer"
           echo "The approve button stays disabled until npm has finished scanning."
 
       # A rehearsal on a tree whose versions are already on npm is refused, which
@@ -177,7 +178,7 @@ jobs:
         if: ${{ inputs.dry_run == true }}
         run: |
           set -u
-          for package in sdk agent-claude agent-cofold agent-acp server; do
+          for package in sdk agent-claude agent-cofold agent-acp server computer; do
             name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
             version=$(node -p "require('./packages/$package/package.json').version")
             said=$(npm stage publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public 2>&1) && code=0 || code=$?

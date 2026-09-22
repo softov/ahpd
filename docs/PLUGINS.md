@@ -559,6 +559,42 @@ the machine, so what it proves is the routing rather than a daemon being up.
 Running one by hand, and what Docker and KVM need from the account, is
 [COMPUTER.md](COMPUTER.md).
 
+## A fourth worked example: `@ahpd/computer`
+
+`@ahpd/computer` is the first package to serve a host-owned scheme, and the one
+that makes the thing the scheme is about.
+
+```bash
+ahpd --plugin @ahpd/computer
+```
+
+It serves `computer:` read-only from a runtime - `computer://` lists the
+machines, `computer://<id>/status` is the runtime's own record of one, and
+`computer://<id>/capabilities` says which runtimes, limits and maximum this host
+has - and it offers three tools, because a machine is made by an action and a
+resource write can carry neither an image nor a limit:
+
+| Tool | |
+| --- | --- |
+| `request_disposable_computer` | Start one. `image`, `cpus`, `memory` and `name` override what the host was configured with |
+| `release_computer` | Stop it and remove it. Nothing on it survives |
+| `computer_exec` | Run a command line inside it through `sh -lc` |
+
+Each declares its `effects`, so a backend with a policy has something to ask a
+person on. Docker is the runtime that ships, chosen by `runtime`; the command,
+the image and the limits are options, and the manifest's `options` block is what
+`ahpd plugin list` reads.
+
+One package serves the scheme however many runtimes it grows, because a host
+refuses a second provider for one scheme - which is why this is not
+`@ahpd/computer-docker` with `@ahpd/computer-kvm` beside it.
+
+The account the daemon runs as has to reach Docker:
+`sudo usermod -aG docker "$USER"`, then a new session.
+[COMPUTER.md](COMPUTER.md) has that, the same for KVM, and
+`scripts/computer.mjs`, which is the operator's half: one machine, by hand, for
+when no agent asked for one.
+
 ## Trying one today
 
 No plugin is published yet. From a checkout, `@ahpd/agent-cofold`,
