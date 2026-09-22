@@ -556,6 +556,8 @@ different clients get for a cross-client move.
 tests load. A real `computer:` provider on this machine would talk to Docker, or
 to a hypervisor handed the KVM device; the fixture starts nothing and answers for
 the machine, so what it proves is the routing rather than a daemon being up.
+Running one by hand, and what Docker and KVM need from the account, is
+[COMPUTER.md](COMPUTER.md).
 
 ## Trying one today
 
