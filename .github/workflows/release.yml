@@ -142,7 +142,10 @@ jobs:
             said=$(npm stage publish "${{ runner.temp }}/$stem-$version.tgz" --provenance --access public 2>&1) && code=0 || code=$?
             echo "$said"
             if [ "$code" = "0" ]; then continue; fi
-            if printf '%s' "$said" | grep -qE 'cannot publish over|already (been )?(staged|published)|EPUBLISHCONFLICT'; then
+            # npm answers E409 "Cannot stage previously published version" for a
+            # version already staged as well as one already released, which is
+            # the same thing to a re-run: there is nothing left to do here.
+            if printf '%s' "$said" | grep -qE 'E409|previously published|cannot publish over|already (been )?(staged|published)|EPUBLISHCONFLICT'; then
               echo "$full@$version is already staged; leaving it alone."
               continue
             fi
@@ -180,9 +183,9 @@ jobs:
             said=$(npm stage publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public 2>&1) && code=0 || code=$?
             echo "$said"
             if [ "$code" = "0" ]; then continue; fi
-            if printf '%s' "$said" | grep -q 'cannot publish over'; then
+            if printf '%s' "$said" | grep -qE 'E409|previously published|cannot publish over|already (been )?(staged|published)|EPUBLISHCONFLICT'; then
               echo
-              echo "$name $version is already on npm. Expected until the manifests are bumped."
+              echo "$name $version is already staged or published. Expected until the manifests are bumped."
               continue
             fi
             exit "$code"
