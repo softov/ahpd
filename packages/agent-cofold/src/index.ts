@@ -1,9 +1,9 @@
 /**
- * An AHP backend over the facio agent runtime.
+ * An AHP backend over the cofold agent runtime.
  *
  * ```ts
- * import { facioAgent } from '@ahpd/agent-facio';
- * createHost({ path, agents: [facioAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' })] });
+ * import { cofoldAgent } from '@ahpd/agent-cofold';
+ * createHost({ path, agents: [cofoldAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' })] });
  * ```
  *
  * The same module is the plugin the daemon loads: `apply` and `name` are what
@@ -15,20 +15,20 @@ export {
   EFFORT_LEVELS,
   PERMISSION_LABELS,
   PERMISSION_MODES,
-  facioAgent,
+  cofoldAgent,
   defaultStoreRoot,
   effortOf,
   modelOf,
   resourceOf,
   storeOf,
 } from './agent.js';
-export type { FacioOptions } from './agent.js';
+export type { CofoldOptions } from './agent.js';
 export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 export type { HarnessConfig, HarnessProvider } from './config.js';
-export { facioSession, sessionIdOf } from './session.js';
+export { cofoldSession, sessionIdOf } from './session.js';
 export { mapTurn } from './mapping.js';
 export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';
-export { facioTool, facioTools } from './tools.js';
+export { cofoldTool, cofoldTools } from './tools.js';
 export type { ClientToolCall, ClientToolRelay } from './tools.js';
 export { turnsOf } from './transcript.js';
 export type { TranscriptTurn } from './transcript.js';

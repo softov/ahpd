@@ -2,10 +2,10 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { createFakeModel } from '@facio/agents/testing';
-import type { ModelAdapter } from '@facio/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import type { ModelAdapter } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Session, Start } from '@ahpd/sdk';
-import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, facioAgent, modelOf } from '../packages/agent-facio/src/index.js';
+import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, modelOf } from '../packages/agent-cofold/src/index.js';
 
 /*
  * The two controls a window draws beyond the text fields.
@@ -44,7 +44,7 @@ const ended = (view: ReturnType<typeof channels>): boolean =>
 const asked = (view: ReturnType<typeof channels>): boolean => view.types('session').includes('session/inputNeededSet');
 
 /** A directory a session can call its workspace. */
-const place = (): string => mkdtempSync(join(tmpdir(), 'ahpd-facio-modes-'));
+const place = (): string => mkdtempSync(join(tmpdir(), 'ahpd-cofold-modes-'));
 
 /** The interface a session may be told, as a map a test can read. */
 const properties = (agent: Agent): Record<string, Bag> =>
@@ -84,7 +84,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
     ],
     stream: true,
   });
-  const agent = facioAgent({ adapter: model, memory: true });
+  const agent = cofoldAgent({ adapter: model, memory: true });
   const view = channels();
   const session: Session = agent.create({
     uri: 'ahp-session:/modes',
@@ -103,7 +103,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
 }
 
 it('advertises an approvals mode and a thinking level, in the window own names', () => {
-  const props = properties(facioAgent({}));
+  const props = properties(cofoldAgent({}));
   expect(Object.keys(props)).toEqual(['model', 'baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
   expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
@@ -114,12 +114,12 @@ it('advertises an approvals mode and a thinking level, in the window own names',
 });
 
 it('omits a control this backend would not honour', () => {
-  const withPolicy = facioAgent({ policy: { decide: () => ({ behavior: 'allow' }) } });
+  const withPolicy = cofoldAgent({ policy: { decide: () => ({ behavior: 'allow' }) } });
   expect(Object.keys(properties(withPolicy))).not.toContain('permissionMode');
   expect(Object.keys(properties(withPolicy))).toContain('effortLevel');
 
   const stub = { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
-  const withAdapter = facioAgent({ adapter: stub });
+  const withAdapter = cofoldAgent({ adapter: stub });
   expect(Object.keys(properties(withAdapter))).toContain('permissionMode');
   expect(Object.keys(properties(withAdapter))).not.toContain('effortLevel');
 });
@@ -182,7 +182,7 @@ let had: string | undefined;
 let real: typeof fetch;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'ahpd-facio-effort-'));
+  home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-effort-'));
   had = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = home;
   real = globalThis.fetch;
@@ -196,8 +196,8 @@ afterEach(() => {
 
 /** What the endpoint was sent for a session with these settings. */
 const sent = async (settings: Record<string, unknown>): Promise<Record<string, unknown>> => {
-  mkdirSync(join(home, 'facio'), { recursive: true });
-  writeFileSync(join(home, 'facio', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'cofold'), { recursive: true });
+  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
   }));

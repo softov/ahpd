@@ -95,13 +95,13 @@ When a newer `@ahpd/server` is on npm, `start` and `status` say so on one more l
 A plugin is an installed package that contributes a backend, a port, a server tool or a configuration default, named on the command line or in the configuration file:
 
 ```bash
-ahpd --plugin @ahpd/agent-facio --plugin ./my-plugin
+ahpd --plugin @ahpd/agent-cofold --plugin ./my-plugin
 ```
 
 `--plugin` can be repeated and `--no-plugins` loads none, whatever the file says. The same list goes in the configuration:
 
 ```json
-{ "plugins": ["@ahpd/agent-facio", { "name": "./my-plugin", "enabled": false }] }
+{ "plugins": ["@ahpd/agent-cofold", { "name": "./my-plugin", "enabled": false }] }
 ```
 
 Naming a plugin **runs its code in the daemon's process with the daemon's permissions**, so installing one is the trust decision. `ahpd plugin list` says what the configuration names and what a run would load, without importing any of it. See [docs/PLUGINS.md](docs/PLUGINS.md) for writing one and [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs) for running one.

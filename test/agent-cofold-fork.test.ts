@@ -2,17 +2,17 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { textOf } from '@facio/agents';
-import { createFakeModel } from '@facio/agents/testing';
-import { createFileStore } from '@facio/store-file';
-import type { ModelAdapter, Policy } from '@facio/agents';
+import { textOf } from '@cofold/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import { createFileStore } from '@cofold/store-file';
+import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag, Session, Start } from '@ahpd/sdk';
 import { createHost } from '../packages/sdk/src/host.js';
-import { facioAgent } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent } from '../packages/agent-cofold/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
 /*
- * A facio conversation cut at a turn.
+ * A cofold conversation cut at a turn.
  *
  * AHP means two things by a cut: a fork continues from a turn under a new id
  * and leaves the original whole, and a rewind keeps the id and drops what
@@ -56,7 +56,7 @@ function channels() {
 
 /** A directory a store and a workspace can both live under. */
 const place = (): { root: string; sweep: string } => {
-  const dir = mkdtempSync(join(tmpdir(), 'ahpd-facio-fork-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-cofold-fork-'));
   return { root: join(dir, 'store'), sweep: join(dir, 'work') };
 };
 
@@ -64,7 +64,7 @@ const place = (): { root: string; sweep: string } => {
 const allowAll = (): Partial<Policy> => ({ decide: () => ({ behavior: 'allow' }) });
 
 const backend = (root: string, model: ModelAdapter): Agent =>
-  facioAgent({ adapter: model, store: root, policy: allowAll() });
+  cofoldAgent({ adapter: model, store: root, policy: allowAll() });
 
 /** Open one session on a backend, with everything the harness would have handed it. */
 function open(agent: Agent, id: string, workingDirectory: string, extra: Partial<Start> = {}) {
@@ -270,14 +270,14 @@ it('still opens a session when neither was asked', () => {
  * against the test's idea of which id means what.
  */
 
-/** A connected client with one facio session, watching both its channels. */
+/** A connected client with one cofold session, watching both its channels. */
 async function throughHost(root: string) {
-  const path = mkdtempSync(join(tmpdir(), 'ahpd-facio-fork-host-'));
+  const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-fork-host-'));
   const model = createFakeModel({
     script: [{ text: 'answer one' }, { text: 'answer two' }, { text: 'answer three' }, { text: 'answer four' }],
     stream: true,
   });
-  const agent = facioAgent({ adapter: model, store: root, policy: allowAll() });
+  const agent = cofoldAgent({ adapter: model, store: root, policy: allowAll() });
   const host = createHost({ path, agents: [agent] });
   const notes: { method: string; params: unknown }[] = [];
   const peer: Peer = {
@@ -294,7 +294,7 @@ async function throughHost(root: string) {
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'facio' } });
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { client, notes, uri, chatUri };

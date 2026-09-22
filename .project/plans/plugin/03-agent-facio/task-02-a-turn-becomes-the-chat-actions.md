@@ -3,14 +3,14 @@ title: A turn becomes the chat actions a client already knows
 status: done
 depends:
   - task-01-the-package-and-the-provider.md
-layer: packages/agent-facio
+layer: packages/agent-cofold
 refs:
   - code://packages/sdk/src/types/session.ts - `Session`, `Emit` and `Ran`, what `create` returns
   - code://packages/sdk/src/types/agent.ts#L10-L43 - `BoundTool`, the host tools the model must be offered
   - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, which a bound tool came from
-  - file:///github/facio/packages/agents/src/types/event.ts - the `RunEvent` union this task maps
-  - file:///github/facio/packages/agents/src/types/run.ts - `run`, `RunHandle`, `submit` and `cancel`
-  - file:///github/facio/packages/agents/src/index.ts - `createTool`, `textOf` and the message helpers
+  - file:///github/cofold/packages/agents/src/types/event.ts - the `RunEvent` union this task maps
+  - file:///github/cofold/packages/agents/src/types/run.ts - `run`, `RunHandle`, `submit` and `cancel`
+  - file:///github/cofold/packages/agents/src/index.ts - `createTool`, `textOf` and the message helpers
   - code://test/example.test.ts#L90-L113 - the turn and the action ordering a backend is expected to keep
 ---
 
@@ -20,10 +20,10 @@ A session created by `facioAgent` runs a facio agent: `begin` calls `run({ agent
 
 ## Files
 
-- `CREATE: packages/agent-facio/src/session.ts` - the `Session`, its state and its `begin`, `steer`, `cancel` and `ran`.
-- `CREATE: packages/agent-facio/src/mapping.ts` - `RunEvent` to `chat/*`, the one file a facio event change edits.
-- `CREATE: packages/agent-facio/src/tools.ts` - a `BoundTool` as a facio `Tool`, and its result as an AHP tool action.
-- `CREATE: test/agent-facio-turn.test.ts` - the cases below.
+- `CREATE: packages/agent-cofold/src/session.ts` - the `Session`, its state and its `begin`, `steer`, `cancel` and `ran`.
+- `CREATE: packages/agent-cofold/src/mapping.ts` - `RunEvent` to `chat/*`, the one file a facio event change edits.
+- `CREATE: packages/agent-cofold/src/tools.ts` - a `BoundTool` as a facio `Tool`, and its result as an AHP tool action.
+- `CREATE: test/agent-cofold-turn.test.ts` - the cases below.
 
 ## Steps
 
@@ -39,7 +39,7 @@ A session created by `facioAgent` runs a facio agent: `begin` calls `run({ agent
 
 ## Validation
 
-- `test/agent-facio-turn.test.ts`, with a stub `ModelAdapter` and a memory store, driving the session through the host the way `test/example.test.ts` does:
+- `test/agent-cofold-turn.test.ts`, with a stub `ModelAdapter` and a memory store, driving the session through the host the way `test/example.test.ts` does:
   - one turn of text emits `chat/turnStarted`, a response part and deltas, and `chat/turnComplete`, in that order.
   - a reasoning delta arrives as `chat/reasoning` and not as response text.
   - a model that calls a host tool produces the three tool-call actions, and the tool's return value is what the model is given back.
@@ -51,8 +51,8 @@ A session created by `facioAgent` runs a facio agent: `begin` calls `run({ agent
 ## Resume
 
 Done 2026-09-20.
-`packages/agent-facio/src/session.ts` holds `facioSession(options, start)` and `sessionIdOf(uri)`; `mapping.ts` holds `mapTurn`, the one place a `RunEvent` becomes `chat/*`; `tools.ts` holds `facioTool`/`facioTools`, a `BoundTool` as a facio `Tool` through `createTool`; `agent.ts`'s `create` returns the session; `index.ts` exports the session and the mapping.
-`test/agent-facio-turn.test.ts` is seven tests driving the real `createHost` with `@facio/agents/testing`'s fake model: text in the required order, a delta as a plain action, reasoning as `chat/reasoning`, a host tool called and its result returned to the model, two turns under one facio session, and a cancelled turn.
+`packages/agent-cofold/src/session.ts` holds `facioSession(options, start)` and `sessionIdOf(uri)`; `mapping.ts` holds `mapTurn`, the one place a `RunEvent` becomes `chat/*`; `tools.ts` holds `facioTool`/`facioTools`, a `BoundTool` as a facio `Tool` through `createTool`; `agent.ts`'s `create` returns the session; `index.ts` exports the session and the mapping.
+`test/agent-cofold-turn.test.ts` is seven tests driving the real `createHost` with `@facio/agents/testing`'s fake model: text in the required order, a delta as a plain action, reasoning as `chat/reasoning`, a host tool called and its result returned to the model, two turns under one facio session, and a cancelled turn.
 Verified: `pnpm test` 746 passed over 50 files, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` builds four packages.
 `test/host.test.ts`'s `create-pr` cases flaked once in a full run and once alone, and passed on the next run and in the run after; the plugin and facio code does not touch that path, and the timing sensitivity is pre-existing.
 What facio does not carry, found while mapping: `run.finished` has no duration, so the turn's duration is measured from `begin`; `tool.started` has no input, so the input is held from `tool.proposed`; `tool.denied` can arrive for a tool that was never proposed, which has no client row and is dropped; `RunOutcome.stopped` carries a reason with no AHP action, so it ends as complete; and `model.completed` carries the assembled reply, so an adapter with `features.streaming: false` would produce no text at all, which is left for a later task because the shipped `openaiCompat` streams by default.

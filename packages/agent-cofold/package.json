@@ -1,9 +1,9 @@
 {
-  "name": "@ahpd/agent-facio",
+  "name": "@ahpd/agent-cofold",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "An AHP backend over the facio agent runtime: every model it can reach is a model inside one provider",
+  "description": "An AHP backend over the cofold agent runtime: every model it can reach is a model inside one provider",
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,12 +32,12 @@
     "@ahpd/sdk": "workspace:*"
   },
   "dependencies": {
-    "@facio/agents": "link:../../../facio/packages/agents",
-    "@facio/model-openai-compat": "link:../../../facio/packages/model-openai-compat",
-    "@facio/store-file": "link:../../../facio/packages/store-file"
+    "@cofold/agents": "^0.1.0",
+    "@cofold/model-openai-compat": "^0.1.0",
+    "@cofold/store-file": "^0.1.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",
-    "title": "Facio"
+    "title": "Cofold"
   }
 }

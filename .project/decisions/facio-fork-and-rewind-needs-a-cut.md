@@ -5,12 +5,12 @@ date: 2026-09-20
 refs:
   - code://.project/plans/plugin/04-agent-facio-extras/task-02-fork-and-rewind.md - the task this decides the shape of
   - code://packages/agent-facio/src/session.ts - the two point methods and the cut `create` makes
-  - file:///github/facio/packages/agents/src/run/run.ts - `run()`, which has no argument for the history to run on
-  - file:///github/facio/packages/agents/src/run/turn.ts - `store.sessions.listMessages({ sessionId })`, the whole session, read once per turn
-  - file:///github/facio/packages/agents/src/types/store.ts - `Store.sessions`, whose only removal was a whole session
-  - file:///github/facio/packages/agents/src/store/cut.ts - `selectCut`, the one rule the two stores cut by
-  - file:///github/facio/packages/store-file/src/store.ts - `truncate`, `fork`, and the `lastMessageId` an append advances
-  - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, neither of which can start at a message
+  - file:///github/cofold/packages/agents/src/run/run.ts - `run()`, which has no argument for the history to run on
+  - file:///github/cofold/packages/agents/src/run/turn.ts - `store.sessions.listMessages({ sessionId })`, the whole session, read once per turn
+  - file:///github/cofold/packages/agents/src/types/store.ts - `Store.sessions`, whose only removal was a whole session
+  - file:///github/cofold/packages/agents/src/store/cut.ts - `selectCut`, the one rule the two stores cut by
+  - file:///github/cofold/packages/store-file/src/store.ts - `truncate`, `fork`, and the `lastMessageId` an append advances
+  - file:///github/cofold/packages/agents/src/types/run.ts - `RunArgs` and `ResumeArgs`, neither of which can start at a message
 ---
 
 ## Context

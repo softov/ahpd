@@ -5,8 +5,8 @@ date: 2026-09-20
 refs:
   - code://packages/sdk/src/types/plugin.ts - the contract every agent package implements
   - code://packages/server/src/plugins.ts - the loader that turns an installed package into a backend
-  - file:///github/facio/packages/agents/src/index.ts - the harness that already exists, so a model-backed backend is not a new one
-  - file:///github/facio/packages/model-openai-compat/src/index.ts - the `/chat/completions` adapter, which is why OpenAI-compatible and DeepSeek are model configs and not packages
+  - file:///github/cofold/packages/agents/src/index.ts - the harness that already exists, so a model-backed backend is not a new one
+  - file:///github/cofold/packages/model-openai-compat/src/index.ts - the `/chat/completions` adapter, which is why OpenAI-compatible and DeepSeek are model configs and not packages
   - file:///github/deepseek-harness/packages/acp/acp/package.json - deepseek-harness ships an ACP server, so it arrives through the ACP package
   - code://.project/ideas/agents-as-extensions.md - the first-party list this corrects
 ---

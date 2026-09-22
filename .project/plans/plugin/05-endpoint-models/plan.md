@@ -6,16 +6,16 @@ priority: medium
 created: 2026-09-20
 revalidated: 2026-09-20
 requires:
-  - plans/plugin/04-agent-facio-extras/plan.md
+  - plans/plugin/04-agent-cofold-extras/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/listed-models-are-provider-references.md
 refs:
-  - code://.project/plans/plugin/04-agent-facio-extras/plan.md - the plan that made the harness configuration the default and left the list at one row
-  - code://packages/agent-facio/src/agent.ts - `connectionOf`, `listModels`, the catalogue cache and `probe`
-  - code://packages/agent-facio/src/session.ts - `models()`, the per-session list the host learns from
-  - code://packages/agent-facio/src/config.ts#L111-L115 - `splitModel`, the first-slash rule a listed id must satisfy
+  - code://.project/plans/plugin/04-agent-cofold-extras/plan.md - the plan that made the harness configuration the default and left the list at one row
+  - code://packages/agent-cofold/src/agent.ts - `connectionOf`, `listModels`, the catalogue cache and `probe`
+  - code://packages/agent-cofold/src/session.ts - `models()`, the per-session list the host learns from
+  - code://packages/agent-cofold/src/config.ts#L111-L115 - `splitModel`, the first-slash rule a listed id must satisfy
   - code://packages/agent-claude/src/probe.ts#L50-L120 - the backend that already offers every model its harness reports, per model options included
   - code://packages/sdk/src/host.ts#L1663-L1683 - the probe the root channel is built from, and the empty-model guard
   - code://packages/sdk/src/types/probe.ts#L4-L15 - `Offered.models`, what a picker draws
@@ -34,10 +34,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### Searches performed
 
-- `rg "models" packages/agent-facio/src` - `probe` offers `options.model ?? harness.model` alone; `session.models()` reads the session's settings and offers the same single id; nothing else in the package knows a catalogue exists.
+- `rg "models" packages/agent-cofold/src` - `probe` offers `options.model ?? harness.model` alone; `session.models()` reads the session's settings and offers the same single id; nothing else in the package knows a catalogue exists.
 - `rg "learnModels|probe\(\)" packages/sdk/src/host.ts` - the root channel's model list is the probe's, and `learnModels` overwrites it from `session.models()` on a handshake the facio backend never fires.
 - `rg "init.models" packages/agent-claude/src` - the reference backend offers what its harness reports, with a per-model `configSchema`; the shape to mirror.
-- `rg "splitModel" packages/agent-facio/src` - every model setting goes through the first-slash split, so a model id that itself contains slashes cannot be offered bare.
+- `rg "splitModel" packages/agent-cofold/src` - every model setting goes through the first-slash split, so a model id that itself contains slashes cannot be offered bare.
 
 ### Runtime path
 
@@ -52,7 +52,7 @@ a chosen id -> session setting `model` or a turn's model -> modelOf -> splitMode
 - `probe` offers the configured model alone, so the picker has one row on an endpoint that publishes hundreds.
 - `session.models()` answers the same single id, so a handshake-driven refresh would shrink a learned list rather than keep it.
 - No test covers a catalogue: nothing stubs `GET /models` or asserts that an offered id resolves through `modelOf`.
-- `Not found: a timeout or a fallback for a probe that hangs - searched "AbortSignal|timeout" in packages/agent-facio/src; the fetch would be the package's first outbound catalogue call.`
+- `Not found: a timeout or a fallback for a probe that hangs - searched "AbortSignal|timeout" in packages/agent-cofold/src; the fetch would be the package's first outbound catalogue call.`
 
 ## Decisions locked in
 
@@ -65,8 +65,8 @@ a chosen id -> session setting `model` or a turn's model -> modelOf -> splitMode
 - **Data flow** - one `GET <baseUrl>/models` per endpoint and key, cached for the life of the backend; `probe` awaits it for the configured connection, `session.models()` reads the cache for the session's connection and asks in the background when it is missing.
 - **Event flow** - none of its own: the host already announces `root/agentsChanged` when the probe answers, and an empty model list is kept out of the root state.
 - **State flow** - a catalogue is cached by `baseUrl` and key; a configured model that the list does not carry is prepended; an endpoint that answers nothing caches nothing, so it is asked again rather than remembered as empty.
-- **Layer responsibilities** - `packages/agent-facio`: `agent.ts` resolves a connection once and reads its catalogue, `session.ts` answers `models()` from the same cache · `packages/sdk`: unchanged · `docs/PLUGINS.md`: says the list is the endpoint's and the configured model is the default.
-- **Source-of-truth files** - `code://packages/agent-facio/src/agent.ts`, `code://packages/agent-facio/src/session.ts`.
+- **Layer responsibilities** - `packages/agent-cofold`: `agent.ts` resolves a connection once and reads its catalogue, `session.ts` answers `models()` from the same cache · `packages/sdk`: unchanged · `docs/PLUGINS.md`: says the list is the endpoint's and the configured model is the default.
+- **Source-of-truth files** - `code://packages/agent-cofold/src/agent.ts`, `code://packages/agent-cofold/src/session.ts`.
 
 ## Tasks
 

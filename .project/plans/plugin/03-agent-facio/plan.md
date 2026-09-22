@@ -18,20 +18,20 @@ refs:
   - code://packages/server/src/plugins.ts - `loadPlugins`, which resolves and imports this package by spec
   - code://.project/decisions/agent-package-only-when-it-brings-a-runtime.md - why this is one package and not one per model
   - code://.project/ideas/agents-as-extensions.md - the first-party order this plan is the first step of
-  - file:///github/facio/packages/agents/src/index.ts - `createAgent`, `run`, `resume`, `createTool`, the store and the policy
-  - file:///github/facio/packages/agents/src/types/event.ts - the `RunEvent` union this bridge maps onto `chat/*`
-  - file:///github/facio/packages/agents/src/types/run.ts - `RunArgs`, `ResumeArgs` and `RunHandle`, the stream and the cancel
-  - file:///github/facio/packages/agents/src/types/agent.ts - `AgentOptions` and `Policy`, what a facio agent is built from
-  - file:///github/facio/packages/agents/src/types/store.ts - the `Store` that `list()` and `transcript()` read, which already names the AHP workspace
-  - file:///github/facio/packages/agents/src/types/message.ts - the message the transcript is built from
-  - file:///github/facio/packages/model-openai-compat/src/index.ts - `openaiCompat`, the model adapter the session config selects
-  - file:///github/facio/packages/store-file/src/index.ts - `createFileStore`, the store a daemon wants
+  - file:///github/cofold/packages/agents/src/index.ts - `createAgent`, `run`, `resume`, `createTool`, the store and the policy
+  - file:///github/cofold/packages/agents/src/types/event.ts - the `RunEvent` union this bridge maps onto `chat/*`
+  - file:///github/cofold/packages/agents/src/types/run.ts - `RunArgs`, `ResumeArgs` and `RunHandle`, the stream and the cancel
+  - file:///github/cofold/packages/agents/src/types/agent.ts - `AgentOptions` and `Policy`, what a facio agent is built from
+  - file:///github/cofold/packages/agents/src/types/store.ts - the `Store` that `list()` and `transcript()` read, which already names the AHP workspace
+  - file:///github/cofold/packages/agents/src/types/message.ts - the message the transcript is built from
+  - file:///github/cofold/packages/model-openai-compat/src/index.ts - `openaiCompat`, the model adapter the session config selects
+  - file:///github/cofold/packages/store-file/src/index.ts - `createFileStore`, the store a daemon wants
   - code://test/example.test.ts#L1-L30 - the fake peer and the turn a bridge test follows
 ---
 
 ## Goal
 
-`@ahpd/agent-facio` is an installed package and a plugin that runs facio's agent runtime as an AHP backend, so every model facio can reach is a model inside one provider rather than a package of its own.
+`@ahpd/agent-cofold` is an installed package and a plugin that runs facio's agent runtime as an AHP backend, so every model facio can reach is a model inside one provider rather than a package of its own.
 A client creates a session on provider `facio`, the session config chooses the model and the endpoint, and the conversation, tools, approvals, pause and resume, catalogue and transcript all behave the way a backend is expected to.
 A model that facio cannot reach is a facio adapter and a configuration line, and never an ahpd release.
 
@@ -52,7 +52,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ### Runtime path
 
 ```
-ahpd --plugin @ahpd/agent-facio
+ahpd --plugin @ahpd/agent-cofold
   -> loadPlugins resolves it, checks its manifest, imports it, apply(host) registers one Agent with provider `facio`
   -> createSession -> the bridge builds a facio Agent: createAgent({ instructions, model, tools, store, policy })
   -> Session.begin(turn) -> run({ agent, session, input }) -> RunHandle.events
@@ -95,8 +95,8 @@ ahpd --plugin @ahpd/agent-facio
 - **Data flow** - a session's config becomes a facio `Agent`, a turn becomes `run()`'s event stream, and each event becomes the AHP action a client already knows; the client's answer to a pause goes back through `RunHandle.submit`.
 - **Event flow** - none of AHP's own; this package subscribes to nothing. The bridge is the consumer of facio's stream and the producer of `chat/*` actions, which is what a backend is.
 - **State flow** - the conversation lives in a facio `Store`, one file store beside the daemon configuration with the workspace as the partition; the AHP session id is the facio `sessionId`, so a resume after a restart is `resume()` and not a replay.
-- **Layer responsibilities** - `packages/agent-facio`: the `Agent`, the `Session`, the `RunEvent` mapping, the config schema, the store wiring and the plugin entry. `/github/facio`: unchanged except where the bridge finds a fact AHP needs and facio does not carry, which is a change to record before it is made.
-- **Source-of-truth files** - `code://packages/agent-facio/src/index.ts`, `code://packages/agent-facio/src/agent.ts`, `code://packages/agent-facio/src/session.ts`, `code://packages/agent-facio/src/mapping.ts`, `code://packages/agent-facio/src/plugin.ts`.
+- **Layer responsibilities** - `packages/agent-cofold`: the `Agent`, the `Session`, the `RunEvent` mapping, the config schema, the store wiring and the plugin entry. `/github/cofold`: unchanged except where the bridge finds a fact AHP needs and facio does not carry, which is a change to record before it is made.
+- **Source-of-truth files** - `code://packages/agent-cofold/src/index.ts`, `code://packages/agent-cofold/src/agent.ts`, `code://packages/agent-cofold/src/session.ts`, `code://packages/agent-cofold/src/mapping.ts`, `code://packages/agent-cofold/src/plugin.ts`.
 
 ## Tasks
 
@@ -122,14 +122,14 @@ ahpd --plugin @ahpd/agent-facio
 - **Done so far:** all five tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
 - **Next action:** none; the plan is built. `@ahpd/agent-acp` is the next agent package, and [agents as extensions](../../ideas/agents-as-extensions.md) is the order.
 - **Open questions:** none open; facio is linked, the provider is per registration, the store is an option, and the resume shape is the seed giving way to the replay.
-- **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; facio is unpublished and its packages must be built in `/github/facio` before this package typechecks; and the package is `private: true` until facio has a version on npm.
+- **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; facio is unpublished and its packages must be built in `/github/cofold` before this package typechecks; and the package is `private: true` until facio has a version on npm.
 
 ## Final verification checklist
 
 - [x] `pnpm test` green, with a mapped turn, a pause and answer, a resume and a transcript in it.
-- [x] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-facio` declaring what it imports.
-- [x] By hand: the daemon started with `--plugin @ahpd/agent-facio` serves provider `facio`, and a turn answers from a model through a configured endpoint.
-- [x] A client that needs a confirmation is asked, answers, and the run continues - by `test/agent-facio-approval.test.ts`, because a configuration file cannot carry the policy function.
-- [x] A daemon restarted mid-conversation lists the session and resumes it - by `test/agent-facio-store.test.ts`, and a resumed paused run is seen once.
+- [x] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-cofold` declaring what it imports.
+- [x] By hand: the daemon started with `--plugin @ahpd/agent-cofold` serves provider `facio`, and a turn answers from a model through a configured endpoint.
+- [x] A client that needs a confirmation is asked, answers, and the run continues - by `test/agent-cofold-approval.test.ts`, because a configuration file cannot carry the policy function.
+- [x] A daemon restarted mid-conversation lists the session and resumes it - by `test/agent-cofold-store.test.ts`, and a resumed paused run is seen once.
 - [x] `docs/PLUGINS.md` names the package and its session config.
 - [x] `plans/index.md` and `plans/plugin/00-plugin.md` updated.

@@ -12,7 +12,7 @@
     "url": "git+https://github.com/softov/ahpd.git"
   },
   "scripts": {
-    "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/agent-facio && tsc -p packages/server",
+    "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/agent-cofold && tsc -p packages/server",
     "start": "node packages/server/dist/main.js",
     "start:heap": "node --heapsnapshot-near-heap-limit=1 --max-old-space-size=4096 packages/server/dist/main.js",
     "dev": "node --watch --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts",
@@ -31,9 +31,9 @@
     "@ahpd/agent-claude": "workspace:*",
     "@ahpd/sdk": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "^0.3.278",
-    "@facio/agents": "link:../facio/packages/agents",
-    "@facio/model-openai-compat": "link:../facio/packages/model-openai-compat",
-    "@facio/store-file": "link:../facio/packages/store-file",
+    "@cofold/agents": "^0.1.0",
+    "@cofold/model-openai-compat": "^0.1.0",
+    "@cofold/store-file": "^0.1.0",
     "@microsoft/agent-host-protocol": "^0.9.0",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",

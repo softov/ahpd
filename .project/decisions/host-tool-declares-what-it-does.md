@@ -5,8 +5,8 @@ date: 2026-09-20
 refs:
   - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, which gains the hint
   - code://packages/agent-facio/src/tools.ts - where a bound tool is wrapped, and where the hint reaches facio
-  - file:///github/facio/packages/agents/src/types/tool.ts - `ToolEffects`, the same four flags
-  - file:///github/facio/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
+  - file:///github/cofold/packages/agents/src/types/tool.ts - `ToolEffects`, the same four flags
+  - file:///github/cofold/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
   - code://.project/plans/plugin/04-agent-facio-extras/plan.md - where this is implemented
 ---
 

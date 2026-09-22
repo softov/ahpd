@@ -1,8 +1,8 @@
 /**
- * The facio agent runtime as an AHP backend.
+ * The cofold agent runtime as an AHP backend.
  *
- * `@facio/agents` owns the loop, the conversation, the tools, the policy, the
- * pause and the store; `@facio/model-openai-compat` owns one transport. What
+ * `@cofold/agents` owns the loop, the conversation, the tools, the policy, the
+ * pause and the store; `@cofold/model-openai-compat` owns one transport. What
  * this package adds is the AHP half, so a model or an endpoint is a session
  * setting rather than a package of its own.
  *
@@ -13,21 +13,21 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createMemoryStore, textOf } from '@facio/agents';
-import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@facio/agents';
-import { openaiCompat } from '@facio/model-openai-compat';
-import { createFileStore } from '@facio/store-file';
+import { createMemoryStore, textOf } from '@cofold/agents';
+import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@cofold/agents';
+import { openaiCompat } from '@cofold/model-openai-compat';
+import { createFileStore } from '@cofold/store-file';
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { harnessConfig, splitModel } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
-import { facioSession } from './session.js';
+import { cofoldSession } from './session.js';
 import { turnsOf } from './transcript.js';
 
 /** What an embedder, or a plugin's options, may set. */
-export interface FacioOptions {
-  /** The AHP provider id. Default `facio`. */
+export interface CofoldOptions {
+  /** The AHP provider id. Default `cofold`. */
   provider?: string;
-  /** What a client reads instead of the id. Default `Facio`. */
+  /** What a client reads instead of the id. Default `Cofold`. */
   displayName?: string;
   /** One line about what this backend is. */
   description?: string;
@@ -57,7 +57,7 @@ export interface FacioOptions {
   /**
    * The run-level policy an approval decision comes from.
    *
-   * Absent means facio's own default, which asks about a destructive tool and
+   * Absent means cofold's own default, which asks about a destructive tool and
    * allows the rest; this bridge carries a policy through rather than
    * inventing a second default beside it.
    */
@@ -65,13 +65,13 @@ export interface FacioOptions {
 }
 
 /**
- * Where a facio store lives when nothing named one.
+ * Where a cofold store lives when nothing named one.
  *
  * Data rather than configuration: sessions and runs are written by the daemon,
  * not edited by a person, and `XDG_DATA_HOME` is the variable for exactly that.
  */
 export const defaultStoreRoot = (): string =>
-  join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'ahpd', 'facio');
+  join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'ahpd', 'cofold');
 
 /** A short string, or nothing for a blank or missing one. */
 const text = (value: unknown): string | undefined =>
@@ -91,14 +91,14 @@ const titleOf = (said: string, fallback: string): string => {
 };
 
 /** The resource a client authenticates against when nothing named one. */
-export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-facio';
+export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-cofold';
 
 /**
  * The approvals modes a session may be put in, in the window's own order.
  *
  * The same six the Claude backend advertises, because the labels are what a
  * person reads and the harness owns the meanings: `policyOf` in
- * `@facio/agents` is what a mode becomes. `auto` is facio's own default, so
+ * `@cofold/agents` is what a mode becomes. `auto` is cofold's own default, so
  * that is what a session that chooses none starts on.
  */
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const;
@@ -147,7 +147,7 @@ export const effortOf = (value: unknown): ReasoningEffort | undefined =>
  * rather than the whole URL: a token is for the service, not for one path
  * under it.
  */
-export const resourceOf = (options: FacioOptions = {}, harness: HarnessConfig = harnessConfig()): string => {
+export const resourceOf = (options: CofoldOptions = {}, harness: HarnessConfig = harnessConfig()): string => {
   if (options.resource !== undefined) return options.resource;
   const named = options.baseUrl ?? endpointOf(options, harness)?.baseUrl;
   if (named !== undefined) {
@@ -170,7 +170,7 @@ export const resourceOf = (options: FacioOptions = {}, harness: HarnessConfig = 
  * explicit endpoint or the first provider.
  */
 const endpointOf = (
-  options: FacioOptions,
+  options: CofoldOptions,
   harness: HarnessConfig,
   ref?: string,
 ): HarnessProvider | undefined => {
@@ -220,13 +220,13 @@ const LOCAL_ENDPOINT = 'http://127.0.0.1:1234/v1';
  * provider's endpoint and lists what it has.
  */
 const connectionOf = (
-  options: FacioOptions,
+  options: CofoldOptions,
   settings: Record<string, unknown>,
   credentials: Record<string, string>,
   harness: HarnessConfig,
   strict: boolean,
 ): Connection => {
-  const own = options.provider ?? 'facio';
+  const own = options.provider ?? 'cofold';
   const reference = text(settings.model) ?? options.model ?? harness.model;
   const named = reference === undefined ? undefined : splitModel(reference);
   const provider = endpointOf(options, harness, reference);
@@ -311,7 +311,7 @@ const listModels = async (connection: Connection): Promise<{ id: string; name: s
  * harness configuration, and a caller-passed adapter wins over all three. A
  * model written `<provider>/<model>` selects that provider's endpoint and key
  * from the harness file, which is the whole point of reading it: a person who
- * has already pointed facio at a provider does not say it again here, and no
+ * has already pointed cofold at a provider does not say it again here, and no
  * token has to be lent for the common case.
  *
  * The key is the one a client lent through `authenticate` for this backend's
@@ -320,7 +320,7 @@ const listModels = async (connection: Connection): Promise<{ id: string; name: s
  * credential written to the session store and carried by every backup.
  */
 export const modelOf = (
-  options: FacioOptions = {},
+  options: CofoldOptions = {},
   settings: Record<string, unknown> = {},
   credentials: Record<string, string> = {},
   harness: HarnessConfig = harnessConfig(),
@@ -344,21 +344,21 @@ export const modelOf = (
 };
 
 /** The store this backend keeps its sessions and runs in. */
-export const storeOf = (options: FacioOptions = {}): Store =>
+export const storeOf = (options: CofoldOptions = {}): Store =>
   options.memory === true
     ? createMemoryStore()
     : createFileStore({ root: options.store ?? defaultStoreRoot() });
 
 /**
- * One AHP backend over facio.
+ * One AHP backend over cofold.
  *
  * The provider id is per registration rather than per package, so two of these
  * with two stores and two models are two backends, which is how the register
  * surface gets exercised with a harness behind it.
  */
-export function facioAgent(options: FacioOptions = {}): Agent {
-  const provider = options.provider ?? 'facio';
-  const displayName = options.displayName ?? 'Facio';
+export function cofoldAgent(options: CofoldOptions = {}): Agent {
+  const provider = options.provider ?? 'cofold';
+  const displayName = options.displayName ?? 'Cofold';
   /*
    * One store for the whole backend, built here rather than per session.
    *
@@ -414,7 +414,7 @@ export function facioAgent(options: FacioOptions = {}): Agent {
       /*
        * The approvals mode. The names and labels are the ones the window
        * already draws for Claude, so one session reads the same whichever
-       * backend it is; the default is `auto`, which is facio's own policy,
+       * backend it is; the default is `auto`, which is cofold's own policy,
        * asking only about a tool that says it is destructive.
        */
       ...(options.policy === undefined
@@ -508,7 +508,7 @@ export function facioAgent(options: FacioOptions = {}): Agent {
     /*
      * A chat can be forked from one of its turns.
      *
-     * A fork copies the conversation through a turn into a facio session of
+     * A fork copies the conversation through a turn into a cofold session of
      * its own - `Store.sessions.fork` - and leaves the source whole, which is
      * what AHP's `source.kind: 'fork'` asks for. There is no side chat: that
      * is a fresh conversation told what a turn said, and this backend has no
@@ -548,7 +548,7 @@ export function facioAgent(options: FacioOptions = {}): Agent {
      * The sessions this backend already has.
      *
      * No workspace is passed to the query: `list()` is asked before any
-     * session exists, and the workspace is a per-session key facio already
+     * session exists, and the workspace is a per-session key cofold already
      * holds, so filtering by one here would hide every other conversation the
      * store has. Each row reports the directory its own session recorded.
      */
@@ -583,18 +583,18 @@ export function facioAgent(options: FacioOptions = {}): Agent {
       return await turnsOf(store, id);
     },
     /*
-     * The session runs a facio agent: a turn becomes `run()`'s event stream
+     * The session runs a cofold agent: a turn becomes `run()`'s event stream
      * and each event becomes the AHP action a client expects. The work is in
      * `session.ts`, `mapping.ts` and `tools.ts`.
      *
      * `Start.forkAt` and `Start.rewindAt` are the cut the session was asked
      * for: a fork copies the resumed conversation through that message into a
-     * facio session of its own, and a rewind drops what followed it from the
+     * cofold session of its own, and a rewind drops what followed it from the
      * resumed one, which is `Store.sessions.fork` and `Store.sessions.truncate`
      * doing the work before the first turn runs. `session.ts` refuses a turn if
      * the cut could not be made, rather than carrying on from the wrong place.
      */
-    create: (start) => facioSession(options, start, store, harness, (settings, credentials) =>
+    create: (start) => cofoldSession(options, start, store, harness, (settings, credentials) =>
       knownCatalogue(connectionOf(options, settings, credentials, harness, false))),
   };
 }

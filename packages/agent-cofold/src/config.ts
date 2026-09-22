@@ -1,8 +1,8 @@
 /**
  * The harness configuration this backend runs on.
  *
- * facio already has a configuration a person writes once, at
- * `$XDG_CONFIG_HOME/facio/config.json` or `~/.config/facio/config.json`, where
+ * cofold already has a configuration a person writes once, at
+ * `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`, where
  * the providers and their keys live and the model is named as
  * `<provider>/<model>`. Reading it here is what makes the plugin usable
  * without repeating a key: a daemon whose bridge names no model and is given
@@ -43,7 +43,7 @@ export interface HarnessConfig {
 
 /** The file the harness configuration lives in. */
 export const harnessConfigPath = (env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string =>
-  join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'facio', 'config.json');
+  join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'cofold', 'config.json');
 
 /** A non-empty string, or nothing for a blank or missing one. */
 const word = (value: unknown): string | undefined =>

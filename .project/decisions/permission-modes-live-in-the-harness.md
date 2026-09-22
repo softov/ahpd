@@ -5,10 +5,10 @@ date: 2026-09-20
 refs:
   - code://packages/agent-facio/src/agent.ts - the schema that declares no mode and no effort today
   - code://packages/agent-claude/src/claude.ts#L126-L196 - the `permissionMode` and `effortLevel` properties a client draws controls from
-  - file:///github/facio/packages/papo/src/agent.ts#L33-L62 - `policyOf`, `byEffects` and `EDITS`, the mode mapping that lives in a surface
-  - file:///github/facio/packages/agents/src/types/agent.ts - `Policy.decide`, what a mode becomes
-  - file:///github/facio/packages/agents/src/types/model.ts#L14-L23 - `ReasoningEffort` and `ModelParams.reasoning`, what a thinking level becomes
-  - file:///github/facio/packages/model-openai-compat/src/index.ts#L12 - `features.reasoning` false by default, so a level is ignored until it is on
+  - file:///github/cofold/packages/papo/src/agent.ts#L33-L62 - `policyOf`, `byEffects` and `EDITS`, the mode mapping that lives in a surface
+  - file:///github/cofold/packages/agents/src/types/agent.ts - `Policy.decide`, what a mode becomes
+  - file:///github/cofold/packages/agents/src/types/model.ts#L14-L23 - `ReasoningEffort` and `ModelParams.reasoning`, what a thinking level becomes
+  - file:///github/cofold/packages/model-openai-compat/src/index.ts#L12 - `features.reasoning` false by default, so a level is ignored until it is on
 ---
 
 ## Context

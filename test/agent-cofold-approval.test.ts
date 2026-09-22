@@ -2,22 +2,22 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createFakeModel } from '@facio/agents/testing';
-import { pauseForInput } from '@facio/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import { pauseForInput } from '@cofold/agents';
 import { chatReducer, sessionReducer } from '@microsoft/agent-host-protocol';
-import type { AskQuestion, ModelAdapter, Policy } from '@facio/agents';
+import type { AskQuestion, ModelAdapter, Policy } from '@cofold/agents';
 import { createHost } from '../packages/sdk/src/host.js';
-import { facioAgent } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent } from '../packages/agent-cofold/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import type { HostTool } from '../packages/sdk/src/types/host.js';
 
 /*
- * A facio run that stops for a person, as a client drives it.
+ * A cofold run that stops for a person, as a client drives it.
  *
  * No network and no real model: the adapter is a script, the store is in
  * memory, and the host is the same `createHost` the daemon uses. Two paths
  * raise a pause: a host tool that declares `effects.destructive`, which
- * facio's own default policy asks about with no policy configured, and a
+ * cofold's own default policy asks about with no policy configured, and a
  * policy the caller passes for a tool that says nothing.
  *
  * What this checks is the whole round trip: an `approval.requested` becomes
@@ -77,7 +77,7 @@ const reduced = (p: ReturnType<typeof peer>, uri: string, chatUri: string) => {
     resource: chatUri, title: '', status: 1, modifiedAt: '', turns: [], queuedMessages: [],
   };
   let session: Record<string, unknown> = {
-    resource: uri, provider: 'facio', title: '', status: 1, lifecycle: 'ready',
+    resource: uri, provider: 'cofold', title: '', status: 1, lifecycle: 'ready',
     defaultChat: chatUri, chats: [], workingDirectories: [], customizations: [],
   };
   for (const one of actions(p, chatUri)) chat = chatReducer(chat as never, one.action as never) as never;
@@ -93,12 +93,12 @@ const asksFor = (names: string[]): Partial<Policy> => ({
   decide: ({ tool }) => (names.includes(tool.name) ? { behavior: 'ask' } : { behavior: 'allow' }),
 });
 
-/** A host with one facio agent, ready for as many sessions as a test opens. */
+/** A host with one cofold agent, ready for as many sessions as a test opens. */
 async function talking(model: ModelAdapter, tools: HostTool[], policy: Partial<Policy>) {
-  const path = mkdtempSync(join(tmpdir(), 'ahpd-facio-'));
+  const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
   const host = createHost({
     path,
-    agents: [facioAgent({ adapter: model, memory: true, policy })],
+    agents: [cofoldAgent({ adapter: model, memory: true, policy })],
     tools,
   });
   const p = peer();
@@ -119,7 +119,7 @@ async function talking(model: ModelAdapter, tools: HostTool[], policy: Partial<P
  */
 async function open(client: Awaited<ReturnType<typeof talking>>['client'], name: string) {
   const uri = `ahp-session:/${name}`;
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'facio' } });
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { defaultChat: string } };
   };
@@ -155,7 +155,7 @@ const writer = (ran: string[]): HostTool => ({
   },
 });
 
-/** The ask tool facio pauses on, reached through the host's own tool slot. */
+/** The ask tool cofold pauses on, reached through the host's own tool slot. */
 const asker: HostTool = {
   definition: {
     name: 'ask_user',
@@ -424,7 +424,7 @@ it('asks about a destructive host tool with no policy configured', async () => {
   const ran: string[] = [];
   const model = createFakeModel({ script: writeScript('c1', 'note'), stream: true });
   // No `policy` option: the pause has to come from the tool's own effects and
-  // facio's default policy, which is what a JSON-configured daemon can reach.
+  // cofold's default policy, which is what a JSON-configured daemon can reach.
   const { client, peer: p } = await talking(model, [{ ...writer(ran), effects: { writes: true, destructive: true } }], {});
   const { uri, chatUri } = await open(client, 'destructive');
   begin(client, chatUri, 't1', 'write it');

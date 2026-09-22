@@ -2,12 +2,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createFakeModel } from '@facio/agents/testing';
+import { createFakeModel } from '@cofold/agents/testing';
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import type { ModelAdapter } from '@facio/agents';
+import type { ModelAdapter } from '@cofold/agents';
 import { createHost } from '../packages/sdk/src/host.js';
-import { facioAgent, facioTools } from '../packages/agent-facio/src/index.js';
-import type { ClientToolRelay } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent, cofoldTools } from '../packages/agent-cofold/src/index.js';
+import type { ClientToolRelay } from '../packages/agent-cofold/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import type { BoundTool } from '../packages/sdk/src/types/agent.js';
 
@@ -94,7 +94,7 @@ const script = (final: string) => [
 ];
 
 /**
- * A running facio session with one client that says it can run `openFile`.
+ * A running cofold session with one client that says it can run `openFile`.
  *
  * Announced the way the protocol says a client does: dispatching a
  * `session/activeClientSet` whose `tools` are the definitions it provides.
@@ -102,8 +102,8 @@ const script = (final: string) => [
  * the tool `probe__openFile` on the model's list.
  */
 async function offering(model: ModelAdapter) {
-  const path = mkdtempSync(join(tmpdir(), 'ahpd-facio-'));
-  const host = createHost({ path, agents: [facioAgent({ adapter: model, memory: true })] });
+  const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
+  const host = createHost({ path, agents: [cofoldAgent({ adapter: model, memory: true })] });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -111,7 +111,7 @@ async function offering(model: ModelAdapter) {
     params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'facio' } });
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { defaultChat: string } };
   };
@@ -343,5 +343,5 @@ it('does not offer a tool nobody can run', () => {
 
   // With a session to reply on, the client's own tool is offered; the one
   // with neither an owner nor an implementation still is not.
-  expect(facioTools([ghost, mine, theirs], relay).map((one) => one.name)).toEqual(['mine', 'theirs']);
+  expect(cofoldTools([ghost, mine, theirs], relay).map((one) => one.name)).toEqual(['mine', 'theirs']);
 });

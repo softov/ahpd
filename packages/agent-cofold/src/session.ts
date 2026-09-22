@@ -1,8 +1,8 @@
 /**
- * One facio session, seen through the AHP `Session` contract.
+ * One cofold session, seen through the AHP `Session` contract.
  *
  * The host owns the channels and the sequence numbers; this owns the state
- * they carry, the facio `run()` behind a turn, and the translation of that
+ * they carry, the cofold `run()` behind a turn, and the translation of that
  * run's events into the `chat/*` actions a client already knows. The
  * event-to-action decisions themselves live in `mapping.ts` and the host tool
  * wrapping in `tools.ts`; this file is the lifecycle around them.
@@ -19,17 +19,17 @@
  */
 
 import { resolve, sep } from 'node:path';
-import { createAgent, policyOf, resume, run, textOf } from '@facio/agents';
-import type { Agent as FacioAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store } from '@facio/agents';
+import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
+import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store } from '@cofold/agents';
 import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { PERMISSION_MODES, modelOf, storeOf } from './agent.js';
-import type { FacioOptions } from './agent.js';
+import type { CofoldOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
 import { mapTurn } from './mapping.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
-import { facioTools } from './tools.js';
+import { cofoldTools } from './tools.js';
 import type { ClientToolRelay } from './tools.js';
 
 /**
@@ -54,14 +54,14 @@ const modeOf = (values: Record<string, unknown>): PermissionMode => {
 };
 
 /**
- * The facio agent id.
+ * The cofold agent id.
  *
- * A constant rather than the AHP provider: facio requires an id matching its
+ * A constant rather than the AHP provider: cofold requires an id matching its
  * own pattern, and the provider is a registration name a host is free to
- * spell with characters facio would refuse. One backend serves one store, so
+ * spell with characters cofold would refuse. One backend serves one store, so
  * two sessions of it are two conversations rather than two agents.
  */
-const AGENT_ID = 'facio';
+const AGENT_ID = 'cofold';
 
 /** What the model is told when neither the package nor the session named a prompt. */
 const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.';
@@ -73,16 +73,16 @@ const str = (value: unknown): string | undefined => (typeof value === 'string' ?
 const DECLINED = 'The person declined this action';
 
 /**
- * The answers a client sent, in the shape facio's questions want.
+ * The answers a client sent, in the shape cofold's questions want.
  *
- * AHP carries each answer as `{ state, value: { kind, value } }` and facio
+ * AHP carries each answer as `{ state, value: { kind, value } }` and cofold
  * wants the value itself, keyed by question id and a list only where the
  * question allows many. The value sits two levels in, and a value that is
  * already a string or a list is taken as it is, so a caller that hands over
- * facio's own shape is not unwrapped into nothing.
+ * cofold's own shape is not unwrapped into nothing.
  */
 const answersOf = (answers: Bag): Record<string, string | string[]> => {
-  /** One value as facio reads it, or nothing for a shape it would refuse. */
+  /** One value as cofold reads it, or nothing for a shape it would refuse. */
   const valueOf = (value: unknown): string | string[] | undefined => {
     const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
     if (typeof value === 'string') return value;
@@ -98,16 +98,16 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
   for (const [id, value] of Object.entries(answers)) {
     const one = valueOf(value);
     // A skipped or shapeless answer is left out rather than sent empty, which
-    // facio's own validation would refuse the whole form for.
+    // cofold's own validation would refuse the whole form for.
     if (one !== undefined) said[id] = one;
   }
   return said;
 };
 
 /**
- * The facio session id an AHP session URI names.
+ * The cofold session id an AHP session URI names.
  *
- * The client names the channel and facio names the transcript; the two are
+ * The client names the channel and cofold names the transcript; the two are
  * one conversation, so the id is derived in one place rather than a channel
  * URI handed to a store keyed by ids. A URI already stripped of its scheme
  * is left alone, which is what a `resume` carries.
@@ -132,15 +132,15 @@ interface WaitingCall {
 }
 
 /**
- * One conversation over a facio agent.
+ * One conversation over a cofold agent.
  *
  * `options` is the backend's identity and wiring: the provider it was
  * registered under, the store, and the model factory a session's settings
  * feed. `start` is what this particular session was told. Everything after
  * this is the turn lifecycle.
  */
-export function facioSession(
-  options: FacioOptions,
+export function cofoldSession(
+  options: CofoldOptions,
   start: Start,
   sharedStore?: Store,
   harness: HarnessConfig = harnessConfig(),
@@ -152,9 +152,9 @@ export function facioSession(
   catalogue: (settings: Record<string, unknown>, credentials: Record<string, string>) => { id: string; name: string }[] =
     () => [],
 ): Session {
-  const provider = options.provider ?? 'facio';
+  const provider = options.provider ?? 'cofold';
   /**
-   * The facio session this chat reads and writes.
+   * The cofold session this chat reads and writes.
    *
    * A fresh session and a plain resume are the id the host named, or the one
    * the URI spells. A rewind is that same id: AHP keeps the session and drops
@@ -172,7 +172,7 @@ export function facioSession(
   /**
    * The store every turn of this session shares.
    *
-   * `facioAgent` builds one for the whole backend, so the catalogue and the
+   * `cofoldAgent` builds one for the whole backend, so the catalogue and the
    * conversation read the same store; a caller that named none - the export
    * is public - gets one of its own, which is what a single session had.
    */
@@ -220,7 +220,7 @@ export function facioSession(
   /** The run behind `active`, so a cancel has something to stop. */
   let handle: RunHandle | undefined;
   /** The agent the active run was built from, so a rejoin continues on the same one. */
-  let liveAgent: FacioAgent | undefined;
+  let liveAgent: CofoldAgent | undefined;
   /** The active turn's mapping, so an answer can settle the entries it opened. */
   let activeMapping: TurnMapping | undefined;
   /**
@@ -241,7 +241,7 @@ export function facioSession(
   let paused: { runId: string; seq: number } | undefined;
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   let cancelRequested = false;
-  let title = 'Facio session';
+  let title = 'Cofold session';
   let modified = new Date().toISOString();
   let closed = false;
   /**
@@ -265,7 +265,7 @@ export function facioSession(
    */
   let refused: Error | undefined;
   /**
-   * How each watched turn began and ended, in facio's own message ids.
+   * How each watched turn began and ended, in cofold's own message ids.
    *
    * `forkPoint` and `endPoint` are asked synchronously and a store read is
    * not, so the two ids are read once when the turn ends - before the client
@@ -293,7 +293,7 @@ export function facioSession(
    * The calls a connected client is running, by the id of the model's call.
    *
    * Nothing on this host executes an owner-bound tool, so this map is the
-   * whole of its execution: a call is held here from the moment facio tries
+   * whole of its execution: a call is held here from the moment cofold tries
    * to run the tool until the owning client settles it through
    * `completeToolCall`, or goes away and `clientGone` fails it. Every path
    * that takes an entry out also settles its promise, because a run waiting
@@ -311,7 +311,7 @@ export function facioSession(
   };
 
   /**
-   * The session side of a client-run call, used by `facioTool`.
+   * The session side of a client-run call, used by `cofoldTool`.
    *
    * The entry is registered synchronously, in the promise executor, so a
    * client's answer that arrives on a later turn of the loop always finds
@@ -340,7 +340,7 @@ export function facioSession(
   };
 
   /**
-   * The facio agent a turn runs on, built fresh so the config in force is
+   * The cofold agent a turn runs on, built fresh so the config in force is
    * the config that runs. `createAgent` is a value, not an actor, so building
    * it per turn costs nothing the store does not already hold.
    *
@@ -350,11 +350,11 @@ export function facioSession(
    * it writes - this host's tools are the daemon's and a client's, so their
    * names are not a list this backend can keep.
    */
-  const agentOf = (values: Record<string, unknown>): FacioAgent => createAgent({
+  const agentOf = (values: Record<string, unknown>): CofoldAgent => createAgent({
     id: AGENT_ID,
     instructions: instructionsOf(values),
     model: modelOf(options, values, start.credentials ?? {}, harness),
-    tools: facioTools(offered, relay),
+    tools: cofoldTools(offered, relay),
     store,
     policy: options.policy ?? {
       decide: policyOf(modeOf(values), {
@@ -508,7 +508,7 @@ export function facioSession(
   /**
    * Rejoin a run this process paused, so it can take a command again.
    *
-   * facio's `run()` returns a handle with no command channel; only `resume()`
+   * cofold's `run()` returns a handle with no command channel; only `resume()`
    * installs one. The sequence the pause ended at is passed so the rejoined
    * stream carries what happens next rather than everything the client has
    * already seen.
@@ -530,7 +530,7 @@ export function facioSession(
    * A run that has not paused still holds a live handle and takes the command
    * directly; one that paused is rejoined first. The answer is fire and
    * forget, the way a steer is: whether it was taken is known here, and a
-   * refusal is facio's to log rather than a turn to fail.
+   * refusal is cofold's to log rather than a turn to fail.
    */
   const route = (command: RunCommand): void => {
     const live = paused === undefined ? handle : rejoin();
@@ -542,7 +542,7 @@ export function facioSession(
    * Stop the run, answering anything it is waiting on.
    *
    * A paused run has already closed its handle, so stopping it means
-   * rejoining it and cancelling that: facio's own cancel denies the open
+   * rejoining it and cancelling that: cofold's own cancel denies the open
    * request and ends the run, which is the one path that leaves no promise
    * nobody can settle.
    */
@@ -572,7 +572,7 @@ export function facioSession(
    *
    * `chat/turnStarted` is emitted here, before `run()` is called, because the
    * host has already dispatched that action and AHP requires the order
-   * turnStarted, then an opened part, then deltas. facio's own `run.started`
+   * turnStarted, then an opened part, then deltas. cofold's own `run.started`
    * therefore means nothing on the wire and is dropped in `mapping.ts`.
    *
    * `queuedMessageId` names the waiting message it came from; a client's
@@ -591,7 +591,7 @@ export function facioSession(
   ): { mapping: TurnMapping; values: Record<string, unknown> } | undefined => {
     if (closed || active !== undefined) return undefined;
     cancelRequested = false;
-    if (title === 'Facio session' && text !== '') {
+    if (title === 'Cofold session' && text !== '') {
       title = text.slice(0, 60);
       // Said, because a client that opened the session holds the old one.
       start.emit('session', { type: 'session/titleChanged', title });
@@ -755,7 +755,7 @@ export function facioSession(
   /**
    * Rejoin the run a restart left paused.
    *
-   * A paused facio run still holds the session's writer claim, so a new run
+   * A paused cofold run still holds the session's writer claim, so a new run
    * under this id would be refused `writer_busy`, and no answer could reach it
    * either: `resume()` is the only call that installs a command channel. The
    * run's own events are replayed through the same mapping a live turn uses,
@@ -764,7 +764,7 @@ export function facioSession(
    *
    * A conversation whose newest run already finished, or that the store has
    * never seen, is left alone: the next turn appends a new run under the same
-   * facio session, which is what continuing a finished conversation means.
+   * cofold session, which is what continuing a finished conversation means.
    */
   const reopen = async (): Promise<void> => {
     if (closed) return;
@@ -823,7 +823,7 @@ export function facioSession(
     activeMapping = mapping;
 
     /*
-     * What the run already wrote, in the order facio persisted it, before the
+     * What the run already wrote, in the order cofold persisted it, before the
      * live handle is read: the paused call and the request it waits on are
      * rebuilt by the events that carry them.
      */
@@ -887,10 +887,10 @@ export function facioSession(
     },
     agentId: () => sessionId,
     /*
-     * Where a fork and a rewind cut, in facio's own message ids.
+     * Where a fork and a rewind cut, in cofold's own message ids.
      *
      * A turn this process did not watch run has no entry: it was read back off
-     * a transcript, and facio names a run's span rather than a turn's, so the
+     * a transcript, and cofold names a run's span rather than a turn's, so the
      * point is not something this session can promise. Answering nothing is
      * what makes the host offer no cut at that turn rather than offer one that
      * fails when it is used.
@@ -947,7 +947,7 @@ export function facioSession(
     /**
      * Stop the running turn.
      *
-     * The cancel reaches facio's `RunHandle.cancel`, and the run's own
+     * The cancel reaches cofold's `RunHandle.cancel`, and the run's own
      * `run.finished` (a cancelled outcome) is what emits `chat/turnCancelled`
      * exactly once. This must not send one of its own, or a client sees two.
      */
@@ -962,7 +962,7 @@ export function facioSession(
     /**
      * Put a message into the running turn.
      *
-     * facio's own word for it is a steer: a message appended to the
+     * cofold's own word for it is a steer: a message appended to the
      * transcript before the next model step. Answers whether there was a turn
      * to steer, because a chat with nothing running has nothing to inject
      * into.
@@ -1070,7 +1070,7 @@ export function facioSession(
      * Answer a question the run is waiting on.
      *
      * A declined question is a deny rather than an empty answer, because
-     * facio's own validation refuses a form with nothing in it and the model
+     * cofold's own validation refuses a form with nothing in it and the model
      * is owed the reason either way.
      */
     answer: (requestId, accepted, answers) => {
@@ -1117,7 +1117,7 @@ export function facioSession(
      * way - for a call nobody is waiting on and for a client that does not
      * own it - because both are a client out of step and the host says which.
      *
-     * Nothing is emitted here. The result goes back into facio, which writes
+     * Nothing is emitted here. The result goes back into cofold, which writes
      * the tool result, and the run's own `tool.completed` reports the
      * completion to every client from that - the same path every other tool
      * call takes. A completion emitted here as well would be the same row
@@ -1130,7 +1130,7 @@ export function facioSession(
       /*
        * The client's word is the tool's result: its text when it worked and
        * its message when it did not. A failure is thrown rather than
-       * returned, which is what facio records as a failed `tool.completed`
+       * returned, which is what cofold records as a failed `tool.completed`
        * and what makes the model read the message as the reason.
        */
       if (result.ok) held.resolve(result.text);

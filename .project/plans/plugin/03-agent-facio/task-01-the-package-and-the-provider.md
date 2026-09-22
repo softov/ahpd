@@ -8,10 +8,10 @@ refs:
   - code://packages/sdk/src/types/agent.ts#L66-L140 - `Start`, what `create` is handed
   - code://packages/sdk/src/types/plugin.ts - `PluginHost` and `PluginContext`, what the entry is handed
   - code://packages/server/src/plugins.ts - the loader that installs this package by spec
-  - file:///github/facio/packages/agents/src/index.ts - `createAgent`, the harness this wraps
-  - file:///github/facio/packages/agents/src/types/agent.ts - `AgentOptions`, what a facio agent is built from
-  - file:///github/facio/packages/model-openai-compat/src/index.ts - `openaiCompat`, the model adapter the config selects
-  - file:///github/facio/packages/store-file/src/index.ts - `createFileStore`, the durable store
+  - file:///github/cofold/packages/agents/src/index.ts - `createAgent`, the harness this wraps
+  - file:///github/cofold/packages/agents/src/types/agent.ts - `AgentOptions`, what a facio agent is built from
+  - file:///github/cofold/packages/model-openai-compat/src/index.ts - `openaiCompat`, the model adapter the config selects
+  - file:///github/cofold/packages/store-file/src/index.ts - `createFileStore`, the durable store
   - code://test/plugin-load.test.ts - the manifest and peer-range shape a plugin package already has
 ---
 
@@ -57,5 +57,5 @@ Done 2026-09-20.
 The root `tsconfig.json` paths, `vitest.config.ts` alias and `package.json` `build` script name the package, and the root `devDependencies` carry the same three `link:` deps so a test under `test/` can import a facio type.
 `test/agent-facio.test.ts` covers the provider and the schema keys, a second registration's provider, the defaults agreeing with the schema, the model factory and the caller's adapter, the refusal when no model was chosen, and the store.
 Verified: `pnpm test` 739 passed over 49 files, `pnpm typecheck` green, `pnpm boundary` green with `@ahpd/agent-facio: 4 declared, none undeclared`, `pnpm build` builds four packages.
-Facio is linked rather than published: `/github/facio/packages/agents`, `model-openai-compat` and `store-file` are built with `node node_modules/typescript/bin/tsc -p` in the facio checkout, because `pnpm build` there cannot open its store under the sandbox; the ahpd installs that wrote the link symlinks and `pnpm-lock.yaml` did so with wider access for the same reason.
+Facio is linked rather than published: `/github/cofold/packages/agents`, `model-openai-compat` and `store-file` are built with `node node_modules/typescript/bin/tsc -p` in the facio checkout, because `pnpm build` there cannot open its store under the sandbox; the ahpd installs that wrote the link symlinks and `pnpm-lock.yaml` did so with wider access for the same reason.
 Departures from the plan: the package is `private: true` until facio publishes, since a `link:` dependency cannot be published; `create` throws saying the session arrives in task 02, so a client cannot mistake an unbuilt backend for a model that said nothing; the root `devDependencies` carry the facio links as well as the package's own, because the package-local links are not visible to a test file at the repository root.

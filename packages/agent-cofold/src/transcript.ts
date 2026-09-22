@@ -1,9 +1,9 @@
 /**
- * One facio conversation, rebuilt as the AHP turns a client reads.
+ * One cofold conversation, rebuilt as the AHP turns a client reads.
  *
  * `transcript(id)` is what makes a catalogue row openable and what a client
  * pages through before anything is started, so this is a read of the store and
- * nothing else: no model, no run and no session. facio keeps a conversation as
+ * nothing else: no model, no run and no session. cofold keeps a conversation as
  * `Message`s - a user message, then each assistant reply with its text, its
  * reasoning and its tool calls, and one tool message per result - while AHP
  * wants a turn per user message with every response part in the order it was
@@ -14,12 +14,12 @@
  * carry: a tool call's timing, which is in its `tool.started` and
  * `tool.completed` events, and the request a paused run is waiting on, which
  * `Store.requests` holds. Everything else comes from the messages themselves,
- * in the order facio appended them, because a transcript that reorders a tool
+ * in the order cofold appended them, because a transcript that reorders a tool
  * call and its answer is a conversation read wrong.
  */
 
-import { textOf } from '@facio/agents';
-import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@facio/agents';
+import { textOf } from '@cofold/agents';
+import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
 
 /**
@@ -54,7 +54,7 @@ interface Waiting {
 }
 
 /**
- * facio's token counts, in the protocol's spelling.
+ * cofold's token counts, in the protocol's spelling.
  *
  * `Turn.usage` is required and may be `undefined`, which is "not measured"
  * rather than "none", so a session with no run behind it answers `undefined`.
@@ -133,7 +133,7 @@ const callPartOf = (call: ToolCallPart, timing: Timing | undefined, waiting: Wai
 };
 
 /**
- * Close a call with the result facio recorded.
+ * Close a call with the result cofold recorded.
  *
  * The mutation is deliberate: the part was pushed into the turn while the call
  * was still open, and a result arriving later moves the same object a
@@ -163,7 +163,7 @@ interface Building {
 }
 
 /**
- * One conversation as turns, in the order facio wrote it.
+ * One conversation as turns, in the order cofold wrote it.
  *
  * The store is the only input, so a session read here is the same conversation
  * a resumed session appends to rather than a second rendering of it.
@@ -254,7 +254,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
 
   for (const message of messages) {
     /*
-     * A user message the person typed begins a turn, including one facio
+     * A user message the person typed begins a turn, including one cofold
      * appended as a steer part-way through a run: it is a thing somebody said,
      * and the reply that follows it is its answer.
      */

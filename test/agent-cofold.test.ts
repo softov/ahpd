@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import type { ModelAdapter } from '@facio/agents';
-import { facioAgent, modelOf, resourceOf, storeOf } from '../packages/agent-facio/src/index.js';
+import type { ModelAdapter } from '@cofold/agents';
+import { cofoldAgent, modelOf, resourceOf, storeOf } from '../packages/agent-cofold/src/index.js';
 
 /*
  * The backend's identity, before a session exists.
@@ -10,35 +10,35 @@ import { facioAgent, modelOf, resourceOf, storeOf } from '../packages/agent-faci
  * the store, which is the half a session is built on top of.
  */
 
-const properties = (agent: ReturnType<typeof facioAgent>): Record<string, unknown> =>
+const properties = (agent: ReturnType<typeof cofoldAgent>): Record<string, unknown> =>
   (agent.schema() as { properties: Record<string, unknown> }).properties;
 
-it('answers provider facio with the settings a session may carry', () => {
-  const agent = facioAgent({});
-  expect(agent.provider).toBe('facio');
-  expect(agent.displayName).toBe('Facio');
+it('answers provider cofold with the settings a session may carry', () => {
+  const agent = cofoldAgent({});
+  expect(agent.provider).toBe('cofold');
+  expect(agent.displayName).toBe('Cofold');
   // No key: a bearer token is a credential, and the protocol's path for one is
   // `authenticate` against the protected resource below, not session config.
   // The mode and the effort are the two controls a window draws, and the cases
-  // for what each one means are `agent-facio-modes.test.ts`.
+  // for what each one means are `agent-cofold-modes.test.ts`.
   expect(Object.keys(properties(agent))).toEqual(['model', 'baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
 });
 
 it('advertises the resource a client may lend a token for', () => {
-  const agent = facioAgent({ baseUrl: 'https://api.deepseek.com/v1' });
+  const agent = cofoldAgent({ baseUrl: 'https://api.deepseek.com/v1' });
   expect(agent.protectedResources).toEqual([
-    { resource: 'https://api.deepseek.com', resource_name: 'Facio', required: false },
+    { resource: 'https://api.deepseek.com', resource_name: 'Cofold', required: false },
   ]);
 });
 
 it('names the resource after the endpoint only when that is an https URL', () => {
   expect(resourceOf({ baseUrl: 'https://api.deepseek.com/v1' })).toBe('https://api.deepseek.com');
-  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBe('https://ahpd.dev/agent-facio');
+  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBe('https://ahpd.dev/agent-cofold');
   expect(resourceOf({ resource: 'https://models.example' })).toBe('https://models.example');
 });
 
 it('defaults name only keys the schema declares', () => {
-  const agent = facioAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' });
+  const agent = cofoldAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' });
   expect(agent.defaults()).toEqual({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' });
   for (const key of Object.keys(agent.defaults())) {
     expect(properties(agent)).toHaveProperty(key);
@@ -46,15 +46,15 @@ it('defaults name only keys the schema declares', () => {
 });
 
 it('gives a second registration its own provider', () => {
-  expect(facioAgent({ provider: 'other', displayName: 'Other' })).toMatchObject({ provider: 'other', displayName: 'Other' });
+  expect(cofoldAgent({ provider: 'other', displayName: 'Other' })).toMatchObject({ provider: 'other', displayName: 'Other' });
 });
 
 it('offers the configured model and no commands', async () => {
   // An adapter, so the case is about the configured model standing in rather
   // than about whatever endpoint this machine happens to have running; the
-  // catalogue an endpoint serves is `agent-facio-models.test.ts`.
+  // catalogue an endpoint serves is `agent-cofold-models.test.ts`.
   const stub = { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
-  const offered = await facioAgent({ adapter: stub, model: 'deepseek-chat' }).probe?.();
+  const offered = await cofoldAgent({ adapter: stub, model: 'deepseek-chat' }).probe?.();
   expect(offered?.models).toEqual([{ id: 'deepseek-chat', name: 'deepseek-chat' }]);
   expect(offered?.commands).toEqual([]);
 });
@@ -93,7 +93,7 @@ it('sends the token a client lent, and the daemon key when nobody did', async ()
 
 it('refuses a model nobody chose and no default covers', () => {
   // An explicit empty harness, so the case does not depend on whether the
-  // machine running the suite has a facio configuration of its own.
+  // machine running the suite has a cofold configuration of its own.
   expect(() => modelOf({}, {}, {}, { providers: [], path: 'test' })).toThrow(/no model|names none/);
 });
 

@@ -14,13 +14,13 @@
  * a client sends.
  */
 
-import type { ModelAdapter, Policy } from '@facio/agents';
+import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { PluginHost } from '@ahpd/sdk';
-import { facioAgent } from './agent.js';
-import type { FacioOptions } from './agent.js';
+import { cofoldAgent } from './agent.js';
+import type { CofoldOptions } from './agent.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
-export const name = '@ahpd/agent-facio';
+export const name = '@ahpd/agent-cofold';
 
 /**
  * What a listing prints for this package.
@@ -29,7 +29,7 @@ export const name = '@ahpd/agent-facio';
  * which must not import the module to read it; this export is for an embedder
  * that imports the entry directly.
  */
-export const title = 'Facio';
+export const title = 'Cofold';
 
 /** One non-empty string, or nothing for a value this package cannot use. */
 const str = (value: unknown): string | undefined =>
@@ -38,14 +38,14 @@ const str = (value: unknown): string | undefined =>
 /**
  * The package's own options, out of whatever the configuration named.
  *
- * Every key is taken only when it has the type `facioAgent` declared for it,
+ * Every key is taken only when it has the type `cofoldAgent` declared for it,
  * so a value the configuration misspelled is dropped rather than thrown over:
  * `apply` must not fail over an option it does not understand. A key this
- * does not name is ignored the same way, which leaves any option facio adds
- * later to facio's own handling instead of this file's.
+ * does not name is ignored the same way, which leaves any option cofold adds
+ * later to cofold's own handling instead of this file's.
  */
-const optionsOf = (values: Record<string, unknown>): FacioOptions => {
-  const options: FacioOptions = {};
+const optionsOf = (values: Record<string, unknown>): CofoldOptions => {
+  const options: CofoldOptions = {};
 
   const provider = str(values.provider);
   if (provider !== undefined) options.provider = provider;
@@ -76,7 +76,7 @@ const optionsOf = (values: Record<string, unknown>): FacioOptions => {
    * The two seams an embedder has and a configuration does not: a model
    * adapter to use instead of the OpenAI-compatible one, and the run-level
    * policy an approval comes from. Both are checked only for being objects,
-   * because the contracts are structural and facio is what will use them.
+   * because the contracts are structural and cofold is what will use them.
    */
   if (typeof values.adapter === 'object' && values.adapter !== null) {
     options.adapter = values.adapter as ModelAdapter;
@@ -89,12 +89,12 @@ const optionsOf = (values: Record<string, unknown>): FacioOptions => {
 };
 
 /**
- * Register provider `facio` from the plugin's own options.
+ * Register provider `cofold` from the plugin's own options.
  *
  * The provider is per registration rather than per package, so two specs with
  * two providers and two stores are two backends that do not collide, which is
  * how one package serves several endpoints at once.
  */
 export function apply(host: PluginHost, options: Record<string, unknown>): void {
-  host.registerAgent(facioAgent(optionsOf(options)));
+  host.registerAgent(cofoldAgent(optionsOf(options)));
 }

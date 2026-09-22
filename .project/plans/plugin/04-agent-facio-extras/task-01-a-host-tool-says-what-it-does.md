@@ -5,11 +5,11 @@ depends: []
 layer: packages/sdk
 refs:
   - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, which gains `effects`
-  - code://packages/agent-facio/src/tools.ts - `facioTool`, which passes it to `createTool`
-  - file:///github/facio/packages/agents/src/types/tool.ts - `ToolEffects`: `reads`, `writes`, `network`, `destructive`
-  - file:///github/facio/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
+  - code://packages/agent-cofold/src/tools.ts - `facioTool`, which passes it to `createTool`
+  - file:///github/cofold/packages/agents/src/types/tool.ts - `ToolEffects`: `reads`, `writes`, `network`, `destructive`
+  - file:///github/cofold/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
   - code://.project/decisions/host-tool-declares-what-it-does.md - why four flags and not one boolean
-  - code://test/agent-facio-approval.test.ts - the harness the new case follows
+  - code://test/agent-cofold-approval.test.ts - the harness the new case follows
 ---
 
 ## Objective
@@ -19,8 +19,8 @@ refs:
 ## Files
 
 - `UPDATE: packages/sdk/src/types/host.ts` - `effects?: { reads?: boolean; writes?: boolean; network?: boolean; destructive?: boolean }` on `HostTool`, with a comment saying what a policy reads it for.
-- `UPDATE: packages/agent-facio/src/tools.ts` - pass `effects` through when wrapping a bound tool.
-- `UPDATE: test/agent-facio-approval.test.ts` - a destructive host tool gated by the default policy.
+- `UPDATE: packages/agent-cofold/src/tools.ts` - pass `effects` through when wrapping a bound tool.
+- `UPDATE: test/agent-cofold-approval.test.ts` - a destructive host tool gated by the default policy.
 - `UPDATE: docs/PLUGINS.md` - the field and what it makes happen.
 
 ## Steps
@@ -40,8 +40,8 @@ refs:
 ## Resume
 
 Done 2026-09-20.
-`ToolEffects` is a new interface in `types/agent.ts`, `HostTool` and `BoundTool` both carry an optional `effects`, `host.ts`'s `boundTools` passes a host tool's effects through to the backend, and `agent-facio`'s `facioTool` hands them to `createTool`, so facio's own default policy asks about a destructive tool.
-`test/agent-facio-approval.test.ts` gained two cases: a destructive host tool pauses with no `policy` configured and has not run, and a tool that says nothing runs.
+`ToolEffects` is a new interface in `types/agent.ts`, `HostTool` and `BoundTool` both carry an optional `effects`, `host.ts`'s `boundTools` passes a host tool's effects through to the backend, and `agent-cofold`'s `facioTool` hands them to `createTool`, so facio's own default policy asks about a destructive tool.
+`test/agent-cofold-approval.test.ts` gained two cases: a destructive host tool pauses with no `policy` configured and has not run, and a tool that says nothing runs.
 `docs/PLUGINS.md` has a "What a tool says about itself" section with the four flags and the example.
 Verified: `pnpm test` facio files 39 passed, `pnpm typecheck` green, `pnpm boundary` green, `pnpm build` four packages.
 Departure from the plan: `ToolEffects` was defined in `types/agent.ts` rather than in `types/host.ts`, because `BoundTool` is already there and `host.ts` already imports from it, so the field is added in the direction the dependency already runs.

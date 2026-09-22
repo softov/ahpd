@@ -2,15 +2,15 @@
 title: The model picker lists what the endpoint serves, with the configured model as the default
 status: done
 depends: []
-layer: packages/agent-facio
+layer: packages/agent-cofold
 refs:
-  - code://packages/agent-facio/src/agent.ts - `connectionOf`, `listModels`, the catalogue cache and `probe`
-  - code://packages/agent-facio/src/session.ts - `models()`, which answers the same list
-  - code://packages/agent-facio/src/config.ts#L111-L115 - `splitModel`, the rule a listed id satisfies
+  - code://packages/agent-cofold/src/agent.ts - `connectionOf`, `listModels`, the catalogue cache and `probe`
+  - code://packages/agent-cofold/src/session.ts - `models()`, which answers the same list
+  - code://packages/agent-cofold/src/config.ts#L111-L115 - `splitModel`, the rule a listed id satisfies
   - code://packages/agent-claude/src/probe.ts#L50-L120 - the backend whose probe already offers every model
   - https://openrouter.ai/docs/api-reference/list-available-models - `GET /api/v1/models` and its `id`/`name`
   - code://.project/decisions/listed-models-are-provider-references.md - why a listed id carries the provider prefix
-  - code://test/agent-facio-models.test.ts - the cases
+  - code://test/agent-cofold-models.test.ts - the cases
 ---
 
 ## Objective
@@ -20,10 +20,10 @@ When the endpoint cannot be asked, the offered list is the configured model alon
 
 ## Files
 
-- `UPDATE: packages/agent-facio/src/agent.ts` - `connectionOf` extracted from `modelOf`, `listModels`, the per-endpoint catalogue cache, `probe` reading it, and the catalogue handed to `facioSession`.
-- `UPDATE: packages/agent-facio/src/session.ts` - `models()` answering the catalogue for the session's connection, falling back to the configured id.
+- `UPDATE: packages/agent-cofold/src/agent.ts` - `connectionOf` extracted from `modelOf`, `listModels`, the per-endpoint catalogue cache, `probe` reading it, and the catalogue handed to `facioSession`.
+- `UPDATE: packages/agent-cofold/src/session.ts` - `models()` answering the catalogue for the session's connection, falling back to the configured id.
 - `UPDATE: docs/PLUGINS.md` - the list is the endpoint's; the configured `model` is the default.
-- `CREATE: test/agent-facio-models.test.ts` - the cases below.
+- `CREATE: test/agent-cofold-models.test.ts` - the cases below.
 
 ## Steps
 
@@ -36,14 +36,14 @@ When the endpoint cannot be asked, the offered list is the configured model alon
 
 ## Validation
 
-- `test/agent-facio-models.test.ts`:
+- `test/agent-cofold-models.test.ts`:
   - a stubbed `GET /models` with three models offers all three, each `<provider>/<id>`, in the endpoint's order, and the request carried the key.
   - a configured `model` the list does not carry is offered first, and one it does carry is not repeated.
   - an endpoint that refuses, times out or answers a wrong shape offers the configured model alone.
   - every offered id resolves through `modelOf` to that provider's endpoint and key.
   - an endpoint named only by `options.baseUrl` offers ids under this backend's provider id and they resolve to that endpoint.
   - an `adapter` is never asked over the network.
-- `test/agent-facio.test.ts`, `test/agent-facio-config.test.ts` and `test/agent-facio-turn.test.ts` still pass.
+- `test/agent-cofold.test.ts`, `test/agent-cofold-config.test.ts` and `test/agent-cofold-turn.test.ts` still pass.
 - `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.
 
 ## Resume
@@ -53,7 +53,7 @@ Done 2026-09-20.
 `listModels` reads `GET <baseUrl>/models` with the key and headers under `AbortSignal.timeout(5000)`, offering each model as `<provider>/<id>` with its `name` or its id, and answers `[]` for a refusal, a wrong status or a shape that is not a catalogue.
 The backend caches the list by endpoint and key, never caching an empty answer, and `probe` offers it with the configured model first when the list does not carry it; a caller that passed an `adapter` is never asked over the network.
 `facioSession` takes the same cache and answers `models()` from it for the endpoint and key in force, falling back to the configured id until the endpoint has answered.
-`test/agent-facio-models.test.ts` is nine cases: the catalogue with the key sent, the configured default first and not repeated, the configured model alone when the endpoint refuses (and the endpoint asked again rather than remembered as empty), the same for a bad status or shape, every offered id resolving through `modelOf` to that provider's endpoint and key, an endpoint no harness entry owns under this backend's own prefix, no call at all with an `adapter`, a session answering the catalogue, and the root channel advertising all of it with `provider` on each row.
+`test/agent-cofold-models.test.ts` is nine cases: the catalogue with the key sent, the configured default first and not repeated, the configured model alone when the endpoint refuses (and the endpoint asked again rather than remembered as empty), the same for a bad status or shape, every offered id resolving through `modelOf` to that provider's endpoint and key, an endpoint no harness entry owns under this backend's own prefix, no call at all with an `adapter`, a session answering the catalogue, and the root channel advertising all of it with `provider` on each row.
 Verified: the nine facio test files 68 passed, the full suite 799 passed, `pnpm typecheck` green, `pnpm boundary` green.
 Departure from the plan: one real bug was found by the tests rather than by reading - `connectionOf` first returned the whole reference as the model id when the prefix was the backend's own, which would have sent `facio/qwen/qwen3-8b` to the endpoint verbatim; the model id is the part after the first slash whenever there is a slash at all.
-Also updated beyond the task's files: `test/agent-facio.test.ts`'s probe case now passes an `adapter`, because it asserted the single-row fallback while reaching for whatever endpoint the machine running the suite happened to have.
+Also updated beyond the task's files: `test/agent-cofold.test.ts`'s probe case now passes an `adapter`, because it asserted the single-row fallback while reaching for whatever endpoint the machine running the suite happened to have.

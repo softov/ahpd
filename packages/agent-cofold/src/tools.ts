@@ -1,46 +1,46 @@
 /**
- * The host's tools as facio tools, and a call's life as AHP actions.
+ * The host's tools as cofold tools, and a call's life as AHP actions.
  *
  * `Start.tools` are `BoundTool`s: a definition to offer the model and a
- * function to run when it calls. facio wants a `Tool`, which is the same
+ * function to run when it calls. cofold wants a `Tool`, which is the same
  * thing with its effects resolved and its input schema checked, so this file
  * wraps one into the other. A tool call is reported to a client with its own
  * three actions, and those builders live here beside the wrapping because
  * both sides are about one tool.
  */
 
-import { createTool } from '@facio/agents';
-import type { Tool } from '@facio/agents';
+import { createTool } from '@cofold/agents';
+import type { Tool } from '@cofold/agents';
 import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /**
- * facio's own input-schema type, read off its factory.
+ * cofold's own input-schema type, read off its factory.
  *
- * The type belongs to `@facio/sdk`, which this package does not depend on
+ * The type belongs to `@cofold/sdk`, which this package does not depend on
  * directly, so it is named here by query rather than by a new import that
  * boundary would refuse.
  */
-type FacioInput = Parameters<typeof createTool>[0]['input'];
+type CofoldInput = Parameters<typeof createTool>[0]['input'];
 
 /** The host offered this tool's schema, or an empty object for one that has none. */
-const inputOf = (bound: BoundTool): FacioInput => {
+const inputOf = (bound: BoundTool): CofoldInput => {
   const schema = bound.definition.inputSchema;
   if (schema === undefined) return { type: 'object', properties: {} };
   /*
    * A cast, because the protocol's `inputSchema` is a loose `{ properties?:
-   * Record<string, object> }` while facio's `JsonSchema` checks each property
+   * Record<string, object> }` while cofold's `JsonSchema` checks each property
    * it will actually validate. Every host tool this host contributes is a
-   * plain object schema; anything richer is refused by facio's own
+   * plain object schema; anything richer is refused by cofold's own
    * `assertSupportedSchema` when the tool is wrapped, rather than silently
    * accepted here.
    */
-  return schema as unknown as FacioInput;
+  return schema as unknown as CofoldInput;
 };
 
 /**
  * A call a client announced it can run, on its way out to that client.
  *
- * The session holds one of these from the moment facio tries to execute an
+ * The session holds one of these from the moment cofold tries to execute an
  * owner-bound tool until the owning client answers or goes away. The fields
  * are what `completeToolCall` and `clientGone` need: the owner tells one
  * client's call from another's, and the name is what a call failed by a lost
@@ -71,11 +71,11 @@ export interface ClientToolRelay {
 }
 
 /**
- * One bound tool as facio calls it.
+ * One bound tool as cofold calls it.
  *
  * The result is handed back as the string `BoundTool.run` returned, because
  * that is the one shape every model reads. A tool that throws is answered
- * with the message rather than allowed to end the run: facio catches it into
+ * with the message rather than allowed to end the run: cofold catches it into
  * a failed `tool.completed`, and the model hears why.
  *
  * A tool a client runs carries an `owner` and no `run`. Its `execute` is the
@@ -83,18 +83,18 @@ export interface ClientToolRelay {
  * client that provides it, and returns the promise that client's answer
  * settles. Nothing here executes it.
  */
-export const facioTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Record<string, unknown>> => createTool<Record<string, unknown>>({
+export const cofoldTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Record<string, unknown>> => createTool<Record<string, unknown>>({
   name: bound.definition.name,
   description: bound.definition.description ?? bound.definition.title ?? bound.definition.name,
   input: inputOf(bound),
-  // What the host says running it does, so facio's own default policy asks a
+  // What the host says running it does, so cofold's own default policy asks a
   // person about a destructive tool rather than running it unchecked. A tool
-  // that says nothing keeps facio's defaults.
+  // that says nothing keeps cofold's defaults.
   ...(bound.effects !== undefined ? { effects: bound.effects } : {}),
   execute: async (input, ctx) => {
     if (bound.owner !== undefined) {
       if (relay === undefined) {
-        // No session to wait on, so this call could only hang. `facioTools`
+        // No session to wait on, so this call could only hang. `cofoldTools`
         // leaves such a tool out rather than offering it, and reaching here
         // means a caller wrapped one by hand.
         throw new Error(`${bound.definition.name} is ${bound.owner}'s to run, and no session is here to wait on it`);
@@ -123,10 +123,10 @@ export const facioTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Recor
  * because the model calls it, spends a step and reports a failure that never
  * had a chance to happen.
  */
-export const facioTools = (tools: BoundTool[], relay?: ClientToolRelay): Tool<Record<string, unknown>>[] =>
+export const cofoldTools = (tools: BoundTool[], relay?: ClientToolRelay): Tool<Record<string, unknown>>[] =>
   tools
     .filter((bound) => bound.run !== undefined || (bound.owner !== undefined && relay !== undefined))
-    .map((bound) => facioTool(bound, relay));
+    .map((bound) => cofoldTool(bound, relay));
 
 /*
  * How a call a client runs is reported, read from the protocol rather than
@@ -152,7 +152,7 @@ export const facioTools = (tools: BoundTool[], relay?: ClientToolRelay): Tool<Re
  *
  * The call is closed by the same `tool.completed` every other tool call
  * takes. The client dispatches `chat/toolCallComplete`, the host routes it
- * to the session's `completeToolCall`, the waiting facio tool resolves with
+ * to the session's `completeToolCall`, the waiting cofold tool resolves with
  * the client's text, and the mapping emits the completion action from that.
  * The host deliberately does not echo the client's action, because the row
  * would otherwise be finished twice.

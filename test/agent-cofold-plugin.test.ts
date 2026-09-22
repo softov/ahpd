@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { createFakeModel } from '@facio/agents/testing';
-import { createFileStore } from '@facio/store-file';
-import type { Policy } from '@facio/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import { createFileStore } from '@cofold/store-file';
+import type { Policy } from '@cofold/agents';
 import { createHost } from '../packages/sdk/src/host.js';
 import { describePlugin, loadPlugins } from '../packages/server/src/plugins.js';
 import { sdkVersion } from '../packages/sdk/src/version.js';
@@ -20,7 +20,7 @@ import type { Peer } from '../packages/sdk/src/types/rpc.js';
  * Every case here goes through the real loader and the real host. The model is
  * a script and the store is in memory or under a temporary directory, because
  * a test calls no endpoint; what is under test is that the manifest resolves
- * the module, that `apply` contributes provider `facio` from its own options,
+ * the module, that `apply` contributes provider `cofold` from its own options,
  * that a turn is served exactly as a literal backend's is, and that a resumed
  * paused run reaches a subscribing client once.
  *
@@ -31,7 +31,7 @@ import type { Peer } from '../packages/sdk/src/types/rpc.js';
  */
 
 const REPO = join(import.meta.dirname, '..');
-const SOURCE = './packages/agent-facio/src/index.ts';
+const SOURCE = './packages/agent-cofold/src/index.ts';
 
 /** A temporary directory removed after the one test that made it. */
 let loose: string | undefined;
@@ -75,8 +75,8 @@ const ended = (p: ReturnType<typeof peer>, chatUri: string): boolean =>
 
 /** One backend the daemon would have had anyway, so the plugin's is provably extra. */
 const base = (): HostOptions => ({
-  path: '/tmp/plugin-facio',
-  agents: [{ ...echo({ path: '/tmp/plugin-facio', pace: 0 }), provider: 'base', displayName: 'Base backend' }],
+  path: '/tmp/plugin-cofold',
+  agents: [{ ...echo({ path: '/tmp/plugin-cofold', pace: 0 }), provider: 'base', displayName: 'Base backend' }],
 });
 
 const load = (specs: PluginSpec[], over: Partial<HostOptions> = {}) =>
@@ -120,17 +120,17 @@ it('loads the package from its source file and serves a turn through the stub mo
 
   expect(problems).toEqual([]);
   expect(loaded).toHaveLength(1);
-  expect(loaded[0]?.name).toBe('@ahpd/agent-facio');
+  expect(loaded[0]?.name).toBe('@ahpd/agent-cofold');
   // The module exports no title, so this is the manifest's `ahpd.title`.
-  expect(loaded[0]?.title).toBe('Facio');
+  expect(loaded[0]?.title).toBe('Cofold');
 
   const host = createHost(options);
   const said = peer();
   const client = host.accept(said);
   const ready = await initialize(client);
-  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'facio']);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'cofold']);
 
-  const { chatUri } = await open(client, 'facio', 'plugin');
+  const { chatUri } = await open(client, 'cofold', 'plugin');
   begin(client, chatUri, 't1', 'hello there');
   await until(() => ended(said, chatUri));
   expect(types(said, chatUri).at(-1)).toBe('chat/turnComplete');
@@ -143,33 +143,33 @@ it('loads the package from its source file and serves a turn through the stub mo
 });
 
 it('lists the package manifest, and its title, without importing the entry', async () => {
-  const row = await describePlugin('./packages/agent-facio', { configDir: REPO, cwd: REPO });
+  const row = await describePlugin('./packages/agent-cofold', { configDir: REPO, cwd: REPO });
 
   expect(row.state).toBe('ready');
-  expect(row.name).toBe('@ahpd/agent-facio');
-  expect(row.title).toBe('Facio');
+  expect(row.name).toBe('@ahpd/agent-cofold');
+  expect(row.title).toBe('Cofold');
 });
 
 it('contributes two backends for two specs that name different providers', async () => {
   const a = createFakeModel({ script: [{ text: 'answered by a' }], stream: true });
   const b = createFakeModel({ script: [{ text: 'answered by b' }], stream: true });
   const { options, loaded, problems } = await load([
-    { name: SOURCE, options: { provider: 'facio-a', displayName: 'Facio A', adapter: a, memory: true } },
-    { name: SOURCE, options: { provider: 'facio-b', displayName: 'Facio B', adapter: b, memory: true } },
+    { name: SOURCE, options: { provider: 'cofold-a', displayName: 'Cofold A', adapter: a, memory: true } },
+    { name: SOURCE, options: { provider: 'cofold-b', displayName: 'Cofold B', adapter: b, memory: true } },
   ]);
 
   expect(problems).toEqual([]);
   expect(loaded).toHaveLength(2);
-  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-facio', '@ahpd/agent-facio']);
+  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-cofold', '@ahpd/agent-cofold']);
 
   const host = createHost(options);
   const p = peer();
   const client = host.accept(p);
   const ready = await initialize(client);
-  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'facio-a', 'facio-b']);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'cofold-a', 'cofold-b']);
 
-  const first = await open(client, 'facio-a', 'a');
-  const second = await open(client, 'facio-b', 'b');
+  const first = await open(client, 'cofold-a', 'a');
+  const second = await open(client, 'cofold-b', 'b');
   begin(client, first.chatUri, 't1', 'say a');
   await until(() => ended(p, first.chatUri));
   begin(client, second.chatUri, 't1', 'say b');
@@ -191,13 +191,13 @@ it('refuses the package when its @ahpd/sdk peer range is not satisfied', async (
    * before `import()`, so the entry it points at is never reached and only the
    * manifest has to be real. The copy is removed after the test.
    */
-  loose = mkdtempSync(join(tmpdir(), 'ahpd-facio-peer-'));
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-cofold-peer-'));
   writeFileSync(join(loose, 'package.json'), JSON.stringify({
-    name: '@ahpd/agent-facio',
+    name: '@ahpd/agent-cofold',
     version: '0.0.1',
     type: 'module',
     peerDependencies: { '@ahpd/sdk': '^9.9.9' },
-    ahpd: { entry: './index.js', title: 'Facio' },
+    ahpd: { entry: './index.js', title: 'Cofold' },
   }, null, 2));
   writeFileSync(join(loose, 'index.js'), 'export function apply() {}\n');
 
@@ -225,8 +225,8 @@ const pausedRun = async (root: string, sessionId: string): Promise<void> => {
 };
 
 it('resumes a paused run and shows the open turn once to a client that subscribes after', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'ahpd-facio-resume-'));
-  const where = mkdtempSync(join(tmpdir(), 'ahpd-facio-work-'));
+  const root = mkdtempSync(join(tmpdir(), 'ahpd-cofold-resume-'));
+  const where = mkdtempSync(join(tmpdir(), 'ahpd-cofold-work-'));
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'write' ? { behavior: 'ask' } : { behavior: 'allow' }),
   };
@@ -252,7 +252,7 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   const before = createHost(first.options);
   const clientA = before.accept(peer());
   await initialize(clientA);
-  const opened = await open(clientA, 'facio', 'one');
+  const opened = await open(clientA, 'cofold', 'one');
   begin(clientA, opened.chatUri, 't1', 'hi');
   await pausedRun(root, 'one');
   /*
@@ -276,13 +276,13 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
    * a row after the provider that owns it, and that is the channel a client
    * browses and continues it on.
    */
-  const session = await client.handle({ method: 'subscribe', params: { channel: 'facio:/one' } }) as {
+  const session = await client.handle({ method: 'subscribe', params: { channel: 'cofold:/one' } }) as {
     snapshot: { state: { defaultChat: string } };
   };
   const chatUri = session.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   begin(client, chatUri, 't2', 'carry on');
-  await until(() => actions(p, 'facio:/one').some((e) => e.action.type === 'session/inputNeededSet'));
+  await until(() => actions(p, 'cofold:/one').some((e) => e.action.type === 'session/inputNeededSet'));
 
   /*
    * A client that arrives after the resume reads the chat snapshot the way a

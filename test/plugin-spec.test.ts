@@ -13,7 +13,7 @@ import { asSpec } from '../packages/server/src/config.js';
 
 describe('asSpec', () => {
   it('passes a non-empty string through unchanged', () => {
-    expect(asSpec('@ahpd/agent-facio')).toBe('@ahpd/agent-facio');
+    expect(asSpec('@ahpd/agent-cofold')).toBe('@ahpd/agent-cofold');
     expect(asSpec('./some/plugin.js')).toBe('./some/plugin.js');
   });
 

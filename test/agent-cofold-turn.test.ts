@@ -2,24 +2,24 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createFakeModel } from '@facio/agents/testing';
-import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@facio/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { createHost } from '../packages/sdk/src/host.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
-import { facioAgent, facioTools, sessionIdOf } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent, cofoldTools, sessionIdOf } from '../packages/agent-cofold/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import type { BoundTool } from '../packages/sdk/src/types/agent.js';
 import type { HostTool } from '../packages/sdk/src/types/host.js';
 
 /*
- * One facio turn, as a client drives it.
+ * One cofold turn, as a client drives it.
  *
  * No network and no real model: the adapter is a script, the store is in
  * memory, and the host is the same `createHost` the daemon uses. What this
- * checks is that a facio `RunEvent` reaches the client as the `chat/*`
+ * checks is that a cofold `RunEvent` reaches the client as the `chat/*`
  * action it means, in the order AHP requires, and that the two actions a
- * client sends back - cancel and a host tool's call - reach facio.
+ * client sends back - cancel and a host tool's call - reach cofold.
  */
 
 function peer(): Peer & { notes: { method: string; params: unknown }[] } {
@@ -52,12 +52,12 @@ const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
 const types = (p: ReturnType<typeof peer>, channel: string): string[] =>
   actions(p, channel).map((e) => String(e.action.type));
 
-/** A connected client with one facio session, watching both its channels. */
+/** A connected client with one cofold session, watching both its channels. */
 async function talking(model: ModelAdapter, tools: HostTool[] = []) {
-  const path = mkdtempSync(join(tmpdir(), 'ahpd-facio-'));
+  const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
   const host = createHost({
     path,
-    agents: [facioAgent({ adapter: model, memory: true })],
+    agents: [cofoldAgent({ adapter: model, memory: true })],
     ...(tools.length > 0 ? { tools } : {}),
   });
   const p = peer();
@@ -68,7 +68,7 @@ async function talking(model: ModelAdapter, tools: HostTool[] = []) {
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'facio' } });
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri };
@@ -114,7 +114,7 @@ it('keeps a delta a plain action and starts no second turn from it', async () =>
   const deltas = actions(p, chatUri).filter((e) => e.action.type === 'chat/delta');
   expect(deltas.length).toBeGreaterThan(0);
   for (const one of deltas) {
-    // The facio event and its seq are not on the wire; the action is AHP's.
+    // The cofold event and its seq are not on the wire; the action is AHP's.
     expect(Object.keys(one.action).sort()).toEqual(['content', 'partId', 'turnId', 'type']);
   }
   expect(types(p, chatUri).filter((type) => type === 'chat/turnStarted')).toHaveLength(1);
@@ -234,7 +234,7 @@ it('reports a host tool call as three actions and gives its result back to the m
   expect(JSON.stringify(second?.messages)).toContain('found x');
 });
 
-it('keeps two turns in one facio session and finishes both', async () => {
+it('keeps two turns in one cofold session and finishes both', async () => {
   const model = createFakeModel({ script: [{ text: 'noted' }, { text: 'again' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'remember the number 41');
@@ -294,7 +294,7 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
   expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
-it('names the facio session id from the AHP URI in one place', () => {
+it('names the cofold session id from the AHP URI in one place', () => {
   expect(sessionIdOf('ahp-session:/one')).toBe('one');
   expect(sessionIdOf('ahp-session:/a/b')).toBe('a/b');
 });
@@ -328,5 +328,5 @@ it('does not offer a tool a client runs, because nothing here can answer it', ()
   const definition: BoundTool['definition'] = { name: 'lookup', description: 'Looks a word up.', inputSchema: { type: 'object', properties: {} } };
   const mine: BoundTool = { definition, run: () => 'mine' };
   const theirs: BoundTool = { definition: { ...definition, name: 'theirs' }, owner: 'client-1' };
-  expect(facioTools([mine, theirs]).map((one) => one.name)).toEqual(['lookup']);
+  expect(cofoldTools([mine, theirs]).map((one) => one.name)).toEqual(['lookup']);
 });

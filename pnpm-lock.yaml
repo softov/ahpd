@@ -17,15 +17,15 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.278
         version: 0.3.278(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(zod@4.5.4)
-      '@facio/agents':
-        specifier: link:../facio/packages/agents
-        version: link:../facio/packages/agents
-      '@facio/model-openai-compat':
-        specifier: link:../facio/packages/model-openai-compat
-        version: link:../facio/packages/model-openai-compat
-      '@facio/store-file':
-        specifier: link:../facio/packages/store-file
-        version: link:../facio/packages/store-file
+      '@cofold/agents':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@cofold/model-openai-compat':
+        specifier: ^0.1.0
+        version: 0.1.0(@cofold/agents@0.1.0)
+      '@cofold/store-file':
+        specifier: ^0.1.0
+        version: 0.1.0(@cofold/agents@0.1.0)
       '@microsoft/agent-host-protocol':
         specifier: ^0.9.0
         version: 0.9.0
@@ -67,17 +67,17 @@ importers:
         specifier: ^0.9.0
         version: 0.9.0
 
-  packages/agent-facio:
+  packages/agent-cofold:
     dependencies:
-      '@facio/agents':
-        specifier: link:../../../facio/packages/agents
-        version: link:../../../facio/packages/agents
-      '@facio/model-openai-compat':
-        specifier: link:../../../facio/packages/model-openai-compat
-        version: link:../../../facio/packages/model-openai-compat
-      '@facio/store-file':
-        specifier: link:../../../facio/packages/store-file
-        version: link:../../../facio/packages/store-file
+      '@cofold/agents':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@cofold/model-openai-compat':
+        specifier: ^0.1.0
+        version: 0.1.0(@cofold/agents@0.1.0)
+      '@cofold/store-file':
+        specifier: ^0.1.0
+        version: 0.1.0(@cofold/agents@0.1.0)
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
@@ -174,6 +174,26 @@ packages:
   '@babel/runtime@7.29.7':
     resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
+
+  '@cofold/agents@0.1.0':
+    resolution: {integrity: sha512-oQFDszU9nDdGGQ7LqU5al3qp7d1UUsXfVFqJGXEQBDo3ODkBhztKLvhVYQ7QC+DjVkszuJKKNr8E1iPxSnGaTg==}
+    engines: {node: '>=22'}
+
+  '@cofold/model-openai-compat@0.1.0':
+    resolution: {integrity: sha512-67JrA07Wi11aizt0UNusFcjGqRrotkQqAgB5f4XZ03Mnw0kt0UszYsMwwCz3thh2oZM+9zTdxNQZMuP8O4kAkg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@cofold/agents': 0.1.0
+
+  '@cofold/sdk@0.2.0':
+    resolution: {integrity: sha512-+BJXliKbdRZB4Yt5jydQK/004tPmpiEXwwRvrTjn5wste4ZiJYGuA1kArg18C7HQWiM+zVPB23zhWtKEVySWKg==}
+    engines: {node: '>=22'}
+
+  '@cofold/store-file@0.1.0':
+    resolution: {integrity: sha512-1qn8JeIRjCtrTZRzGkqqo7BYg1WY9V3G7Q4RiumhyfG+4/NPwfM+56Bd+f0oCAlURrGP1p/voEuScGHVG1GHcw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      '@cofold/agents': 0.1.0
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1189,6 +1209,20 @@ snapshots:
       zod: 4.5.4
 
   '@babel/runtime@7.29.7': {}
+
+  '@cofold/agents@0.1.0':
+    dependencies:
+      '@cofold/sdk': 0.2.0
+
+  '@cofold/model-openai-compat@0.1.0(@cofold/agents@0.1.0)':
+    dependencies:
+      '@cofold/agents': 0.1.0
+
+  '@cofold/sdk@0.2.0': {}
+
+  '@cofold/store-file@0.1.0(@cofold/agents@0.1.0)':
+    dependencies:
+      '@cofold/agents': 0.1.0
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true

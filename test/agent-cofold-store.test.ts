@@ -2,12 +2,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { textOf } from '@facio/agents';
-import { createFakeModel } from '@facio/agents/testing';
-import { createFileStore } from '@facio/store-file';
-import type { Message, ModelAdapter, Policy } from '@facio/agents';
+import { textOf } from '@cofold/agents';
+import { createFakeModel } from '@cofold/agents/testing';
+import { createFileStore } from '@cofold/store-file';
+import type { Message, ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
-import { facioAgent } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent } from '../packages/agent-cofold/src/index.js';
 
 /*
  * The catalogue, the transcript and a resume, over a file store.
@@ -17,7 +17,7 @@ import { facioAgent } from '../packages/agent-facio/src/index.js';
  * session writes are the same object and a second backend over the same
  * directory is a restart. What this checks is that a conversation left on
  * disk can be listed, read back part by part, and continued - paused or
- * finished - under the facio session id it already had.
+ * finished - under the cofold session id it already had.
  */
 
 /** Let the run's zero-delay work finish, up to a point; no wall-clock waiting on a real model. */
@@ -61,13 +61,13 @@ const pausedRun = async (root: string, sessionId: string): Promise<void> => {
 
 /** A directory a store and a workspace can both live under. */
 const place = (): { root: string; sweep: string } => {
-  const dir = mkdtempSync(join(tmpdir(), 'ahpd-facio-store-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-cofold-store-'));
   return { root: join(dir, 'store'), sweep: join(dir, 'work') };
 };
 
 /** One backend over a file store, with a model scripted and the policy the test wants. */
 const backend = (root: string, model: ModelAdapter, policy?: Partial<Policy>): Agent =>
-  facioAgent({ adapter: model, store: root, ...(policy !== undefined ? { policy } : {}) });
+  cofoldAgent({ adapter: model, store: root, ...(policy !== undefined ? { policy } : {}) });
 
 /** Open one session on a backend, with everything the harness would have handed it. */
 function open(agent: Agent, id: string, workingDirectory: string, extra: Partial<Start> = {}) {
@@ -150,7 +150,7 @@ it('rebuilds a turn with its text, its reasoning and its tool call in order', as
   expect(turn?.message).toMatchObject({ text: 'hello there', origin: { kind: 'user' } });
   expect(turn?.state).toBe('complete');
   const parts = (turn?.responseParts ?? []) as Bag[];
-  // The order facio recorded, which is what keeps a tool call beside its
+  // The order cofold recorded, which is what keeps a tool call beside its
   // answer rather than after it.
   expect(parts.map((part) => String(part.kind))).toEqual(['reasoning', 'markdown', 'toolCall', 'markdown']);
   expect(parts[0]?.content).toBe('weighing it up');
@@ -173,7 +173,7 @@ it('answers undefined for a session the store does not know and empty for one wi
   expect(await agent.transcript?.('nobody')).toBeUndefined();
 
   const store = createFileStore({ root });
-  await store.sessions.create({ sessionId: 'empty', agentId: 'facio', workspace: sweep });
+  await store.sessions.create({ sessionId: 'empty', agentId: 'cofold', workspace: sweep });
   expect(await agent.transcript?.('empty')).toEqual([]);
   // The empty session is a row all the same: it exists, it has just said
   // nothing yet.
@@ -211,7 +211,7 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   expect(before.view.said('chat', 'chat/toolCallReady')?.confirmationTitle).toBeDefined();
 
   // The restart: a second backend over the same directory, told to continue
-  // the same facio session.
+  // the same cofold session.
   const second = backend(root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
   expect(after.session.agentId()).toBe('one');
@@ -228,7 +228,7 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   expect(ran).toEqual(['x']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
 
-  // One facio session, one run, and the input written once: the rejoin
+  // One cofold session, one run, and the input written once: the rejoin
   // continued the conversation rather than starting it over.
   const reader = createFileStore({ root });
   const runs = await reader.runs.list({ sessionId: 'one' });

@@ -1,8 +1,8 @@
 /**
- * The one place a facio `RunEvent` becomes an AHP `chat/*` action.
+ * The one place a cofold `RunEvent` becomes an AHP `chat/*` action.
  *
  * Every event a run emits arrives here, and every decision about what it
- * means on the wire is made here, so a change in facio's event union is one
+ * means on the wire is made here, so a change in cofold's event union is one
  * edit in one file. `session.ts` iterates the run's stream and sends what
  * this returns; it makes no choices of its own about an event.
  *
@@ -14,7 +14,7 @@
  * that has stopped without saying so.
  */
 
-import type { AskQuestion, RunEvent, Usage } from '@facio/agents';
+import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
 import { contributorOf, toolCallPart, toolCompleteAction, toolReadyAction, toolStartAction } from './tools.js';
 
@@ -105,7 +105,7 @@ export interface TurnMapping {
   settle(requestId: string): Bag | undefined;
 }
 
-/** facio's token counts, in the protocol's spelling. */
+/** cofold's token counts, in the protocol's spelling. */
 const usageOf = (usage: Usage, model: string | undefined): Bag => {
   const extra: Bag = {
     ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
@@ -156,7 +156,7 @@ interface OpenCall {
 /**
  * One question as AHP's composer wants it.
  *
- * facio's option is a label and a line about it; the protocol wants both an
+ * cofold's option is a label and a line about it; the protocol wants both an
  * id and a label, and the label is what comes back as the answer. A question
  * with no options is free text, and one that allows a free-text answer beside
  * its options says so.
@@ -176,7 +176,7 @@ const questionOf = (question: AskQuestion): Bag => {
       label: one.label,
       ...(one.description !== undefined ? { description: one.description } : {}),
     })),
-    // facio takes free text unless the question said otherwise, and the
+    // cofold takes free text unless the question said otherwise, and the
     // protocol's default is the same, so the flag is only sent when it is no.
     ...(question.allowOther === false ? { allowFreeformInput: false } : {}),
     ...title,
@@ -256,7 +256,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'run.started':
         /*
          * A step boundary. Nothing on the wire means anything to a client: it
-         * already sees the deltas, and the step number is facio's bookkeeping.
+         * already sees the deltas, and the step number is cofold's bookkeeping.
          * What it does mean is that the next step has not streamed anything
          * yet, which is what the `model.completed` fallback reads.
          */
@@ -266,7 +266,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           return only([]);
         /*
          * The step's reply, once it is whole. An adapter that streamed has
-         * already sent every part as a delta, and facio's step usage arrives
+         * already sent every part as a delta, and cofold's step usage arrives
          * with `run.finished` rather than here, so this is empty for one that
          * streamed. An adapter that did not stream never sent a delta at all,
          * and this is where its text and its reasoning reach the client -
@@ -514,7 +514,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           /*
            * An unknown tool never got a proposal, so there is no call on the
            * client to close. The refusal still reaches the model as the tool
-           * result facio appends; it is not a row a client was ever shown.
+           * result cofold appends; it is not a row a client was ever shown.
            */
           if (held === undefined) return only([]);
           open.delete(event.callId);
@@ -570,11 +570,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
         default: {
           /*
-           * A new facio event is a compile error here rather than a silent
+           * A new cofold event is a compile error here rather than a silent
            * drop, which is the property this file exists to keep.
            */
           const unhandled: never = event;
-          throw new Error(`facio event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
+          throw new Error(`cofold event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
         }
       }
     },

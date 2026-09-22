@@ -2,12 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { facioAgent, harnessConfig, modelOf, resourceOf, splitModel } from '../packages/agent-facio/src/index.js';
+import { cofoldAgent, harnessConfig, modelOf, resourceOf, splitModel } from '../packages/agent-cofold/src/index.js';
 
 /*
  * The harness's own configuration, read by the backend.
  *
- * facio already has a file a person writes once, and the point of reading it
+ * cofold already has a file a person writes once, and the point of reading it
  * is that a key does not have to be lent or repeated: a daemon whose bridge
  * names no model still runs on the provider the harness was pointed at. Every
  * case here owns its own `XDG_CONFIG_HOME`, so nothing reads the real one.
@@ -17,7 +17,7 @@ let home: string;
 let had: string | undefined;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'ahpd-facio-config-'));
+  home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-config-'));
   had = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = home;
 });
@@ -37,14 +37,14 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'facio'), { recursive: true });
-  writeFileSync(join(home, 'facio', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'cofold'), { recursive: true });
+  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify(value));
 };
 
 it('reads the file the harness reads, and only the parts a backend needs', () => {
   put(CONFIG);
   const found = harnessConfig();
-  expect(found.path).toBe(join(home, 'facio', 'config.json'));
+  expect(found.path).toBe(join(home, 'cofold', 'config.json'));
   expect(found.providers).toEqual([{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }]);
   expect(found.model).toBe('open_router/~deepseek/deepseek-flash-latest');
   expect(found.instructions).toBe('Be careful.');
@@ -87,9 +87,9 @@ it('runs on the model the harness named, with that provider endpoint and key', a
 
 it('advertises the endpoint the harness named and defaults to its model', () => {
   put(CONFIG);
-  const agent = facioAgent({});
+  const agent = cofoldAgent({});
   expect(resourceOf({})).toBe('https://openrouter.ai');
-  expect(agent.protectedResources).toEqual([{ resource: 'https://openrouter.ai', resource_name: 'Facio', required: false }]);
+  expect(agent.protectedResources).toEqual([{ resource: 'https://openrouter.ai', resource_name: 'Cofold', required: false }]);
   expect(agent.defaults()).toMatchObject({ model: 'open_router/~deepseek/deepseek-flash-latest' });
 });
 

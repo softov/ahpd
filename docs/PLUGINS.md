@@ -76,7 +76,7 @@ host.registerTool({
 ```
 
 It is the host's own claim, not a guarantee, and it is what a backend reads to
-decide whether to ask a person. `@ahpd/agent-facio` passes it to the runtime,
+decide whether to ask a person. `@ahpd/agent-cofold` passes it to the runtime,
 whose default policy asks about a destructive tool, so a daemon configured only
 from a file can have one gated with no policy of its own. A tool that says
 nothing behaves exactly as it did before the field existed.
@@ -259,17 +259,17 @@ missing ./gone -> - (not resolved): Plugin ./gone is not there: tried /work/gone
 A plugin that would throw on load still lists as `ready`, which is the whole
 reason the `ahpd` key exists: a listing must not run third-party code.
 
-## A worked example: `@ahpd/agent-facio`
+## A worked example: `@ahpd/agent-cofold`
 
-The repository ships a real backend as a plugin. `@ahpd/agent-facio` wraps the
-facio agent runtime as provider `facio`, so every model an OpenAI-compatible
+The repository ships a real backend as a plugin. `@ahpd/agent-cofold` wraps the
+cofold agent runtime as provider `cofold`, so every model an OpenAI-compatible
 endpoint serves is a model inside one provider rather than a package of its
 own. It is the same package an embedder imports and the same one the daemon
 loads when it is named, which is the point: a plugin is not a second kind of
 backend.
 
 ```bash
-ahpd --plugin @ahpd/agent-facio
+ahpd --plugin @ahpd/agent-cofold
 ```
 
 Or in the configuration file, with the backend's own options as defaults for
@@ -279,13 +279,13 @@ every session it serves:
 {
   "plugins": [
     {
-      "name": "@ahpd/agent-facio",
+      "name": "@ahpd/agent-cofold",
       "options": {
-        "provider": "facio",
-        "displayName": "Facio",
+        "provider": "cofold",
+        "displayName": "Cofold",
         "model": "deepseek-chat",
         "baseUrl": "https://api.deepseek.com/v1",
-        "store": "/var/lib/ahpd/facio"
+        "store": "/var/lib/ahpd/cofold"
       }
     }
   ]
@@ -294,18 +294,18 @@ every session it serves:
 
 | Option | |
 | --- | --- |
-| `provider` | The AHP provider id, `facio` when absent. Two specs with two providers are two backends |
-| `displayName` | What a client draws, `Facio` when absent |
+| `provider` | The AHP provider id, `cofold` when absent. Two specs with two providers are two backends |
+| `displayName` | What a client draws, `Cofold` when absent |
 | `description` | One line about the backend |
 | `model` | The model id a session that names none runs on |
 | `baseUrl` | The OpenAI-compatible endpoint a session that names none uses |
 | `instructions` | The system prompt the agent is created with |
-| `store` | Where the facio file store lives: `$XDG_DATA_HOME/ahpd/facio`, or `~/.local/share/ahpd/facio` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/facio/config.json` |
+| `store` | Where the cofold file store lives: `$XDG_DATA_HOME/ahpd/cofold`, or `~/.local/share/ahpd/cofold` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/cofold/config.json` |
 | `memory` | `true` to hold the store in memory, for a test |
 | `apiKey` | The daemon's own key, or a function asked once per request so an expired one is not cached |
 | `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
-| `adapter` | A facio `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
-| `policy` | The run-level policy a pause comes from, facio's own default when absent |
+| `adapter` | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
+| `policy` | The run-level policy a pause comes from, cofold's own default when absent |
 
 A session still chooses for itself. The backend publishes the choices as
 config keys, and a `session/configChanged` on any of them changes what the next
@@ -343,11 +343,11 @@ harness runs:
 
 ### The harness configuration is the default
 
-`@ahpd/agent-facio` reads facio's own file,
-`$XDG_CONFIG_HOME/facio/config.json` or `~/.config/facio/config.json`, so a
+`@ahpd/agent-cofold` reads cofold's own file,
+`$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`, so a
 person who has already pointed the harness at a provider does not say it again
-in the plugin's options. An OpenRouter file of your own, which the facio
-repository also carries copyable at `examples/facio-config.example.json`, looks
+in the plugin's options. An OpenRouter file of your own, which the cofold
+repository also carries copyable at `examples/cofold-config.example.json`, looks
 like this with your key in place:
 
 ```json
@@ -412,20 +412,20 @@ run on. A backend built with an `adapter` is never asked over the network, since
 an embedder's models are the adapter's own.
 
 A package becomes a plugin by exporting `name` and `apply` from the module its
-`ahpd.entry` names, and `@ahpd/agent-facio` is no different: its `package.json`
+`ahpd.entry` names, and `@ahpd/agent-cofold` is no different: its `package.json`
 carries the `ahpd` key and the `@ahpd/sdk` peer range shown under
 [The manifest](#the-manifest), and its `apply` registers one backend built from
 the options above.
 
 ## Trying one today
 
-No plugin is published yet. From a checkout, `@ahpd/agent-facio` and the
+No plugin is published yet. From a checkout, `@ahpd/agent-cofold` and the
 fixtures under [`test/fixtures/`](../test/fixtures/) are real plugins and are
 what the tests load:
 
 ```bash
 pnpm build
-node packages/server/dist/main.js --port 0 --plugin ./packages/agent-facio
+node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
 ```
 
@@ -433,7 +433,7 @@ Load a package by its directory, not by its `src/index.ts`: the manifest names
 the build, and a source file lists as `ready` without being imported, but a
 load of it fails because its own `./agent.js` imports do not exist beside the
 `.ts` sources. `pnpm build` is what makes the directory loadable, and
-`ahpd plugin list --plugin ./packages/agent-facio` is how to check it without
+`ahpd plugin list --plugin ./packages/agent-cofold` is how to check it without
 starting a daemon.
 
 `plugin-echo` contributes the example's `echo` backend and is the one to use to

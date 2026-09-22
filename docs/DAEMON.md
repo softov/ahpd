@@ -116,7 +116,7 @@ builds: a backend, one of its ports, a server tool or a configuration default.
 It is named on the command line or in the configuration file.
 
 ```bash
-ahpd --plugin @ahpd/agent-facio --plugin ./my-plugin
+ahpd --plugin @ahpd/agent-cofold --plugin ./my-plugin
 ```
 
 `--plugin` is repeatable and the plugins apply in the order they are named.
@@ -131,7 +131,7 @@ one with the options `apply` receives and whether it is on:
 ```json
 {
   "plugins": [
-    "@ahpd/agent-facio",
+    "@ahpd/agent-cofold",
     { "name": "./my-plugin", "options": { "token": "…" }, "enabled": false }
   ]
 }

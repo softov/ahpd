@@ -19,10 +19,10 @@ refs:
   - code://packages/sdk/src/types/session.ts#L348-L367 - `completeToolCall` and `clientGone`, which task 03 implements
   - code://packages/agent-facio/src/tools.ts - where a bound tool is wrapped and a call's actions are built
   - code://packages/agent-facio/src/session.ts - the session task 02 and 03 extend
-  - file:///github/facio/packages/agents/src/types/tool.ts - `ToolEffects`, the four flags task 01 carries
-  - file:///github/facio/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
-  - file:///github/facio/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
-  - file:///github/facio/packages/agents/src/store/cut.ts - `selectCut`, the one rule both stores cut by
+  - file:///github/cofold/packages/agents/src/types/tool.ts - `ToolEffects`, the four flags task 01 carries
+  - file:///github/cofold/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
+  - file:///github/cofold/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
+  - file:///github/cofold/packages/agents/src/store/cut.ts - `selectCut`, the one rule both stores cut by
   - code://packages/agent-claude/src/session.ts - a backend that already answers `forkPoint`, `endPoint` and `completeToolCall`
 ---
 
@@ -38,7 +38,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### Searches performed
 
-- `rg "effects" /github/facio/packages/agents/src` - `ToolEffects` is `reads`, `writes`, `network`, `destructive`, `createTool` takes them, and the default policy asks when `destructive` is true, so a host tool that carries them is gated with no policy function.
+- `rg "effects" /github/cofold/packages/agents/src` - `ToolEffects` is `reads`, `writes`, `network`, `destructive`, `createTool` takes them, and the default policy asks when `destructive` is true, so a host tool that carries them is gated with no policy function.
 - `rg "forkPoint|endPoint|completeToolCall|clientGone" packages/agent-claude/src` - one backend already answers all four, and the shapes are there to copy.
 - `rg "forkAt|rewindAt|forkPoint" packages/sdk/src packages/agent-facio/src` - the SDK declares them and agent-facio leaves them unmapped with a comment, which task 02 replaces.
 - `rg "owner" packages/agent-facio/src/tools.ts` - `facioTools` now leaves an owner-bound tool out, so the model is not offered a tool nothing can answer; task 03 is the round trip that puts it back.
@@ -91,7 +91,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Done so far:** all four tasks, 2026-09-20. Task 01, a host tool's effects; task 02, the fork and the rewind over the cut facio gained; task 03, a client's own tool; task 04, the harness configuration.
 - **Next action:** none; the plan is built and [implemented.md](implemented.md) records it.
 - **Open questions:** none. The cut decision was settled by [facio-fork-and-rewind-needs-a-cut](../../../decisions/facio-fork-and-rewind-needs-a-cut.md) as two store primitives and a loop that keeps reading the session, and the cut is made before the first turn, so the run it drops is never left writing.
-- **Watch out for:** the `@facio/*` dependencies are `link:` to a sibling checkout, so the cut these two tasks depend on lives in `/github/facio` and is not committed by this repository; see [deferred.md](deferred.md) for what waits on facio publishing.
+- **Watch out for:** the `@facio/*` dependencies are `link:` to a sibling checkout, so the cut these two tasks depend on lives in `/github/cofold` and is not committed by this repository; see [deferred.md](deferred.md) for what waits on facio publishing.
 
 ## Final verification checklist
 

@@ -5,8 +5,8 @@ date: 2026-09-20
 refs:
   - code://packages/agent-facio/src/agent.ts - `probe` and `modelOf`, which is where a listed id is built and resolved
   - code://packages/agent-facio/src/config.ts#L111-L115 - `splitModel`, the first-slash rule every reference goes through
-  - file:///github/facio/packages/papo/src/types/config.ts - the harness's own `model`, always spelled `<provider>/<model>`
-  - file:///github/facio/packages/papo/README.md - the configuration example, `"model": "or/qwen/qwen3-8b"`
+  - file:///github/cofold/packages/papo/src/types/config.ts - the harness's own `model`, always spelled `<provider>/<model>`
+  - file:///github/cofold/packages/papo/README.md - the configuration example, `"model": "or/qwen/qwen3-8b"`
 ---
 
 ## Context
