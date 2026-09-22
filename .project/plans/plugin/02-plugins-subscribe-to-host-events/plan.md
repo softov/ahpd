@@ -102,7 +102,7 @@ plugin apply -> host.on('session_start', handler)
 ## Resume state
 
 - **Done so far:** all three tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
-- **Next action:** none; the plan is built. The agent plugins that arrive through plan 01 are the next domain work, with [agents as extensions](../../ideas/agents-as-extensions.md) as the order.
+- **Next action:** none; the plan is built. The agent plugins that arrive through plan 01 are the next domain work, with [agents as extensions](../../../ideas/agents-as-extensions.md) as the order.
 - **Open questions:** none open; both were settled by the build, and the departures are in [implemented.md](implemented.md).
 - **Watch out for:** the event union is the contract, so adding an event changes `@ahpd/sdk` and every handler's types; a per-token delta is deliberately not one, and the reasons are in the event file.
 

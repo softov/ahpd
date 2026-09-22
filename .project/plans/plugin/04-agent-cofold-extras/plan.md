@@ -1,5 +1,5 @@
 ---
-title: The facio backend declares tool effects, forks a conversation, and runs a client's tool
+title: The cofold backend declares tool effects, forks a conversation, and runs a client's tool
 domain: plugin
 status: built
 priority: medium

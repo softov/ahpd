@@ -1,5 +1,5 @@
 ---
-title: The package exists, registers provider `facio`, and carries its model config
+title: The package exists, registers provider `cofold`, and carries its model config
 status: done
 depends: []
 layer: packages/agent-cofold

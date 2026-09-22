@@ -1,5 +1,5 @@
 ---
-title: The catalogue, the transcript and a resume all read the facio store
+title: The catalogue, the transcript and a resume all read the cofold store
 status: done
 depends:
   - task-01-the-package-and-the-provider.md

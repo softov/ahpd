@@ -1,5 +1,5 @@
 ---
-title: The plugin entry, and a daemon that serves provider `facio`
+title: The plugin entry, and a daemon that serves provider `cofold`
 status: done
 depends:
   - task-02-a-turn-becomes-the-chat-actions.md

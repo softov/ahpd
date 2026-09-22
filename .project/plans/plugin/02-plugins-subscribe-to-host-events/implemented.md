@@ -45,4 +45,4 @@ The event set is closed and written down in one file, and a per-token delta is d
 ## Left for later
 
 - Nothing in this plan; customizations, MCP servers, `needs`/`provides`, hot reload and the rest stay in [deferred.md](../01-plugins-load-from-configuration/deferred.md).
-- The agent plugins that arrive through plan 01 are still unplanned; [agents as extensions](../../ideas/agents-as-extensions.md) is the order.
+- The agent plugins that arrive through plan 01 are still unplanned; [agents as extensions](../../../ideas/agents-as-extensions.md) is the order.

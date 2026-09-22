@@ -1,5 +1,5 @@
 ---
-title: An agent backend over facio, so every model is one provider - implemented
+title: An agent backend over cofold, so every model is one provider - implemented
 date: 2026-09-20
 refs:
   - git://07683df
@@ -19,7 +19,7 @@ refs:
 
 `@ahpd/agent-cofold` is an installed package and a plugin that runs the facio agent runtime as an AHP backend, so every model an OpenAI-compatible endpoint serves is a model inside one provider rather than a package of its own.
 A client creates a session on provider `facio`, the session config chooses the model and the endpoint, and the conversation, the tools, the approvals, the catalogue and the transcript behave the way a backend is expected to.
-The rule it implements is [agent-package-only-when-it-brings-a-runtime](../../decisions/agent-package-only-when-it-brings-a-runtime.md): a package for a runtime, a configuration for a model.
+The rule it implements is [agent-package-only-when-it-brings-a-runtime](../../../decisions/agent-package-only-when-it-brings-a-runtime.md): a package for a runtime, a configuration for a model.
 
 ## What was built
 
@@ -66,6 +66,6 @@ Three of the items above were closed the same day, after the protocol and the co
 - A non-streaming adapter now says what it said: `mapping.ts` kept a per-step flag, and `model.completed` appends the step's text and reasoning when no delta carried them, so a turn cannot finish having said nothing. `test/agent-cofold-turn.test.ts` pins it with `stream: false`.
 - A tool a client runs is no longer offered: `facioTools` leaves an owner-bound `BoundTool` out, because a tool that always fails is worse than an absent one. The round trip that would put it back is [plan 04](../04-agent-cofold-extras/plan.md) task 03.
 - The key stopped being a config key. Reading the protocol, `SessionConfigChanged` is a client action so config is legally mutable, but a bearer token is a credential and the protocol's path for one is `authenticate` against a `ProtectedResourceMetadata` the server advertises. `HostTool` aside, the package now advertises a protected resource (`resourceOf`, the endpoint's origin when it is `https`) and reads the lent token from `Start.credentials`, with the daemon's own `apiKey` option as the fallback. `apiKey` is gone from the session schema.
-- The host-tool effects gap was not fixed here: it changes a public SDK type, so it has a decision, [host-tool-declares-what-it-does](../../decisions/host-tool-declares-what-it-does.md), and [plan 04](../04-agent-cofold-extras/plan.md) task 01.
+- The host-tool effects gap was not fixed here: it changes a public SDK type, so it has a decision, [host-tool-declares-what-it-does](../../../decisions/host-tool-declares-what-it-does.md), and [plan 04](../04-agent-cofold-extras/plan.md) task 01.
 - The restart path the checklist could only claim by test is now also verified by hand, through the daemon on the harness configuration: a turn streamed `harness config works` and completed; the daemon was stopped and started again on the same file store; the catalogue listed the session as `facio:/e2e`, and subscribing to its chat answered the transcript with the one turn and its text. So the row on disk and the conversation in it are read by the host, not only by a unit test.
 

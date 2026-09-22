@@ -1,5 +1,5 @@
 ---
-title: A facio conversation forks at a turn and rewinds to one
+title: A cofold conversation forks at a turn and rewinds to one
 status: done
 depends: []
 layer: packages/agent-cofold

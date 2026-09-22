@@ -1,5 +1,5 @@
 ---
-title: The facio extras - implemented
+title: The cofold extras - implemented
 date: 2026-09-20
 refs:
   - git://32ff260
@@ -54,3 +54,10 @@ Each is a capability another backend already had, so a facio session is no longe
 
 - The `@facio/*` packages are `link:` dependencies of a sibling checkout, so the two store primitives task 02 needs are an uncommitted change in `/github/cofold`; publishing facio and moving the dependency to a range is the release step, and until then a fresh checkout of this repository cannot build the bridge without that sibling.
 - `@ahpd/agent-acp` remains the next agent package, and `@deepseek-ai/dsh-acp` is one of the servers it will cover.
+
+## Since built
+
+The release the *Left for later* list waited on happened, so the first bullet above is superseded.
+
+- The runtime published as `@cofold/*` and the `link:` into a sibling checkout is gone. This package's three dependencies are `@cofold/agents: ^0.1.0`, `@cofold/model-openai-compat: ^0.1.0` and `@cofold/store-file: ^0.1.0`, so a fresh checkout of this repository builds and tests without `/github/cofold` present. What remains is un-privating `@ahpd/agent-cofold`, choosing its version and pointing the prose at the installed package, which is [deferred.md](deferred.md)'s release row and not work in this plan.
+

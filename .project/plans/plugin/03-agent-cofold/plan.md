@@ -1,5 +1,5 @@
 ---
-title: An agent backend over facio, so every model is one provider rather than one package
+title: An agent backend over cofold, so every model is one provider rather than one package
 domain: plugin
 status: built
 priority: high
@@ -120,7 +120,7 @@ ahpd --plugin @ahpd/agent-cofold
 ## Resume state
 
 - **Done so far:** all five tasks, done 2026-09-20, and [implemented.md](implemented.md) written.
-- **Next action:** none; the plan is built. `@ahpd/agent-acp` is the next agent package, and [agents as extensions](../../ideas/agents-as-extensions.md) is the order.
+- **Next action:** none; the plan is built. `@ahpd/agent-acp` is the next agent package, and [agents as extensions](../../../ideas/agents-as-extensions.md) is the order.
 - **Open questions:** none open; facio is linked, the provider is per registration, the store is an option, and the resume shape is the seed giving way to the replay.
 - **Watch out for:** pnpm's store is outside this checkout, so `pnpm install` needs wider file access than the default sandbox allows; facio is unpublished and its packages must be built in `/github/cofold` before this package typechecks; and the package is `private: true` until facio has a version on npm.
 

@@ -25,7 +25,7 @@ title: Deferred from plugins load from configuration
   It waits because neither the daemon nor its ports are reloadable, so a plugin reload would be half a reload.
   It goes wherever a daemon-wide reload goes, if it ever does.
 - **Ports through `Start`.** A backend asking the host for file and shell access, which `@ahpd/agent-acp` needs.
-  It waits because it is a change to `Start` in `packages/sdk` and belongs to the agent plans in `ideas/agents-as-extensions.md`, not to the loader.
+  Taken by [plan 07](../07-agent-acp/plan.md) task 03 and decision [acp-ports-come-through-start](../../../decisions/acp-ports-come-through-start.md), because it is a change to `Start` in `packages/sdk` and belongs to the agent plans in `ideas/agents-as-extensions.md`, not to the loader.
 - **The root configuration schema as an option.** `ROOT_CONFIG_SCHEMA` is a fixed literal, so a plugin cannot add a key a client draws a control from.
   It waits because it is a `HostOptions` field and not a plugin-loader concern.
 - **A plugin registry or a first-party plugin set.** The `@ahpd/agent-acp`, `@ahpd/agent-openai` and facio plugins themselves.

@@ -13,7 +13,7 @@ Every kind after those waits, and the whole list is in [deferred.md](01-plugins-
 
 - `code://packages/sdk` - `createHost` and `HostOptions`, the composition point a plugin contributes to; `types/agent.ts` is the `Agent` contract a harness plugin implements.
 - `code://packages/server` - the daemon: its configuration file, its command line, and the literal a plan in this domain replaces with a folded result.
-- `code://packages/agent-claude` - the one backend that ships, and the worked example of a package the host knows nothing about.
+- `code://packages/agent-claude` and `code://packages/agent-cofold` - the backends that ship, and the worked examples of a package the host knows nothing about; [plan 07](07-agent-acp/plan.md) adds a third over a protocol rather than a library.
 
 ## Contracts
 
@@ -74,7 +74,7 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 
 ## Known gaps
 
-- Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload, ports through `Start` and reading the port beneath all wait on an SDK option or a later plan; the whole list is [deferred.md](01-plugins-load-from-configuration/deferred.md).
-- [03 - An agent backend over facio](03-agent-cofold/plan.md) is built: `@ahpd/agent-cofold` is the first real consumer of this mechanism, one installed package that runs a harness and serves every model it can reach, and it is also the worked example in [docs/PLUGINS.md](../../docs/PLUGINS.md).
-- [04 - The facio extras](04-agent-cofold-extras/plan.md) is planned: a host tool says what running it does, a facio conversation forks and rewinds, and a tool a client runs is offered and waited for.
-- `@ahpd/agent-acp`, the bridge to any Agent Client Protocol server, has no plan yet; `@deepseek-ai/dsh-acp` is one, and the decision [agent-package-only-when-it-brings-a-runtime](../../decisions/agent-package-only-when-it-brings-a-runtime.md) is why a model or an endpoint is not a package of its own.
+- Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload and reading the port beneath all wait on an SDK option or a later plan; the whole list is [deferred.md](01-plugins-load-from-configuration/deferred.md).
+- [03 - An agent backend over cofold](03-agent-cofold/plan.md) is built: `@ahpd/agent-cofold` is the first real consumer of this mechanism, one installed package that runs a harness and serves every model it can reach, and it is also the worked example in [docs/PLUGINS.md](../../../docs/PLUGINS.md).
+- [04 - The cofold extras](04-agent-cofold-extras/plan.md) is built: a host tool says what running it does, a cofold conversation forks and rewinds, and a tool a client runs is offered and waited for.
+- [07 - The ACP bridge](07-agent-acp/plan.md) is planned: `@ahpd/agent-acp` speaks the Agent Client Protocol to any server, so `copilot --acp`, `codex-acp`, `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` are configuration lines; the decision [agent-package-only-when-it-brings-a-runtime](../../decisions/agent-package-only-when-it-brings-a-runtime.md) is why a model or an endpoint is not a package of its own.
