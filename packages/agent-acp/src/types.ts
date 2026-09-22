@@ -7,7 +7,11 @@
  */
 
 import type {
+  CreateTerminalRequest,
+  CreateTerminalResponse,
   InitializeResponse,
+  KillTerminalRequest,
+  KillTerminalResponse,
   ListSessionsRequest,
   ListSessionsResponse,
   LoadSessionRequest,
@@ -15,11 +19,22 @@ import type {
   NewSessionRequest,
   NewSessionResponse,
   PromptResponse,
+  ReadTextFileRequest,
+  ReadTextFileResponse,
+  ReleaseTerminalRequest,
+  ReleaseTerminalResponse,
+  RequestPermissionRequest,
   SessionUpdate,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
   SetSessionModeRequest,
   SetSessionModeResponse,
+  TerminalOutputRequest,
+  TerminalOutputResponse,
+  WaitForTerminalExitRequest,
+  WaitForTerminalExitResponse,
+  WriteTextFileRequest,
+  WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import type { Bag, MessageFrom } from '@ahpd/sdk';
 
@@ -43,9 +58,46 @@ export interface AcpOptions {
   model?: string;
 }
 
-/** One `session/update` notification, already routed by the session id it named. */
+/**
+ * What a session answers a permission request with.
+ *
+ * The option the person chose, or `cancelled` when nobody could be asked or
+ * when the server offered no option this bridge may select.
+ */
+export type PermissionAnswer = { optionId: string } | 'cancelled';
+
+/**
+ * What a session answers for the server.
+ *
+ * `update` is the only one always wired. Everything else is optional and each
+ * is present only when the session has what the request needs - a file read
+ * needs the host's store, a terminal needs the host's factory - and what is
+ * absent is left off the handshake, so a server is never told a client can do
+ * something it cannot.
+ */
 export interface AcpHandlers {
   update(sessionId: string, update: SessionUpdate): void;
+  /** Read a file the agent named, through the host's own store. */
+  readTextFile?(request: ReadTextFileRequest): Promise<ReadTextFileResponse>;
+  /** Write one. */
+  writeTextFile?(request: WriteTextFileRequest): Promise<WriteTextFileResponse>;
+  /** Open a shell the host owns and lists. */
+  createTerminal?(request: CreateTerminalRequest): Promise<CreateTerminalResponse>;
+  /** Everything it has printed so far. */
+  terminalOutput?(request: TerminalOutputRequest): Promise<TerminalOutputResponse>;
+  /** Wait for it to exit. */
+  waitForTerminalExit?(request: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse>;
+  /** End it. */
+  killTerminal?(request: KillTerminalRequest): Promise<KillTerminalResponse>;
+  /** Let go of it. */
+  releaseTerminal?(request: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse>;
+  /**
+   * A permission the server is waiting on, put to a person.
+   *
+   * Absent means nobody is asked and every request is cancelled, which is the
+   * honest answer rather than one that allows silently.
+   */
+  permission?(request: RequestPermissionRequest): Promise<PermissionAnswer>;
 }
 
 /** How a connection spawns a server and where its updates go. */

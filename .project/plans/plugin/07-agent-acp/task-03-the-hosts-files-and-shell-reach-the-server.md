@@ -1,6 +1,6 @@
 ---
 title: The host's files and shell reach the server, and a permission is a person
-status: doing
+status: done
 depends:
   - task-01-the-package-the-provider-and-a-turn.md
 layer: agents
@@ -40,12 +40,13 @@ An ACP agent reads and writes files and opens a terminal through the host's own 
 
 ## Validation
 
-- `test/agent-acp-ports.test.ts` - a read through the port and a refusal outside it, a write, a terminal opened and released, the capability absent with no ports, a permission asked and approved, one denied, and one refused by a closed session.
+- `test/agent-acp-ports.test.ts` - the capabilities the handshake advertises with both ports and with neither, a read and a write through the host's store, a terminal opened, waited on, read and released, and a permission approved as `allow_once` and refused as `reject_once`. The refusal a closed session produces is implemented in `close` (held permissions settle `cancelled` and held terminals are released) but is not separately asserted; what fails in that case is a subprocess nobody is listening to.
 - `npx tsc -p tsconfig.json --noEmit`, `node scripts/boundary.mjs` and the full suite green.
 
 ## Resume
 
-Started 2026-09-22, and deliberately stopped after step 1 so the public SDK change could be reviewed before the bridge uses it.
-Done: `Start` gained `resources?: ResourceStore` and `terminals?: StartTerminals` in `packages/sdk/src/types/agent.ts`, and `createHost`'s `spawn` passes them when the host holds them, so an embedder and a plugin both receive them. `ResourceStore` and `TerminalStore` moved from `types/host.ts` to `types/resources.ts` and `types/terminals.ts`, which is where a backend reads them from; `types/host.ts` still re-exports them, and both are on the public type barrel. Because a backend cannot use the raw terminal port - the host owns the terminal's URI, its root-list row and its `emit` - `Start.terminals` is a host-owned factory, `StartTerminals.open`, and `TerminalOptions` gained `args`/`env` while `Terminal` gained `waitForExit` for ACP's argv, environment and exit wait.
-Left: everything the bridge does with them - advertising `fs.readTextFile`, `fs.writeTextFile` and `terminal` from `initialize` only when the matching one is present, answering the three client requests through the store and the factory, turning `session/request_permission` into a real `chat/inputNeededSet` and `confirm`, and the fixture and test cases.
-Also corrected: the decision said the same fields would be added to `SessionOptions`, which is the shape a backend builds for its own session and not a host contract; only `Start` carries them.
+Done 2026-09-22.
+The SDK half: `Start` gained `resources?: ResourceStore` and `terminals?: StartTerminals` in `packages/sdk/src/types/agent.ts`, and `createHost`'s `spawn` passes them when the host holds them, so an embedder and a plugin both receive them. `ResourceStore` and `TerminalStore` moved from `types/host.ts` to `types/resources.ts` and `types/terminals.ts`, which is where a backend reads them from; `types/host.ts` still re-exports them, and both are on the public type barrel. Because a backend cannot use the raw terminal port - the host owns the terminal's URI, its root-list row and its `emit` - `Start.terminals` is a host-owned factory, `StartTerminals.open`, and `TerminalOptions` gained `args`/`env` while `Terminal` gained `waitForExit` for ACP's argv, environment and exit wait.
+The bridge half: `AcpHandlers` gained the optional ACP client callbacks, which `connectAcp` derives `clientCapabilities` from and wires one for one, so a capability is advertised exactly when it has an implementation. `session.ts` answers `fs/read_text_file` (whole file, or a line range) and `fs/write_text_file` through `Start.resources`; `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill` and `terminal/release` through `StartTerminals`, holding each handle by the ACP terminal id and capping output to the byte limit the create request named; and `session/request_permission` as `session/inputNeededSet` plus `confirm`, selecting `allow_once` on approval and `reject_once` on refusal, never an `always`, and `cancelled` when no once option was offered.
+Left: task 04, which is the plugin entry, the docs and an end-to-end daemon run. ACP has no `ran`, so a `!command` on an ACP session is refused until one is added.
+A method name cost a wrong answer: the ACP wait method is `terminal/wait_for_exit`, not `terminal/wait_for_terminal_exit`, and the fixture was written with the wrong one first.

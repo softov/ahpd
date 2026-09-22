@@ -14,6 +14,7 @@ import { Readable, Writable } from 'node:stream';
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk';
 import type {
   Client,
+  ClientCapabilities,
   InitializeResponse,
   ListSessionsRequest,
   ListSessionsResponse,
@@ -33,11 +34,10 @@ import type {
 import type { AcpConnection, AcpConnectionOptions } from './types.js';
 
 /**
- * What this bridge answers a permission request with for now.
+ * What this bridge answers a permission request with when nobody can be asked.
  *
- * `cancelled` is the protocol's refusal, and refusing is the honest answer: no
- * person is asked and nothing is allowed silently. Task 03 replaces this with
- * the host's `confirm`, where the question has somewhere to go.
+ * `cancelled` is the protocol's refusal, and refusing is the honest answer: a
+ * client that allowed a tool silently would be a client deciding policy.
  */
 const REFUSED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
 
@@ -63,6 +63,32 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
 
   const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
 
+  const handlers = options.handlers;
+  const {
+    readTextFile, writeTextFile, createTerminal, terminalOutput,
+    waitForTerminalExit, killTerminal, releaseTerminal,
+  } = handlers;
+
+  /*
+   * The handshake says what this client can answer, and only that.
+   *
+   * A capability advertised without an implementation is a server request
+   * nobody answers, and one left unadvertised is a request a conformant server
+   * never makes - so both are derived from the same handlers rather than
+   * written twice.
+   */
+  const clientCapabilities: ClientCapabilities = {
+    ...(readTextFile !== undefined || writeTextFile !== undefined
+      ? {
+          fs: {
+            ...(readTextFile !== undefined ? { readTextFile: true } : {}),
+            ...(writeTextFile !== undefined ? { writeTextFile: true } : {}),
+          },
+        }
+      : {}),
+    ...(createTerminal !== undefined ? { terminal: true } : {}),
+  };
+
   const client: Client = {
     /*
      * One update, routed by the session id the server named.
@@ -73,18 +99,27 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
      * better than writing it into the wrong turn.
      */
     sessionUpdate: (params: SessionNotification): void => {
-      options.handlers.update(params.sessionId, params.update);
+      handlers.update(params.sessionId, params.update);
     },
     /*
-     * Refused, never allowed silently.
+     * A person's answer, or the protocol's refusal.
      *
-     * The two members above and this one are the `Client` interface's
-     * required surface. The optional capabilities - a file read, a file write,
-     * a terminal - are deliberately absent, because they are not advertised on
-     * the handshake and a server that asked for one anyway would be answered
-     * by nobody.
+     * The optional members below are the same shape: present only when the
+     * session has something to answer with, which is also what the handshake
+     * advertised.
      */
-    requestPermission: async (_params: RequestPermissionRequest): Promise<RequestPermissionResponse> => REFUSED,
+    requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+      const answer = await handlers.permission?.(params);
+      if (answer === undefined || answer === 'cancelled') return REFUSED;
+      return { outcome: { outcome: 'selected', optionId: answer.optionId } };
+    },
+    ...(readTextFile !== undefined ? { readTextFile } : {}),
+    ...(writeTextFile !== undefined ? { writeTextFile } : {}),
+    ...(createTerminal !== undefined ? { createTerminal } : {}),
+    ...(terminalOutput !== undefined ? { terminalOutput } : {}),
+    ...(waitForTerminalExit !== undefined ? { waitForTerminalExit } : {}),
+    ...(killTerminal !== undefined ? { killTerminal } : {}),
+    ...(releaseTerminal !== undefined ? { releaseTerminal } : {}),
   };
 
   const connection = new ClientSideConnection((_agent) => client, stream);
@@ -103,9 +138,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       if (handshake !== undefined) return Promise.resolve(handshake);
       return connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
-        // No `fs` and no `terminal`: this task has no ports to serve them
-        // through, and advertising one would invite a request nobody answers.
-        clientCapabilities: {},
+        clientCapabilities,
         clientInfo: CLIENT_INFO,
       }).then((reply) => {
         handshake = reply;

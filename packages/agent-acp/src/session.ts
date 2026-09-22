@@ -23,18 +23,35 @@
  * not have yet.
  */
 
+import { pathToFileURL } from 'node:url';
 import type {
   AvailableCommand,
+  CreateTerminalRequest,
+  CreateTerminalResponse,
+  KillTerminalRequest,
+  KillTerminalResponse,
+  PermissionOptionKind,
+  ReadTextFileRequest,
+  ReadTextFileResponse,
+  ReleaseTerminalRequest,
+  ReleaseTerminalResponse,
+  RequestPermissionRequest,
   SessionConfigOption,
   SessionModeState,
   SessionUpdate,
+  TerminalOutputRequest,
+  TerminalOutputResponse,
+  WaitForTerminalExitRequest,
+  WaitForTerminalExitResponse,
+  WriteTextFileRequest,
+  WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageFrom, OpenedTerminal, Session, Start } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
 import { mapUpdate } from './mapping.js';
-import type { AcpConnection, AcpOptions, AcpTurn, WatchedSession, WatchedTurn } from './types.js';
+import type { AcpConnection, AcpOptions, AcpTurn, PermissionAnswer, WatchedSession, WatchedTurn } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
@@ -110,6 +127,23 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   let record: WatchedSession | undefined;
   /** The turn being watched, while one runs. Kept for the transcript. */
   let watchedTurn: WatchedTurn | undefined;
+  /**
+   * The permissions the server is waiting on a person for, by tool call id.
+   *
+   * Held because the ACP request is answered from here: `confirm` settles the
+   * promise the request is awaiting, which is what sends the reply back.
+   */
+  const permissions = new Map<string, {
+    /** The input-needed entry id a client answers by. */
+    requestId: string;
+    /** The option an approval selects, when the server offered a once option. */
+    allow?: string;
+    /** The option a refusal selects, when it offered one. */
+    reject?: string;
+    settle(answer: PermissionAnswer): void;
+  }>();
+  /** The terminals this session opened for the server, by the server's own id. */
+  const terminals = new Map<string, { handle: OpenedTerminal; limit?: number }>();
 
   const messageOf = (why: unknown): string => (why instanceof Error ? why.message : String(why));
 
@@ -126,10 +160,16 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
   };
 
-  /** `SessionStatus`: 8 is in progress and 1 is idle. Nothing here waits on a person. */
-  const status = (): number => (active !== undefined ? Status.InProgress
-    : failed !== undefined ? Status.Error
-      : Status.Idle);
+  /**
+   * `SessionStatus`: 8 is in progress, 4 waits on a person and 1 is idle.
+   *
+   * A permission the server is blocked on is the session waiting for
+   * somebody, which is what a client draws the input request from.
+   */
+  const status = (): number => (permissions.size > 0 ? Status.InputNeeded
+    : active !== undefined ? Status.InProgress
+      : failed !== undefined ? Status.Error
+        : Status.Idle);
 
   /** Remember the modes the server named, and where it currently sits. */
   const learnModes = (state: SessionModeState | null | undefined): void => {
@@ -243,6 +283,168 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * The `file://` URI a path names, which is what the host's store reads.
+   *
+   * Encoded rather than concatenated, because a path is allowed a space and a
+   * store that reads a URI has to be given one it can parse.
+   */
+  const uriOf = (path: string): string => pathToFileURL(path).href;
+
+  /** A file the agent asked to read, through the host's own store. */
+  const readTextFile = async (request: ReadTextFileRequest): Promise<ReadTextFileResponse> => {
+    const store = start.resources;
+    if (store === undefined) throw new Error(`${provider}: this session has no files to read`);
+    const read = await store.read(uriOf(request.path));
+    if (read.encoding !== 'utf-8') throw new Error(`${provider}: ${request.path} is not text`);
+    // ACP sends `null` for absent as readily as it omits, so both mean the same.
+    const line = request.line ?? undefined;
+    const limit = request.limit ?? undefined;
+    // A whole-file read is the common case and the one a server expects to be
+    // exactly the file, so the split only happens when a range was asked for.
+    if (line === undefined && limit === undefined) return { content: read.data };
+    const lines = read.data.split('\n');
+    const from = Math.max(0, (line ?? 1) - 1);
+    return { content: lines.slice(from, limit === undefined ? undefined : from + limit).join('\n') };
+  };
+
+  /** One the agent asked to write. */
+  const writeTextFile = async (request: WriteTextFileRequest): Promise<WriteTextFileResponse> => {
+    const store = start.resources;
+    if (store?.write === undefined) throw new Error(`${provider}: this session has no files to write`);
+    await store.write(uriOf(request.path), { data: request.content, encoding: 'utf-8', mode: 'truncate' });
+    return {};
+  };
+
+  /** The environment ACP sent, as the host's port takes it. */
+  const environmentOf = (request: CreateTerminalRequest): Record<string, string> | undefined => {
+    const list = request.env;
+    if (list === undefined || list.length === 0) return undefined;
+    const env: Record<string, string> = {};
+    for (const one of list) env[one.name] = one.value;
+    return env;
+  };
+
+  /** A shell the agent asked for, opened and listed by the host. */
+  const openTerminal = async (request: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
+    const shells = start.terminals;
+    if (shells === undefined) throw new Error(`${provider}: this session has no shells`);
+    const env = environmentOf(request);
+    const handle = shells.open({
+      cwd: request.cwd ?? where,
+      command: request.command,
+      ...(request.args !== undefined && request.args.length > 0 ? { args: request.args } : {}),
+      ...(env === undefined ? {} : { env }),
+    });
+    terminals.set(handle.uri, {
+      handle,
+      ...(typeof request.outputByteLimit === 'number' ? { limit: request.outputByteLimit } : {}),
+    });
+    return { terminalId: handle.uri };
+  };
+
+  /** One by its own id, or a refusal the server reads as a failed request. */
+  const terminalOf = (id: string): { handle: OpenedTerminal; limit?: number } => {
+    const held = terminals.get(id);
+    if (held === undefined) throw new Error(`${provider}: no terminal ${id}`);
+    return held;
+  };
+
+  /** Everything it has printed, capped to what the request that opened it asked. */
+  const terminalOutput = async (request: TerminalOutputRequest): Promise<TerminalOutputResponse> => {
+    const held = terminalOf(request.terminalId);
+    const said = held.handle.output();
+    const limit = held.limit;
+    // The protocol truncates from the beginning to stay within the limit,
+    // which keeps the tail: what a person watching wants is the end of it.
+    const output = limit === undefined || said.output.length <= limit ? said.output : said.output.slice(-limit);
+    return {
+      output,
+      truncated: output.length !== said.output.length,
+      ...(said.exitCode === undefined ? {} : { exitStatus: { exitCode: said.exitCode } }),
+    };
+  };
+
+  /** The wait the server does instead of polling. */
+  const waitForTerminalExit = async (request: WaitForTerminalExitRequest): Promise<WaitForTerminalExitResponse> => {
+    const done = await terminalOf(request.terminalId).handle.waitForExit();
+    return {
+      ...(done.exitCode === undefined ? {} : { exitCode: done.exitCode }),
+      ...(done.signal === undefined ? {} : { signal: done.signal }),
+    };
+  };
+
+  const killTerminal = async (request: KillTerminalRequest): Promise<KillTerminalResponse> => {
+    terminalOf(request.terminalId).handle.kill();
+    return {};
+  };
+
+  const releaseTerminal = async (request: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> => {
+    terminalOf(request.terminalId).handle.release();
+    terminals.delete(request.terminalId);
+    return {};
+  };
+
+  /**
+   * A permission the server is blocked on, put to a person.
+   *
+   * AHP's confirmation is two-valued, so an approval selects the server's
+   * `allow_once` and a refusal its `reject_once` - never an `always`, which
+   * would change this session's policy from a single answer. A server that
+   * offers no once option is refused instead, because selecting `allow_always`
+   * is a decision the person did not make.
+   */
+  const askPermission = (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
+    const option = (kind: PermissionOptionKind): string | undefined =>
+      request.options.find((one) => one.kind === kind)?.optionId;
+    const allow = option('allow_once');
+    const reject = option('reject_once') ?? option('reject_always');
+    const toolCallId = request.toolCall.toolCallId;
+    const requestId = `${toolCallId}:permission`;
+
+    const answered = new Promise<PermissionAnswer>((resolve) => {
+      permissions.set(toolCallId, {
+        requestId,
+        ...(allow === undefined ? {} : { allow }),
+        ...(reject === undefined ? {} : { reject }),
+        settle: resolve,
+      });
+    });
+
+    /*
+     * The row, if the server asked without announcing the call first.
+     *
+     * Usually the `tool_call` update arrived before this and the part is the
+     * one a client already draws, so it is found rather than replaced and only
+     * its state moves.
+     */
+    const turnId = mapping?.turnId ?? '';
+    const existing = mapping?.parts.find((one) => one.id === toolCallId);
+    const call = existing === undefined ? {
+      toolCallId,
+      toolName: request.toolCall.name ?? request.toolCall.title ?? toolCallId,
+      displayName: request.toolCall.title ?? request.toolCall.name ?? toolCallId,
+      ...(request.toolCall.rawInput === undefined ? {} : { toolInput: JSON.stringify(request.toolCall.rawInput) }),
+    } as Bag : bag(bag(existing).toolCall);
+    call.status = 'pending-confirmation';
+    call.invocationMessage = request.toolCall.title ?? call.toolName;
+    delete call.confirmed;
+    if (existing === undefined && mapping !== undefined) {
+      mapping.parts.push({ id: toolCallId, kind: 'toolCall', toolCall: call });
+      emit('chat', {
+        type: 'chat/toolCallStart', turnId, toolCallId,
+        toolName: call.toolName, displayName: call.displayName,
+      });
+    }
+    emit('session', {
+      type: 'session/inputNeededSet',
+      request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: call },
+    });
+    doing('Waiting on you');
+    touch();
+    return answered;
+  };
+
+  /**
    * Spawn the server, hand it a client, and open the one session on it.
    *
    * One promise for the whole of it, so a second turn that arrives while the
@@ -262,7 +464,22 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         ...(options.args === undefined ? {} : { args: options.args }),
         ...(options.env === undefined ? {} : { env: options.env }),
         cwd: where,
-        handlers: { update: receivedUpdate },
+        handlers: {
+          update: receivedUpdate,
+          permission: askPermission,
+          // Each half only where the session has what it needs: an
+          // unadvertised capability is a request a conformant server never
+          // makes, and one with nothing behind it would throw.
+          ...(start.resources === undefined
+            ? {}
+            : {
+                readTextFile,
+                ...(start.resources.write === undefined ? {} : { writeTextFile }),
+              }),
+          ...(start.terminals === undefined
+            ? {}
+            : { createTerminal: openTerminal, terminalOutput, waitForTerminalExit, killTerminal, releaseTerminal }),
+        },
       });
       live = connection;
       const handshake = await connection.initialize();
@@ -627,15 +844,47 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
     },
 
-    /*
-     * Nothing here is waiting on a person.
+    /**
+     * A person's answer to the permission the server is waiting on.
      *
-     * `requestPermission` answers the server with `cancelled` rather than
-     * putting a question to a client, so there is no tool call a decision
-     * could belong to. Task 03 is what turns it into a form and gives these
-     * two something to settle.
+     * Found by the tool call the entry names rather than assumed to be the one
+     * held, because two calls can be waiting at once and answering the wrong
+     * one is worse than answering none. Nothing is allowed without a once
+     * option to select: the request is refused instead, with the person's
+     * answer standing as the reason.
      */
-    confirm: () => {},
+    confirm: (toolCallId, approved) => {
+      const held = permissions.get(toolCallId);
+      if (held === undefined) return;
+      permissions.delete(toolCallId);
+      emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
+      const part = mapping?.parts.find((one) => one.id === toolCallId);
+      if (part !== undefined) {
+        const call = bag(bag(part).toolCall);
+        call.status = approved ? 'running' : 'cancelled';
+        if (approved) call.confirmed = 'user-action';
+      }
+      emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: mapping?.turnId,
+        toolCallId,
+        approved,
+        ...(approved ? { confirmed: 'user-action' } : {}),
+      });
+      held.settle(approved
+        ? (held.allow === undefined ? 'cancelled' : { optionId: held.allow })
+        : (held.reject === undefined ? 'cancelled' : { optionId: held.reject }));
+      doing(approved ? 'Running' : 'Thinking');
+      touch();
+    },
+
+    /*
+     * ACP asks no questions of its own here.
+     *
+     * Its only interactive request is `session/request_permission`, which is
+     * the confirmation above; there is no question shape to answer, so an
+     * answer names something this session never asked.
+     */
     answer: () => {},
 
     /**
@@ -701,6 +950,18 @@ export function acpSession(options: AcpOptions, start: Start): Session {
 
     close: () => {
       closed = true;
+      /*
+       * Everything anybody is still waiting on is let go first.
+       *
+       * A permission is a subprocess blocked on a promise, and a shell the
+       * server asked for is a process this host opened: closing the connection
+       * without answering either leaves the first hanging and the second
+       * running under nobody.
+       */
+      for (const held of permissions.values()) held.settle('cancelled');
+      permissions.clear();
+      for (const held of terminals.values()) held.handle.release();
+      terminals.clear();
       const connection = live;
       live = undefined;
       connection?.close();

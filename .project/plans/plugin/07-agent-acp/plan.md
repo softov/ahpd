@@ -105,7 +105,7 @@ ahpd --plugin @ahpd/agent-acp
 | --- | --- | --- |
 | [01 - The package, the provider and a turn](task-01-the-package-the-provider-and-a-turn.md) | done | - |
 | [02 - The catalogue, a resume and the config schema](task-02-the-catalogue-a-resume-and-the-config-schema.md) | done | 01 |
-| [03 - The host's files and shell reach the server](task-03-the-hosts-files-and-shell-reach-the-server.md) | doing | 01 |
+| [03 - The host's files and shell reach the server](task-03-the-hosts-files-and-shell-reach-the-server.md) | done | 01 |
 | [04 - The plugin entry, the docs and a daemon that serves it](task-04-the-plugin-entry-the-docs-and-a-daemon.md) | todo | 02, 03 |
 
 ## Risks and tradeoffs
@@ -118,8 +118,8 @@ ahpd --plugin @ahpd/agent-acp
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, both done 2026-09-22, and task 03's SDK half: `Start` carries the host's `resources` and `terminals`. The bridge does not use them yet, and that is deliberate - the public change was made on its own so it could be read before a consumer depends on it.
-- **Next action:** the rest of [task-03-the-hosts-files-and-shell-reach-the-server.md](task-03-the-hosts-files-and-shell-reach-the-server.md): the capabilities, the three client requests and real approvals.
+- **Done so far:** tasks 01, 02 and 03, all done 2026-09-22. The package runs a turn and a cancel, reads the catalogue, resumes, learns models, modes and commands, answers the transcript from what it watched, and now answers the server's file and terminal requests through the host's own store and factory, with a permission put to a person as a two-valued confirmation.
+- **Next action:** [task-04-the-plugin-entry-the-docs-and-a-daemon.md](task-04-the-plugin-entry-the-docs-and-a-daemon.md): the plugin entry, the docs and an end-to-end daemon run.
 - **Open questions:**
   1. Whether `transcript(id)` should record updates to the file store so a session browsed in a later daemon opens with its history - proposed: no for this plan, because the ACP server owns the conversation and `loadSession` is the way it is read back.
 - **Watch out for:** the workspace's pnpm store is outside the checkout, so `pnpm install` needs `PNPM_HOME` unset and `HOME` writable, and because `CI=true` implies a frozen lockfile a manifest change needs `pnpm install --no-frozen-lockfile`; a test must not spawn a real `copilot`, so the scripted `test/fixtures/acp-server.mjs` is what the tests run against; the protocol has no `chat/toolCallUpdate`, so tool updates map to `chat/toolCallContentChanged` and `chat/toolCallComplete`; and ACP names neither models nor commands before a session, so the schema has no `model` property and `probe` states an empty offer.
