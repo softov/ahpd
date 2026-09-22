@@ -4,8 +4,9 @@ The machine a `computer:` resource would be about: one container, started when
 somebody asks for one and thrown away after.
 Nothing in `@ahpd/*` starts it - this is the operator's half, and the script here
 is what a provider would eventually drive.
-On this machine Docker is available and `/dev/kvm` exists but is not readable by
-an ordinary account, so the first section is the once-per-machine part.
+Docker is available on this machine; `/dev/kvm` is readable once the account is
+in the `kvm` group and has started a new session, so the first section is the
+once-per-machine part.
 
 ## Let a person use Docker and KVM
 

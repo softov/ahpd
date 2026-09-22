@@ -1,6 +1,6 @@
 ---
 title: The host routes a resource command by scheme
-status: todo
+status: done
 depends:
   - task-01-a-plugin-contributes-a-provider.md
 layer: host
@@ -46,7 +46,7 @@ Every resource command reaches the store or provider that owns the URI's scheme,
 
 ## Resume
 
-Done 2026-09-23.
+Done 2026-09-22.
 `storeFor(uri)` answers the file store for `file:` and for a scheme nobody serves, and the registered provider otherwise, so an unregistered scheme keeps the sentence `fileResources` already writes.
 Every routed handler asks for its method through `need`, so a provider that leaves one out answers `-32601`; `resourceMove` and `resourceCopy` compare the two ends and refuse `-32602` across schemes.
 Found: the union return type flowed through `need(...).watch.call(store, ...)` in `createResourceWatch` with no cast, so the factory needed only the store lookup and nothing else.

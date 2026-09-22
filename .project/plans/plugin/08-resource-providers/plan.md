@@ -3,8 +3,8 @@ title: A plugin serves a host-owned URI scheme
 domain: plugin
 status: built
 priority: medium
-created: 2026-09-23
-revalidated: 2026-09-23
+created: 2026-09-22
+revalidated: 2026-09-22
 requires: []
 changes: []
 creates: []
@@ -74,7 +74,7 @@ ahpd --plugin <pkg> -> loadPlugins -> apply(host) -> host.registerResourceProvid
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [A host-owned URI scheme is a provider a plugin contributes](../../../decisions/host-owned-schemes-are-provider-contributions.md) | The user, 2026-09-23: asked which route the plan should take and answered "The provider mechanism". |
+| 1 | [A host-owned URI scheme is a provider a plugin contributes](../../../decisions/host-owned-schemes-are-provider-contributions.md) | The user, 2026-09-22: asked which route the plan should take and answered "The provider mechanism". |
 | 2 | [A scheme provider implements less than a resource store](../../../decisions/a-scheme-provider-implements-less-than-a-resource-store.md) | (defaulted: a `computer:` provider has no path completion to offer, and the research asks for a smaller contract rather than fake file semantics). |
 
 | What | Source | Task |
@@ -114,7 +114,7 @@ ahpd --plugin <pkg> -> loadPlugins -> apply(host) -> host.registerResourceProvid
 
 ## Resume state
 
-- **Done so far:** all three tasks, 2026-09-23. A plugin registers a scheme, the host routes every resource command by it, and a read-only `computer:` fixture is loaded through the real loader. See [implemented.md](implemented.md).
+- **Done so far:** all three tasks, 2026-09-22. A plugin registers a scheme, the host routes every resource command by it, and a read-only `computer:` fixture is loaded through the real loader. See [implemented.md](implemented.md).
 - **Next action:** none; the plan is built. Docker and KVM are named as the substrate a real provider would talk to, and that provider is its own plan.
 - **Open questions:**
   1. Should a provider be allowed to claim a scheme a connected client is publishing right now? - answered: no check is made, because a registration cannot know what a future client will publish; the relay wins and the precedence is documented.

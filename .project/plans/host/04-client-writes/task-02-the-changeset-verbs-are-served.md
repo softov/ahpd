@@ -40,7 +40,7 @@ A changeset operation that writes runs for a connected client with no `resourceR
 
 ## Resume
 
-Done 2026-09-23.
+Done 2026-09-22.
 The `offered.writes === true` gate is gone from `invokeChangesetOperation`, and the comment above it names three gates instead of four.
 `test/operations.test.ts` changed in three places rather than two: the refusal case became one where `commit` runs and the source records the invocation, the case that opened by requesting a grant lost that call, and the `resourceRequest` case's title and comment now say it answers rather than grants.
 `test/host.test.ts`'s `create` helper lost the `resourceRequest` it opened with, and its `dir` argument with it, since nothing in the helper used the directory.

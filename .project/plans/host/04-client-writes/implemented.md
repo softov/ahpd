@@ -1,6 +1,6 @@
 ---
 title: A client may write a file it may read - implemented
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/sdk/src/host.ts
   - code://packages/sdk/src/types/host.ts
@@ -45,4 +45,4 @@ The store's own refusals and a client-owned resource's relayed refusal are untou
 
 ## Left for later
 
-Nothing. The VS Code window check was confirmed by the user in a running window on 2026-09-23, and the release shipped as `0.6.3`.
+Nothing. The VS Code window check was confirmed by the user in a running window on 2026-09-22, and the release shipped as `0.6.3`.

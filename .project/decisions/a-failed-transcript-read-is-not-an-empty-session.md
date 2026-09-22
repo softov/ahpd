@@ -1,7 +1,7 @@
 ---
 title: A transcript read that failed is not kept as an empty session
 status: accepted
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/agent-claude/src/transcript.ts#L38-L51 - the catch that answers `[]` for any failure, and the comment that argues for it
   - code://packages/sdk/src/host.ts#L3772 - `history`, the cache that lives as long as the host process
@@ -26,7 +26,7 @@ A read that answered nothing is not remembered: `past` puts a transcript in `his
 `turnsOf` tries a failed read once more before answering empty, so a transient failure is not drawn as an empty session at all.
 The rule that a transcript this host cannot parse is still served as an empty session stands, because a row the catalogue vouches for has to open; what changes is that the empty answer is not kept for the process and is not the first thing a failure produces.
 
-Source: the user, 2026-09-23, reporting the symptom and answering "Build it now" when asked whether to build this plan.
+Source: the user, 2026-09-22, reporting the symptom and answering "Build it now" when asked whether to build this plan.
 
 ## Consequences
 

@@ -3,8 +3,8 @@ title: A transcript that answered nothing is read again
 domain: host
 status: built
 priority: high
-created: 2026-09-23
-revalidated: 2026-09-23
+created: 2026-09-22
+revalidated: 2026-09-22
 requires: []
 changes: []
 creates: []
@@ -57,7 +57,7 @@ a client subscribes to a catalogue session's chat
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [A transcript read that failed is not kept as an empty session](../../../decisions/a-failed-transcript-read-is-not-an-empty-session.md) | The user, 2026-09-23: reported the symptom and answered "do the plan" to the fix direction. |
+| 1 | [A transcript read that failed is not kept as an empty session](../../../decisions/a-failed-transcript-read-is-not-an-empty-session.md) | The user, 2026-09-22: reported the symptom and answered "do the plan" to the fix direction. |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ a client subscribes to a catalogue session's chat
 
 ## Resume state
 
-- **Done so far:** both tasks, 2026-09-23. `past` keeps a read only when it has turns, and `turnsOf` reads once more when the first attempt throws. See [implemented.md](implemented.md).
+- **Done so far:** both tasks, 2026-09-22. `past` keeps a read only when it has turns, and `turnsOf` reads once more when the first attempt throws. See [implemented.md](implemented.md).
 - **Next action:** none; the plan is built. The by-hand item below is the one thing not run here.
 - **Open questions:**
   1. Should the retry wait a moment rather than run immediately? - answered: no, an immediate second read is free and a timer would be a wall-clock wait in a suite that is trying to remove them. If a blank session is seen again, the answer is the log line the risks section names, not a longer wait.

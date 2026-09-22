@@ -38,7 +38,7 @@ A transcript read that throws is attempted once more before it is drawn as an em
 
 ## Resume
 
-Done 2026-09-23.
+Done 2026-09-22.
 `turnsOf` retries the SDK read once on a throw and answers `[]` only when that attempt fails too, and its doc comment gained the paragraph that says why.
 The mock gained `throwOnce`, reset in `beforeEach`, and throws while it is positive after the existing one-tick wait, so two concurrent callers still overlap.
 The case asserts the turn is drawn and that two reads were attempted, and it fails with the retry reverted.

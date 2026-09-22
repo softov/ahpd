@@ -3,8 +3,8 @@ title: A client may write a file it may read
 domain: host
 status: built
 priority: high
-created: 2026-09-23
-revalidated: 2026-09-23
+created: 2026-09-22
+revalidated: 2026-09-22
 requires: []
 changes: []
 creates: []
@@ -68,7 +68,7 @@ invokeChangesetOperation with offered.writes === true
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [A client that may connect may write a file it may read](../../../decisions/client-writes-are-served-not-gated.md) | The user chose "Plan it first" on 2026-09-23, so this file is the proposal under review. |
+| 1 | [A client that may connect may write a file it may read](../../../decisions/client-writes-are-served-not-gated.md) | The user chose "Plan it first" on 2026-09-22, so this file is the proposal under review. |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -102,7 +102,7 @@ invokeChangesetOperation with offered.writes === true
 
 ## Resume state
 
-- **Done so far:** both tasks, 2026-09-23. `mayWrite`, `needsWrite` and `connection.grants` are gone, the five resource handlers and `invokeChangesetOperation` serve a write with no grant, and `resourceRequest` still answers and logs. See [implemented.md](implemented.md).
+- **Done so far:** both tasks, 2026-09-22. `mayWrite`, `needsWrite` and `connection.grants` are gone, the five resource handlers and `invokeChangesetOperation` serve a write with no grant, and `resourceRequest` still answers and logs. See [implemented.md](implemented.md).
 - **Next action:** none; the plan is built. What is left is the by-hand window check below and a version bump, since `0.6.2` is published.
 - **Open questions:**
   1. Does the window ask for a read grant before it lists a directory? - answered: no, and it never needed to, because the read half was never gated.
@@ -112,5 +112,5 @@ invokeChangesetOperation with offered.writes === true
 
 - [x] `pnpm test` green, with `test/writes.test.ts` and `test/operations.test.ts` updated.
 - [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
-- [x] By hand: a VS Code window saves a file in a session workspace this host serves. Confirmed by the user in a running window on 2026-09-23; the wire call had already been driven against the real daemon, see [implemented.md](implemented.md).
+- [x] By hand: a VS Code window saves a file in a session workspace this host serves. Confirmed by the user in a running window on 2026-09-22; the wire call had already been driven against the real daemon, see [implemented.md](implemented.md).
 - [x] `plans/index.md` and [00-host.md](../00-host.md) updated.

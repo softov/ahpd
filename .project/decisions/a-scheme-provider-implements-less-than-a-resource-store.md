@@ -1,7 +1,7 @@
 ---
 title: A scheme provider implements less than a resource store
 status: accepted
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/sdk/src/types/resources.ts#L125-L183 - `ResourceStore`, whose four read methods are required
   - code://packages/sdk/src/host.ts#L4726-L4745 - the `@` completion, which asks for paths rather than URIs

@@ -38,6 +38,6 @@ A session whose transcript answered no turns is read again the next time it is o
 
 ## Resume
 
-Done 2026-09-23.
+Done 2026-09-22.
 `past` wraps the write as `if (built.length > 0) history.set(id, built);`, with the comment that says why: an empty answer is what a failure and a session with nothing in it both look like from the port, and keeping it makes one bad read permanent.
 The case covers all three halves in one place: an empty read is repeated, a read with turns is served, and a third open does not read at all.

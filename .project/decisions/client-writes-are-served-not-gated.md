@@ -1,7 +1,7 @@
 ---
 title: A client that may connect may write a file it may read
 status: accepted
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/sdk/src/host.ts#L4388-L4412 - `mayWrite` and `needsWrite`, the gate this decision removes
   - code://packages/sdk/src/host.ts#L5258-L5327 - the five resource handlers that call it
@@ -29,7 +29,7 @@ Client to server resource writes are served without a prior grant: `resourceWrit
 `resourceRequest` stays served and keeps answering `{}` for a `file:` URI, and the ask is still logged, but `mayWrite`, `needsWrite` and the per-connection `grants` set go, because a set nothing reads claims an enforcement that is not there.
 The `-32009` a client-owned resource answers with is unchanged: this host still relays the owner's refusal verbatim, because that refusal is the owner's and not this gate.
 
-Source: the user, 2026-09-23, asked whether to build the plan this decision backs and answering "Build the whole plan (01 then 02)".
+Source: the user, 2026-09-22, asked whether to build the plan this decision backs and answering "Build the whole plan (01 then 02)".
 
 ## Consequences
 

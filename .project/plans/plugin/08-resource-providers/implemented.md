@@ -1,6 +1,6 @@
 ---
 title: A plugin serves a host-owned URI scheme - implemented
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/sdk/src/types/resources.ts
   - code://packages/sdk/src/types/plugin.ts
@@ -45,5 +45,6 @@ A provider implements less than a `ResourceStore`: `read` is required, `list`, `
 
 ## Left for later
 
-- A real `computer:` provider and the master it would call. Docker is available on this machine and `/dev/kvm` exists but is not readable by the user, so a VM path needs the `kvm` group or `--device /dev/kvm` through Docker plus a hypervisor; the plan names both and builds neither.
+- A real `computer:` provider, and what it asks for a machine. Docker is available on this machine and `/dev/kvm` is readable once the account is in the `kvm` group and the session is new, so both a container path and a VM path are open; the plan names the substrate and builds neither.
+- `scripts/computer.mjs` and `docs/COMPUTER.md` landed after this plan closed, in `0194e5e`: the operator's half, one Docker container owned by name and labelled `ahpd.computer=1`, with `start`, `status`, `exec`, `stop`, `rm` and `list`. It is referenced from the README and the plugin docs. It is not the provider: nothing yet connects the scheme, the fixture and a running container.
 - Nothing here is released: a `0.6.4` would carry it, together with the transcript fix from `host/05`.

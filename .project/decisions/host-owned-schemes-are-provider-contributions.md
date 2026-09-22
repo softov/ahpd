@@ -1,7 +1,7 @@
 ---
 title: A host-owned URI scheme is a provider a plugin contributes
 status: accepted
-date: 2026-09-23
+date: 2026-09-22
 refs:
   - code://packages/sdk/src/types/plugin.ts#L83-L130 - the contribution surface the new method joins
   - code://packages/sdk/src/types/plugin.ts#L163-L187 - `Contribution`, which gains the keyed bucket
@@ -25,7 +25,7 @@ A plugin contributes one host-owned URI scheme with `registerResourceProvider(sc
 The providers are collected under `HostOptions.resourceProviders`, keyed by scheme, so `registerResources` and the file store keep their present meaning and nothing that works today moves.
 A scheme another plugin already registered, and a reserved one (`file`, and anything on `ahp-`), is refused when the plugin is applied.
 
-Source: the user, 2026-09-23, asked which route the plan should take and answered "The provider mechanism".
+Source: the user, 2026-09-22, asked which route the plan should take and answered "The provider mechanism".
 
 ## Consequences
 
