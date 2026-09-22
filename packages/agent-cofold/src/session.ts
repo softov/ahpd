@@ -958,10 +958,19 @@ export function cofoldSession(
       // the finished call rather than the `streaming` one it was opened with.
       Object.assign(bag(part.toolCall), result, { status: 'completed', confirmed: 'not-needed' });
       start.emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      const duration = Date.now() - began;
       active.state = done.success ? 'complete' : 'error';
-      active.duration = Date.now() - began;
+      active.duration = duration;
       turns.push(active);
       active = undefined;
+      /*
+       * The turn closes like any other.
+       *
+       * A shell command is a turn of this chat, so a client that watched it
+       * needs the same completion a model's answer gets; without it the row
+       * stays open on screen while the session already counts it as done.
+       */
+      start.emit('chat', { type: 'chat/turnComplete', turnId, duration });
       doing(undefined);
       touch();
       startNext();

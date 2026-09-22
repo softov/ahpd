@@ -1,10 +1,38 @@
 {
   "name": "@ahpd/agent-acp",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.6.2",
   "type": "module",
   "description": "An AHP backend over the Agent Client Protocol: any ACP server is one provider instead of one package",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "protocol",
+    "json-rpc",
+    "backend",
+    "adapter",
+    "acp",
+    "agent-client-protocol",
+    "copilot",
+    "codex",
+    "gemini"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/agent-acp"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -36,6 +64,23 @@
   },
   "ahpd": {
     "entry": "./dist/index.js",
-    "title": "ACP"
+    "title": "ACP",
+    "options": {
+      "command": {
+        "required": true
+      },
+      "args": {
+        "required": false
+      },
+      "env": {
+        "required": false
+      },
+      "cwd": {
+        "required": false
+      },
+      "provider": {
+        "required": false
+      }
+    }
   }
 }

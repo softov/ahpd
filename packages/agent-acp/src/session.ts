@@ -47,7 +47,7 @@ import type {
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, OpenedTerminal, Session, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageFrom, OpenedTerminal, Ran, Session, Start } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
 import { mapUpdate } from './mapping.js';
@@ -684,6 +684,128 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     }
   };
 
+  /**
+   * One shell command, run by the host rather than asked of the server.
+   *
+   * `!ls` is a person's command, not a prompt: the host spawns the shell and
+   * hands back what it printed, so nothing here reaches the ACP server. The
+   * turn is still this chat's and still a turn - it opens, carries one tool
+   * call and completes - which is what puts the command and its output in the
+   * transcript beside the conversation it interrupted.
+   *
+   * The ACP connection is not touched: a server that is mid-prompt is not
+   * asked to stop, and one that is idle stays idle. Any `session/update` that
+   * arrives meanwhile is dropped, because `mapping` is deliberately cleared
+   * while a command runs - there is no model turn for it to belong to.
+   */
+  const runCommand = (
+    turnId: string,
+    command: string,
+    run: (toolCallId: string) => Promise<Ran>,
+    queuedMessageId?: string,
+  ): void => {
+    if (closed || active !== undefined) return;
+    cancelRequested = false;
+    failed = undefined;
+    if (title === UNTITLED && command !== '') {
+      title = command.slice(0, 60);
+      if (record !== undefined) record.title = title;
+      emit('session', { type: 'session/titleChanged', title });
+    }
+    const began = Date.now();
+    const toolCallId = `${turnId}:command`;
+    /*
+     * `terminal` as the name, which is what a client draws a shell by.
+     *
+     * The call is held as the turn's one part, so a client that subscribes
+     * after the command finished reads the row from the snapshot rather than
+     * the actions it missed.
+     */
+    const call: Bag = {
+      toolCallId,
+      toolName: 'terminal',
+      displayName: 'Terminal',
+      intention: command,
+      invocationMessage: command,
+      toolInput: command,
+      confirmed: 'not-needed',
+      status: 'running',
+    };
+    const part: Bag = { id: toolCallId, kind: 'toolCall', toolCall: call };
+    active = {
+      id: turnId,
+      startedAt: new Date(began).toISOString(),
+      message: { text: `!${command}`, origin: { kind: 'user' } },
+      responseParts: [part],
+    };
+    // No ACP turn is running, so a stray `session/update` has nothing to be
+    // mapped into and is dropped rather than written into this shell's turn.
+    mapping = undefined;
+    emit('chat', {
+      type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message,
+      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+    });
+    emit('chat', {
+      type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal', displayName: 'Terminal', intention: command,
+    });
+    emit('chat', {
+      type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, confirmed: 'not-needed', toolInput: command,
+    });
+    doing('Running');
+    touch();
+    void run(toolCallId).then((done) => {
+      if (active === undefined || String(active.id) !== turnId) return;
+      /*
+       * The terminal first, so a client can watch the output arrive, then the
+       * text it printed. `content` replaces rather than appends, so the two go
+       * out together in the one action that closes the row.
+       */
+      const content: Bag[] = [
+        ...(done.terminal === undefined ? [] : [{
+          type: 'terminal',
+          resource: done.terminal,
+          title: 'Terminal',
+          // Pipes, not a pseudoterminal: a client reads this to decide whether
+          // the preview needs VT parsing.
+          isPty: false,
+          result: {
+            ...(done.code !== undefined ? { exitCode: done.code } : {}),
+            ...(done.output === '' ? {} : { preview: done.output }),
+          },
+        }]),
+        ...(done.output === '' ? [] : [{ type: 'text', text: done.output }]),
+      ];
+      const result: Bag = {
+        success: done.success,
+        pastTenseMessage: done.said,
+        content,
+        ...(done.success ? {} : { error: { message: done.said } }),
+      };
+      // Into the part as well, so the snapshot a late subscriber reads holds
+      // the finished call rather than the `running` one it was opened with.
+      Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
+      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      const turn = active;
+      const duration = Date.now() - began;
+      turn.state = done.success ? 'complete' : 'error';
+      turn.duration = duration;
+      turns.push(turn);
+      active = undefined;
+      if (!done.success) failed = done.said;
+      /*
+       * The turn closes like any other.
+       *
+       * A shell command is a turn of this chat, so a client that watched it
+       * needs the same completion a model's answer gets; without it the row
+       * stays open on screen while the session already counts it as done.
+       */
+      emit('chat', { type: 'chat/turnComplete', turnId, duration });
+      doing(undefined);
+      touch();
+      startNext();
+    });
+  };
+
   /** Begin a turn, once the session is free. */
   const begin = (
     turnId: string,
@@ -705,11 +827,23 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     void run(turnId, text, model);
   };
 
-  /** The head of the queue, once there is nothing running. */
+  /**
+   * The head of the queue, once there is nothing running.
+   *
+   * A queued `!command` is *run* rather than sent: `ran` queued the command
+   * itself when a turn was already running, and handing its text to the server
+   * as a prompt is the one thing the `!` prefix exists not to do.
+   */
   const startNext = (): void => {
     if (active !== undefined || closed) return;
     const next = queued.shift();
     if (next === undefined) return;
+    const held = bag(next.command);
+    const typed = typeof held.text === 'string' ? held.text : undefined;
+    if (typed !== undefined && typeof held.run === 'function') {
+      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, String(next.id));
+      return;
+    }
     const message = bag(next.message);
     begin(
       crypto.randomUUID(),
@@ -776,6 +910,27 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     }),
 
     begin: (turnId, text, model, from) => begin(turnId, text, model, from),
+
+    /**
+     * A person's `!command`, run by the host in one of its own shells.
+     *
+     * An ACP server has no shell turn of its own, so this turn belongs to the
+     * bridge: the host spawns the shell and this session opens the turn around
+     * it. The command waits its turn when one is already running, because a
+     * shell that jumped the queue would run against a tree the turn in front
+     * of it is still editing - and what waits is the command, not its text, so
+     * `startNext` runs it rather than asking the server about `!ping`.
+     */
+    ran: (turnId, command, run) => {
+      if (active !== undefined) {
+        const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
+        queued.push({ id: turnId, command: { text: command, run }, message });
+        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        touch();
+        return;
+      }
+      runCommand(turnId, command, run);
+    },
 
     /**
      * Stop the running turn.

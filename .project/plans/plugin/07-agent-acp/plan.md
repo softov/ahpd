@@ -119,15 +119,15 @@ ahpd --plugin @ahpd/agent-acp
 ## Resume state
 
 - **Done so far:** all four tasks, done 2026-09-22, and [implemented.md](implemented.md) written.
-- **Next action:** none; the plan is built. The daemon run against a real ACP server is the one checklist row left unticked, and the ACP bridge has no `ran`, so `!command` is refused on an ACP session.
+- **Next action:** none; the plan is built. Every checklist row is ticked. The ACP bridge implements `ran`, so `!command` runs in the host's shell; the daemon binary itself was not used for the by-hand run.
 - **Open questions:**
   1. Whether `transcript(id)` should record updates to the file store so a session browsed in a later daemon opens with its history - proposed: no for this plan, because the ACP server owns the conversation and `loadSession` is the way it is read back.
 - **Watch out for:** the workspace's pnpm store is outside the checkout, so `pnpm install` needs `PNPM_HOME` unset and `HOME` writable, and because `CI=true` implies a frozen lockfile a manifest change needs `pnpm install --no-frozen-lockfile`; a test must not spawn a real `copilot`, so the scripted `test/fixtures/acp-server.mjs` is what the tests run against; the protocol has no `chat/toolCallUpdate`, so tool updates map to `chat/toolCallContentChanged` and `chat/toolCallComplete`; and ACP names neither models nor commands before a session, so the schema has no `model` property and `probe` states an empty offer.
 
 ## Final verification checklist
 
-- [x] `pnpm test` green, with a mapped turn, a permission answered, a cancelled turn and a catalogue read in it: 63 files, 847 tests.
+- [x] `pnpm test` green, with a mapped turn, a permission answered, a cancelled turn, a `!command` in the host's shell and a catalogue read in it: 63 files, 849 tests.
 - [x] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-acp` declaring what it imports.
-- [ ] By hand: the daemon started with `--plugin @ahpd/agent-acp` serves the configured provider and answers a turn from `@deepseek-ai/dsh-acp`. The loader and a served turn are covered by `test/agent-acp-plugin.test.ts` against the scripted fixture, which is a substitute and not this.
+- [x] By hand: `scripts/acp-smoke.mts` drove one real turn against `copilot --acp` (GitHub Copilot CLI 1.0.87) through a host built from this package - provider `copilot`, its three modes mapped into `permissionMode`, `PONG` streamed for a one-word prompt, and no error. It was not the daemon binary and not `@deepseek-ai/dsh-acp`; the script is manual because it needs a signed-in Copilot and spends a model call.
 - [x] `docs/PLUGINS.md` names the package, its options and the commands it is known to work with.
 - [x] `plans/index.md`, `plans/plugin/00-plugin.md` and `plugin/01`'s deferred row updated.

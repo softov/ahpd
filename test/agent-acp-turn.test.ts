@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../packages/sdk/src/host.js';
+import { shellTerminals } from '../packages/sdk/src/terminals.js';
 import { acpAgent } from '../packages/agent-acp/src/index.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 
@@ -56,6 +57,8 @@ async function talking() {
   const host = createHost({
     path,
     agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
+    // The composer's `!` prefix is the host's shell, so the host has to hold one.
+    terminals: shellTerminals(),
   });
   const p = peer();
   const client = host.accept(p);
@@ -169,4 +172,30 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
   expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
   expect(said).not.toContain('chat/turnComplete');
   expect(said.at(-1)).toBe('chat/turnCancelled');
+});
+
+it("runs a !command in the host's shell rather than asking the server", async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', '!echo acp-ran-it');
+  await until(() => ended(p, chatUri));
+
+  // The host's shell, not the ACP server: one tool call named `terminal`,
+  // completed with what the shell printed. Before `ran` existed here the host
+  // refused the turn, because the bridge had no way to hold it.
+  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+  expect(start?.action).toMatchObject({ toolName: 'terminal' });
+  const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  expect((completed?.action.result as { success: boolean }).success).toBe(true);
+  expect(JSON.stringify(completed?.action.result)).toContain('acp-ran-it');
+  // The turn closes, so a client does not keep it open.
+  expect(types(p, chatUri)).toContain('chat/turnComplete');
+
+  // And in the snapshot, not only in the stream, with the call finished rather
+  // than left `running` for a client that subscribed afterwards.
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { kind?: string; toolCall?: { toolName: string; status: string } }[] }[] } };
+  }).snapshot.state.turns;
+  expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
+  expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
+  expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
 });

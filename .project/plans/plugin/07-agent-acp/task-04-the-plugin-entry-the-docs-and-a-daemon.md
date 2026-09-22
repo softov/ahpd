@@ -38,14 +38,15 @@ refs:
 ## Validation
 
 - `test/agent-acp-plugin.test.ts` - the loader resolving the package and serving a turn through the scripted server, a manifest listed as `ready` without importing its entry, two providers from two specs, and a spec with no `command` reported and skipped.
-- By hand: `node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp` serves the configured provider, and a session answers a turn from `@deepseek-ai/dsh-acp` with a real model configured. **Not done:** the scripted fixture stands in for a real server, and no daemon was driven against a real harness here.
+- By hand: `scripts/acp-smoke.mts` drove one real turn against `copilot --acp` (GitHub Copilot CLI 1.0.87) through a host built from this package, and it completed with no error. The daemon binary itself was not used and `@deepseek-ai/dsh-acp` was not installed.
 - `npx tsc -p tsconfig.json --noEmit`, `node scripts/boundary.mjs` and the full suite green.
 - `plans/index.md` and `plans/plugin/00-plugin.md` updated, which is the plan-closing change.
 
 ## Resume
 
-Done 2026-09-22, but not by hand.
-Built: `packages/agent-acp/src/plugin.ts` (`name`, `title`, `apply`, one backend per spec, `command` required and reported at load when absent), the re-export from `index.ts`, the `ahpd` key and `private` in the manifest, and `test/agent-acp-plugin.test.ts`.
+Done 2026-09-22, and by hand against a real server as well.
+Built: `packages/agent-acp/src/plugin.ts` (`name`, `title`, `apply`, one backend per spec, `command` required and reported at load when absent), the re-export from `index.ts`, the `ahpd` key in the manifest, and `test/agent-acp-plugin.test.ts`.
+Then released: the manifest lost `private`, gained the published metadata and an `ahpd.options` declaring `command` required (so `ahpd plugin list` reports a spec with no command as `unconfigured`), and moved to `0.6.2` with the other four packages. `release.yml` now checks, packs and stages all five; see [release-versions-move-together.md](../../../decisions/release-versions-move-together.md).
 Written: the `@ahpd/agent-acp` worked example in `docs/PLUGINS.md`, with the options, the four commands it is known to cover, the capability-to-port table and the binary permission rule.
-Not done: driving a daemon against a real ACP server with a real model. The loader and a served turn are covered by the test, which uses the scripted fixture; that is a substitute and is recorded as one in [implemented.md](implemented.md).
+Run by hand: `scripts/acp-smoke.mts` drives one real turn against `copilot --acp` (GitHub Copilot CLI 1.0.87) through a host built here. It handshook, named provider `copilot`, mapped Copilot's three modes into `permissionMode`, streamed `PONG` for a one-word prompt and completed with no error. Copilot puts its session store under `$HOME/.copilot`, which this sandbox mounts read-only, so the run names `COPILOT_HOME` to a writable directory; on a normal machine it needs no environment at all. The daemon binary itself was not used, and `@deepseek-ai/dsh-acp` was not installed.
 Two SDK gaps closed on the way, both on the terminal factory: it now opens the shell `rootConfig.defaultShell` names, and it fires the `terminal_open` event the client path fires, so a plugin watching for a shell cannot tell which half of the host opened it.

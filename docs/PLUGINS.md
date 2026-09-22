@@ -462,6 +462,13 @@ One spec is one server, so `copilot --acp`, `codex-acp`,
 lines and not four packages. The command is the only thing that tells them
 apart, which is why it is the one option with no default.
 
+GitHub Copilot CLI 1.0.87 is the one driven end to end through this bridge, by
+[`scripts/acp-smoke.mts`](../scripts/acp-smoke.mts): it handshook, registered
+provider `copilot`, mapped Copilot's three mode ids into the approvals control,
+streamed its answer and completed with no error. Copilot keeps its session store
+under `$HOME/.copilot`, so a host whose `$HOME` is read-only has to give it
+`COPILOT_HOME` pointing somewhere writable.
+
 ### What the server may ask the host for
 
 An ACP server is a client's peer, and it reaches back for files, a shell and a
@@ -487,9 +494,11 @@ option is never selected because that would change the session's policy from a
 single answer. A server that offers no once option is refused rather than
 allowed.
 
-There is no `!command` on an ACP session, because the bridge implements no `ran`
-and a shell turn is the backend's to open; the daemon says so rather than
-handing the command to the model as a question.
+A `!command` in the composer is the host's shell turn, not the server's: the
+bridge implements `ran`, so the daemon spawns the command in one of its own
+terminals, opens a `terminal` tool call around it and closes the turn with what
+it printed. Nothing about the command reaches the ACP server, and the server is
+never asked to stop for it - one already mid-prompt stays mid-prompt.
 
 ## Trying one today
 

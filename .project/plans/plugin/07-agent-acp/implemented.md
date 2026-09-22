@@ -20,6 +20,7 @@ refs:
   - code://test/agent-acp-ports.test.ts
   - code://test/agent-acp-plugin.test.ts
   - code://test/fixtures/acp-server.mjs
+  - code://scripts/acp-smoke.mts
   - code://docs/PLUGINS.md
   - npm://@agentclientprotocol/sdk@^1.4.0
 ---
@@ -49,7 +50,8 @@ A client creates a session on a provider the package registered, and that sessio
 - `test/agent-acp-ports.test.ts` - the capabilities the handshake advertises with both ports and with neither, a read and a write through the host's store, a terminal opened, waited on, read and released, and a permission approved as `allow_once` and refused as `reject_once`.
 - `test/agent-acp-plugin.test.ts` - the loader resolving the package and serving a turn through the scripted server, a manifest listed as `ready` without importing its entry, two providers from two specs, and a spec with no `command` reported and skipped.
 - `test/fixtures/acp-server.mjs` - the scripted server, which now sends requests of its own and awaits the answers.
-- 63 files, 847 tests; `tsc -p tsconfig.json --noEmit`, `pnpm build` and `node scripts/boundary.mjs` green with `@ahpd/agent-acp: 2 declared, none undeclared`.
+- By hand: `scripts/acp-smoke.mts` drove one real turn against `copilot --acp`, GitHub Copilot CLI 1.0.87. It handshook, registered provider `copilot`, mapped Copilot's three mode ids into `permissionMode`, streamed `PONG` for a one-word prompt and completed with no error. Copilot keeps its session store under `$HOME/.copilot`, so the sandbox's read-only home made it fail until the script named `COPILOT_HOME`; on a machine with a writable home it needs no environment.
+- 63 files, 849 tests; `tsc -p tsconfig.json --noEmit`, `pnpm build` and `node scripts/boundary.mjs` green with `@ahpd/agent-acp: 2 declared, none undeclared`.
 
 ## Departures from the plan
 
@@ -61,6 +63,6 @@ A client creates a session on a provider the package registered, and that sessio
 
 ## Left for later
 
-- **A daemon against a real ACP server.** The end-to-end run the plan's checklist names, against `@deepseek-ai/dsh-acp` with a configured model, has not been done here: the loader is exercised by `test/agent-acp-plugin.test.ts` and the server by the scripted fixture, and neither is a real harness answering a real model.
-- **No `ran`.** An ACP session has no shell turn, so `!command` is refused by the host with the reason rather than asked of the model. Giving the bridge a `ran` is a task of its own.
+- **`@deepseek-ai/dsh-acp` itself.** A real turn was driven against `copilot --acp` through `scripts/acp-smoke.mts`, which is the end-to-end proof the checklist wanted. DSH was not installed, and the daemon binary was not used - the host was built in process, which is the same bridge the daemon loads and not the daemon's own argv and configuration path.
+- **`!command` is the host's shell turn.** `acpSession` implements `ran`: the host spawns the command in one of its own terminals, the bridge opens a `terminal` tool call around it, closes the turn with what it printed, and the ACP server is never asked about it or interrupted for it. A command typed while a model turn is running queues as the command itself, not its text, so `startNext` runs it rather than prompting with `!ping`. `test/agent-acp-turn.test.ts` covers the direct path.
 - **A command named in the manifest's `ahpd.options`.** The required `command` is reported at apply and skipped; `ahpd plugin list` shows the spec as `unconfigured` only if the manifest declares it, which this one does not yet.

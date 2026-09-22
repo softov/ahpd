@@ -9,7 +9,7 @@
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 ![runs on Node, Bun, Deno](https://img.shields.io/badge/runs%20on-Node%20%7C%20Bun%20%7C%20Deno-495057)
 
-An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself. It ships with a Claude backend, which is the only one so far.
+An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself. It ships with a Claude backend, and two more backends - cofold and ACP - are published packages of their own.
 
 `ahpd` can be used in two ways:
 
@@ -310,6 +310,19 @@ Claude Code, behind the one seam a host knows: `Agent`. [`@ahpd/agent-claude` on
 | [packages/agent-claude/src/session.ts](packages/agent-claude/src/session.ts)       | One live Claude session, reduced into its channels' state. |
 | [packages/agent-claude/src/transcript.ts](packages/agent-claude/src/transcript.ts) | A past Claude session read as turns. |
 | [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |
+
+### `@ahpd/agent-cofold` and `@ahpd/agent-acp` - the other two backends
+
+Two more implementations of the same `Agent` seam, each in its own package and
+each loaded as a plugin rather than built into the daemon.
+
+| | |
+| --- | --- |
+| [`@ahpd/agent-cofold`](packages/agent-cofold/) | The cofold runtime: every model its endpoint serves is a model inside one provider. |
+| [`@ahpd/agent-acp`](packages/agent-acp/) | Any [Agent Client Protocol](https://agentclientprotocol.com/) server - `copilot --acp`, `codex-acp`, `gemini --experimental-acp` - as one provider per configured command. |
+
+Both are documented in [`docs/PLUGINS.md`](docs/PLUGINS.md), including their
+options and the `--plugin` line that loads each.
 
 ### `ahpd` - the daemon
 

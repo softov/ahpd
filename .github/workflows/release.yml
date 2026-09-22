@@ -1,7 +1,7 @@
 name: Release
 
-# A pushed tag is the whole gesture: `git tag v0.4.0 && git push --tags`.
-# The three packages move together, so one tag releases all of them.
+# A pushed tag is the whole gesture: `git tag v0.6.2 && git push --tags`.
+# The five packages move together, so one tag releases all of them.
 on:
   push:
     tags: ['v*']
@@ -45,7 +45,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The tag is a claim about what is in the manifests, and these three
+      # The tag is a claim about what is in the manifests, and these five
       # versions move together. A tag that disagrees with any of them publishes
       # a version nobody asked for, so it is checked before anything is built.
       - name: The tag says what every package says
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -eu
           tagged=${GITHUB_REF_NAME#v}
-          for package in sdk agent-claude server; do
+          for package in sdk agent-claude agent-cofold agent-acp server; do
             found=$(node -p "require('./packages/$package/package.json').version")
             if [ "$tagged" != "$found" ]; then
               echo "The tag says $tagged and packages/$package says $found."
@@ -69,11 +69,11 @@ jobs:
       - run: timeout 600 pnpm test
       - run: pnpm build
 
-      # Packed by pnpm and not by npm, because these three depend on each other
-      # with `workspace:^` and only pnpm rewrites that to a real range on the
-      # way out. An `npm pack` tarball carries the literal `workspace:^`, which
-      # installs here and is broken for everybody else - it looks fine right up
-      # until somebody else runs `npm i`.
+      # Packed by pnpm and not by npm, because these packages depend on each
+      # other with `workspace:^` and only pnpm rewrites that to a real range on
+      # the way out. An `npm pack` tarball carries the literal `workspace:^`,
+      # which installs here and is broken for everybody else - it looks fine
+      # right up until somebody else runs `npm i`.
       - name: Pack
         run: pnpm -r exec pnpm pack --pack-destination ${{ runner.temp }}
 
@@ -113,7 +113,7 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         run: |
           set -eu
-          for package in sdk agent-claude server; do
+          for package in sdk agent-claude agent-cofold agent-acp server; do
             name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
             version=$(node -p "require('./packages/$package/package.json').version")
             npm stage publish "${{ runner.temp }}/$name-$version.tgz" --provenance --access public
@@ -125,6 +125,8 @@ jobs:
           echo "Staged. Approve these in order, sdk first:"
           echo "  https://www.npmjs.com/package/@ahpd/sdk"
           echo "  https://www.npmjs.com/package/@ahpd/agent-claude"
+          echo "  https://www.npmjs.com/package/@ahpd/agent-cofold"
+          echo "  https://www.npmjs.com/package/@ahpd/agent-acp"
           echo "  https://www.npmjs.com/package/@ahpd/server"
           echo "The approve button stays disabled until npm has finished scanning."
 
@@ -136,7 +138,7 @@ jobs:
         if: ${{ inputs.dry_run == true }}
         run: |
           set -u
-          for package in sdk agent-claude server; do
+          for package in sdk agent-claude agent-cofold agent-acp server; do
             name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
             version=$(node -p "require('./packages/$package/package.json').version")
             said=$(npm stage publish "${{ runner.temp }}/$name-$version.tgz" --dry-run --access public 2>&1) && code=0 || code=$?

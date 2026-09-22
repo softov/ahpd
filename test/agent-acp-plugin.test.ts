@@ -201,3 +201,22 @@ it('reports a spec with nothing to spawn, and loads nothing for it', async () =>
   expect(problems).toHaveLength(1);
   expect(problems[0]).toContain('command');
 });
+
+it('lists a spec with no command as unconfigured, naming what it needs', async () => {
+  /*
+   * The manifest declares `command` required, so a listing says what is wrong
+   * before anything is imported or spawned. Without the declaration the same
+   * spec lists as `ready` and the problem only appears when a turn is asked
+   * for, which is the failure this is here to prevent.
+   */
+  const dir = join(REPO, 'packages/agent-acp');
+  const missing = await describePlugin(dir, { configDir: REPO, cwd: REPO });
+  expect(missing.state).toBe('unconfigured');
+  expect(missing.problem).toContain('command');
+
+  const given = await describePlugin(
+    { name: dir, options: { command: 'copilot', args: ['--acp'] } },
+    { configDir: REPO, cwd: REPO },
+  );
+  expect(given.state).toBe('ready');
+});
