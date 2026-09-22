@@ -23,17 +23,17 @@ DeepSeek is the same case, and `deepseek-harness` is the opposite one: it is a f
 ## Decision
 
 A new `@ahpd/agent-*` package is written only when the thing being integrated brings its own agent runtime and the way to talk to it is a new one.
-A model, an endpoint or a transport is not a package: it is a facio `ModelAdapter` reached through `@ahpd/agent-facio`, or configuration of one.
-Concretely, the first-party backends are `@ahpd/agent-claude` (Claude Code has its own runtime), `@ahpd/agent-acp` (any ACP server, `@deepseek-ai/dsh-acp` included) and `@ahpd/agent-facio` (every model-backed provider, with DeepSeek, OpenRouter, Ollama, vLLM and LM Studio as model configs inside one provider).
+A model, an endpoint or a transport is not a package: it is a facio `ModelAdapter` reached through `@ahpd/agent-cofold`, or configuration of one.
+Concretely, the first-party backends are `@ahpd/agent-claude` (Claude Code has its own runtime), `@ahpd/agent-acp` (any ACP server, `@deepseek-ai/dsh-acp` included) and `@ahpd/agent-cofold` (every model-backed provider, with DeepSeek, OpenRouter, Ollama, vLLM and LM Studio as model configs inside one provider).
 `@ahpd/agent-openai` and an API-only DeepSeek package are not made.
 
 ## Consequences
 
 One package covers every model instead of one package per vendor, so a new model is a facio adapter or a configuration value rather than an ahpd release.
-The work in `@ahpd/agent-facio` is the AHP half: session config to `createAgent`, `RunEvent` to `chat/*`, approval and questions to `inputNeededSet` and `confirm`, and `transcript()` and `list()` read from a facio `Store`.
+The work in `@ahpd/agent-cofold` is the AHP half: session config to `createAgent`, `RunEvent` to `chat/*`, approval and questions to `inputNeededSet` and `confirm`, and `transcript()` and `list()` read from a facio `Store`.
 A harness that gains an ACP server later needs no new package, which is the path `deepseek-harness` already took.
 A new runtime with a genuinely new way to talk to it still gets a package, so the rule refuses duplication and not integration.
-`Agent.provider` is per registered agent rather than per package, so `agent-facio` can put two model-backed providers side by side to exercise the register surface.
+`Agent.provider` is per registered agent rather than per package, so `agent-cofold` can put two model-backed providers side by side to exercise the register surface.
 `@facio/agents` is not published yet, so the bridge is developed against a linked checkout and its dependency becomes a range when facio is on npm.
 
 ## Options

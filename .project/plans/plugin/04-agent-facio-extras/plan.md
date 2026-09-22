@@ -6,19 +6,19 @@ priority: medium
 created: 2026-09-20
 revalidated: 2026-09-20
 requires:
-  - plans/plugin/03-agent-facio/plan.md
+  - plans/plugin/03-agent-cofold/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/host-tool-declares-what-it-does.md
   - decisions/facio-fork-and-rewind-needs-a-cut.md
 refs:
-  - code://.project/plans/plugin/03-agent-facio/plan.md - the plan this follows, and its implemented record
+  - code://.project/plans/plugin/03-agent-cofold/plan.md - the plan this follows, and its implemented record
   - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, which task 01 gives an `effects`
   - code://packages/sdk/src/types/session.ts#L189-L203 - `forkPoint` and `endPoint`, which task 02 implements
   - code://packages/sdk/src/types/session.ts#L348-L367 - `completeToolCall` and `clientGone`, which task 03 implements
-  - code://packages/agent-facio/src/tools.ts - where a bound tool is wrapped and a call's actions are built
-  - code://packages/agent-facio/src/session.ts - the session task 02 and 03 extend
+  - code://packages/agent-cofold/src/tools.ts - where a bound tool is wrapped and a call's actions are built
+  - code://packages/agent-cofold/src/session.ts - the session task 02 and 03 extend
   - file:///github/cofold/packages/agents/src/types/tool.ts - `ToolEffects`, the four flags task 01 carries
   - file:///github/cofold/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
   - file:///github/cofold/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
@@ -28,7 +28,7 @@ refs:
 
 ## Goal
 
-Three things `@ahpd/agent-facio` left open are closed: a host tool can say that running it writes or is destructive, so a daemon configured only from a file can have one gated; a conversation can be forked at a turn and rewound to one; and a tool a connected client runs is offered, called, and waited for rather than left out.
+Three things `@ahpd/agent-cofold` left open are closed: a host tool can say that running it writes or is destructive, so a daemon configured only from a file can have one gated; a conversation can be forked at a turn and rewound to one; and a tool a connected client runs is offered, called, and waited for rather than left out.
 A fourth arrived while testing: the backend reads the harness's own configuration, so a provider key already written for facio does not have to be lent or repeated.
 Each is a capability a client already has for another backend, so a facio session stops being the one that cannot do what the window offers.
 
@@ -40,8 +40,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - `rg "effects" /github/cofold/packages/agents/src` - `ToolEffects` is `reads`, `writes`, `network`, `destructive`, `createTool` takes them, and the default policy asks when `destructive` is true, so a host tool that carries them is gated with no policy function.
 - `rg "forkPoint|endPoint|completeToolCall|clientGone" packages/agent-claude/src` - one backend already answers all four, and the shapes are there to copy.
-- `rg "forkAt|rewindAt|forkPoint" packages/sdk/src packages/agent-facio/src` - the SDK declares them and agent-facio leaves them unmapped with a comment, which task 02 replaces.
-- `rg "owner" packages/agent-facio/src/tools.ts` - `facioTools` now leaves an owner-bound tool out, so the model is not offered a tool nothing can answer; task 03 is the round trip that puts it back.
+- `rg "forkAt|rewindAt|forkPoint" packages/sdk/src packages/agent-cofold/src` - the SDK declares them and agent-cofold leaves them unmapped with a comment, which task 02 replaces.
+- `rg "owner" packages/agent-cofold/src/tools.ts` - `facioTools` now leaves an owner-bound tool out, so the model is not offered a tool nothing can answer; task 03 is the round trip that puts it back.
 - `Not found: a test that drives a client-run tool through any backend - searched "completeToolCall" in test/; the protocol path exists and is unexercised.`
 
 ### Gaps
@@ -67,8 +67,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Data flow** - a tool's `effects` travel from its definition into facio's policy; a fork or a rewind turns an AHP turn id into a facio message id and starts a run at it; a client-owned call travels out as an action and its result comes back into the waiting run.
 - **Event flow** - none of AHP's own; all three are behaviours of a backend.
 - **State flow** - a fork opens a new facio session under a new id; a rewind keeps the id and drops what followed; a client call is held open in `session.ts` until the client answers or goes.
-- **Layer responsibilities** - `packages/sdk`: the `HostTool.effects` field only. `packages/agent-facio`: `tools.ts` for the effects and the owner round trip, `session.ts` for the fork, the rewind and the waiting call.
-- **Source-of-truth files** - `code://packages/sdk/src/types/host.ts`, `code://packages/agent-facio/src/tools.ts`, `code://packages/agent-facio/src/session.ts`.
+- **Layer responsibilities** - `packages/sdk`: the `HostTool.effects` field only. `packages/agent-cofold`: `tools.ts` for the effects and the owner round trip, `session.ts` for the fork, the rewind and the waiting call.
+- **Source-of-truth files** - `code://packages/sdk/src/types/host.ts`, `code://packages/agent-cofold/src/tools.ts`, `code://packages/agent-cofold/src/session.ts`.
 
 ## Tasks
 
@@ -97,6 +97,6 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - [x] `pnpm test` green, with a destructive host tool gated by the default policy, a fork, a rewind, and a client-run tool: 790 passed with one pre-existing `host.test.ts` `create-pr` flake that passes alone.
 - [x] `pnpm typecheck` and `pnpm boundary` green.
-- [x] By hand: a window's fork and rewind work on a facio session, and a client tool offered to the model runs on the client. The window was not driven; the host handlers a window calls are exercised end to end by `test/agent-facio-fork.test.ts` through `createHost`, so what is unverified is the client's drawing of the controls and not the backend.
+- [x] By hand: a window's fork and rewind work on a facio session, and a client tool offered to the model runs on the client. The window was not driven; the host handlers a window calls are exercised end to end by `test/agent-cofold-fork.test.ts` through `createHost`, so what is unverified is the client's drawing of the controls and not the backend.
 - [x] `docs/PLUGINS.md` names `effects` and what a destructive tool does.
 - [x] `plans/index.md` updated.

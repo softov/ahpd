@@ -3,7 +3,7 @@ title: A permission mode is a harness policy, and the thinking level is a model 
 status: accepted
 date: 2026-09-20
 refs:
-  - code://packages/agent-facio/src/agent.ts - the schema that declares no mode and no effort today
+  - code://packages/agent-cofold/src/agent.ts - the schema that declares no mode and no effort today
   - code://packages/agent-claude/src/claude.ts#L126-L196 - the `permissionMode` and `effortLevel` properties a client draws controls from
   - file:///github/cofold/packages/papo/src/agent.ts#L33-L62 - `policyOf`, `byEffects` and `EDITS`, the mode mapping that lives in a surface
   - file:///github/cofold/packages/agents/src/types/agent.ts - `Policy.decide`, what a mode becomes
@@ -14,7 +14,7 @@ refs:
 ## Context
 
 A client draws a mode picker and a thinking control only when the backend advertises them: the config schema is generic and the property names are what the pickers key off.
-`@ahpd/agent-claude` advertises `permissionMode` (six values, `scope: 'session'`) and either a per-model `thinkingLevel` or a chat-scope `effortLevel`; `@ahpd/agent-facio` advertises neither, which is why a facio session shows no mode and no effort.
+`@ahpd/agent-claude` advertises `permissionMode` (six values, `scope: 'session'`) and either a per-model `thinkingLevel` or a chat-scope `effortLevel`; `@ahpd/agent-cofold` advertises neither, which is why a facio session shows no mode and no effort.
 
 Both mappings exist in the harness, but in the wrong places for a second host to use.
 `policyOf` and its `byEffects`/`EDITS` helpers live in `@facio/papo`, a surface, and resolve an edit against the CLI's workspace through `@facio/tools`.
@@ -27,7 +27,7 @@ A facio model takes `ModelParams.reasoning.effort`, but `openaiCompat` sends it 
 1. `PermissionMode` and `policyOf(mode, rules)` move into `@facio/agents`, with `rules` carrying `inside(path)` and `isEdit(tool)`. What an edit is and where the workspace boundary lies are host facts: papo passes `write_file`/`edit_file` and `resolveWithin`, and the bridge passes a tool that declares `writes` and a path check under the session's working directory.
 2. The union has six values, the same six the window already draws for Claude. The four papo has keep their exact meaning (`default` asks on writes, destruction or the network; `acceptEdits` lets an in-workspace edit through; `bypassPermissions` allows everything; `dontAsk` turns the mode's own ask into a denial). `plan` refuses anything that writes or destroys, which is a facio reading of a mode that must not change anything, and `auto` is facio's own `DEFAULT_DECIDE`, asking only about a destructive tool.
 3. papo keeps its four-value config type and re-exports the core's `policyOf`, so its behaviour and its public surface do not move.
-4. `@ahpd/agent-facio` advertises `permissionMode` only when the plugin was given no `policy`. An embedder's policy is the authority, and a control whose value the backend would ignore is not drawn.
+4. `@ahpd/agent-cofold` advertises `permissionMode` only when the plugin was given no `policy`. An embedder's policy is the authority, and a control whose value the backend would ignore is not drawn.
 5. Thinking is a chat-scope `effortLevel` with the harness's own four levels, `off`, `low`, `medium` and `high`, mapped to `params.reasoning.effort` with `features.reasoning: true`; `off` sends no reasoning field at all. Per-model `thinkingLevel` is not offered, because an OpenAI-compatible catalogue publishes no effort enum and claiming every level for every model would be a guess.
 Source: Softov, 2026-09-20: "ok do it" (defaulted: six modes, the injected `inside`/`isEdit` seam, and `off` as the effort default).
 
@@ -42,7 +42,7 @@ A session that never sets `effortLevel` sends no reasoning field, so nothing abo
 
 ## Options
 
-- **Copy the four modes into `@ahpd/agent-facio`.**
+- **Copy the four modes into `@ahpd/agent-cofold`.**
   Rejected: two definitions of what a mode means, in two repositories, which is how the window and the CLI would drift apart.
 - **Move `policyOf` unchanged into the core with a workspace string.**
   Rejected: it needs `resolveWithin` from `@facio/tools`, which the zero-dependency core must not take, and the bridge's workspace is the AHP working directory rather than a CLI one.

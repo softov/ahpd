@@ -40,7 +40,7 @@ What is missing is only that the daemon hands `createHost` the literal instead o
 A module with named exports, in the same idiom as an `Agent`.
 
 ```ts
-export const name = '@ahpd/agent-facio'
+export const name = '@ahpd/agent-cofold'
 export const needs = ['store']                 // optional, phase two
 export const provides = ['store']              // optional, phase two
 export const defaults = { model: 'gpt-5' }     // optional
@@ -83,7 +83,7 @@ A plugin that is not a backend has no convention in this repository yet, so it t
 Install it where the daemon can resolve it, which is the config directory:
 
 ```bash
-cd ~/.config/ahpd && npm i @ahpd/agent-facio
+cd ~/.config/ahpd && npm i @ahpd/agent-cofold
 ```
 
 Name it in `config.json` beside `port` and `paths`:
@@ -91,7 +91,7 @@ Name it in `config.json` beside `port` and `paths`:
 ```json
 {
   "plugins": [
-    "@ahpd/agent-facio",
+    "@ahpd/agent-cofold",
     { "name": "@ahpd/agent-openai", "options": { "baseUrl": "http://127.0.0.1:11434/v1" } },
     { "name": "./scratch/thing.js", "enabled": false }
   ]
@@ -101,7 +101,7 @@ Name it in `config.json` beside `port` and `paths`:
 Or name it for one run only:
 
 ```bash
-ahpd --plugin @ahpd/agent-facio --plugin ./scratch/thing.js
+ahpd --plugin @ahpd/agent-cofold --plugin ./scratch/thing.js
 ahpd --no-plugins
 ```
 
@@ -176,7 +176,7 @@ A plugin pinned to an old `@ahpd/sdk` fails to install rather than failing at a 
 
 ## The first plugin, which is facio
 
-`@ahpd/agent-facio` is an `Agent` over `@facio/agents`, and it is the case that stresses the design.
+`@ahpd/agent-cofold` is an `Agent` over `@facio/agents`, and it is the case that stresses the design.
 `provider: 'facio'`, `schema()` from the agent's own parameters, `probe()` from its models and tools, and `create(start)` mapping `run()`'s `RunEvent`s onto the `chat/*` actions `@ahpd/agent-claude` already shows how to emit.
 A `policy.decide` answering `ask` becomes `session/inputNeededSet` plus `confirm`, `resume()` re-attaches a paused run, and `transcript()` reads a `Store`.
 It wants `needs`/`provides` because the durable store is `@facio/store-file`, a package of its own, and a harness that names it is more honest than one that imports it and forbids a second store.

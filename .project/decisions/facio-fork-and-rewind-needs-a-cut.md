@@ -3,8 +3,8 @@ title: Fork and rewind are a cut in the store, and the run loop keeps reading th
 status: accepted
 date: 2026-09-20
 refs:
-  - code://.project/plans/plugin/04-agent-facio-extras/task-02-fork-and-rewind.md - the task this decides the shape of
-  - code://packages/agent-facio/src/session.ts - the two point methods and the cut `create` makes
+  - code://.project/plans/plugin/04-agent-cofold-extras/task-02-fork-and-rewind.md - the task this decides the shape of
+  - code://packages/agent-cofold/src/session.ts - the two point methods and the cut `create` makes
   - file:///github/cofold/packages/agents/src/run/run.ts - `run()`, which has no argument for the history to run on
   - file:///github/cofold/packages/agents/src/run/turn.ts - `store.sessions.listMessages({ sessionId })`, the whole session, read once per turn
   - file:///github/cofold/packages/agents/src/types/store.ts - `Store.sessions`, whose only removal was a whole session
@@ -15,7 +15,7 @@ refs:
 
 ## Context
 
-`@ahpd/agent-facio` leaves `Start.forkAt` and `Start.rewindAt` unmapped, so the window's fork and rewind controls do nothing on a facio session.
+`@ahpd/agent-cofold` leaves `Start.forkAt` and `Start.rewindAt` unmapped, so the window's fork and rewind controls do nothing on a facio session.
 AHP means two different things by them: a fork continues from a turn under a **new** session id and leaves the original whole, while a rewind continues under the **same** id with the turns after the cut dropped.
 
 Facio records one of the two facts a cut needs - a run's `inputMessageId` - and documents `lastMessageId` as the other beside it, but nothing wrote the second and the store has no way to act on either.

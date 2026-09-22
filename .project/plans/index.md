@@ -61,8 +61,8 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | --- | --- | --- | --- | --- |
 | [01 - Plugins load from configuration](plugin/01-plugins-load-from-configuration/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/01-plugins-load-from-configuration/implemented.md)) | - | the agent plugins, which arrive through it |
 | [02 - Plugins subscribe to the host's own events](plugin/02-plugins-subscribe-to-host-events/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/02-plugins-subscribe-to-host-events/implemented.md)) | plugin 01 | - |
-| [03 - An agent backend over facio](plugin/03-agent-facio/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/03-agent-facio/implemented.md)) | - | every model-backed provider, and the ACP plan after it |
-| [04 - The facio extras](plugin/04-agent-facio-extras/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/04-agent-facio-extras/implemented.md)) | plugin 03 | - |
+| [03 - An agent backend over facio](plugin/03-agent-cofold/plan.md) | high | built 2026-09-20 ([implemented.md](plugin/03-agent-cofold/implemented.md)) | - | every model-backed provider, and the ACP plan after it |
+| [04 - The facio extras](plugin/04-agent-cofold-extras/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/04-agent-cofold-extras/implemented.md)) | plugin 03 | - |
 | [05 - The endpoint's models](plugin/05-endpoint-models/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/05-endpoint-models/implemented.md)) | plugin 04 | - |
 | [06 - A mode and an effort control](plugin/06-permission-modes/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/06-permission-modes/implemented.md)) | plugin 05 | - |
 

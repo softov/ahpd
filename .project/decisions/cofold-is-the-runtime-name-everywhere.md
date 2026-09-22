@@ -5,9 +5,9 @@ date: 2026-09-21
 refs:
   - file:///github/cofold/README.md - the repository the packages now come from
   - file:///github/cofold/packages/agents/src/index.ts - the runtime whose specifiers the bridge imports
-  - code://packages/agent-facio/src/agent.ts - `defaultStoreRoot`, the provider default and the `resourceOf` fallback
-  - code://packages/agent-facio/src/config.ts - `harnessConfigPath`, the file the bridge reads
-  - code://packages/agent-facio/src/session.ts - `AGENT_ID` and the provider default
+  - code://packages/agent-cofold/src/agent.ts - `defaultStoreRoot`, the provider default and the `resourceOf` fallback
+  - code://packages/agent-cofold/src/config.ts - `harnessConfigPath`, the file the bridge reads
+  - code://packages/agent-cofold/src/session.ts - `AGENT_ID` and the provider default
   - code://docs/PLUGINS.md - the published provider id, store path and config path a user reads
   - code://HANDOFF.md - the rename this follows, and the two options it left open
 ---
@@ -19,7 +19,7 @@ That rename is committed and green; the bridge in this repository still imports 
 
 The rename left two separate choices, because nothing is published and nothing is installed anywhere yet, so both are still free:
 
-- **Specifiers only.** The imports become `@cofold/*`, while the strings a user sees and types stay `facio`: the AHP provider id, `$XDG_CONFIG_HOME/facio/config.json`, `$XDG_DATA_HOME/ahpd/facio`, the `FACIO_*` environment variables and the package name `@ahpd/agent-facio`.
+- **Specifiers only.** The imports become `@cofold/*`, while the strings a user sees and types stay `facio`: the AHP provider id, `$XDG_CONFIG_HOME/facio/config.json`, `$XDG_DATA_HOME/ahpd/facio`, the `FACIO_*` environment variables and the package name `@ahpd/agent-cofold`.
 - **Everything.** Those runtime strings move to `cofold` as well, and the package becomes `@ahpd/agent-cofold`.
 
 Only the first is required to publish, which is why the handoff treated the second as a later pass and left the choice open.
@@ -37,7 +37,7 @@ Because the bridge is broken until the specifiers are re-pointed, the two change
 
 ## Consequences
 
-`packages/agent-facio/` is renamed to `packages/agent-cofold/`, its `package.json` `name`, `ahpd.title` and `ahpd.entry` move with it, and the root `package.json` script that builds it changes target, as do the `paths` entry in `tsconfig.json` and the alias in `vitest.config.ts`.
+`packages/agent-cofold/` is renamed to `packages/agent-cofold/`, its `package.json` `name`, `ahpd.title` and `ahpd.entry` move with it, and the root `package.json` script that builds it changes target, as do the `paths` entry in `tsconfig.json` and the alias in `vitest.config.ts`.
 The strings move in `packages/agent-cofold/src/agent.ts` (`defaultStoreRoot`, the provider default, the `displayName` default and the `resourceOf` fallback), `config.ts` (`harnessConfigPath`), `session.ts` (`AGENT_ID` and the provider default) and `plugin.ts` (the contributed `title`), and `docs/PLUGINS.md`, `docs/DAEMON.md` and `README.md` follow in the same pass so the worked example, the options table and the "Trying one today" section cannot drift from the code.
 The runtime strings are what an AHP client displays and where session data and configuration are read, so any existing local session records and configuration files under `facio` names are abandoned rather than migrated; this is acceptable because the bridge is not installed anywhere.
 `@ahpd/sdk` is a peer and is not renamed by this decision, so `packages/agent-cofold/package.json` keeps the `@ahpd/sdk` range while its three runtime dependencies become published `@cofold/*` ranges, which is what removed the `link:` into a directory that no longer exists.

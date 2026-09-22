@@ -4,10 +4,10 @@ status: accepted
 date: 2026-09-20
 refs:
   - code://packages/sdk/src/types/host.ts#L279-L332 - `HostTool`, which gains the hint
-  - code://packages/agent-facio/src/tools.ts - where a bound tool is wrapped, and where the hint reaches facio
+  - code://packages/agent-cofold/src/tools.ts - where a bound tool is wrapped, and where the hint reaches facio
   - file:///github/cofold/packages/agents/src/types/tool.ts - `ToolEffects`, the same four flags
   - file:///github/cofold/packages/agents/src/policy/rules.ts - the default that asks when a tool is destructive
-  - code://.project/plans/plugin/04-agent-facio-extras/plan.md - where this is implemented
+  - code://.project/plans/plugin/04-agent-cofold-extras/plan.md - where this is implemented
 ---
 
 ## Context
@@ -15,7 +15,7 @@ refs:
 A `HostTool` is a tool the host contributes, and the protocol has no place to say what running it does to the world.
 A backend that runs one therefore cannot tell a read from a delete, and the only prompt for a person is the tool's own name and description.
 facio models exactly this: `ToolEffects` is `reads`, `writes`, `network` and `destructive`, and its default policy asks a person when `destructive` is true.
-Because a host tool carries none of that, `@ahpd/agent-facio` cannot let facio's default ask about a host tool, so a daemon configured only from a JSON file - which cannot carry a policy function - can never raise an approval for one.
+Because a host tool carries none of that, `@ahpd/agent-cofold` cannot let facio's default ask about a host tool, so a daemon configured only from a JSON file - which cannot carry a policy function - can never raise an approval for one.
 
 ## Decision
 
