@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -208,8 +208,26 @@ it('lists a spec with no command as unconfigured, naming what it needs', async (
    * before anything is imported or spawned. Without the declaration the same
    * spec lists as `ready` and the problem only appears when a turn is asked
    * for, which is the failure this is here to prevent.
+   *
+   * The real `ahpd` block is copied into a directory whose entry exists, rather
+   * than listing this package: `describePlugin` resolves `ahpd.entry`, which is
+   * the `dist` build, and `pnpm test` runs before `pnpm build` - a listing of
+   * the package directory itself is `missing` in a fresh checkout.
    */
-  const dir = join(REPO, 'packages/agent-acp');
+  const real = JSON.parse(readFileSync(join(REPO, 'packages/agent-acp/package.json'), 'utf8')) as {
+    ahpd: Record<string, unknown>;
+  };
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-acp-options-'));
+  loose = dir;
+  writeFileSync(join(dir, 'entry.js'), 'throw new Error("a listing imported the entry");\n');
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: '@ahpd/agent-acp',
+    private: true,
+    type: 'module',
+    exports: { '.': './entry.js' },
+    ahpd: { ...real.ahpd, entry: './entry.js' },
+  }));
+
   const missing = await describePlugin(dir, { configDir: REPO, cwd: REPO });
   expect(missing.state).toBe('unconfigured');
   expect(missing.problem).toContain('command');
