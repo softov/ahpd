@@ -1,6 +1,6 @@
 ---
 title: The plugin entry, the docs, and a daemon that serves a configured server
-status: todo
+status: done
 depends:
   - task-02-the-catalogue-a-resume-and-the-config-schema.md
   - task-03-the-hosts-files-and-shell-reach-the-server.md
@@ -37,11 +37,15 @@ refs:
 
 ## Validation
 
-- `test/agent-acp-plugin.test.ts` - the bare-name and directory specs, two providers from two specs, and a whole turn served through the loader.
-- By hand: `node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp` serves the configured provider, and a session answers a turn from `@deepseek-ai/dsh-acp` with a real model configured.
+- `test/agent-acp-plugin.test.ts` - the loader resolving the package and serving a turn through the scripted server, a manifest listed as `ready` without importing its entry, two providers from two specs, and a spec with no `command` reported and skipped.
+- By hand: `node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp` serves the configured provider, and a session answers a turn from `@deepseek-ai/dsh-acp` with a real model configured. **Not done:** the scripted fixture stands in for a real server, and no daemon was driven against a real harness here.
 - `npx tsc -p tsconfig.json --noEmit`, `node scripts/boundary.mjs` and the full suite green.
 - `plans/index.md` and `plans/plugin/00-plugin.md` updated, which is the plan-closing change.
 
 ## Resume
 
-Empty until started. Then: what was done, what is left, what was found that the plan did not know.
+Done 2026-09-22, but not by hand.
+Built: `packages/agent-acp/src/plugin.ts` (`name`, `title`, `apply`, one backend per spec, `command` required and reported at load when absent), the re-export from `index.ts`, the `ahpd` key and `private` in the manifest, and `test/agent-acp-plugin.test.ts`.
+Written: the `@ahpd/agent-acp` worked example in `docs/PLUGINS.md`, with the options, the four commands it is known to cover, the capability-to-port table and the binary permission rule.
+Not done: driving a daemon against a real ACP server with a real model. The loader and a served turn are covered by the test, which uses the scripted fixture; that is a substitute and is recorded as one in [implemented.md](implemented.md).
+Two SDK gaps closed on the way, both on the terminal factory: it now opens the shell `rootConfig.defaultShell` names, and it fires the `terminal_open` event the client path fires, so a plugin watching for a shell cannot tell which half of the host opened it.

@@ -1,6 +1,7 @@
 {
   "name": "@ahpd/agent-acp",
   "version": "0.0.1",
+  "private": true,
   "type": "module",
   "description": "An AHP backend over the Agent Client Protocol: any ACP server is one provider instead of one package",
   "license": "MIT",
@@ -32,5 +33,9 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "ACP"
   }
 }

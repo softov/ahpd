@@ -3361,6 +3361,9 @@ export function createHost(options: HostOptions): Host {
         ...(asked.args !== undefined ? { args: asked.args } : {}),
         ...(asked.env !== undefined ? { env: asked.env } : {}),
         ...(asked.name !== undefined ? { name: asked.name } : {}),
+        // The configured shell, the way the client path opens one: a backend
+        // asking for a shell means the one this host was told to use.
+        ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
         emit: (_channel, action) => {
           dispatch(uri, action);
           // The root list says whether a terminal is still running, so it is
@@ -3371,6 +3374,9 @@ export function createHost(options: HostOptions): Host {
         },
       });
       terminals.set(uri, terminal);
+      // The same observation the client path makes, so a plugin watching for a
+      // shell cannot tell which half of the host opened it.
+      void fire('terminal_open', { type: 'terminal_open', terminal: uri, cwd: asked.cwd });
       log(`opened ${uri} for ${sessionUri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return {

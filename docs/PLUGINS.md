@@ -417,15 +417,90 @@ carries the `ahpd` key and the `@ahpd/sdk` peer range shown under
 [The manifest](#the-manifest), and its `apply` registers one backend built from
 the options above.
 
+## A second worked example: `@ahpd/agent-acp`
+
+`@ahpd/agent-acp` speaks the Agent Client Protocol to a program, so any ACP
+server is one provider rather than a package of its own. It is the same package
+an embedder imports and the same one the daemon loads:
+
+```bash
+ahpd --plugin @ahpd/agent-acp
+```
+
+The command is an option rather than a flag, because a plugin is named on the
+command line and configured in the file:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@ahpd/agent-acp",
+      "options": {
+        "provider": "copilot",
+        "displayName": "Copilot",
+        "command": "copilot",
+        "args": ["--acp"]
+      }
+    }
+  ]
+}
+```
+
+| Option | |
+| --- | --- |
+| `command` | The program to spawn. **Required**: a spec with nothing to run is reported at load and skipped |
+| `args` | Its arguments |
+| `env` | Environment variables merged over the daemon's own |
+| `cwd` | The directory it starts in, when a session names none |
+| `provider` | The AHP provider id, `acp` when absent. Two specs with two commands are two backends |
+| `displayName` | What a client draws, `ACP` when absent |
+| `description` | One line about the backend |
+| `model` | The model id a session that names none runs on |
+
+One spec is one server, so `copilot --acp`, `codex-acp`,
+`gemini --experimental-acp` and `@deepseek-ai/dsh-acp` are four configuration
+lines and not four packages. The command is the only thing that tells them
+apart, which is why it is the one option with no default.
+
+### What the server may ask the host for
+
+An ACP server is a client's peer, and it reaches back for files, a shell and a
+person's decision. Each of those is answered through the port the daemon
+already holds, and the capability is advertised on the handshake only when the
+port is there - a server is never told a host can do something it cannot.
+
+| The server asks | Answered by | Advertised when |
+| --- | --- | --- |
+| `fs/read_text_file` | The `resources` store, whole or as the line range asked for | The host has a `resources` port |
+| `fs/write_text_file` | The same store's write half | That store can write |
+| `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release` | The host's own shells, opened and listed by the host | The host has a `terminals` port |
+| `session/request_permission` | A `chat/inputNeededSet` confirmation the person answers | Always |
+
+The shell is the host's and not the bridge's: `terminal/create` arrives with an
+argv and an environment, the host opens the terminal it would have opened for a
+client, and the bridge answers with what it printed and what it exited with.
+
+A permission is one question with two answers. ACP offers up to four options, of
+which `allow_once` and `reject_once` are the two this host can honestly return:
+approving picks `allow_once` and refusing picks `reject_once`, and an `always`
+option is never selected because that would change the session's policy from a
+single answer. A server that offers no once option is refused rather than
+allowed.
+
+There is no `!command` on an ACP session, because the bridge implements no `ran`
+and a shell turn is the backend's to open; the daemon says so rather than
+handing the command to the model as a question.
+
 ## Trying one today
 
-No plugin is published yet. From a checkout, `@ahpd/agent-cofold` and the
-fixtures under [`test/fixtures/`](../test/fixtures/) are real plugins and are
-what the tests load:
+No plugin is published yet. From a checkout, `@ahpd/agent-cofold`,
+`@ahpd/agent-acp` and the fixtures under [`test/fixtures/`](../test/fixtures/)
+are real plugins and are what the tests load:
 
 ```bash
 pnpm build
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
+node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
 ```
 

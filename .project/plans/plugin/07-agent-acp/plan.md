@@ -1,7 +1,7 @@
 ---
 title: The ACP bridge, so one package serves Copilot, Codex, Gemini and DeepSeek Harness
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-22
 revalidated: 2026-09-22
@@ -106,7 +106,7 @@ ahpd --plugin @ahpd/agent-acp
 | [01 - The package, the provider and a turn](task-01-the-package-the-provider-and-a-turn.md) | done | - |
 | [02 - The catalogue, a resume and the config schema](task-02-the-catalogue-a-resume-and-the-config-schema.md) | done | 01 |
 | [03 - The host's files and shell reach the server](task-03-the-hosts-files-and-shell-reach-the-server.md) | done | 01 |
-| [04 - The plugin entry, the docs and a daemon that serves it](task-04-the-plugin-entry-the-docs-and-a-daemon.md) | todo | 02, 03 |
+| [04 - The plugin entry, the docs and a daemon that serves it](task-04-the-plugin-entry-the-docs-and-a-daemon.md) | done | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -118,16 +118,16 @@ ahpd --plugin @ahpd/agent-acp
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03, all done 2026-09-22. The package runs a turn and a cancel, reads the catalogue, resumes, learns models, modes and commands, answers the transcript from what it watched, and now answers the server's file and terminal requests through the host's own store and factory, with a permission put to a person as a two-valued confirmation.
-- **Next action:** [task-04-the-plugin-entry-the-docs-and-a-daemon.md](task-04-the-plugin-entry-the-docs-and-a-daemon.md): the plugin entry, the docs and an end-to-end daemon run.
+- **Done so far:** all four tasks, done 2026-09-22, and [implemented.md](implemented.md) written.
+- **Next action:** none; the plan is built. The daemon run against a real ACP server is the one checklist row left unticked, and the ACP bridge has no `ran`, so `!command` is refused on an ACP session.
 - **Open questions:**
   1. Whether `transcript(id)` should record updates to the file store so a session browsed in a later daemon opens with its history - proposed: no for this plan, because the ACP server owns the conversation and `loadSession` is the way it is read back.
 - **Watch out for:** the workspace's pnpm store is outside the checkout, so `pnpm install` needs `PNPM_HOME` unset and `HOME` writable, and because `CI=true` implies a frozen lockfile a manifest change needs `pnpm install --no-frozen-lockfile`; a test must not spawn a real `copilot`, so the scripted `test/fixtures/acp-server.mjs` is what the tests run against; the protocol has no `chat/toolCallUpdate`, so tool updates map to `chat/toolCallContentChanged` and `chat/toolCallComplete`; and ACP names neither models nor commands before a session, so the schema has no `model` property and `probe` states an empty offer.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with a mapped turn, a permission answered, a cancelled turn and a catalogue read in it.
-- [ ] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-acp` declaring what it imports.
-- [ ] By hand: the daemon started with `--plugin @ahpd/agent-acp` serves the configured provider and answers a turn from `@deepseek-ai/dsh-acp`.
-- [ ] `docs/PLUGINS.md` names the package, its options and the commands it is known to work with.
-- [ ] `plans/index.md`, `plans/plugin/00-plugin.md` and `plugin/01`'s deferred row updated.
+- [x] `pnpm test` green, with a mapped turn, a permission answered, a cancelled turn and a catalogue read in it: 63 files, 847 tests.
+- [x] `pnpm typecheck` and `pnpm boundary` green, with `packages/agent-acp` declaring what it imports.
+- [ ] By hand: the daemon started with `--plugin @ahpd/agent-acp` serves the configured provider and answers a turn from `@deepseek-ai/dsh-acp`. The loader and a served turn are covered by `test/agent-acp-plugin.test.ts` against the scripted fixture, which is a substitute and not this.
+- [x] `docs/PLUGINS.md` names the package, its options and the commands it is known to work with.
+- [x] `plans/index.md`, `plans/plugin/00-plugin.md` and `plugin/01`'s deferred row updated.
