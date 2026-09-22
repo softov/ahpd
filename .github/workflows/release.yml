@@ -109,15 +109,51 @@ jobs:
       #
       # `--provenance` attaches a signed attestation tying each tarball to this
       # commit and this workflow, which npm shows on the package page.
+      #
+      # A partial release has to be resumable. A version already on npm is
+      # skipped, one already staged is left alone, and one package's failure
+      # does not stop the rest from being staged - the run still ends red,
+      # saying which versions are missing and why.
+      #
+      # A name that has never been published is the one case this workflow
+      # cannot do by itself: npm configures a trusted publisher *on a package*,
+      # so the package has to exist first. The first version of a new package
+      # is published once with a token, its trusted publisher is added, and
+      # only then can OIDC stage the versions after it.
       - name: Stage the release
         if: ${{ inputs.dry_run != true }}
         run: |
-          set -eu
+          set -u
+          failed=' '
           for package in sdk agent-claude agent-cofold agent-acp server; do
-            name=$(node -p "require('./packages/$package/package.json').name.replace('@','').replace('/','-')")
+            full=$(node -p "require('./packages/$package/package.json').name")
             version=$(node -p "require('./packages/$package/package.json').version")
-            npm stage publish "${{ runner.temp }}/$name-$version.tgz" --provenance --access public
+            stem=$(printf '%s' "$full" | sed 's/^@//; s|/|-|')
+            if npm view "$full@$version" version >/dev/null 2>&1; then
+              echo "$full@$version is already on npm; nothing to stage."
+              continue
+            fi
+            if ! npm view "$full" version >/dev/null 2>&1; then
+              echo "::warning::$full has never been published, so it cannot have a trusted publisher yet."
+              echo "Publish $full@$version once with a token, add its trusted publisher, then re-run this workflow."
+              failed="$failed$full@$version "
+              continue
+            fi
+            said=$(npm stage publish "${{ runner.temp }}/$stem-$version.tgz" --provenance --access public 2>&1) && code=0 || code=$?
+            echo "$said"
+            if [ "$code" = "0" ]; then continue; fi
+            if printf '%s' "$said" | grep -qE 'cannot publish over|already (been )?(staged|published)|EPUBLISHCONFLICT'; then
+              echo "$full@$version is already staged; leaving it alone."
+              continue
+            fi
+            failed="$failed$full@$version "
           done
+          if [ "$failed" != ' ' ]; then
+            echo
+            echo "Not staged:$failed"
+            echo "Everything else was staged. This run is red because the release is incomplete."
+            exit 1
+          fi
 
       - name: Say what is waiting
         if: ${{ inputs.dry_run != true }}
