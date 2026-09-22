@@ -3374,24 +3374,28 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     expect(found.uri).toBe(`file://${REPO}/packages/sdk/src`);
   });
 
-  it('will not write without a grant, and names the request that would give one', async () => {
-    const client = await opened();
-    // The whole access model for the write half. A refusal that did not carry
-    // the request would be a dead end - the client has nothing to send next.
-    await expect(client.handle({
-      method: 'resourceWrite',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}/x`, data: 'x', encoding: 'utf-8' },
-    })).rejects.toMatchObject({
-      code: -32009,
-      data: { request: { channel: 'ahp-root://', uri: `file://${REPO}/x`, write: true } },
-    });
+  it('serves a write to a connected client without a grant', async () => {
+    const where = mkdtempSync(join(tmpdir(), 'ahpd-grant-'));
+    try {
+      const client = await opened(where);
+      // No `resourceRequest` first. The reference host enforces no per-resource
+      // grant for client to server access, its client never asks for one, and a
+      // window that could not save was the whole symptom.
+      await expect(client.handle({
+        method: 'resourceWrite',
+        params: { channel: 'ahp-root://', uri: `file://${where}/written.txt`, data: 'x', encoding: 'utf-8' },
+      })).resolves.toEqual({});
+      expect(readFileSync(join(where, 'written.txt'), 'utf8')).toBe('x');
+    } finally {
+      rmSync(where, { recursive: true, force: true });
+    }
   });
 
   it('answers -32601 for a store that only reads, which is not a refusal about a path', async () => {
     // Two different ways not to have this, and they must not be confused: a
-    // host with a read-only store does not serve the method at all, and a
-    // client that gets `-32009` instead would go and ask for a grant it could
-    // never use.
+    // host with a read-only store does not serve the method at all, while a
+    // path the store cannot write is that store's own refusal. Neither is a
+    // grant, which this host no longer asks for.
     const host = createHost({
       path: REPO,
       agents: [claude({ paths: [REPO] })],
@@ -3399,10 +3403,6 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
-    await client.handle({
-      method: 'resourceRequest',
-      params: { channel: 'ahp-root://', uri: `file://${REPO}`, write: true },
-    });
     for (const method of ['resourceWrite', 'resourceDelete', 'resourceMkdir', 'resourceMove', 'resourceCopy']) {
       await expect(client.handle({
         method,
@@ -6712,8 +6712,7 @@ describe('the pull request a create-pr recorded', () => {
       .map((one) => [one.name, one]),
   );
 
-  const create = async (client: { handle(r: { method: string; params: unknown }): unknown }, dir: string, changeset: string) => {
-    await client.handle({ method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${dir}`, write: true } });
+  const create = async (client: { handle(r: { method: string; params: unknown }): unknown }, changeset: string) => {
     return await client.handle({
       method: 'invokeChangesetOperation',
       params: { channel: changeset, operationId: 'create-pr', _meta: { 'vscode.pullRequest': { title: 'Fix the thing', description: 'Because.' } } },
@@ -6722,7 +6721,7 @@ describe('the pull request a create-pr recorded', () => {
 
   it('records it as an artifact and puts its URL on the branch', async () => {
     const { dir, fake, client, peer: p, uri, changeset } = await withRepo();
-    const done = await create(client, dir, changeset);
+    const done = await create(client, changeset);
     expect(done.followUp?.content.uri).toBe(URL);
     expect(fake.asked.length).toBeGreaterThan(0);
     await settle(8);
@@ -6742,7 +6741,7 @@ describe('the pull request a create-pr recorded', () => {
       snapshot: { state: { _meta?: { github?: Record<string, unknown> } } };
     }).snapshot.state;
     expect((before._meta?.github as { initialPullRequestUrls?: unknown } | undefined)?.initialPullRequestUrls).toEqual([URL]);
-    await create(client, dir, changeset);
+    await create(client, changeset);
     await settle(8);
 
     const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
@@ -6770,7 +6769,7 @@ describe('the pull request a create-pr recorded', () => {
     // The branch had none, and that is a captured baseline rather than an
     // absent one.
     expect((before._meta?.github as { initialPullRequestUrls?: unknown } | undefined)?.initialPullRequestUrls).toEqual([]);
-    await create(client, dir, changeset);
+    await create(client, changeset);
     await settle(8);
 
     const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
@@ -6788,7 +6787,7 @@ describe('the pull request a create-pr recorded', () => {
     });
     const id = /^Added reference: ([0-9a-f-]+)$/.exec(String(added?.content[0]?.text))?.[1];
     expect(id).toBeDefined();
-    await create(client, dir, changeset);
+    await create(client, changeset);
     await settle(8);
 
     const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);

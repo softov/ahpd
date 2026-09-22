@@ -4295,7 +4295,7 @@ export function createHost(options: HostOptions): Host {
     connections: () => connections.size,
     accept(peer: Peer) {
       const connection: Connection = {
-        peer, clientId: '', watching: new Set<string>(), grants: new Set<string>(),
+        peer, clientId: '', watching: new Set<string>(),
         tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
       };
       /**
@@ -4372,44 +4372,6 @@ export function createHost(options: HostOptions): Host {
         expiring.delete(resource);
       };
       connections.add(connection);
-      /**
-       * Whether this client has talked its way into writing that.
-       *
-       * A grant on a directory covers what is under it. The alternative is an
-       * exact match per URI, which is defensible and unusable: an editor saves
-       * a file it has open, and a round trip per file turns one negotiation
-       * into one per keystroke-since-last-save. Asking for `file:///project`
-       * and being answered about `file:///project` is what the client did -
-       * this is honouring that answer, not widening it.
-       *
-       * Prefix on a path separator, never on the string: a grant on
-       * `/src/brb` must not reach `/src/brb_framework`.
-       */
-      const mayWrite = (uri: string): boolean => {
-        if (connection.grants.has(`write:${uri}`)) return true;
-        if (!uri.startsWith('file://')) return false;
-        const path = uri.slice('file://'.length);
-        for (const held of connection.grants) {
-          if (!held.startsWith('write:file://')) continue;
-          const root = held.slice('write:file://'.length);
-          if (path === root || path.startsWith(`${root}/`)) return true;
-        }
-        return false;
-      };
-
-      /**
-       * Refuse a write nobody asked permission for, and say how to ask.
-       *
-       * The `request` in the error data is the protocol's own affordance: it
-       * is a `resourceRequest` payload that, sent as-is, would make the same
-       * call work. A refusal without it is a dead end.
-       */
-      const needsWrite = (uri: string): void => {
-        if (mayWrite(uri)) return;
-        throw new RpcError(-32009, `Write access to ${uri} has not been granted`, {
-          request: { channel: ROOT, uri, write: true },
-        });
-      };
 
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
@@ -4963,13 +4925,13 @@ export function createHost(options: HostOptions): Host {
         /*
          * The host's filesystem, as far as a client is allowed to see it.
          *
-         * Both halves are served. The read half answers any connection; the
-         * write half - `resourceWrite`, `resourceDelete`, `resourceMkdir`,
-         * `resourceMove` and `resourceCopy` - is served too, and each of them
-         * is gated by a `resourceRequest` grant. A write with no grant is
-         * refused with `-32009`, which carries the `resourceRequest` that
-         * would make the same call work; only a host with no store that
-         * writes answers `-32601`.
+         * Both halves are served. The read half answers any connection, and
+         * the write half - `resourceWrite`, `resourceDelete`, `resourceMkdir`,
+         * `resourceMove` and `resourceCopy` - does too, because the connection
+         * token has already decided who may be here and `resourceRequest`
+         * grants any `file:` URI to anyone who asks. What decides a write is
+         * the store's own rule about the path, not a grant this connection
+         * holds; only a host with no store that writes answers `-32601`.
          */
         /**
          * A shell on this machine.
@@ -5243,12 +5205,10 @@ export function createHost(options: HostOptions): Host {
         /*
          * The write half of `resource*`.
          *
-         * Every one takes the same two gates in the same order, and the order
-         * matters. The grant is checked here, because it is a fact about this
-         * *connection* and the store has never heard of connections; the path
-         * is checked in the store, because only it knows what a path means -
-         * and it resolves the parent rather than the target, so a symlink
-         * pointing out of the served set cannot be written through.
+         * Every one takes the same gate, and it is the store's: the path is
+         * checked there, because only it knows what a path means - and it
+         * resolves the parent rather than the target, so a symlink pointing
+         * out of the served set cannot be written through.
          *
          * `need` twice, because there are two ways not to have this: a host
          * given no `resources` port at all, and one given a store that only
@@ -5257,7 +5217,6 @@ export function createHost(options: HostOptions): Host {
          */
         resourceWrite: async (params) => {
           const uri = String(params.uri ?? '');
-          needsWrite(uri);
           const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
           await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, {
             data: String(params.data ?? ''),
@@ -5284,7 +5243,6 @@ export function createHost(options: HostOptions): Host {
         },
         resourceDelete: async (params) => {
           const uri = String(params.uri ?? '');
-          needsWrite(uri);
           await need(need(options.resources, 'resourceDelete').remove, 'resourceDelete')(
             uri, params.recursive === true,
           );
@@ -5293,23 +5251,20 @@ export function createHost(options: HostOptions): Host {
         },
         resourceMkdir: async (params) => {
           const uri = String(params.uri ?? '');
-          needsWrite(uri);
           await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
           return {};
         },
         /*
-         * Both ends, because a move writes both.
+         * Both ends are the store's business, including the source.
          *
-         * The source is emptied and the destination is filled, so a grant on
-         * one of them is permission for half of what would happen. `copy` only
-         * needs the destination - reading the source is what the read half
-         * already allows inside a served directory.
+         * The source is emptied and the destination is filled, so a store that
+         * can write one and not the other refuses the half it cannot do. A
+         * `copy` reads the source, which the read half already allows inside a
+         * served directory.
          */
         resourceMove: async (params) => {
           const source = String(params.source ?? '');
           const destination = String(params.destination ?? '');
-          needsWrite(source);
-          needsWrite(destination);
           await need(need(options.resources, 'resourceMove').move, 'resourceMove')(
             source, destination, params.failIfExists === true,
           );
@@ -5319,7 +5274,6 @@ export function createHost(options: HostOptions): Host {
         resourceCopy: async (params) => {
           const source = String(params.source ?? '');
           const destination = String(params.destination ?? '');
-          needsWrite(destination);
           await need(need(options.resources, 'resourceCopy').copy, 'resourceCopy')(
             source, destination, params.failIfExists === true,
           );
@@ -5328,16 +5282,16 @@ export function createHost(options: HostOptions): Host {
         /**
          * May I read this, may I write it.
          *
-         * The negotiated form of a refusal, and the only door onto anything
-         * here that writes. A grant is per resource and per connection: a
-         * client asks about one file, is answered about that file, and a
-         * second client on the same port inherits nothing from the first.
+         * The negotiated form of the question, and a client that asks is told
+         * yes for any `file:` URI, the way the reference host answers it:
+         * there is no person at a daemon to prompt, and the connection token
+         * has already decided who may be here.
          *
-         * What this host will grant is any `file:` URI, the way the
-         * reference host grants everything it is asked: there is no person
-         * at a daemon to prompt, and the connection token has already
-         * decided who may be here. The grant is what makes a later write
-         * deliberate, not what makes it permitted.
+         * It grants nothing, because there is nothing left to grant: the write
+         * half is served to any connection, and the read half always was. The
+         * answer is kept because the protocol has the method and a client that
+         * asks deserves the same answer the reference gives, and the ask is
+         * logged so a host operator can see it.
          */
         resourceRequest: async (params) => {
           const uri = String(params.uri ?? '');
@@ -5345,21 +5299,18 @@ export function createHost(options: HostOptions): Host {
           // Neither flag is a read, which is what the protocol tells receivers
           // to make of a request that sets nothing.
           const write = params.write === true;
-          const read = params.read === true || !write;
-          if (read) connection.grants.add(`read:${uri}`);
-          if (write) connection.grants.add(`write:${uri}`);
           log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
           return {};
         },
         /**
          * Run one of the verbs a changeset advertised.
          *
-         * Four gates, and none of them is a flag on this host: the id has to
+         * Three gates, and none of them is a flag on this host: the id has to
          * be one this changeset offers *now*, the target has to be a kind that
-         * operation accepts, the session must not be mid-turn, and an
-         * operation that writes needs a `resourceRequest` grant on what it
-         * would write. The list is the access model - a client can invoke
-         * nothing that was not already put in front of it.
+         * operation accepts, and the session must not be mid-turn. The list is
+         * the access model - a client can invoke nothing that was not already
+         * put in front of it. An operation that writes is not gated on a
+         * `resourceRequest`, because the resource half is not either.
          */
         invokeChangesetOperation: async (params) => {
           const channel = String(params.channel ?? '');
@@ -5399,11 +5350,6 @@ export function createHost(options: HostOptions): Host {
           // try another provider when what it should do is wait.
           if ((statusOf(at.owner) & Status.InProgress) !== 0)
             throw new RpcError(-32004, `${at.owner} is mid-turn`);
-
-          // A file for a targeted operation, the project for a changeset-wide
-          // one: committing is a write to the directory and there is no single
-          // resource to name for it.
-          if (offered.writes === true) needsWrite(target?.resource ?? `file://${at.dir}`);
 
           const key = opKey(channel, operationId);
           const held = sessions.get(at.owner);

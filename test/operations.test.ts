@@ -160,15 +160,16 @@ it('refuses an operation it never offered, and one aimed at the wrong kind of th
   expect(misaimed.code).toBe(-32602);
 });
 
-it('refuses a write with no grant, and names the request that would unlock it', async () => {
-  const { client, changeset } = await watching(scripted().source);
-  const denied = await refused(client.handle({
+it('runs a write with no grant, as it runs one that writes nothing', async () => {
+  const { source, invoked } = scripted();
+  const { client, changeset } = await watching(source);
+  // No `resourceRequest` before it. The resource half is served to any
+  // connection, and a changeset verb that writes is the same half.
+  const done = await client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
-  }));
-  expect(denied.code).toBe(-32009);
-  // The protocol's own affordance: the refusal carries the `resourceRequest`
-  // that, granted, would make the same call work.
-  expect(denied.data).toEqual({ request: { channel: 'ahp-root://', uri: `file://${DIR}`, write: true } });
+  });
+  expect(done).toEqual({ message: 'did commit' });
+  expect(invoked).toHaveLength(1);
 });
 
 it('lets an operation that writes nothing through without one', async () => {
@@ -180,13 +181,14 @@ it('lets an operation that writes nothing through without one', async () => {
   expect(source).toBeUndefined();
 });
 
-it('grants any file on this machine, and mediates nothing else', async () => {
+it('answers yes to any file on this machine, and mediates nothing else', async () => {
   const { client } = await watching(scripted().source);
   expect(await client.handle({
     method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}/a.txt`, write: true },
   })).toEqual({});
   // As the reference host: there is nobody at a daemon to ask, and the
-  // token already answered who may be here.
+  // token already answered who may be here. The answer withholds nothing,
+  // because the write half is served without it.
   expect(await client.handle({
     method: 'resourceRequest', params: { channel: 'ahp-root://', uri: 'file:///etc/hostname', write: true },
   })).toEqual({});
@@ -196,12 +198,9 @@ it('grants any file on this machine, and mediates nothing else', async () => {
   expect(denied.code).toBe(-32009);
 });
 
-it('runs it once granted, and says running then idle on the changeset', async () => {
+it('says running then idle on the changeset', async () => {
   const { source, invoked } = scripted();
   const { client, peer: p, changeset } = await watching(source);
-  await client.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${DIR}`, write: true },
-  });
   const done = await client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
   });

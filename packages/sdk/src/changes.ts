@@ -116,7 +116,7 @@ interface Captured {
  *
  * Ids and labels follow the reference host's where it has one - a client that
  * special-cases `commit` should find it spelled the way it expects - and every
- * one of them writes, which is what the host gates on.
+ * one of them writes, which is what the `writes` flag tells a client.
  */
 const COMMIT: ChangesetOperation = {
   id: 'commit',
@@ -828,10 +828,9 @@ export function gitChanges(): ChangesetSource {
      * Run one.
      *
      * Everything about *whether* this is allowed happened before the call: the
-     * host checked the id against what `operations` offered for this scope,
-     * checked the target against the operation's scopes, and checked that a
-     * write grant is held. What is left is the doing, and saying what git said
-     * when it did not work.
+     * host checked the id against what `operations` offered for this scope and
+     * the target against the operation's scopes. What is left is the doing,
+     * and saying what git said when it did not work.
      */
     invoke: async ({ dir, session, scope, operationId, target, subject, meta, base, github }) => {
       if (operationId === 'checkout') return checkout(dir, meta ?? {});

@@ -245,7 +245,7 @@ method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 par
 | Chats and turns | turns, streaming, cancellation, tools | ✅ | Several chats can share one session, each on its own agent process |
 | Human in the loop | tool confirmation, agent questions | ✅ | `session/inputNeeded` is a list, so two tools asking at once are answered apart |
 | Session configuration | model, permission mode, effort, output style, sandbox, shell init scripts | ✅ | A backend advertises its own properties and a client draws what it is given - the same five approval modes VS Code's own Claude host offers, and its platform's `sandboxEnabled` and `shellInitScripts`. Keys a client sends anyway (`autoApprove`, `mode`) are mapped onto that. Capabilities are discovered at startup, so a composer draws itself before any turn. `sessionConfigCompletions` is 🚫: every key here is an enum |
-| Resources | `resources` port | 🧩 | Optional; reads and writes confined to the served directories, writes behind `resourceRequest` |
+| Resources | `resources` port | 🧩 | Optional; reads and writes anywhere the store reaches, and a write needs no grant to negotiate first |
 | Resource watches | `resources` port | 🧩 | Watch lifetime follows channel subscriptions - the protocol has no dispose command |
 | Terminals | `terminals` port | 🧩 | The built-in implementation uses pipes, not a PTY, and says so rather than leaving it to be discovered |
 | Changesets | `changes` port | 🧩 | The git implementation serves all four scopes and the working-tree operations |

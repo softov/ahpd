@@ -20,19 +20,14 @@ let outside: string;
 
 const peer = (): Peer => ({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} });
 
-/** A connected client, granted write on the served root unless told otherwise. */
-async function client(grant = true) {
+/** A connected client. Writes need no grant, so there is nothing to ask for first. */
+async function client() {
   const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], resources: fileResources() });
   const held = host.accept(peer());
   await held.handle({
     method: 'initialize',
     params: { clientId: 'w', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
   });
-  if (grant) {
-    await held.handle({
-      method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${root}`, write: true },
-    });
-  }
   return held;
 }
 
@@ -239,7 +234,7 @@ it('makes a directory and the parents it needs', async () => {
   }))).code).toBe(-32010);
 });
 
-it('moves and copies, and refuses a destination it holds no grant on', async () => {
+it('moves and copies, and a destination conflict is the refusal that is left', async () => {
   const held = await client();
   writeFileSync(join(root, 'from.txt'), 'carried');
 
@@ -257,20 +252,22 @@ it('moves and copies, and refuses a destination it holds no grant on', async () 
   expect(text('moved.txt')).toBe('carried');
   expect(existsSync(join(root, 'from.txt'))).toBe(false);
 
-  // The grant is on `root`, and the destination is not under it: a move is
-  // a write at both ends, and the far end was never asked for.
-  const away = await refused(held.handle({
+  // Out of the served root and into another directory entirely. The store
+  // reaches any path it is asked about, and no grant on the far end holds it
+  // back, which is the whole of this change; the reference host does the same.
+  await held.handle({
     method: 'resourceMove',
     params: { channel: 'ahp-root://', source: `file://${root}/moved.txt`, destination: `file://${outside}/taken.txt` },
-  }));
-  expect(away.code).toBe(-32009);
-  expect(existsSync(join(root, 'moved.txt'))).toBe(true);
+  });
+  expect(readFileSync(join(outside, 'taken.txt'), 'utf8')).toBe('carried');
+  expect(existsSync(join(root, 'moved.txt'))).toBe(false);
 
+  writeFileSync(join(root, 'again.txt'), 'again');
   const over = await refused(held.handle({
     method: 'resourceCopy',
     params: {
       channel: 'ahp-root://',
-      source: `file://${root}/moved.txt`,
+      source: `file://${root}/again.txt`,
       destination: `file://${root}/copy.txt`,
       failIfExists: true,
     },
@@ -279,33 +276,21 @@ it('moves and copies, and refuses a destination it holds no grant on', async () 
   expect(text('copy.txt')).toBe('carried');
 });
 
-it('needs a grant, and one on a directory covers what is under it', async () => {
-  const held = await client(false);
-  const denied = await refused(put(held, 'deep/a.txt', { data: 'x' }));
-  expect(denied.code).toBe(-32009);
-  expect(existsSync(join(root, 'deep'))).toBe(false);
-
-  // One request, not one per file. An editor saves the file it has open, and
-  // a round trip per save would make the negotiation the slow part.
-  await held.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${root}`, write: true },
-  });
+it('writes without asking, and still answers a client that asks', async () => {
+  // The first write of the connection, with no `resourceRequest` before it.
+  const held = await client();
   await held.handle({ method: 'resourceMkdir', params: { channel: 'ahp-root://', uri: `file://${root}/deep` } });
   await put(held, 'deep/a.txt', { data: 'x' });
   expect(text('deep/a.txt')).toBe('x');
-});
 
-it('does not let a grant on one directory reach a sibling whose name starts the same', async () => {
-  const held = await client(false);
-  mkdirSync(join(root, 'brb'));
-  mkdirSync(join(root, 'brb_framework'));
-  await held.handle({
-    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${root}/brb`, write: true },
-  });
-  await put(held, 'brb/ok.txt', { data: 'x' });
-  // Prefix on a separator, never on the string.
-  expect((await refused(put(held, 'brb_framework/no.txt', { data: 'x' }))).code).toBe(-32009);
-  expect(existsSync(join(root, 'brb_framework/no.txt'))).toBe(false);
+  // The method is still served for a client that asks, and says yes, as the
+  // reference host answers it. It grants nothing, because nothing is withheld.
+  expect(await held.handle({
+    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${root}`, write: true },
+  })).toEqual({});
+  expect(await held.handle({
+    method: 'resourceRequest', params: { channel: 'ahp-root://', uri: `file://${root}/deep/a.txt`, write: true },
+  })).toEqual({});
 });
 
 it('refuses final file links for writes and copies, including dangling ones', async () => {

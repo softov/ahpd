@@ -142,10 +142,11 @@ export interface ChangesetOperation {
   /**
    * Whether running it writes to the working tree.
    *
-   * What the host gates on: an operation that writes needs a write grant on the
-   * resource, negotiated through `resourceRequest`, and is refused with `-32009`
-   * until one is held. Declared here rather than inferred from the id, because
-   * the host cannot know what a source's verbs do.
+   * Descriptive: it says what invoking this would do, so a client can draw the
+   * verb as the destructive one it is. The host does not gate on it - an
+   * operation that writes is served like any other, and the source is what
+   * refuses one it cannot carry out. Declared here rather than inferred from
+   * the id, because the host cannot know what a source's verbs do.
    */
   writes?: boolean;
 }
@@ -299,10 +300,10 @@ export interface ChangesetSource {
    * Run one.
    *
    * The host has already checked that `operationId` is among what this source
-   * offered for this scope, that the target's kind is one the operation
-   * accepts, and that a write grant is held where the operation says it writes.
-   * What is left is doing it, and throwing if it did not work - the protocol
-   * signals failure by rejecting the request, not by a field on the result.
+   * offered for this scope and that the target's kind is one the operation
+   * accepts. What is left is doing it, and throwing if it did not work - the
+   * protocol signals failure by rejecting the request, not by a field on the
+   * result.
    * An error thrown with a numeric `code` is the request's error code, and
    * its `data` goes with it; anything else is an internal error carrying the
    * message.
