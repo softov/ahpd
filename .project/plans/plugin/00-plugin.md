@@ -14,6 +14,7 @@ Every kind after those waits, and the whole list is in [deferred.md](01-plugins-
 - `code://packages/sdk` - `createHost` and `HostOptions`, the composition point a plugin contributes to; `types/agent.ts` is the `Agent` contract a harness plugin implements.
 - `code://packages/server` - the daemon: its configuration file, its command line, and the literal a plan in this domain replaces with a folded result.
 - `code://packages/agent-claude`, `code://packages/agent-cofold` and `code://packages/agent-acp` - the backends that ship, and the worked examples of a package the host knows nothing about: one over a harness library, one over a protocol, and one over a protocol spoken to a subprocess.
+- `code://packages/computer` - the first package to serve a host-owned URI scheme, so the resource-provider kind has a consumer that is not a test fixture.
 
 ## Contracts
 
