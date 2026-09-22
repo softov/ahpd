@@ -33,6 +33,17 @@ docker info --format '{{.ServerVersion}}'
 test -r /dev/kvm && echo 'kvm readable' || echo 'kvm not readable'
 ```
 
+A membership `usermod` adds shows in the group file at once and in `id -nG`
+only in a session that started after it, so the two can disagree:
+
+```sh
+getent group kvm          # kvm:x:993:softov   - the file already says so
+id -nG                    # ...and this shell still does not, until it is new
+```
+
+That is the usual reason `/dev/kvm` is still not readable after the command:
+the shell, not the group.
+
 Inside the sandbox this repository is developed in, `/dev` is a minimal one and
 `/dev/kvm` is not visible at all, so the last check is for a normal shell.
 
