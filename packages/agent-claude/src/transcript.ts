@@ -41,13 +41,23 @@ function resultText(content: unknown): string | undefined {
  * A transcript that will not parse is an empty session, not a refusal: the
  * catalogue said the session exists and the catalogue is right. Refusing to
  * open a row because its file is odd would be the host arguing with itself.
+ *
+ * A read that threw is tried once more before it is, though. A transcript
+ * being written as it is read and a transient filesystem error are both
+ * failures this cannot tell from a session with nothing in it, and empty is
+ * the answer a client draws nothing for - so it is worth one more attempt
+ * rather than being shown as a session that has no turns.
  */
 export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
     messages = await getSessionMessages(sessionId, { dir });
   } catch {
-    return [];
+    try {
+      messages = await getSessionMessages(sessionId, { dir });
+    } catch {
+      return [];
+    }
   }
 
   const built: WireTurn<Turn>[] = [];

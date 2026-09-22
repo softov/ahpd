@@ -41,6 +41,8 @@ const sdk = vi.hoisted(() => {
     transcript: [] as Record<string, unknown>[],
     /** How many times a transcript was actually read off disk. */
     reads: 0,
+    /** How many of the next reads should throw, so a retry can be seen. */
+    throwOnce: 0,
     init: {} as Record<string, unknown>,
     mcp: [] as Record<string, unknown>[],
     skills: [] as Record<string, unknown>[],
@@ -81,6 +83,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     // reads once per caller and one that shares a read are indistinguishable
     // when the read resolves synchronously.
     await new Promise((r) => { setTimeout(r, 1); });
+    if (sdk.throwOnce > 0) {
+      sdk.throwOnce -= 1;
+      throw new Error('the transcript could not be read');
+    }
     return sdk.transcript;
   },
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
@@ -182,6 +188,7 @@ beforeEach(() => {
   sdk.sessions.length = 0;
   sdk.transcript.length = 0;
   sdk.reads = 0;
+  sdk.throwOnce = 0;
   sdk.mcp.length = 0;
   sdk.skills.length = 0;
   sdk.said.length = 0;
@@ -2421,6 +2428,51 @@ describe('a session read from its transcript', () => {
     // Most of what the schema offers is fixed when the query is built, so a
     // session resumed without it is one that can never be given it.
     expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
+  });
+
+  it('reads a session again when the first read answered nothing', async () => {
+    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+
+    // Nothing in the transcript yet, which is the answer a read that failed
+    // and a session nobody has written both give.
+    const first = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+      snapshot: { state: { turns: unknown[] } };
+    };
+    expect(first.snapshot.state.turns).toEqual([]);
+    expect(sdk.reads).toBe(1);
+
+    // The turns are there now. The next open reads again rather than serving
+    // the empty answer it kept, which is what made one bad read permanent for
+    // the life of the process.
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'now' } });
+    const second = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+      snapshot: { state: { turns: { message: { text: string } }[] } };
+    };
+    expect(sdk.reads).toBe(2);
+    expect(second.snapshot.state.turns[0]?.message.text).toBe('now');
+
+    // And a read that has turns is still kept, which is the large transcript
+    // this cache was added for: a third open does not read at all.
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } });
+    expect(sdk.reads).toBe(2);
+  });
+
+  it('tries a transcript that failed once more before calling it empty', async () => {
+    sdk.sessions.push({ sessionId: 'flaky', summary: 'Flaky', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'there' } });
+    sdk.throwOnce = 1;
+
+    const client = open();
+    await client.handle(hello(['0.8.0']));
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/flaky' } }) as {
+      snapshot: { state: { turns: { message: { text: string } }[] } };
+    };
+    // The first read threw and the second answered, so the client is drawn a
+    // turn rather than an empty session it would have to reopen to fix.
+    expect(opened.snapshot.state.turns[0]?.message.text).toBe('there');
+    expect(sdk.reads).toBe(2);
   });
 });
 

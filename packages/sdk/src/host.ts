@@ -3816,7 +3816,18 @@ export function createHost(options: HostOptions): Host {
       const built = await owner.transcript(id);
       if (!built)
         return undefined;
-      history.set(id, built);
+      /*
+       * Kept only when it has turns.
+       *
+       * An empty answer is what a read that failed and a session with nothing
+       * in it both look like from this port, and keeping it turns one bad read
+       * into a session that draws nothing for the life of this process. The
+       * answer is served either way, so a row the catalogue vouches for still
+       * opens; what it is not is remembered. A read that did have turns is the
+       * large one this cache exists for, and is kept.
+       */
+      if (built.length > 0)
+        history.set(id, built);
       return built;
     })();
     reading.set(id, asked);
