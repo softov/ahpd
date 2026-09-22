@@ -51,6 +51,7 @@ A client creates a session on a provider the package registered, and that sessio
 - `test/agent-acp-plugin.test.ts` - the loader resolving the package and serving a turn through the scripted server, a manifest listed as `ready` without importing its entry, two providers from two specs, and a spec with no `command` reported and skipped.
 - `test/fixtures/acp-server.mjs` - the scripted server, which now sends requests of its own and awaits the answers.
 - By hand: `scripts/acp-smoke.mts` drove one real turn against `copilot --acp`, GitHub Copilot CLI 1.0.87. It handshook, registered provider `copilot`, mapped Copilot's three mode ids into `permissionMode`, streamed `PONG` for a one-word prompt and completed with no error. Copilot keeps its session store under `$HOME/.copilot`, so the sandbox's read-only home made it fail until the script named `COPILOT_HOME`; on a machine with a writable home it needs no environment.
+- By hand, through the daemon's own argv and configuration rather than an in-process host: `node packages/server/dist/main.js --plugin ./packages/agent-acp` (2026-09-23) served one real turn against `@deepseek-ai/dsh-acp`, run as the shipped `dsh --profile acp` bundle, with a WebSocket client driving `initialize`, `createSession`, `subscribe` and a one-word `chat/turnStarted`. The daemon logged `plugin @ahpd/agent-acp from .../dist/index.js`, listed provider `dsh` beside `claude`, streamed `PONG`, and ended the turn with `chat/turnComplete` and no `chat/error`; the session's config schema carried `permissionMode`, which is the ACP mode catalogue mapped. That is the last gap the plan left.
 - 63 files, 849 tests; `tsc -p tsconfig.json --noEmit`, `pnpm build` and `node scripts/boundary.mjs` green with `@ahpd/agent-acp: 2 declared, none undeclared`.
 
 ## Departures from the plan
@@ -61,8 +62,11 @@ A client creates a session on a provider the package registered, and that sessio
 - **A permission is binary.** AHP's `confirm` is two-valued, so `allow_once`/`reject_once` are the only options this host returns and an `always` is never selected.
 - **The ACP method is `terminal/wait_for_exit`**, not `terminal/wait_for_terminal_exit`; the fixture carried the wrong name first.
 
-## Left for later
+## Closed after the plan
 
-- **`@deepseek-ai/dsh-acp` itself.** A real turn was driven against `copilot --acp` through `scripts/acp-smoke.mts`, which is the end-to-end proof the checklist wanted. DSH was not installed, and the daemon binary was not used - the host was built in process, which is the same bridge the daemon loads and not the daemon's own argv and configuration path.
-- **`!command` is the host's shell turn.** `acpSession` implements `ran`: the host spawns the command in one of its own terminals, the bridge opens a `terminal` tool call around it, closes the turn with what it printed, and the ACP server is never asked about it or interrupted for it. A command typed while a model turn is running queues as the command itself, not its text, so `startNext` runs it rather than prompting with `!ping`. `test/agent-acp-turn.test.ts` covers the direct path.
-- **A command named in the manifest's `ahpd.options`.** The required `command` is reported at apply and skipped; `ahpd plugin list` shows the spec as `unconfigured` only if the manifest declares it, which this one does not yet.
+- **`@deepseek-ai/dsh-acp`, closed 2026-09-23.** The plan wanted the real daemon binary and this server, and both were run: `dsh --profile acp` is the shipped DSH ACP profile, and the daemon served a `PONG` turn through it. Nothing is left of the gap; what it cost is that DSH was already present in the harness's own `npx` checkout rather than installed here, the profile is zero-option, and `DSH_HOME` had to point somewhere writable because the sandbox's real one is not.
+- **The manifest's required `command`, closed 2026-09-22.** Release prep gave the manifest `ahpd.options.command` with `required: true`, so `ahpd plugin list` reports a spec with no command as `unconfigured` without importing the package. The earlier note that this one does not declare it is superseded by that change.
+
+## A note on `!command`
+
+- **It is the host's shell turn.** `acpSession` implements `ran`: the host spawns the command in one of its own terminals, the bridge opens a `terminal` tool call around it, closes the turn with what it printed, and the ACP server is never asked about it or interrupted for it. A command typed while a model turn is running queues as the command itself, not its text, so `startNext` runs it rather than prompting with `!ping`. `test/agent-acp-turn.test.ts` covers the direct path.
