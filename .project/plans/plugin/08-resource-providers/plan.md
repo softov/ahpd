@@ -1,7 +1,7 @@
 ---
 title: A plugin serves a host-owned URI scheme
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-09-23
 revalidated: 2026-09-23
@@ -100,9 +100,9 @@ ahpd --plugin <pkg> -> loadPlugins -> apply(host) -> host.registerResourceProvid
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin contributes a provider for one scheme](task-01-a-plugin-contributes-a-provider.md) | todo | - |
-| [02 - The host routes a resource command by scheme](task-02-the-host-routes-by-scheme.md) | todo | 01 |
-| [03 - A read-only example, the docs and the kinds table](task-03-the-example-and-the-docs.md) | todo | 02 |
+| [01 - A plugin contributes a provider for one scheme](task-01-a-plugin-contributes-a-provider.md) | done | - |
+| [02 - The host routes a resource command by scheme](task-02-the-host-routes-by-scheme.md) | done | 01 |
+| [03 - A read-only example, the docs and the kinds table](task-03-the-example-and-the-docs.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -114,16 +114,16 @@ ahpd --plugin <pkg> -> loadPlugins -> apply(host) -> host.registerResourceProvid
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its two decisions are written for review.
-- **Next action:** [task-01-a-plugin-contributes-a-provider.md](task-01-a-plugin-contributes-a-provider.md).
+- **Done so far:** all three tasks, 2026-09-23. A plugin registers a scheme, the host routes every resource command by it, and a read-only `computer:` fixture is loaded through the real loader. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built. Docker and KVM are named as the substrate a real provider would talk to, and that provider is its own plan.
 - **Open questions:**
-  1. Should a provider be allowed to claim a scheme a connected client is publishing right now? - proposed: the relay already wins, and a registration-time check cannot know what a future client will publish, so the plan documents the precedence instead of refusing.
-  2. Should the provider contract keep `resolve`? - proposed: yes and optional, because a client that browses asks what a URI is before it reads it, and a provider that cannot answer omits it and gets `-32601`.
-- **Watch out for:** the `@` completion takes a *path*, not a URI, so routing it by scheme is not a rename; leaving it on the file store is the decision, and a reader who expects otherwise will try to route it.
+  1. Should a provider be allowed to claim a scheme a connected client is publishing right now? - answered: no check is made, because a registration cannot know what a future client will publish; the relay wins and the precedence is documented.
+  2. Should the provider contract keep `resolve`? - answered: yes and optional, and the fixture implements it, so a client that browses asks what a URI is before it reads it.
+- **Watch out for:** the `@` completion takes a *path*, not a URI, so it was left on the file store. A reader who expects it routed by scheme will look for a rename that is not there.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the fold, validation, routing and fixture cases below.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: `ahpd plugin list --plugin <fixture>` reports the provider, and a daemon with it serves a `computer:` read while `file:` still lists.
-- [ ] `plans/index.md` and [00-plugin.md](../00-plugin.md) updated.
+- [x] `pnpm test` green: 65 files, 864 tests, with the fold, validation, routing and fixture cases.
+- [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
+- [x] By hand: a scratch `.mjs` provider was loaded by the real daemon (`ahpd ... --plugin ./.tmp-scratch-computer.mjs`), a `computer://local/status` read and resolve reached it, `file:` still listed, a `computer:` write answered `-32601`, and an unregistered scheme answered the `nothing here serves notes:` sentence.
+- [x] `plans/index.md` and [00-plugin.md](../00-plugin.md) updated.

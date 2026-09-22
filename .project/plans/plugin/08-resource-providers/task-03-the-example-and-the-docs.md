@@ -42,4 +42,7 @@ A read-only fixture provider serves `computer://local/status` and `computer://lo
 
 ## Resume
 
-Empty until started.
+Done 2026-09-23.
+Built: the fixture (`package.json` with `ahpd.entry`, and `index.ts` registering a read-only `computer:`), `test/uri-resources-plugin.test.ts`, the docs section and the kinds row.
+Found: the fixture is TypeScript like `plugin-echo`, which the test loader imports and the daemon cannot, so the by-hand daemon check used a scratch `.mjs` provider instead - the path the docs already describe for a plugin with no manifest.
+Left: the docs name Docker and KVM as the substrate a real provider would talk to, and nothing here starts either.

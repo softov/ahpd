@@ -68,7 +68,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [05 - The endpoint's models](plugin/05-endpoint-models/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/05-endpoint-models/implemented.md)) | plugin 04 | - |
 | [06 - A mode and an effort control](plugin/06-permission-modes/plan.md) | medium | built 2026-09-20 ([implemented.md](plugin/06-permission-modes/implemented.md)) | plugin 05 | - |
 | [07 - The ACP bridge](plugin/07-agent-acp/plan.md) | high | built 2026-09-22 ([implemented.md](plugin/07-agent-acp/implemented.md)) | - | the second runtime the `agent-*` contract is proved against |
-| [08 - A plugin serves a host-owned URI scheme](plugin/08-resource-providers/plan.md) | medium | planned | - | - |
+| [08 - A plugin serves a host-owned URI scheme](plugin/08-resource-providers/plan.md) | medium | built 2026-09-23 ([implemented.md](plugin/08-resource-providers/implemented.md)) | - | - |
 
 Next free number in `plugin`: `09`.
 

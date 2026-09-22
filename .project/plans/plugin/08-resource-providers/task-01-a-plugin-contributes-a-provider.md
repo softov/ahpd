@@ -46,4 +46,6 @@ A plugin can call `host.registerResourceProvider('computer', store)` and the fol
 
 ## Resume
 
-Empty until started.
+Done 2026-09-23.
+Built: `ResourceProvider` in `types/resources.ts`, `HostOptions.resourceProviders`, `registerResourceProvider` and the keyed `Contribution.providers` bucket, `checkScheme` and `checkResourceProvider`, `reservedScheme`, the per-plugin duplicate check and the fold's cross-plugin conflict.
+Found: `Contribution` is built as a literal in three test helpers, so a required field moved those too; and `types/index.ts` had to export `ResourceProvider` or the fixture could not name it, even though `types/host.ts` re-exported it.
