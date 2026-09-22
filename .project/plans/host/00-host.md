@@ -40,3 +40,4 @@ createHost({ agents, resources, terminals, git, github, worktrees, automations }
 - The artifact tools answer with a description rather than the reference's status and id, and a reference is never promoted to an artifact in place; plan [01 - Artifact tools](01-artifact-tools/plan.md).
 - The root config declares `defaultShell` and nothing else, so a window setting mapped to a host key has nothing to set; plan [02 - Session config and titles](02-session-config-and-titles/plan.md).
 - `_meta.github` reports the pull requests a branch has and no baseline, so a client cannot tell the session's own from inherited ones; plan [03 - Pull request baseline](03-pull-request-baseline/plan.md).
+- A transcript read that answered no turns is kept for the life of the process, so one failed or mid-write read becomes a session that draws nothing until the daemon restarts; plan [05 - A transcript that answered nothing is read again](05-transcript-reads/plan.md).
