@@ -1,7 +1,7 @@
 ---
 title: A transcript that answered nothing is read again
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-09-23
 revalidated: 2026-09-23
@@ -78,8 +78,8 @@ a client subscribes to a catalogue session's chat
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An empty read is not remembered](task-01-an-empty-read-is-not-remembered.md) | todo | - |
-| [02 - A failed read is tried once more](task-02-a-failed-read-is-tried-once-more.md) | todo | 01 |
+| [01 - An empty read is not remembered](task-01-an-empty-read-is-not-remembered.md) | done | - |
+| [02 - A failed read is tried once more](task-02-a-failed-read-is-tried-once-more.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -89,15 +89,15 @@ a client subscribes to a catalogue session's chat
 
 ## Resume state
 
-- **Done so far:** nothing; the plan and its decision are written for review.
-- **Next action:** [task-01-an-empty-read-is-not-remembered.md](task-01-an-empty-read-is-not-remembered.md).
+- **Done so far:** both tasks, 2026-09-23. `past` keeps a read only when it has turns, and `turnsOf` reads once more when the first attempt throws. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built. The by-hand item below is the one thing not run here.
 - **Open questions:**
-  1. Should the retry wait a moment rather than run immediately? - proposed: no, an immediate second read is free and a timer would be a wall-clock wait in a suite that is trying to remove them.
-- **Watch out for:** `history.set` must stay for a non-empty result, or the 35MB transcript is re-read on every subscribe - the one case the cache was written for.
+  1. Should the retry wait a moment rather than run immediately? - answered: no, an immediate second read is free and a timer would be a wall-clock wait in a suite that is trying to remove them. If a blank session is seen again, the answer is the log line the risks section names, not a longer wait.
+- **Watch out for:** the two behaviours are independent but land together: without task 01 a retried read still gets cached empty once it fails twice, and without task 02 a single transient failure is drawn empty until the next open.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with the two new cases in `test/host.test.ts`.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: a session opened with an empty answer shows its turns on the next subscribe, without restarting the window or the daemon.
-- [ ] `plans/index.md` and [00-host.md](../00-host.md) updated.
+- [x] `pnpm test` green: 63 files, 851 tests, the two new cases included. Both new cases were checked against the code with the fixes reverted, and both fail there.
+- [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
+- [ ] By hand: a session opened with an empty answer shows its turns on the next subscribe, without restarting the window or the daemon. Not run here; the failure was not reproducible in this sandbox.
+- [x] `plans/index.md` and [00-host.md](../00-host.md) updated.
