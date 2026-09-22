@@ -1,7 +1,7 @@
 ---
 title: A client may write a file it may read
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-09-23
 revalidated: 2026-09-23
@@ -90,8 +90,8 @@ invokeChangesetOperation with offered.writes === true
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The resource writes are served without a grant](task-01-the-resource-writes-are-served.md) | todo | - |
-| [02 - The changeset verbs that write are served without one too](task-02-the-changeset-verbs-are-served.md) | todo | 01 |
+| [01 - The resource writes are served without a grant](task-01-the-resource-writes-are-served.md) | done | - |
+| [02 - The changeset verbs that write are served without one too](task-02-the-changeset-verbs-are-served.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -102,15 +102,15 @@ invokeChangesetOperation with offered.writes === true
 
 ## Resume state
 
-- **Done so far:** nothing; this plan is the review the user asked for on 2026-09-23.
-- **Next action:** [task-01-the-resource-writes-are-served.md](task-01-the-resource-writes-are-served.md).
+- **Done so far:** both tasks, 2026-09-23. `mayWrite`, `needsWrite` and `connection.grants` are gone, the five resource handlers and `invokeChangesetOperation` serve a write with no grant, and `resourceRequest` still answers and logs. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built. What is left is the by-hand window check below and a version bump, since `0.6.2` is published.
 - **Open questions:**
-  1. Does the window ask for a read grant before it lists a directory? - proposed: irrelevant to this plan, because reads were never gated and listing works today.
-- **Watch out for:** `connection.grants` has to go with `mayWrite`; leaving it makes the next reader believe a grant is enforced.
+  1. Does the window ask for a read grant before it lists a directory? - answered: no, and it never needed to, because the read half was never gated.
+- **Watch out for:** the two `-32009`s now differ in origin. The store's is about a path and the owner's relay is about someone else's resource; a reader who assumes one meaning for the code would be wrong.
 
 ## Final verification checklist
 
-- [ ] `pnpm test` green, with `test/writes.test.ts` and `test/operations.test.ts` updated.
-- [ ] `pnpm typecheck` and `pnpm boundary` green.
-- [ ] By hand: a VS Code window saves a file in a session workspace this host serves.
-- [ ] `plans/index.md` and [00-host.md](../00-host.md) updated.
+- [x] `pnpm test` green, with `test/writes.test.ts` and `test/operations.test.ts` updated.
+- [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
+- [ ] By hand: a VS Code window saves a file in a session workspace this host serves. Not run; the wire call that window makes was driven against the real daemon instead, see [implemented.md](implemented.md).
+- [x] `plans/index.md` and [00-host.md](../00-host.md) updated.

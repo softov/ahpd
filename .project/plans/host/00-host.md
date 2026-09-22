@@ -40,4 +40,3 @@ createHost({ agents, resources, terminals, git, github, worktrees, automations }
 - The artifact tools answer with a description rather than the reference's status and id, and a reference is never promoted to an artifact in place; plan [01 - Artifact tools](01-artifact-tools/plan.md).
 - The root config declares `defaultShell` and nothing else, so a window setting mapped to a host key has nothing to set; plan [02 - Session config and titles](02-session-config-and-titles/plan.md).
 - `_meta.github` reports the pull requests a branch has and no baseline, so a client cannot tell the session's own from inherited ones; plan [03 - Pull request baseline](03-pull-request-baseline/plan.md).
-- The write half is gated behind a `resourceRequest` grant the reference client never asks for, so a VS Code window cannot save a file this host serves; plan [04 - A client may write a file it may read](04-client-writes/plan.md).

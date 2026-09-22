@@ -1,6 +1,6 @@
 ---
 title: The resource writes are served without a grant
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -58,4 +58,8 @@ refs:
 
 ## Resume
 
-Empty until started.
+Done 2026-09-23.
+`mayWrite`, `needsWrite` and the `grants` set are gone from `packages/sdk/src/host.ts`, and `grants` is gone from the `Connection` interface in `packages/sdk/src/types/host.ts` as well, which the plan's file list did not name: `mayWrite` was its only reader, so leaving the field would have been a claim of enforcement nothing performs.
+Two comments outside the plan's list claimed the host gated on a write grant and were corrected with it: `CodegenOperation.writes` in `packages/sdk/src/types/changes.ts` and the `invoke` comment in `packages/sdk/src/changes.ts`. The flag itself stays, as the descriptive thing it now is.
+Found as the plan predicted: the far-end move does land because the store reaches any absolute path, and the copy `failIfExists` refusal is still `-32010`. The store's own `-32009` for a directory or a symlink is untouched.
+The `client(grant)` helper existed only for the two cases the plan replaced, so it lost its argument.
