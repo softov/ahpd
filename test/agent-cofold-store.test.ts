@@ -31,11 +31,14 @@ const until = async (check: () => boolean, times = 400): Promise<void> => {
 type Note = { channel: 'session' | 'chat' | 'terminal'; action: Bag };
 
 /** One session's channels, collected the way the host would dispatch them. */
-function channels() {
+function channels(onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Bag) => void) {
   const notes: Note[] = [];
   return {
     notes,
-    emit: (channel: 'session' | 'chat' | 'terminal', action: Bag): void => { notes.push({ channel, action }); },
+    emit: (channel: 'session' | 'chat' | 'terminal', action: Bag): void => {
+      notes.push({ channel, action });
+      onEmit?.(channel, action);
+    },
     types: (channel: string): string[] =>
       notes.filter((one) => one.channel === channel).map((one) => String(one.action.type)),
     said: (channel: string, kind: string): Bag | undefined =>
@@ -70,8 +73,14 @@ const backend = (root: string, model: ModelAdapter, policy?: Partial<Policy>): A
   cofoldAgent({ adapter: model, store: root, ...(policy !== undefined ? { policy } : {}) });
 
 /** Open one session on a backend, with everything the harness would have handed it. */
-function open(agent: Agent, id: string, workingDirectory: string, extra: Partial<Start> = {}) {
-  const view = channels();
+function open(
+  agent: Agent,
+  id: string,
+  workingDirectory: string,
+  extra: Partial<Start> = {},
+  onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Bag) => void,
+) {
+  const view = channels(onEmit);
   const session = agent.create({
     uri: `ahp-session:/${id}`,
     chatUri: `ahp-chat:/${id}`,
@@ -225,6 +234,9 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   after.session.confirm('call-1', true);
   await until(() => ended(after.view));
 
+  // A silent give-up in `until` must not read as a pass: the turn this asserts
+  // is the one the answer was supposed to reach.
+  expect(ended(after.view)).toBe(true);
   expect(ran).toEqual(['x']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
 
@@ -236,6 +248,54 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   expect(runs[0]?.status).toBe('completed');
   const messages = await reader.sessions.listMessages({ sessionId: 'one' });
   expect(messages.filter((one: Message) => one.role === 'user' && textOf(one) === 'hi')).toHaveLength(1);
+});
+
+it('answers a request the replay announced before the resumed run had a handle', async () => {
+  /*
+   * The window this pins is small and real: a `start.resume` replays the run's
+   * history, and the replay announces the approval it is waiting on before
+   * `reopen` attaches the handle that takes commands. A person answering the
+   * moment the form appears - or a test polling on the action - can get their
+   * answer in between, and an answer with nowhere to go used to be dropped:
+   * the request left `pending`, the run left `awaiting` for ever, and the turn
+   * never ended.
+   *
+   * The confirmation is queued as a microtask from inside the emission, which
+   * is the earliest it can be sent once the request exists: `pending` is set
+   * right after the actions go out and the handle is attached after the whole
+   * replay, so this lands in between every time rather than under load.
+   */
+  const { root, sweep } = place();
+  const ran: string[] = [];
+  const asks: Partial<Policy> = {
+    decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
+  };
+  const tool = lookup(ran);
+
+  const first = backend(root, createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] }],
+    stream: true,
+  }), asks);
+  const before = open(first, 'one', sweep, { tools: [tool] });
+  before.session.begin('t1', 'hi');
+  await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
+  await pausedRun(root, 'one');
+
+  const second = backend(root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
+  let answer: (() => void) | undefined;
+  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] }, (channel, action) => {
+    if (answer === undefined) return;
+    if (channel !== 'session' || action.type !== 'session/inputNeededSet') return;
+    const send = answer;
+    answer = undefined;
+    queueMicrotask(send);
+  });
+  answer = () => after.session.confirm('call-1', true);
+
+  await until(() => ended(after.view), 2000);
+  expect(ended(after.view)).toBe(true);
+  expect(ran).toEqual(['x']);
+  expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
 });
 
 it('appends a new run under the same session id when a finished session is resumed', async () => {

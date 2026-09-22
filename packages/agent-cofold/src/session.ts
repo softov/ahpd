@@ -534,8 +534,26 @@ export function cofoldSession(
    */
   const route = (command: RunCommand): void => {
     const live = paused === undefined ? handle : rejoin();
-    if (live === undefined) return;
-    void live.submit(command).catch(() => {});
+    if (live !== undefined) {
+      void live.submit(command).catch(() => {});
+      return;
+    }
+    /*
+     * An answer can arrive while a resume is still opening.
+     *
+     * The replay a `start.resume` does announces the request the run is waiting
+     * on before it attaches the handle that takes commands - the awaiting
+     * `run.finished` it reads is history, not a live pause - so a person
+     * answering the moment the form appears would have the decision dropped and
+     * the run left waiting for ever. The answer waits for the same opening
+     * every turn waits for, then goes to whatever handle that left behind.
+     */
+    const waiting = opening;
+    if (waiting === undefined) return;
+    void waiting.then(() => {
+      const later = paused === undefined ? handle : rejoin();
+      if (later !== undefined) void later.submit(command).catch(() => {});
+    }, () => {});
   };
 
   /**
@@ -546,14 +564,8 @@ export function cofoldSession(
    * request and ends the run, which is the one path that leaves no promise
    * nobody can settle.
    */
-  const stop = (reason: string): void => {
-    /*
-     * A client-run call is settled here too, even though a stopped turn's
-     * abort means the model will not read the result: the entry must not
-     * outlive the turn, or `toolCallOwner` keeps claiming a call that is over
-     * and a later answer would settle a promise nobody is waiting on.
-     */
-    releaseCalls(reason);
+  /** The half of `stop` that needs a handle, once the opening has settled. */
+  const stopNow = (reason: string): void => {
     if (paused !== undefined) {
       for (const held of [...pending.values()]) {
         const removal = activeMapping?.settle(held.requestId);
@@ -565,6 +577,30 @@ export function cofoldSession(
       return;
     }
     handle?.cancel({ reason });
+  };
+
+  const stop = (reason: string): void => {
+    /*
+     * A client-run call is settled here too, even though a stopped turn's
+     * abort means the model will not read the result: the entry must not
+     * outlive the turn, or `toolCallOwner` keeps claiming a call that is over
+     * and a later answer would settle a promise nobody is waiting on.
+     */
+    releaseCalls(reason);
+    /*
+     * A stop can arrive while a resume is still opening.
+     *
+     * `active` is rebuilt by the replay before the handle that takes a cancel
+     * exists, so a stop in that window would find neither a paused run nor a
+     * handle and quietly do nothing. It waits for the same opening every turn
+     * waits for and then stops whatever handle that left behind.
+     */
+    const waiting = opening;
+    if (waiting !== undefined) {
+      void waiting.then(() => stopNow(reason), () => stopNow(reason));
+      return;
+    }
+    stopNow(reason);
   };
 
   /**
