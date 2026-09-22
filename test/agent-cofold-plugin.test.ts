@@ -142,12 +142,32 @@ it('loads the package from its source file and serves a turn through the stub mo
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('answered by the plugin');
 });
 
-it('lists the package manifest, and its title, without importing the entry', async () => {
-  const row = await describePlugin('./packages/agent-cofold', { configDir: REPO, cwd: REPO });
+it('lists a manifest, and its title, without importing the entry', async () => {
+  /*
+   * A manifest in its own directory rather than this package's: the loader
+   * resolves a directory through `ahpd.entry`, `exports["."]` or `main`, and
+   * every one of those names the `dist` build, which is gitignored and so
+   * absent in a fresh checkout. Naming this package here made the case depend
+   * on the build rather than on the loader. The package's own name and title
+   * are asserted by the served turn above, which resolves it from its source.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-listing-'));
+  loose = dir;
+  writeFileSync(join(dir, 'entry.js'), 'export const apply = () => {};\n');
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: '@ahpd/agent-cofold',
+    private: true,
+    type: 'module',
+    exports: { '.': './entry.js' },
+    ahpd: { entry: './entry.js', title: 'Cofold' },
+  }));
+
+  const row = await describePlugin(dir, { configDir: REPO, cwd: REPO });
 
   expect(row.state).toBe('ready');
   expect(row.name).toBe('@ahpd/agent-cofold');
   expect(row.title).toBe('Cofold');
+  expect(row.path).toBe(join(dir, 'entry.js'));
 });
 
 it('contributes two backends for two specs that name different providers', async () => {
