@@ -112,5 +112,5 @@ invokeChangesetOperation with offered.writes === true
 
 - [x] `pnpm test` green, with `test/writes.test.ts` and `test/operations.test.ts` updated.
 - [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
-- [ ] By hand: a VS Code window saves a file in a session workspace this host serves. Not run; the wire call that window makes was driven against the real daemon instead, see [implemented.md](implemented.md).
+- [x] By hand: a VS Code window saves a file in a session workspace this host serves. Confirmed by the user in a running window on 2026-09-23; the wire call had already been driven against the real daemon, see [implemented.md](implemented.md).
 - [x] `plans/index.md` and [00-host.md](../00-host.md) updated.
