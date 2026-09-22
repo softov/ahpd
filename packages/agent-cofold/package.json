@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-cofold",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "description": "An AHP backend over the cofold agent runtime: every model it can reach is a model inside one provider",
   "keywords": [

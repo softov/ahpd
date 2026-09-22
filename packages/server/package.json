@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/server",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "description": "An Agent Host Protocol server on Node, Bun or Deno. Ships with a Claude backend",
   "keywords": [
