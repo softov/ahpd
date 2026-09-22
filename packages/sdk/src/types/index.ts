@@ -28,7 +28,7 @@ export type { Page } from './paging.js';
 export type { Connected, OnConnect, Runtime, Listener, Tap } from './listen.js';
 export type { Offered } from './probe.js';
 export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects } from './agent.js';
-export type { Entry, Metadata, Read, ResourceStore } from './resources.js';
+export type { Entry, Metadata, Read, ResourceProvider, ResourceStore } from './resources.js';
 export type { Claim, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals } from './terminals.js';
 export type { Worktree, Worktrees } from './worktrees.js';
 export type { NewPullRequest, PullRequest, PullRequests } from './github.js';

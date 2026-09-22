@@ -165,3 +165,44 @@ export const checkPort = (key: PortKey, value: unknown, by: string): void => {
     if (!right(object[member], expected)) throw new Error(miss(by, method, member, expected));
   }
 };
+
+/*
+ * The optional members of `ResourceProvider`, by kind. `read` is the one
+ * required member and is checked on its own.
+ */
+const PROVIDER_OPTIONAL: Record<string, Kind> = {
+  list: 'function',
+  resolve: 'function',
+  watch: 'function',
+  write: 'function',
+  remove: 'function',
+  mkdir: 'function',
+  move: 'function',
+  copy: 'function',
+};
+
+/**
+ * A scheme, as a URI names one.
+ *
+ * The shape is the one `why` matches when it reads a scheme out of a URI, and
+ * it is checked because the scheme is the key a URI is routed by: a registered
+ * scheme no URI can name is a provider nothing can reach.
+ */
+export const checkScheme = (scheme: unknown, by: string): string => {
+  if (typeof scheme !== 'string' || !/^[a-zA-Z][\w+.-]*$/.test(scheme)) {
+    throw new Error(miss(by, 'registerResourceProvider', 'scheme', 'a URI scheme like computer'));
+  }
+  return scheme;
+};
+
+/** Check one `registerResourceProvider` value against `ResourceProvider`. */
+export const checkResourceProvider = (scheme: string, value: unknown, by: string): void => {
+  const object = asObject(value, by, 'registerResourceProvider', scheme);
+  if (typeof object.read !== 'function') {
+    throw new Error(miss(by, 'registerResourceProvider', 'read', 'a function'));
+  }
+  for (const [member, expected] of Object.entries(PROVIDER_OPTIONAL)) {
+    if (object[member] === undefined) continue;
+    if (!right(object[member], expected)) throw new Error(miss(by, 'registerResourceProvider', member, expected));
+  }
+};

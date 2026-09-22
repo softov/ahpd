@@ -33,6 +33,9 @@ const tool = (name: string): HostTool => ({
   run: () => name,
 });
 
+/** A provider with the one member the contract requires. */
+const provider = { read: (): void => {} };
+
 /** Every required member of every port, as the interfaces name them today. */
 const ports = {
   resources: { list: () => {}, read: () => {}, resolve: () => {}, complete: () => {} },
@@ -72,6 +75,7 @@ describe('pluginHost', () => {
     host.registerAutomations(ports.automations as never);
     host.registerSessions(ports.sessions as never);
     host.registerDiagnostics(ports.diagnostics as never);
+    host.registerResourceProvider('computer', provider as never);
 
     const { options, problems } = foldHostOptions(base(), [contribution]);
     expect(problems).toEqual([]);
@@ -86,6 +90,7 @@ describe('pluginHost', () => {
     expect(options.automations).toBe(ports.automations);
     expect(options.sessions).toBe(ports.sessions);
     expect(options.diagnostics).toBe(ports.diagnostics);
+    expect(options.resourceProviders?.computer).toBe(provider);
   });
 
   it('refuses an agent with no provider, naming the plugin, the method and the member', () => {
@@ -129,6 +134,31 @@ describe('pluginHost', () => {
     const { host } = pluginHost('alpha', context());
     host.registerResources(ports.resources as never);
     expect(() => host.registerResources(ports.resources as never)).toThrow(/alpha.*resources/);
+  });
+
+  it('accepts a provider with only read, and refuses what is not a function', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerResourceProvider('computer', { read: () => {} } as never)).not.toThrow();
+    // `read` is the one required member, and a provider that cannot answer
+    // bytes serves nothing.
+    expect(() => host.registerResourceProvider('notes', {} as never)).toThrow(/alpha.*registerResourceProvider.*read/);
+    // Everything else is optional, which says it may be left out and not that
+    // it may be anything.
+    expect(() => host.registerResourceProvider('notes', { read: () => {}, list: 'nope' } as never)).toThrow(/list/);
+  });
+
+  it('refuses a scheme that is not one, and the schemes the host already owns', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerResourceProvider('9bad', provider as never)).toThrow(/URI scheme/);
+    expect(() => host.registerResourceProvider('', provider as never)).toThrow(/URI scheme/);
+    expect(() => host.registerResourceProvider('file', provider as never)).toThrow(/its own/);
+    expect(() => host.registerResourceProvider('ahp-root', provider as never)).toThrow(/its own/);
+  });
+
+  it('refuses one plugin registering one scheme twice, and leaves two plugins to the fold', () => {
+    const one = pluginHost('alpha', context());
+    one.host.registerResourceProvider('computer', provider as never);
+    expect(() => one.host.registerResourceProvider('computer', provider as never)).toThrow(/computer/);
   });
 
   it('refuses two agents with one provider inside a plugin, and leaves two plugins to the fold', () => {

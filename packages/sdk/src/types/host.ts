@@ -3,7 +3,7 @@
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, ToolEffects } from './agent.js';
 import type { HostHandlers } from './events.js';
-import type { ResourceStore } from './resources.js';
+import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { TerminalStore } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
@@ -53,7 +53,7 @@ export interface DirectoryFacts {
  * They are re-exported because `HostOptions` names them and callers have
  * always reached them here.
  */
-export type { ResourceStore } from './resources.js';
+export type { ResourceProvider, ResourceStore } from './resources.js';
 export type { TerminalStore } from './terminals.js';
 
 /** How to construct a host. */
@@ -84,6 +84,21 @@ export interface HostOptions {
    * that ships with this package, and the daemon uses it.
    */
   resources?: ResourceStore;
+  /**
+   * Other URI schemes this host serves itself, by scheme.
+   *
+   * `file:` is `resources` above and everything else is here: a `computer:`
+   * whose bytes come from somewhere that is not a filesystem, or any scheme a
+   * plugin owns. A resource command is routed by the scheme in the URI, so a
+   * provider is reached only for URIs that name it.
+   *
+   * The order of authority, for a URI that several things could claim: a URI a
+   * connected client published is relayed to that client before any of this is
+   * consulted, then a registered scheme goes to its provider, then `file:` goes
+   * to `resources`, and a scheme nobody serves answers with what
+   * `fileResources()` says about a foreign scheme.
+   */
+  resourceProviders?: Record<string, ResourceProvider>;
   /**
    * How to open a shell.
    *

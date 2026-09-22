@@ -33,7 +33,7 @@ const contributed: Agent = {
   displayName: 'Contributed backend',
 };
 
-const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], ports: {}, events: {} };
+const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], ports: {}, providers: {}, events: {} };
 
 it('serves a backend a plugin contributed, beside the daemon\'s own', async () => {
   const { options, problems } = foldHostOptions(base(), [contribution]);
@@ -57,7 +57,7 @@ it('serves a backend a plugin contributed, beside the daemon\'s own', async () =
 
 it('marks a provider clash so a caller can refuse over one without reading prose', () => {
   const twice = foldHostOptions(base(), [
-    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], ports: {}, events: {} },
+    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], ports: {}, providers: {}, events: {} },
   ]);
   expect(twice.problems).toHaveLength(1);
   expect(twice.problems[0]?.startsWith(AGENT_CLASH)).toBe(true);

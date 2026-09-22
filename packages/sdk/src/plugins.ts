@@ -15,7 +15,7 @@ import type { Agent } from './types/agent.js';
 import type { EventHandler, EventListener, EventName, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
-import { checkAgent, checkPort, checkTool, miss } from './validate.js';
+import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
 
 /**
  * Every key a `set` registration may name.
@@ -42,6 +42,19 @@ void everyPortIsListed;
 
 /** What every agent `provider` collision problem starts with. */
 export const AGENT_CLASH = 'agent provider clash:';
+
+/**
+ * Whether a scheme is the host's own rather than a plugin's to take.
+ *
+ * `file` is the store in `HostOptions.resources`, and every `ahp-` scheme is a
+ * channel the protocol or this host already names. A plugin that registered
+ * one would be answered before it, or would shadow a channel, so it is refused
+ * where it is registered rather than quietly losing.
+ */
+export const reservedScheme = (scheme: string): boolean => {
+  const lower = scheme.toLowerCase();
+  return lower === 'file' || lower.startsWith('ahp-');
+};
 
 /** What `foldHostOptions` answers: the composed options, and everything that could not be composed. */
 export interface FoldedOptions {
@@ -94,6 +107,16 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   for (const agent of base.agents) providers.set(agent.provider, 'the daemon');
   const added: Agent[] = [];
 
+  /*
+   * The URI schemes, and who holds each. Seeded from the base for the same
+   * reason the ports are: a plugin that registers a scheme the host was
+   * already given is told, rather than winning by order.
+   */
+  type Schemes = NonNullable<HostOptions['resourceProviders']>;
+  const schemes = new Map<string, string>();
+  for (const scheme of Object.keys(base.resourceProviders ?? {})) schemes.set(scheme, 'the daemon');
+  const resourceProviders: Schemes = { ...base.resourceProviders };
+
   for (const contribution of contributions) {
     for (const agent of contribution.agents) {
       const held = providers.get(agent.provider);
@@ -118,6 +141,16 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
       }
       owner.set(key, contribution.by);
       set.set(key, entry.value);
+    }
+
+    for (const [scheme, provider] of Object.entries(contribution.providers)) {
+      const held = schemes.get(scheme);
+      if (held !== undefined) {
+        problems.push(`plugin ${contribution.by} registers scheme ${scheme}, which ${held === 'the daemon' ? 'the daemon' : `plugin ${held}`} already registered`);
+        continue;
+      }
+      schemes.set(scheme, contribution.by);
+      resourceProviders[scheme] = provider as Schemes[string];
     }
   }
 
@@ -151,6 +184,8 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   for (const [key, value] of set) {
     (options as unknown as Record<string, unknown>)[key] = value;
   }
+
+  if (Object.keys(resourceProviders).length > 0) options.resourceProviders = resourceProviders;
 
   return { options, problems };
 }
@@ -186,6 +221,7 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
     agents: [],
     tools: [],
     ports: {},
+    providers: {},
     events: events as unknown as HostHandlers,
   };
   const providers = new Set<string>();
@@ -219,6 +255,17 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
       contribution.tools.push(tool);
     },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
+    registerResourceProvider(scheme, provider) {
+      const named = checkScheme(scheme, by);
+      if (reservedScheme(named)) {
+        throw new Error(miss(by, 'registerResourceProvider', named, 'a scheme the host does not already own; file and ahp- are its own'));
+      }
+      checkResourceProvider(named, provider, by);
+      if (contribution.providers[named] !== undefined) {
+        throw new Error(miss(by, 'registerResourceProvider', named, 'a scheme no other provider in this plugin uses'));
+      }
+      contribution.providers[named] = provider;
+    },
     registerTerminals: (store, when) => { setPort('terminals', 'registerTerminals', store, when); },
     registerChanges: (source, when) => { setPort('changes', 'registerChanges', source, when); },
     registerDirectories: (facts, when) => { setPort('directories', 'registerDirectories', facts, when); },

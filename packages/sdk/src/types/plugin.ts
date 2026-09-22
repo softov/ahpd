@@ -15,6 +15,7 @@
 import type { Agent } from './agent.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
+import type { ResourceProvider } from './resources.js';
 
 /**
  * The `HostOptions` keys that hold one value, one plugin at a time.
@@ -102,6 +103,16 @@ export interface PluginHost extends PluginContext {
   registerTool(tool: HostTool): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
+  /**
+   * Serve one URI scheme this host owns, beside the `file:` store.
+   *
+   * The scheme is the plugin's to name and is kept as given: `computer` here
+   * is `computer:` in a URI. `file` and anything on `ahp-` are refused,
+   * because those are the host's own, and two plugins cannot serve one scheme.
+   * What a provider may leave out, and what a client hears for it, is
+   * `ResourceProvider`'s business.
+   */
+  registerResourceProvider(scheme: string, provider: ResourceProvider): void;
   /** Set `HostOptions.terminals`, or take the daemon's over with `'replace'`. */
   registerTerminals(store: PortOf<'terminals'>, when?: 'replace'): void;
   /** Set `HostOptions.changes`, or take the daemon's over with `'replace'`. */
@@ -176,6 +187,15 @@ export interface Contribution {
   tools: HostTool[];
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
+  /**
+   * The URI schemes this plugin serves, keyed by scheme.
+   *
+   * An open key rather than a `PortKey`, because the scheme is a name the
+   * plugin invents and cannot be a written union. The operation is the
+   * `register, open key` one the domain reference describes, which is why the
+   * conflict rule is the fold's and not `setPort`'s.
+   */
+  providers: Record<string, unknown>;
   /**
    * The listeners this plugin attached, by event.
    *

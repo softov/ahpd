@@ -4384,6 +4384,25 @@ export function createHost(options: HostOptions): Host {
       };
       connections.add(connection);
 
+      /**
+       * Which store serves a URI.
+       *
+       * `file:` is the store the host was given, and anything else is a scheme
+       * a plugin registered under `resourceProviders`. A scheme nobody serves
+       * falls through to that same store, which is where the sentence about a
+       * foreign scheme is written - so an unserved URI reads as somebody
+       * else's rather than as a host that forgot it.
+       *
+       * A URI a connected client published never reaches here: the relay in
+       * `handle` answers it before any handler, which is the order that keeps
+       * a plugin from shadowing a client's own resources.
+       */
+      const storeFor = (uri: string) => {
+        const scheme = (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
+        if (scheme === '' || scheme === 'file') return options.resources;
+        return options.resourceProviders?.[scheme] ?? options.resources;
+      };
+
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
          * The handshake.
@@ -5021,17 +5040,20 @@ export function createHost(options: HostOptions): Host {
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
           return {};
         },
-        resourceList: async (params) => ({
-          entries: await need(options.resources, 'resourceList').list(String(params.uri ?? '')),
-        }),
+        resourceList: async (params) => {
+          const uri = String(params.uri ?? '');
+          const store = storeFor(uri);
+          return { entries: await need(need(store, 'resourceList').list, 'resourceList')(uri) };
+        },
         resourceRead: async (params) => {
           const uri = String(params.uri ?? '');
           // The `before` side of an edit is not a file on disk - it is what a
-          // file used to be - so the changeset source is asked first, and
-          // answers only for the URIs it minted.
+          // file used to be - so the changeset source is asked before the
+          // scheme is: it answers only for the URIs it minted, and a scheme a
+          // plugin registered is asked after it.
           const own = await options.changes?.read?.(uri);
           if (own) return own;
-          return await need(options.resources, 'resourceRead').read(
+          return await need(need(storeFor(uri), 'resourceRead').read, 'resourceRead')(
             uri,
             typeof params.encoding === 'string' ? params.encoding : undefined,
           );
@@ -5182,7 +5204,7 @@ export function createHost(options: HostOptions): Host {
          */
         createResourceWatch: async (params) => {
           const uri = String(params.uri ?? '');
-          const store = need(options.resources, 'createResourceWatch');
+          const store = need(storeFor(uri), 'createResourceWatch');
           const start = need(store.watch, 'createResourceWatch');
           const items = (value: unknown): string[] => {
             const held = (typeof value === 'object' && value !== null ? value : {}) as { items?: unknown };
@@ -5229,7 +5251,7 @@ export function createHost(options: HostOptions): Host {
         resourceWrite: async (params) => {
           const uri = String(params.uri ?? '');
           const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
-          await need(need(options.resources, 'resourceWrite').write, 'resourceWrite')(uri, {
+          await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
             data: String(params.data ?? ''),
             encoding,
             /*
@@ -5254,7 +5276,7 @@ export function createHost(options: HostOptions): Host {
         },
         resourceDelete: async (params) => {
           const uri = String(params.uri ?? '');
-          await need(need(options.resources, 'resourceDelete').remove, 'resourceDelete')(
+          await need(need(storeFor(uri), 'resourceDelete').remove, 'resourceDelete')(
             uri, params.recursive === true,
           );
           log(`${connection.clientId} removed ${uri}`);
@@ -5262,7 +5284,7 @@ export function createHost(options: HostOptions): Host {
         },
         resourceMkdir: async (params) => {
           const uri = String(params.uri ?? '');
-          await need(need(options.resources, 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
+          await need(need(storeFor(uri), 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
           return {};
         },
         /*
@@ -5272,11 +5294,17 @@ export function createHost(options: HostOptions): Host {
          * can write one and not the other refuses the half it cannot do. A
          * `copy` reads the source, which the read half already allows inside a
          * served directory.
+         *
+         * Two different schemes are refused rather than attempted: neither
+         * provider could carry out the other's half, which is the same answer
+         * two different clients already get for a cross-client move.
          */
         resourceMove: async (params) => {
           const source = String(params.source ?? '');
           const destination = String(params.destination ?? '');
-          await need(need(options.resources, 'resourceMove').move, 'resourceMove')(
+          const held = storeFor(source);
+          if (held !== storeFor(destination)) throw new RpcError(-32602, `${source} and ${destination} are served by different providers`);
+          await need(need(held, 'resourceMove').move, 'resourceMove')(
             source, destination, params.failIfExists === true,
           );
           log(`${connection.clientId} moved ${source} to ${destination}`);
@@ -5285,7 +5313,9 @@ export function createHost(options: HostOptions): Host {
         resourceCopy: async (params) => {
           const source = String(params.source ?? '');
           const destination = String(params.destination ?? '');
-          await need(need(options.resources, 'resourceCopy').copy, 'resourceCopy')(
+          const held = storeFor(destination);
+          if (storeFor(source) !== held) throw new RpcError(-32602, `${source} and ${destination} are served by different providers`);
+          await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
             source, destination, params.failIfExists === true,
           );
           return {};
@@ -5416,10 +5446,13 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(INTERNAL_ERROR, message);
           }
         },
-        resourceResolve: async (params) => await need(options.resources, 'resourceResolve').resolve(
-          String(params.uri ?? ''),
-          params.followSymlinks !== false,
-        ),
+        resourceResolve: async (params) => {
+          const uri = String(params.uri ?? '');
+          return await need(need(storeFor(uri), 'resourceResolve').resolve, 'resourceResolve')(
+            uri,
+            params.followSymlinks !== false,
+          );
+        },
         /**
          * Start one.
          *

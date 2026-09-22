@@ -39,6 +39,7 @@ against its contract before it is recorded.
 | `registerAgent(agent)` | append | A backend a client names in `createSession` |
 | `registerTool(tool)` | append | A server tool offered to every session's model |
 | `registerResources(store)` | set | `list`, `read`, `resolve`, `complete`, and the optional write half |
+| `registerResourceProvider(scheme, provider)` | register, open key | One host-owned URI scheme, routed beside the `file:` store |
 | `registerTerminals(store)` | set | `create` |
 | `registerChanges(source)` | set | `scopes`, `state`, `summary`, and the optional operations |
 | `registerDirectories(facts)` | set | `meta`, and the optional `refresh` |
@@ -61,6 +62,17 @@ reached as ports, so no key has two spellings.
 
 A plugin that registers the same port twice, or two agents with one `provider`,
 fails its own `apply` rather than the daemon.
+
+`registerResourceProvider` is the one **keyed** registration: the scheme is a
+name the plugin invents, so two plugins can serve two schemes and neither has to
+take `resources` over. `file` and anything on `ahp-` are the host's own and are
+refused, and so is a scheme another plugin already registered.
+
+```ts
+host.registerResourceProvider('computer', {
+  read: async (uri) => ({ data: await machineStatus(uri), encoding: 'utf-8' }),
+});
+```
 
 ### What a tool says about itself
 
@@ -500,6 +512,51 @@ terminals, opens a `terminal` tool call around it and closes the turn with what
 it printed. Nothing about the command reaches the ACP server, and the server is
 never asked to stop for it - one already mid-prompt stays mid-prompt.
 
+## A third worked example: a host-owned URI scheme
+
+A plugin can serve one URI scheme itself - `computer:`, or anything else that is
+not a file - without touching the filesystem store. The daemon routes every
+`resource*` command by the scheme in the URI, so `file:` keeps its store and the
+scheme goes to the plugin.
+
+```ts
+host.registerResourceProvider('computer', {
+  // `read` is the one required member.
+  read: async (uri) => ({ data: await machineStatus(uri), encoding: 'utf-8', contentType: 'application/json' }),
+  // Optional, like everything else: `list`, `resolve`, `watch`, and the five write methods.
+  resolve: async (uri) => ({ uri, type: 'file', size: 2, mtime: at, ctime: at }),
+});
+```
+
+What a provider leaves out is what a client cannot ask for. A `computer:` with no
+`list` answers `-32601` to `resourceList`, which is the same answer a read-only
+store's missing write half gets, and nothing can be written unless the provider
+implements a write method. `read` is required, because a provider that answers
+no bytes serves nothing.
+
+| | |
+| --- | --- |
+| `read(uri, wanted?)` | Required. The bytes, or the range that was asked for |
+| `list(uri)` | Optional. Directory entries, for a scheme that has directories |
+| `resolve(uri, followSymlinks?)` | Optional. What a URI is, for a client that browses |
+| `watch(uri, options, onChange)` | Optional. `createResourceWatch` answers `-32601` without it |
+| `write`, `remove`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to |
+
+The order of authority for a URI is: a URI a connected client published is
+relayed to that client first, then a registered scheme goes to its provider,
+then `file:` goes to the daemon's store. A scheme nobody serves is explained as
+somebody else's - `nothing here serves notes:` - rather than read as a path.
+
+A `move` or a `copy` whose two ends are different schemes is refused `-32602`:
+neither provider could carry out the other's half, which is the same answer two
+different clients get for a cross-client move.
+
+`test/fixtures/plugin-uri-resources` is a read-only `computer:` serving
+`computer://local/status` and `computer://local/capabilities`, and is what the
+tests load. A real `computer:` provider on this machine would talk to Docker, or
+to a hypervisor handed the KVM device; the fixture starts nothing and answers for
+the machine, so what it proves is the routing rather than a daemon being up.
+
 ## Trying one today
 
 No plugin is published yet. From a checkout, `@ahpd/agent-cofold`,
@@ -511,6 +568,7 @@ pnpm build
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
+node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-uri-resources
 ```
 
 Load a package by its directory, not by its `src/index.ts`: the manifest names
@@ -521,8 +579,9 @@ load of it fails because its own `./agent.js` imports do not exist beside the
 starting a daemon.
 
 `plugin-echo` contributes the example's `echo` backend and is the one to use to
-watch a contributed backend serve a whole turn; `plugin-hello` contributes a
-backend and a tool and refuses to create sessions. The others exist to pin a
+watch a contributed backend serve a whole turn; `plugin-uri-resources`
+contributes a read-only `computer:` scheme beside the filesystem store;
+`plugin-hello` contributes a backend and a tool and refuses to create sessions. The others exist to pin a
 failure: `plugin-incompatible`, `plugin-bad-manifest`, `plugin-explodes`,
 `plugin-throws`, `plugin-configurable`, `plugin-plain`, `plugin-alike` and
 `plugin-broken`.

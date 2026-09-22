@@ -37,12 +37,18 @@ const base = (): HostOptions => ({
 
 const contribution = (
   by: string,
-  parts: { agents?: Agent[]; tools?: HostTool[]; ports?: Partial<Record<PortKey, PortContribution>> } = {},
+  parts: {
+    agents?: Agent[];
+    tools?: HostTool[];
+    ports?: Partial<Record<PortKey, PortContribution>>;
+    providers?: Record<string, unknown>;
+  } = {},
 ): Contribution => ({
   by,
   agents: parts.agents ?? [],
   tools: parts.tools ?? [],
   ports: parts.ports ?? {},
+  providers: parts.providers ?? {},
   events: {},
 });
 
@@ -135,6 +141,46 @@ describe('foldHostOptions', () => {
 
     expect(problems).toEqual([]);
     expect(options.automations).toBe(store);
+  });
+
+  it('keeps one scheme per plugin, and names both when two claim one', () => {
+    const alpha = { read: () => 'alpha' };
+    const beta = { read: () => 'beta' };
+    const { options, problems } = foldHostOptions(base(), [
+      contribution('alpha', { providers: { computer: alpha } }),
+      contribution('beta', { providers: { notes: beta } }),
+    ]);
+
+    expect(problems).toEqual([]);
+    // Two schemes, two plugins, and neither had to take `resources` over.
+    expect(Object.keys(options.resourceProviders ?? {})).toEqual(['computer', 'notes']);
+    expect(options.resourceProviders?.computer).toBe(alpha);
+    expect(options.resourceProviders?.notes).toBe(beta);
+
+    const clash = foldHostOptions(base(), [
+      contribution('alpha', { providers: { computer: alpha } }),
+      contribution('beta', { providers: { computer: beta } }),
+    ]);
+    expect(clash.problems).toHaveLength(1);
+    expect(clash.problems[0]).toContain('alpha');
+    expect(clash.problems[0]).toContain('beta');
+    expect(clash.problems[0]).toContain('computer');
+    expect(clash.options.resourceProviders?.computer).toBe(alpha);
+  });
+
+  it('reports a scheme the daemon already serves rather than letting a plugin shadow it', () => {
+    type Providers = NonNullable<HostOptions['resourceProviders']>;
+    const held = { read: () => 'the daemon' } as unknown as Providers[string];
+    const mine = { read: () => 'alpha' } as unknown as Providers[string];
+    const options = { ...base(), resourceProviders: { computer: held } };
+    const { options: folded, problems } = foldHostOptions(options, [
+      contribution('alpha', { providers: { computer: mine } }),
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('alpha');
+    expect(problems[0]).toContain('the daemon');
+    expect(folded.resourceProviders?.computer).toBe(held);
   });
 });
 

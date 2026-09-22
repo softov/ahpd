@@ -181,3 +181,31 @@ export interface ResourceStore {
     onChange: (changes: ResourceChange[]) => void,
   ): Promise<Watcher>;
 }
+
+/**
+ * One URI scheme a host serves itself, beside `file:`.
+ *
+ * Everything `ResourceStore` has except `complete`, and with only `read`
+ * required. A provider for a scheme like `computer:` may serve bytes and say
+ * what a URI is while having no directories, no paths and nothing to complete,
+ * and decision `a-scheme-provider-implements-less-than-a-resource-store` is
+ * that it should not have to invent them.
+ *
+ * Every signature is `ResourceStore`'s own, so a file store is a provider and
+ * a provider's method can be lifted from one. `read` is required because a
+ * provider that answers no bytes serves nothing; the host answers `-32601`
+ * for each member a provider leaves out, the same answer a read-only store's
+ * missing write half gets.
+ *
+ * `complete` is deliberately absent: the `@` menu asks a *path* question,
+ * rooted at the session's own directory, and there is no scheme in it to route
+ * by, so path completion stays with the `file:` store.
+ */
+export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'> & {
+  /** One file's bytes, or the range of them that was asked for. */
+  read(uri: string, wanted?: string): Promise<Read>;
+  /** One directory's entries, for a scheme that has directories. */
+  list?(uri: string): Promise<Entry[]>;
+  /** What a URI is, without reading it, for a client that browses. */
+  resolve?(uri: string, followSymlinks?: boolean): Promise<Metadata>;
+};
