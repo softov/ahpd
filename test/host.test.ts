@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import type { Agent } from '../packages/sdk/src/types/agent.js';
+import type { OpenedTerminal } from '../packages/sdk/src/types/terminals.js';
 import { Status } from '../packages/sdk/src/catalog.js';
 import { fileSessions, memorySessions } from '../packages/sdk/src/sessions.js';
 import { execFileSync } from 'node:child_process';
@@ -3649,6 +3651,70 @@ describe('a command typed into the conversation', () => {
     // in the catalogue that nobody can reach.
     expect(listed()).toHaveLength(0);
   });
+
+  it('runs a command typed during a turn instead of handing it to the agent', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    // A turn that stays open: the fake CLI answers only when a result frame
+    // arrives, which is what leaves the session busy enough to queue behind.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
+    });
+    await settle();
+    // Waiting, and not run: a command that jumped the queue would run against
+    // a tree the turn in front of it is still editing.
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageSet')).toBe(true);
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
+    const done = await ended(p, chatUri);
+    /*
+     * Run, not asked. The command waited as text so a client could see it, and
+     * handing `!echo queued-command` to the CLI on its turn is exactly what
+     * the prefix exists to prevent - `sdk.said` is what proves it did not.
+     */
+    const start = done.find((one) => one.type === 'chat/toolCallStart');
+    expect(start).toMatchObject({ toolName: 'terminal', intention: 'echo queued-command' });
+    const completed = done.find((one) => one.type === 'chat/toolCallComplete');
+    expect((completed?.result as { success: boolean }).success).toBe(true);
+    expect(sdk.said).toEqual(['first']);
+  });
+
+  it('refuses a command when the backend cannot hold one, rather than asking it', async () => {
+    const { echo } = await import('../examples/echo/agent.js');
+    const host = createHost({ path: '/tmp', agents: [echo({ path: '/tmp', pace: 0 })], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0']));
+    const uri = 'ahp-session:/no-command';
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'echo', workingDirectories: ['file:///tmp'] },
+    });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo must-not-run' } } },
+    });
+    await settle();
+    // Refused, not asked. `echo` implements no `ran`, and a host that handed
+    // `!echo must-not-run` to its model would answer with prose about the
+    // command - which is what the prefix exists to prevent. The refusal is
+    // also what tells the client to put its optimistic turn back.
+    const rejection = p.notes
+      .map((n) => (n.params as { rejectionReason?: string }).rejectionReason)
+      .find((reason): reason is string => typeof reason === 'string');
+    expect(rejection).toContain('cannot run a command in a turn');
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
+  });
 });
 
 describe('a shell on this machine', () => {
@@ -3856,6 +3922,63 @@ describe('a shell on this machine', () => {
     };
     expect(root.snapshot.state.terminals?.find((one) => one.resource === uri)?.lifecycle)
       .toEqual({ status: 'running' });
+  });
+});
+
+/*
+ * The factory a backend gets on `Start.terminals`.
+ *
+ * The raw store was not usable by a backend: the host allocates the URI,
+ * registers the terminal on its own root list and supplies the emit that
+ * routes an action to the terminal's channel. This is that machinery, driven
+ * through a backend's own call.
+ */
+describe('a terminal a backend opens', () => {
+  /** A backend that opens one through the host as it starts. */
+  const opening = (held: OpenedTerminal[]): Agent => {
+    const inner = claude({ paths: ['/tmp'] });
+    return {
+      ...inner,
+      create: (start) => {
+        const opened = start.terminals?.open({
+          cwd: '/tmp',
+          command: 'sleep',
+          args: ['30'],
+          name: 'backend shell',
+        });
+        if (opened !== undefined) held.push(opened);
+        return inner.create(start);
+      },
+    };
+  };
+
+  it('lists it on the root channel, and takes it off when released', async () => {
+    const held: OpenedTerminal[] = [];
+    const host = createHost({ path: '/tmp', agents: [opening(held)], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shells', provider: 'claude' } });
+
+    const listed = () => (actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
+      ?.action.terminals as { resource: string; claim?: { kind?: string; session?: string } }[] | undefined) ?? [];
+
+    const opened = held[0];
+    if (opened === undefined) throw new Error('the backend opened no terminal');
+    // The URI is the host's, not one the backend invented, and the claim is
+    // the session's - which is what makes the root list and session cleanup
+    // both know about it.
+    expect(listed()).toHaveLength(1);
+    expect(listed()[0]?.resource).toMatch(/^ahp-terminal:\//);
+    expect(listed()[0]?.claim).toMatchObject({ kind: 'session', session: 'ahp-session:/shells' });
+    expect(opened.uri).toBe(listed()[0]?.resource);
+
+    opened.release();
+    // The row goes, and with it the process: a released terminal that left a
+    // shell running would be one nothing lists and nothing can stop.
+    expect(listed()).toEqual([]);
+    await expect(opened.waitForExit()).resolves.toBeDefined();
   });
 });
 
@@ -6550,13 +6673,14 @@ describe('the pull request a create-pr recorded', () => {
     // again and know nothing of it, which is a session that outlived the
     // branch's pull request.
     if (baseline !== undefined) store.setPullRequests('pr', baseline);
+    const changes = gitChanges();
     const host = createHost({
       path: dir,
       agents: [claude({ paths: [dir] })],
       ...machine(),
       directories: facts(dir),
       github: fake.port,
-      changes: gitChanges(),
+      changes,
       tools: hostTools(),
       sessions: store,
     });
@@ -6568,6 +6692,18 @@ describe('the pull request a create-pr recorded', () => {
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await settle(8);
+    /*
+     * Wait for the source, not for ticks.
+     *
+     * `operations` answers from a cache `git status` fills, and the host fills
+     * it in the background: `refreshFacts` is fired and not awaited. `create-pr`
+     * is offered only while the working tree is dirty, so a `git` spawn that
+     * has not returned yet offers nothing and the invocation is refused. Eight
+     * macrotasks are enough when the machine is idle and not when it is not,
+     * which is the whole of why this read flaked. Awaiting the refresh the host
+     * would make anyway is the same work with a settled answer.
+     */
+    await changes.refresh?.(dir);
     return { dir, fake, client, peer: p, uri, changeset: `${uri}/changeset/uncommitted` };
   }
 

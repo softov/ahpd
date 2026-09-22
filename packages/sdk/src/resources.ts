@@ -3,8 +3,7 @@ import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename,
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RpcError } from './rpc.js';
-import type { Entry, Metadata, Read, ResourceChange, WatchOptions, Watcher, Write } from './types/resources.js';
-import type { ResourceStore } from './types/host.js';
+import type { Entry, Metadata, Read, ResourceChange, ResourceStore, WatchOptions, Watcher, Write } from './types/resources.js';
 
 /**
  * The host's filesystem, as the reference host serves it: all of it.

@@ -23,6 +23,10 @@ const now = (): string => new Date().toISOString();
 /** How many runs a summary list carries before it needs a cursor. */
 const PAGE = 20;
 
+/** Whether a lifecycle has already ended, in the protocol's sense. */
+const ended = (lifecycle: Bag): boolean =>
+  lifecycle.status === 'completed' || lifecycle.status === 'failed' || lifecycle.status === 'cancelled';
+
 export function memoryAutomations(): AutomationStore {
   const held = new Map<string, Automation>();
   /** Runs by automation, newest first. */
@@ -155,24 +159,67 @@ export function memoryAutomations(): AutomationStore {
         origin: { kind: 'automation', automation: resource, run: run.resource },
       };
 
+      /*
+       * Running before the session is asked for.
+       *
+       * A backend can finish the turn it is given before `start` resolves -
+       * the echo backend with no pace does exactly that - and a finished turn
+       * is what settles this run. Marking it running first means that ending
+       * finds a run with the `startedAt` the protocol requires, rather than a
+       * `pending` one where a completed ending has to be refused. A terminal
+       * lifecycle the ending produced is left alone below, so the start
+       * resolving cannot reopen it.
+       */
+      run.lifecycle = { ...run.lifecycle, status: 'running', startedAt: now() };
       try {
         const session = await start(options);
         run.sessions = [session];
         run.primarySession = session;
-        run.lifecycle = { ...run.lifecycle, status: 'running', startedAt: now() };
       }
       catch (error) {
         // Failed, and why. A run that vanished would be indistinguishable from
-        // one that never started.
+        // one that never started. The protocol's failed lifecycle calls the
+        // final timestamp `completedAt`, not `endedAt` - and no execution
+        // began, so this carries no `startedAt`.
         run.lifecycle = {
-          ...run.lifecycle,
           status: 'failed',
-          endedAt: now(),
+          createdAt: run.lifecycle.createdAt,
+          completedAt: now(),
           error: { message: error instanceof Error ? error.message : String(error) },
         };
       }
       said({ automation: resource, run: run.resource });
       return run;
+    },
+
+    /*
+     * The host has seen the turn this run was, and says how it ended.
+     *
+     * Handed over rather than derived because only the host sees a turn
+     * finish, and this store is the only thing that owns the run. A terminal
+     * lifecycle is left exactly as it is: a late event from a session the run
+     * no longer holds must not reopen a finished run.
+     */
+    settle: (resource, ending) => {
+      const run = byRun.get(resource);
+      if (run === undefined) return false;
+      if (ended(run.lifecycle)) return false;
+      const startedAt = typeof run.lifecycle.startedAt === 'string' ? run.lifecycle.startedAt : undefined;
+      // A completed run must carry `startedAt`, and a timestamp nobody
+      // observed is worse than saying nothing moved. In practice a turn ending
+      // means the run is `running` and has one.
+      if (ending.status === 'completed' && startedAt === undefined) return false;
+      run.lifecycle = {
+        status: ending.status,
+        createdAt: run.lifecycle.createdAt,
+        ...(startedAt !== undefined ? { startedAt } : {}),
+        completedAt: now(),
+        ...(ending.status === 'failed'
+          ? { error: ending.error ?? { message: 'The run failed' } }
+          : {}),
+      };
+      said({ automation: run.automation, run: run.resource });
+      return true;
     },
 
     runOf: (resource) => byRun.get(resource),

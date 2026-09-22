@@ -31,7 +31,7 @@ import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from './art
 import { debugLogs, hostLogPath } from './debuglogs.js';
 import type { LogFile } from './debuglogs.js';
 import { lookup } from 'node:dns/promises';
-import type { Claim, Terminal } from './types/terminals.js';
+import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
@@ -42,7 +42,7 @@ import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session } from './types/session.js';
-import type { StartSession } from './types/automations.js';
+import type { RunEnding, StartSession } from './types/automations.js';
 import type { Peer } from './types/rpc.js';
 
 /** `file://` and a path. A string, so this file needs no filesystem to say it. */
@@ -538,6 +538,23 @@ export function createHost(options: HostOptions): Host {
    * telling a client what changed means knowing what it was told before.
    */
   const linked = new Map<string, string[]>();
+  /**
+   * Move the run a session belongs to, when that session stops working.
+   *
+   * Only when nothing else of the run is still busy: the protocol says a run
+   * stays `running` while any linked session executes or awaits a person, so
+   * one session finishing is not the run finishing.
+   */
+  const settleRun = (uri: string, ending: RunEnding): void => {
+    const from = origins.get(uri);
+    if (from === undefined) return;
+    const run = options.automations?.runOf?.(from.run);
+    if (run === undefined) return;
+    const busy = run.sessions.some((one) => one !== uri && sessions.has(one)
+      && (statusOf(one) & (Status.InProgress | Status.InputNeeded)) !== 0);
+    if (busy) return;
+    options.automations?.settle?.(from.run, ending);
+  };
   /** Every chat, back to the session holding it. */
   const byChat = new Map<string, { uri: string; chat: Session }>();
   /**
@@ -2305,6 +2322,15 @@ export function createHost(options: HostOptions): Host {
        */
       ...(boundTools(uri, chatUri).length > 0 ? { tools: boundTools(uri, chatUri) } : {}),
       ...(instructions(uri).length > 0 ? { instructions: instructions(uri) } : {}),
+      /*
+       * The stores a backend may need for itself, handed down only when the
+       * host holds them. Files are this host's own store, so a backend reads
+       * what a client reads. `terminals` is not that store but the factory
+       * over it: the host owns the URI, the root registration and the emit,
+       * and a backend given the raw port would get none of the three.
+       */
+      ...(options.resources !== undefined ? { resources: options.resources } : {}),
+      ...(options.terminals !== undefined ? { terminals: heldTerminals(options.terminals, uri, chatUri) } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -2336,6 +2362,23 @@ export function createHost(options: HostOptions): Host {
             chat: chatUri,
             turn: String(action.turnId ?? ''),
             status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
+          });
+        }
+        /*
+         * And the run this session was started for, when the turn that was it
+         * ends. One call per action, so a run is never settled twice for one
+         * event.
+         */
+        if (action.type === 'chat/turnComplete') settleRun(uri, { status: 'completed' });
+        else if (action.type === 'chat/turnCancelled') settleRun(uri, { status: 'cancelled' });
+        else if (action.type === 'chat/error') {
+          // `ChatErrorAction.part` is `{ kind: 'error', error: { errorType,
+          // message } }`, and only the message is worth carrying into a run.
+          const part = (action.part ?? {}) as Bag;
+          const failure = (part.error ?? {}) as Bag;
+          settleRun(uri, {
+            status: 'failed',
+            error: { message: typeof failure.message === 'string' ? failure.message : 'The run failed' },
           });
         }
         /*
@@ -2973,6 +3016,12 @@ export function createHost(options: HostOptions): Host {
      */
     const from = origins.get(uri);
     if (from !== undefined) options.automations?.unlink?.(from.run, uri);
+    /*
+     * And the run itself, when this was the last session of it still busy. A
+     * run already finished by its turn is left alone by the store, so a
+     * disposal after a completed turn changes nothing.
+     */
+    if (from !== undefined) settleRun(uri, { status: 'cancelled' });
     origins.delete(uri);
     presence.delete(idOf(uri));
     // And what was kept *about* it. All of these are keyed by a session
@@ -3286,6 +3335,75 @@ export function createHost(options: HostOptions): Host {
        */
       lifecycle: held.lifecycle(),
     }));
+  /**
+   * The terminal factory a backend is handed on `Start`.
+   *
+   * The host owns everything a terminal channel needs, so this is where the
+   * backend's request is turned into one: a URI the root list can name, the
+   * session's own claim, the registration that makes the channel reachable
+   * and the emit that routes an action to the terminal instead of the
+   * session. It is the same machinery `commanded` uses for a `!` command,
+   * with the options the backend gave and a handle to read the result through.
+   *
+   * `release` ends a process that has not already gone. Dropping the row
+   * without ending the process would leave a shell running that the root list
+   * no longer names and no client can reach, which is a leak wearing the
+   * clothes of tidiness.
+   */
+  const heldTerminals = (shells: TerminalStore, sessionUri: string, chatUri: string): StartTerminals => ({
+    open: (asked) => {
+      const uri = `ahp-terminal:/${crypto.randomUUID()}`;
+      const terminal = shells.create({
+        uri,
+        cwd: asked.cwd,
+        claim: { kind: 'session', session: sessionUri, chat: chatUri },
+        command: asked.command,
+        ...(asked.args !== undefined ? { args: asked.args } : {}),
+        ...(asked.env !== undefined ? { env: asked.env } : {}),
+        ...(asked.name !== undefined ? { name: asked.name } : {}),
+        emit: (_channel, action) => {
+          dispatch(uri, action);
+          // The root list says whether a terminal is still running, so it is
+          // stale the moment one exits and reaches nobody unless it moves.
+          if ((action as Bag).type === 'terminal/exited') {
+            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          }
+        },
+      });
+      terminals.set(uri, terminal);
+      log(`opened ${uri} for ${sessionUri}`);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+      return {
+        uri,
+        output: () => {
+          /*
+           * The protocol's own recipe for turning typed parts back into the
+           * stream they came from: a command's output, or an unclassified
+           * part's value.
+           */
+          const output = terminal.state().content
+            .map((part) => (part.type === 'command' ? part.output : part.value))
+            .join('');
+          const code = terminal.exitCode();
+          return {
+            output,
+            ...(code !== undefined ? { exitCode: code } : {}),
+          };
+        },
+        waitForExit: () => terminal.waitForExit(),
+        write: (data) => { terminal.write(data); },
+        resize: (cols, rows) => { terminal.resize(cols, rows); },
+        // Ends the process and leaves the row, the way `commanded` does: the
+        // channel may still be what something points at.
+        kill: () => { terminal.close(); },
+        release: () => {
+          if (terminal.exitCode() === undefined) terminal.close();
+          terminals.delete(uri);
+          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+        },
+      };
+    },
+  });
   /**
    * The tools this host contributes, which `setTools` replaces.
    *
@@ -6394,7 +6512,25 @@ export function createHost(options: HostOptions): Host {
              * turn it did not answer, and something after the mark.
              */
             const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
-            if (command !== '' && options.terminals && session.ran) {
+            if (command !== '' && options.terminals) {
+              /*
+               * Refused rather than sent, when the backend cannot hold one.
+               *
+               * `Session.ran` is optional, so a backend that leaves it out has
+               * no turn to put a shell command in. Handing `!ls` to the model
+               * instead is the one thing the prefix promises not to do: the
+               * answer would be prose about the command rather than the command.
+               * A refusal is what tells the client to put its optimistic turn
+               * back, rather than leaving it open over a message nobody ran.
+               */
+              if (!session.ran) {
+                const name = sessions.get(session.uri)?.agent.provider ?? 'This provider';
+                refuse(
+                  connection.peer, channel, action, origin,
+                  `${name} cannot run a command in a turn; use a terminal instead`,
+                );
+                break;
+              }
               const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
               session.ran(turnId, command, (toolCallId) => commanded(command, where, {
                 kind: 'session',

@@ -6,6 +6,8 @@ import type { WireTurn } from './wire.js';
 import type { Emit, Session } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
+import type { ResourceStore } from './resources.js';
+import type { StartTerminals } from './terminals.js';
 
 /**
  * What running a tool does to the world.
@@ -121,6 +123,30 @@ export interface Start {
    * their descriptions alone.
    */
   instructions?: string[];
+  /**
+   * The host's files, for a backend that reads or writes one itself.
+   *
+   * The same store the resource commands are served from, handed down rather
+   * than reached for, so a backend reads the bytes a client would rather than
+   * opening the filesystem a second time. This host serves any `file:` URI a
+   * client asks for, so the store is no more reach than a client already has.
+   * Left out when the host holds no store, and a backend that is not offered
+   * one must expect to do without.
+   */
+  resources?: ResourceStore;
+  /**
+   * The host's shells, for a backend that runs a command itself.
+   *
+   * A factory, not the raw port, because a terminal is a channel and the host
+   * owns it: the URI, the registration on the root list and the emit that
+   * routes an action to that channel are all the host's, and a backend that
+   * reached for the port got none of them. The same machinery serves the
+   * composer's `!` command, so a shell a backend opens is one a client can
+   * watch and one the session catalogues. Left out when the host holds no
+   * terminal store, and a backend that is not offered one must expect to do
+   * without.
+   */
+  terminals?: StartTerminals;
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */

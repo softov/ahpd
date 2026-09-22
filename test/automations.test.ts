@@ -27,10 +27,18 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-async function connected(withStore = true) {
+/** Yield between looks until `done` says so, so a fast run is not timed by ticks. */
+const until = async (done: () => boolean | Promise<boolean>, tries = 200): Promise<void> => {
+  for (let i = 0; i < tries; i++) {
+    if (await done()) return;
+    await new Promise((r) => { setTimeout(r, 1); });
+  }
+};
+
+async function connected(withStore = true, pace = 0) {
   const host = createHost({
     path: DIR,
-    agents: [echo({ path: DIR, pace: 0 })],
+    agents: [echo({ path: DIR, pace })],
     ...(withStore ? { automations: memoryAutomations() } : {}),
   });
   const p = peer();
@@ -68,6 +76,21 @@ const entries = async (client: { handle(r: { method: string; params: Record<stri
   };
   return opened.snapshot.state.entries;
 };
+
+/** The run channel's state, read the way a client watching it would. */
+const runState = async (
+  client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
+  resource: string,
+) => (await client.handle({ method: 'subscribe', params: { channel: resource } }) as {
+  snapshot: {
+    state: {
+      automation: string;
+      lifecycle: { status: string; startedAt?: string; completedAt?: string; error?: { message?: string } };
+      sessions: string[];
+      primarySession?: string;
+    };
+  };
+}).snapshot.state;
 
 const DEFINITION = {
   title: 'Nightly review',
@@ -237,7 +260,7 @@ it('does not offer to run one that is switched off', async () => {
 });
 
 it('starts a session and says the first message, which is the whole point', async () => {
-  const { client, peer: p } = await connected();
+  const { client } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
   await write(client, DEFINITION);
 
@@ -245,13 +268,17 @@ it('starts a session and says the first message, which is the whole point', asyn
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
   expect(run.resource.startsWith('ahp-automation-run:/')).toBe(true);
-  await settle();
 
-  const state = (await client.handle({ method: 'subscribe', params: { channel: run.resource } }) as {
-    snapshot: { state: { automation: string; lifecycle: { status: string }; sessions: string[]; primarySession?: string } };
-  }).snapshot.state;
+  // The echo backend with no pace answers at once, so the turn is over before
+  // this can look - and a run whose turn ended is terminal. Poll for it rather
+  // than assuming a number of ticks, because the ending travels through the
+  // host rather than at the store's own pace.
+  await until(async () => (await runState(client, run.resource)).lifecycle.status === 'completed');
+  const state = await runState(client, run.resource);
   expect(state.automation).toBe(ONE);
-  expect(state.lifecycle.status).toBe('running');
+  expect(state.lifecycle.status).toBe('completed');
+  expect(state.lifecycle.startedAt).toBeTypeOf('string');
+  expect(state.lifecycle.completedAt).toBeTypeOf('string');
   expect(state.sessions).toHaveLength(1);
   expect(state.primarySession).toBe(state.sessions[0]);
 
@@ -263,6 +290,103 @@ it('starts a session and says the first message, which is the whole point', asyn
   };
   const turns = opened.snapshot.state.turns ?? [];
   expect(turns.some((turn) => turn.message?.text === 'review what changed today')).toBe(true);
+});
+
+it('reads running while the session it started is still working', async () => {
+  // A paced backend keeps the turn open, which is the one moment the protocol
+  // says the run is `running` rather than terminal.
+  const { client } = await connected(true, 10);
+  await write(client, {
+    ...DEFINITION,
+    message: { text: 'a message with enough words that the turn is still being streamed' },
+  });
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  }) as { resource: string };
+  const state = await runState(client, run.resource);
+  expect(state.lifecycle.status).toBe('running');
+  expect(state.lifecycle.startedAt).toBeTypeOf('string');
+  expect(state.lifecycle.completedAt).toBeUndefined();
+});
+
+it('reads a finished run as completed in the catalogue, with its session still counted', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  }) as { resource: string };
+  await until(async () => (await runState(client, run.resource)).lifecycle.status === 'completed');
+
+  const page = await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
+  }) as {
+    items: { resource: string; lifecycle: { status: string; completedAt?: string }; sessionCount: number }[];
+  };
+  const summary = page.items.find((one) => one.resource === run.resource);
+  expect(summary?.lifecycle.status).toBe('completed');
+  expect(summary?.lifecycle.completedAt).toBeTypeOf('string');
+  expect(summary?.sessionCount).toBe(1);
+});
+
+it('settles a run cancelled when its session is disposed mid-turn', async () => {
+  const { client } = await connected(true, 10);
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  await write(client, {
+    ...DEFINITION,
+    message: { text: 'a message with enough words that the turn is still being streamed' },
+  });
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  }) as { resource: string };
+
+  const before = await runState(client, run.resource);
+  expect(before.lifecycle.status).toBe('running');
+  const session = before.sessions[0] ?? '';
+  expect(session.startsWith('ahp-session:/')).toBe(true);
+
+  await client.handle({ method: 'disposeSession', params: { channel: session } });
+  await until(async () => (await runState(client, run.resource)).lifecycle.status === 'cancelled');
+  const after = await runState(client, run.resource);
+  expect(after.lifecycle.status).toBe('cancelled');
+  expect(after.lifecycle.startedAt).toBeTypeOf('string');
+  expect(after.lifecycle.completedAt).toBeTypeOf('string');
+});
+
+it('settles a run by hand, and never reopens one that ended', async () => {
+  const store = memoryAutomations();
+  store.create('ahp-automation:/one', {});
+  const start = async (): Promise<string> => 'ahp-session:/one';
+
+  const first = await store.run('ahp-automation:/one', { kind: 'manual' }, start);
+  expect(first?.lifecycle.status).toBe('running');
+  expect(store.settle).toBeTypeOf('function');
+  expect(store.settle?.(first?.resource ?? '', { status: 'completed' })).toBe(true);
+  expect(first?.lifecycle.status).toBe('completed');
+  expect(first?.lifecycle.completedAt).toBeTypeOf('string');
+  // Terminal is terminal: a late event does not move it.
+  expect(store.settle?.(first?.resource ?? '', { status: 'cancelled' })).toBe(false);
+  expect(first?.lifecycle.status).toBe('completed');
+
+  // An unknown run is a no-op rather than a throw.
+  expect(store.settle?.('ahp-automation-run:/never', { status: 'completed' })).toBe(false);
+
+  // A failed ending carries the error and the protocol's `completedAt`, which
+  // is the field the old failure path wrongly called `endedAt`.
+  const second = await store.run('ahp-automation:/one', { kind: 'manual' }, start);
+  expect(store.settle?.(second?.resource ?? '', { status: 'failed', error: { message: 'no backend' } })).toBe(true);
+  expect(second?.lifecycle.status).toBe('failed');
+  expect(second?.lifecycle.error).toEqual({ message: 'no backend' });
+  expect(second?.lifecycle.completedAt).toBeTypeOf('string');
+  expect('endedAt' in (second?.lifecycle ?? {})).toBe(false);
+
+  // A pending run may be cancelled, and cannot be completed without the
+  // `startedAt` the protocol requires of a completed one.
+  const third = await store.run('ahp-automation:/one', { kind: 'manual' }, start);
+  if (third) third.lifecycle = { status: 'pending', createdAt: '2020-01-01T00:00:00.000Z' };
+  expect(store.settle?.(third?.resource ?? '', { status: 'completed' })).toBe(false);
+  expect(store.settle?.(third?.resource ?? '', { status: 'cancelled' })).toBe(true);
+  expect(third?.lifecycle.status).toBe('cancelled');
+  expect('startedAt' in (third?.lifecycle ?? {})).toBe(false);
 });
 
 it('records what it has run, and pages it', async () => {

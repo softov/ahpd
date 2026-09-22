@@ -22,14 +22,14 @@ import { resolve, sep } from 'node:path';
 import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store } from '@cofold/agents';
 import { Status } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, MessageFrom, Session, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
 import { PERMISSION_MODES, modelOf, storeOf } from './agent.js';
 import type { CofoldOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
 import { mapTurn } from './mapping.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
-import { cofoldTools } from './tools.js';
+import { cofoldTools, toolCallPart, toolReadyAction, toolStartAction } from './tools.js';
 import type { ClientToolRelay } from './tools.js';
 
 /**
@@ -742,6 +742,20 @@ export function cofoldSession(
     if (active !== undefined || closed) return;
     const next = queued.shift();
     if (next === undefined) return;
+    /*
+     * A command somebody typed is run, not asked.
+     *
+     * `ran` queued it as text so a client could see it waiting, and handing
+     * that text to the run loop is the one thing `!` exists not to do. It runs
+     * under a fresh turn id with the waiting row named, which is how a queued
+     * message of any other kind becomes a turn.
+     */
+    const held = bag(next.command);
+    const typed = str(held.text);
+    if (typed !== undefined && typeof held.run === 'function') {
+      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, str(next.id));
+      return;
+    }
     const message = bag(next.message);
     beginTurn(
       crypto.randomUUID(),
@@ -865,6 +879,95 @@ export function cofoldSession(
     });
   }
 
+  /**
+   * One shell command as a turn of this chat's.
+   *
+   * The whole of what `!command` means, and one function because it is reached
+   * two ways: immediately from `ran`, and later from `startNext` when the
+   * command was typed while a turn was already running. The host runs it in one
+   * of its own terminals and hands back what happened, so nothing here reaches
+   * cofold's run loop - which is the whole difference from `beginTurn`, and why
+   * a person's shell command never becomes a question to a model.
+   *
+   * `queuedMessageId` names the waiting row it came from, so a client clears it
+   * the way it clears any other.
+   */
+  const runCommand = (
+    turnId: string,
+    command: string,
+    run: (toolCallId: string) => Promise<Ran>,
+    queuedMessageId?: string,
+  ): void => {
+    if (closed || active !== undefined) return;
+    cancelRequested = false;
+    if (title === 'Cofold session' && command !== '') {
+      title = command.slice(0, 60);
+      start.emit('session', { type: 'session/titleChanged', title });
+    }
+    const began = Date.now();
+    const toolCallId = `${turnId}:command`;
+    // The call as a part, because a client that subscribes after the command
+    // ran reads the snapshot rather than the actions it missed.
+    const part = toolCallPart(toolCallId, 'terminal', 'Terminal');
+    active = {
+      id: turnId,
+      startedAt: new Date(began).toISOString(),
+      message: { text: `!${command}`, origin: { kind: 'user' } },
+      responseParts: [part],
+    };
+    start.emit('chat', {
+      type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message,
+      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+    });
+    start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal'));
+    start.emit('chat', toolReadyAction(turnId, toolCallId, 'terminal', command));
+    doing('Running');
+    touch();
+    void run(toolCallId).then((done) => {
+      if (active === undefined || String(active.id) !== turnId) return;
+      /*
+       * The terminal first, so a client can watch the output arrive.
+       *
+       * `content` is replaced rather than appended to, so the terminal
+       * reference and the text it produced go out together at the end - and
+       * the reference alone goes out as soon as there is one, which is what a
+       * client needs to start streaming.
+       */
+      const content: Bag[] = [
+        ...(done.terminal === undefined ? [] : [{
+          type: 'terminal',
+          resource: done.terminal,
+          title: 'Terminal',
+          // Pipes, not a pseudoterminal: a client reads this to decide whether
+          // the preview needs VT parsing.
+          isPty: false,
+          result: {
+            ...(done.code !== undefined ? { exitCode: done.code } : {}),
+            ...(done.output === '' ? {} : { preview: done.output }),
+          },
+        }]),
+        ...(done.output === '' ? [] : [{ type: 'text', text: done.output }]),
+      ];
+      const result: Bag = {
+        success: done.success,
+        pastTenseMessage: done.said,
+        content,
+        ...(done.success ? {} : { error: { message: done.said } }),
+      };
+      // Into the part as well, so the snapshot a late subscriber reads holds
+      // the finished call rather than the `streaming` one it was opened with.
+      Object.assign(bag(part.toolCall), result, { status: 'completed', confirmed: 'not-needed' });
+      start.emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      active.state = done.success ? 'complete' : 'error';
+      active.duration = Date.now() - began;
+      turns.push(active);
+      active = undefined;
+      doing(undefined);
+      touch();
+      startNext();
+    });
+  };
+
   return {
     uri: start.uri,
     chatUri: start.chatUri,
@@ -943,6 +1046,26 @@ export function cofoldSession(
     }),
 
     begin: (turnId, text, model, from) => beginTurn(turnId, text, model, from),
+
+    /**
+     * A turn the host answered itself, with a shell rather than the agent.
+     *
+     * `!command` means "run this", and the host owns the shell, so what comes
+     * back is the same shape as any other turn: it opens, carries one tool
+     * call, and completes. What waits on a busy session is the command itself
+     * and not the text of it, so when its turn comes `startNext` runs it
+     * rather than handing `!ping` to a model.
+     */
+    ran: (turnId, command, run) => {
+      if (active !== undefined || opening !== undefined) {
+        const message = { text: `!${command}`, origin: { kind: 'user' } };
+        queued.push({ id: turnId, command: { text: command, run }, message });
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        touch();
+        return;
+      }
+      runCommand(turnId, command, run);
+    },
 
     /**
      * Stop the running turn.

@@ -105,3 +105,78 @@ export interface WatchOptions {
 export interface Watcher {
   close(): void;
 }
+
+/**
+ * The files a client reads through this host.
+ *
+ * A port, for the same reason `DirectoryFacts` is one: reading a directory is
+ * `node:fs` on one runtime and something else on another, and a host embedded
+ * in an editor may already have the file open. The whole filesystem, as the
+ * reference host serves it: the connection token is what decides who may
+ * read, and the served directories are where the catalogue looks.
+ *
+ * A host given none serves no `resource*` command at all - `-32601`, the same
+ * answer it gives for anything else it does not have - and completes no `@`.
+ *
+ * It lives here rather than beside `HostOptions` because a backend is handed
+ * one through `Start`, and `types/agent.ts` importing it from `host.ts` was a
+ * cycle for no reason: the port describes files, not hosts.
+ */
+export interface ResourceStore {
+  /** One directory's entries. */
+  list(uri: string): Promise<Entry[]>;
+  /** One file's bytes, or the range of them that was asked for. */
+  read(uri: string, wanted?: string): Promise<Read>;
+  /** What a URI is, without reading it. */
+  resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
+  /** Paths under `base` that start with what is typed. */
+  complete(typed: string, base: string, limit?: number): Promise<string[]>;
+
+  /*
+   * The half that writes.
+   *
+   * Every one is optional and they are optional together: a store that has
+   * none is a read-only filesystem, and the host answers `-32601` for each,
+   * which is a different thing from refusing a particular path. `fileResources()`
+   * has them all; a store over something that cannot be written - an archive,
+   * a read-only mount, a fixture - simply leaves them out and says so by
+   * omission rather than by throwing on every call.
+   *
+   * The host has already checked the client's `resourceRequest` grant before
+   * any of these is reached. What is left to each is what the path means,
+   * which is a store's own business: a symlink, a directory, a parent that
+   * is not there.
+   */
+
+  /** Write, create or splice one file. */
+  write?(uri: string, content: Write): Promise<void>;
+  /** Remove a file, or a directory when `recursive`. */
+  remove?(uri: string, recursive?: boolean): Promise<void>;
+  /** Make a directory, and the parents it needs. */
+  mkdir?(uri: string): Promise<void>;
+  /** Rename. `failIfExists` refuses a destination already there. */
+  move?(source: string, destination: string, failIfExists?: boolean): Promise<void>;
+  /** Copy. `failIfExists` refuses a destination already there. */
+  copy?(source: string, destination: string, failIfExists?: boolean): Promise<void>;
+
+  /**
+   * Tell me when that changes.
+   *
+   * Optional on its own rather than with the write half: watching is a read,
+   * and a store may perfectly well serve bytes it cannot subscribe to - a
+   * remote filesystem, an archive, a fixture. A host whose store has none
+   * answers `-32601` for `createResourceWatch`, and the protocol's own client
+   * treats that as a reason to degrade rather than to fail.
+   *
+   * `onChange` is called with a *batch*, because the filesystem reports one
+   * event per file and a save is several: the protocol says a server coalesces
+   * them, and an empty batch MUST NOT be dispatched. Closing the returned
+   * handle is the only way to stop it - there is no dispose command, and
+   * `unsubscribe` is what the host turns into this call.
+   */
+  watch?(
+    uri: string,
+    options: WatchOptions,
+    onChange: (changes: ResourceChange[]) => void,
+  ): Promise<Watcher>;
+}

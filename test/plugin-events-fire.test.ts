@@ -6,7 +6,9 @@ import { sdkVersion } from '../packages/sdk/src/version.js';
 import { echo } from '../examples/echo/agent.js';
 import type { Agent } from '../packages/sdk/src/types/agent.js';
 import type { EventName, HostEvent } from '../packages/sdk/src/types/events.js';
-import type { HostOptions, HostTool, ResourceStore, TerminalStore } from '../packages/sdk/src/types/host.js';
+import type { HostOptions, HostTool } from '../packages/sdk/src/types/host.js';
+import type { ResourceStore } from '../packages/sdk/src/types/resources.js';
+import type { TerminalStore } from '../packages/sdk/src/types/terminals.js';
 import type { PluginContext } from '../packages/sdk/src/types/plugin.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 

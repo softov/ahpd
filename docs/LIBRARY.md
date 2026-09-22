@@ -164,6 +164,10 @@ pull request rather than failing, and an answer that fails keeps what was held.
 named time zone, definitions in `automations.json`, and one catch-up run for
 what was missed while the host was down. A store with no clock says so by
 leaving `nextRunAt` off.
+A run reads `running` while any session it started is executing or waiting on a
+person, and the host says the execution ended through `settle`: a store that
+implements it records the terminal `completed`, `failed` or `cancelled` and
+announces it, and one that keeps its runs immutable leaves the method out.
 
 ## The tools
 

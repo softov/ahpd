@@ -16,6 +16,7 @@ export default defineConfig({
       '@ahpd/sdk': fileURLToPath(new URL('./packages/sdk/src/index.ts', import.meta.url)),
       '@ahpd/agent-claude': fileURLToPath(new URL('./packages/agent-claude/src/index.ts', import.meta.url)),
       '@ahpd/agent-cofold': fileURLToPath(new URL('./packages/agent-cofold/src/index.ts', import.meta.url)),
+      '@ahpd/agent-acp': fileURLToPath(new URL('./packages/agent-acp/src/index.ts', import.meta.url)),
     },
   },
 });

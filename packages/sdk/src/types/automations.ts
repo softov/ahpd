@@ -65,6 +65,13 @@ export interface StartSession {
   origin?: { kind: `${SessionOriginKind}`; automation: string; run: string };
 }
 
+/** How a run's execution ended, for a store to record. */
+export interface RunEnding {
+  status: 'completed' | 'failed' | 'cancelled';
+  /** Why it failed, when it did. */
+  error?: { message: string };
+}
+
 /**
  * Where a host's automations come from.
  *
@@ -116,6 +123,17 @@ export interface AutomationStore {
     origin: Bag,
     start: (options: StartSession) => Promise<string>,
   ): Promise<AutomationRun | undefined>;
+
+  /**
+   * Say a run's execution ended, so it stops reading as `running`.
+   *
+   * The host is the only thing that sees a turn finish and this store is the
+   * only thing that owns the run, so the ending is handed over rather than
+   * derived from state the store cannot see. A run that is already terminal is
+   * left alone and this answers false: a late event from a session the run no
+   * longer holds must not reopen a finished run.
+   */
+  settle?(run: string, ending: RunEnding): boolean;
 
   /** One run's own state, for the channel a client watches it on. */
   runOf(resource: string): AutomationRun | undefined;

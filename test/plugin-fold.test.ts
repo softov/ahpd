@@ -5,7 +5,8 @@ import { foldHostOptions } from '../packages/sdk/src/plugins.js';
 import { sdkVersion } from '../packages/sdk/src/version.js';
 import { echo } from '../examples/echo/agent.js';
 import type { Agent } from '../packages/sdk/src/types/agent.js';
-import type { HostOptions, HostTool, ResourceStore } from '../packages/sdk/src/types/host.js';
+import type { HostOptions, HostTool } from '../packages/sdk/src/types/host.js';
+import type { ResourceStore } from '../packages/sdk/src/types/resources.js';
 import type { AutomationStore } from '../packages/sdk/src/types/automations.js';
 import type { Contribution, PortContribution, PortKey } from '../packages/sdk/src/types/plugin.js';
 

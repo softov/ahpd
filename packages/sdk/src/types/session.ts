@@ -254,9 +254,10 @@ export interface Session {
    * naming it back is what lets a client watch the output arrive rather than
    * only read it afterwards.
    *
-   * Optional. A backend that leaves it out is one this host advertises no
-   * `terminalCommandPrefix` for, which is the protocol's own way of saying the
-   * shorthand is unavailable.
+   * Optional. `terminalCommandPrefix` is advertised per host rather than per
+   * backend, because the protocol's capability is the host's - so a backend
+   * that leaves this out is one whose `!command` turn the host refuses, with
+   * the reason, rather than one it silently turns into a question.
    */
   ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>): void;
 

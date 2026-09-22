@@ -8,7 +8,7 @@ import { protectedResource, urlOf } from './mcp.js';
 import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
 
 /**
  * The effort levels this backend has, weakest first.
@@ -1727,6 +1727,20 @@ export function createSession(options: SessionOptions): Session {
     const next = queued.shift();
     if (!next)
       return;
+    /*
+     * A command somebody typed is run, not asked.
+     *
+     * `ran` queued it as text so a client could see it waiting, and handing
+     * that text to the CLI is the one thing `!` exists not to do. It runs
+     * under a fresh turn id with the waiting row named, which is how a queued
+     * message of any other kind becomes a turn.
+     */
+    const held = bag(next.command);
+    const typed = str(held.text);
+    if (typed !== undefined && typeof held.run === 'function') {
+      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, str(next.id));
+      return;
+    }
     const message = bag(next.message);
     // Read back, not re-parsed: `queue` wrote this entry from a `Chosen` and
     // the values in it are the ones it kept.
@@ -2101,6 +2115,115 @@ export function createSession(options: SessionOptions): Session {
     }
   })();
 
+  /**
+   * One shell command as a turn of this chat's.
+   *
+   * The whole of what `!command` means, and one function because it is reached
+   * two ways: immediately from `ran`, and later from `startNext` when the
+   * command was typed while a turn was already running. Both put the command
+   * and its output in the transcript as a tool call rather than pushing
+   * anything to the CLI. `queuedMessageId` names the waiting row the command
+   * came from, so a client clears it the way it clears any other.
+   */
+  const runCommand = (
+    turnId: string,
+    command: string,
+    run: (toolCallId: string) => Promise<Ran>,
+    queuedMessageId?: string,
+  ): void => {
+    const turn: Bag = {
+      id: turnId,
+      startedAt: new Date().toISOString(),
+      message: { text: `!${command}`, origin: { kind: 'user' } },
+      responseParts: [],
+      usage: undefined,
+    } satisfies WireTurn<ActiveTurn> as Bag;
+    active = turn;
+    startedAt = Date.now();
+    failed = undefined;
+    emit('chat', {
+      type: 'chat/turnStarted', turnId, startedAt: turn.startedAt, message: turn.message,
+      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+    });
+    if (title === 'New session') retitle(command.slice(0, 60));
+    doing('Running');
+    const toolCallId = `${turnId}:command`;
+    /*
+     * `terminal` as the name, which is what the reference host calls it.
+     *
+     * A client draws a tool call by its name, and one called anything else
+     * would be drawn as an unknown tool rather than as the shell it is.
+     */
+    const call = {
+      toolCallId,
+      toolName: 'terminal',
+      displayName: 'Terminal',
+      intention: command,
+      invocationMessage: command,
+      toolInput: command,
+      // The person typed it themselves, so there is nobody left to ask.
+      confirmed: 'not-needed',
+      status: 'running',
+      _meta: { toolKind: 'terminal' },
+    } satisfies OnWire<ToolCallRunningState> as Bag;
+    // As a part, the way every other call is held: the bare call went
+    // into the snapshot with no `kind`, so a client that subscribed after
+    // the command ran had a row it could not draw.
+    holdPart(turn, { id: toolCallId, kind: 'toolCall', toolCall: call });
+    emit('chat', {
+      type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
+      displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },
+    });
+    emit('chat', {
+      type: 'chat/toolCallReady', turnId, toolCallId,
+      invocationMessage: command, toolInput: command, confirmed: 'not-needed',
+    });
+    void run(toolCallId).then((done) => {
+      if (active !== turn) return;
+      /*
+       * The terminal first, so a client can watch the output arrive.
+       *
+       * `content` is replaced rather than appended to, so the terminal
+       * reference and the text it produced go out together at the end -
+       * and the reference alone goes out as soon as there is one, which is
+       * what a client needs to start streaming.
+       */
+      const watched = done.terminal === undefined ? [] : [{
+        type: 'terminal',
+        resource: done.terminal,
+        title: 'Terminal',
+        // Pipes, not a pseudoterminal, which is what the field is for: a
+        // client reads it to decide whether the preview needs VT parsing.
+        isPty: false,
+        result: {
+          ...(done.code !== undefined ? { exitCode: done.code } : {}),
+          ...(done.output === '' ? {} : { preview: done.output }),
+        },
+      } satisfies OnWire<ToolResultTerminalContent>];
+      const said = done.output === ''
+        ? []
+        : [{ type: 'text', text: done.output } satisfies OnWire<ToolResultTextContent>];
+      const shown = [...watched, ...said];
+      const result = {
+        success: done.success,
+        pastTenseMessage: done.said,
+        content: shown,
+        ...(done.success ? {} : { error: { message: done.said } }),
+      } satisfies Partial<OnWire<ToolCallCompletedState>>;
+      Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
+      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      turn.state = done.success ? 'complete' : 'error';
+      turn.duration = Date.now() - startedAt;
+      turns.push(turn);
+      active = undefined;
+      if (!done.success) failed = done.said;
+      emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
+      doing(undefined);
+      touch();
+      startNext();
+    });
+  };
+
   return {
     uri,
     chatUri,
@@ -2431,105 +2554,22 @@ export function createSession(options: SessionOptions): Session {
      * to the CLI, which is the whole difference from `begin`.
      */
     ran: (turnId, command, run) => {
-      // Queued behind whatever is running, like anything else a person types.
-      // A shell command that jumped the queue would run against a tree the
-      // turn in front of it is still editing.
+      /*
+       * A turn is already running, so the command waits its turn.
+       *
+       * A shell command that jumped the queue would run against a tree the
+       * turn in front of it is still editing - and what waits is the command
+       * itself, not the text of it: when its turn comes `startNext` runs it
+       * rather than handing `!ping` to the CLI.
+       */
       if (active) {
-        queued.push({ id: turnId, message: { text: `!${command}`, origin: { kind: 'user' } } });
-        emit('chat', { type: 'chat/pendingMessageSet', message: queued[queued.length - 1] });
+        const message = { text: `!${command}`, origin: { kind: 'user' } };
+        queued.push({ id: turnId, command: { text: command, run }, message });
+        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
         touch();
         return;
       }
-      const turn: Bag = {
-        id: turnId,
-        startedAt: new Date().toISOString(),
-        message: { text: `!${command}`, origin: { kind: 'user' } },
-        responseParts: [],
-        usage: undefined,
-      } satisfies WireTurn<ActiveTurn> as Bag;
-      active = turn;
-      startedAt = Date.now();
-      failed = undefined;
-      emit('chat', {
-        type: 'chat/turnStarted', turnId, startedAt: turn.startedAt, message: turn.message,
-      });
-      if (title === 'New session') retitle(command.slice(0, 60));
-      doing('Running');
-      const toolCallId = `${turnId}:command`;
-      /*
-       * `terminal` as the name, which is what the reference host calls it.
-       *
-       * A client draws a tool call by its name, and one called anything else
-       * would be drawn as an unknown tool rather than as the shell it is.
-       */
-      const call = {
-        toolCallId,
-        toolName: 'terminal',
-        displayName: 'Terminal',
-        intention: command,
-        invocationMessage: command,
-        toolInput: command,
-        // The person typed it themselves, so there is nobody left to ask.
-        confirmed: 'not-needed',
-        status: 'running',
-        _meta: { toolKind: 'terminal' },
-      } satisfies OnWire<ToolCallRunningState> as Bag;
-      // As a part, the way every other call is held: the bare call went
-      // into the snapshot with no `kind`, so a client that subscribed after
-      // the command ran had a row it could not draw.
-      holdPart(turn, { id: toolCallId, kind: 'toolCall', toolCall: call });
-      emit('chat', {
-        type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
-        displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },
-      });
-      emit('chat', {
-        type: 'chat/toolCallReady', turnId, toolCallId,
-        invocationMessage: command, toolInput: command, confirmed: 'not-needed',
-      });
-      void run(toolCallId).then((done) => {
-        if (active !== turn) return;
-        /*
-         * The terminal first, so a client can watch the output arrive.
-         *
-         * `content` is replaced rather than appended to, so the terminal
-         * reference and the text it produced go out together at the end -
-         * and the reference alone goes out as soon as there is one, which is
-         * what a client needs to start streaming.
-         */
-        const watched = done.terminal === undefined ? [] : [{
-          type: 'terminal',
-          resource: done.terminal,
-          title: 'Terminal',
-          // Pipes, not a pseudoterminal, which is what the field is for: a
-          // client reads it to decide whether the preview needs VT parsing.
-          isPty: false,
-          result: {
-            ...(done.code !== undefined ? { exitCode: done.code } : {}),
-            ...(done.output === '' ? {} : { preview: done.output }),
-          },
-        } satisfies OnWire<ToolResultTerminalContent>];
-        const said = done.output === ''
-          ? []
-          : [{ type: 'text', text: done.output } satisfies OnWire<ToolResultTextContent>];
-        const shown = [...watched, ...said];
-        const result = {
-          success: done.success,
-          pastTenseMessage: done.said,
-          content: shown,
-          ...(done.success ? {} : { error: { message: done.said } }),
-        } satisfies Partial<OnWire<ToolCallCompletedState>>;
-        Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
-        emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
-        turn.state = done.success ? 'complete' : 'error';
-        turn.duration = Date.now() - startedAt;
-        turns.push(turn);
-        active = undefined;
-        if (!done.success) failed = done.said;
-        emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
-        doing(undefined);
-        touch();
-        startNext();
-      });
+      runCommand(turnId, command, run);
     },
 
     /**
@@ -2743,8 +2783,8 @@ export function createSession(options: SessionOptions): Session {
      * built.
      */
     setTools: async (next) => {
-      const before = offering.map((one) => `${one.definition.name} ${one.owner ?? ''}`).join('\n');
-      const after = next.map((one) => `${one.definition.name} ${one.owner ?? ''}`).join('\n');
+      const before = offering.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
+      const after = next.map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`).join('\n');
       if (before === after) return true;
       offering = [...next];
       if (offering.length > 0) declared.ahp = contributed(offering, ranByClient) as Bag;

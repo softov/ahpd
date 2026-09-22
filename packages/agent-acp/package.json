@@ -1,0 +1,36 @@
+{
+  "name": "@ahpd/agent-acp",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "An AHP backend over the Agent Client Protocol: any ACP server is one provider instead of one package",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": "^0.6"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0"
+  }
+}

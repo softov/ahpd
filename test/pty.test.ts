@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { shellTerminals } from '../packages/sdk/src/terminals.js';
-import type { Pty, SpawnPty } from '../packages/sdk/src/types/terminals.js';
+import type { Pty, SpawnPty, Terminal } from '../packages/sdk/src/types/terminals.js';
 
 /*
  * A shell that says where it is and what it ran.
@@ -101,6 +101,72 @@ describe('a shell under a pseudoterminal', () => {
     expect(state.supportsCommandDetection).toBe(false);
     expect(seen.some((one) => one.type === 'terminal/commandDetectionAvailable')).toBe(false);
     terminal.close();
+  });
+});
+
+/*
+ * The runtime half of a backend's terminal: what `shellTerminals` does with
+ * `args`, `env` and `waitForExit`. Pipes rather than a pty, which is the
+ * ordinary case and the one every backend gets without a native binding.
+ */
+describe('a shell opened with a command', () => {
+  /** One terminal, driven through the real store. */
+  const run = (asked: {
+    command: string;
+    args?: string[];
+    env?: Record<string, string | undefined>;
+  }): Terminal => shellTerminals().create({
+    uri: 'ahp-terminal:/opened',
+    cwd: '/tmp',
+    claim: { kind: 'session', session: 'ahp-session:/one', chat: 'ahp-chat:/one' },
+    command: asked.command,
+    ...(asked.args !== undefined ? { args: asked.args } : {}),
+    ...(asked.env !== undefined ? { env: asked.env } : {}),
+    emit: () => {},
+  });
+
+  /** Everything it printed, once it has gone. */
+  const whole = async (terminal: Terminal): Promise<string> => {
+    await terminal.waitForExit();
+    // The protocol's own recipe for turning typed parts back into a stream.
+    return terminal.state().content
+      .map((part) => (part.type === 'command' ? part.output : part.value))
+      .join('');
+  };
+
+  it('runs an argv, so an argument with a space arrives whole', async () => {
+    // Quoted word by word, the argument is one word. Split on its space, the
+    // program sees `a` and the test reads back `a`.
+    const terminal = run({
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write(process.argv[1] ?? "")', 'a b'],
+    });
+    expect(await whole(terminal)).toContain('a b');
+  });
+
+  it('puts the caller\'s environment over the host\'s, under the terminal\'s own', async () => {
+    const terminal = run({
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write(`${process.env.AHP_TEST_ENV}|${process.env.TERM}`)'],
+      env: { AHP_TEST_ENV: 'from-the-backend', TERM: 'not-a-real-term' },
+    });
+    const said = await whole(terminal);
+    expect(said).toContain('from-the-backend');
+    // The terminal's own kind is set after the caller's, so a command cannot
+    // leave it disagreeing with the size the channel reports.
+    expect(said).toContain('|dumb');
+  });
+
+  it('resolves waitForExit with the code, and immediately once it has gone', async () => {
+    const terminal = run({ command: process.execPath, args: ['-e', 'process.exit(7)'] });
+    await expect(terminal.waitForExit()).resolves.toMatchObject({ exitCode: 7 });
+    // A process that has already gone answers now rather than leaving a
+    // caller waiting for an event that will never come again.
+    const again = await Promise.race([
+      terminal.waitForExit(),
+      new Promise((resolve) => { setTimeout(() => { resolve('late'); }, 200); }),
+    ]);
+    expect(again).toMatchObject({ exitCode: 7 });
   });
 });
 

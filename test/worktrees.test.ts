@@ -391,11 +391,13 @@ describe('a session with a working tree of its own', () => {
     // A client sending back the config it was given is agreeing, and a session
     // that disposed and reopened itself to arrive where it already was would
     // be churn a person watches happen.
-    client.handle({
+    // Awaited rather than slept on: the refusal is a notification the handler
+    // sends before it answers, so a settled call is the whole of what the
+    // assertion needs and a fixed wait is a race under load.
+    await client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'folder' } } },
     });
-    await new Promise((resolve) => { setTimeout(resolve, 60); });
     const refused = p.notes
       .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
       .filter((reason): reason is string => typeof reason === 'string');
@@ -421,18 +423,18 @@ describe('a session with a working tree of its own', () => {
     const opened = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state;
-    client.handle({
+    await client.handle({
       method: 'dispatchAction',
       params: { channel: opened.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
     });
-    await new Promise((resolve) => { setTimeout(resolve, 50); });
-    client.handle({
+    await client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'worktree' } } },
     });
-    await new Promise((resolve) => { setTimeout(resolve, 50); });
     // Said, rather than accepted and dropped: an agent whose files moved out
     // from under a conversation is the thing this refusal is protecting.
+    // Both dispatches are awaited, so the refusal has already been sent when
+    // the notes are read; a fixed wait here was a race under load.
     const refused = p.notes
       .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
       .filter((reason): reason is string => typeof reason === 'string');
@@ -634,9 +636,23 @@ describe('a worktree the window holds a handle on', () => {
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: true } });
     expect(existsSync(where)).toBe(true);
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/held' } });
-    for (let i = 0; i < 40 && existsSync(where); i++) await new Promise((r) => { setTimeout(r, 25); });
+    /*
+     * Wait for both halves of the disposal, not for the directory alone.
+     *
+     * The host takes the tree down and then deletes the branch, without
+     * awaiting either, so a poll on the directory can pass while the branch
+     * deletion is still in flight - and recreating the branch then fails with
+     * `a branch named ... already exists`, which is this test's flake. The
+     * branch is what the next line depends on, so it is what is waited for.
+     */
+    const branchGone = (): boolean =>
+      execFileSync('git', ['-C', project(root), 'branch', '--list', branch]).toString().trim() === '';
+    for (let i = 0; i < 40 && (!branchGone() || existsSync(where)); i++) {
+      await new Promise((r) => { setTimeout(r, 25); });
+    }
     // The disposal took the clean tree; the branch went with it, since it carried nothing.
     expect(existsSync(where)).toBe(false);
+    expect(branchGone()).toBe(true);
     // Unarchived: put back on its branch, when the branch is still there.
     execFileSync('git', ['-C', project(root), 'branch', branch, 'main'], { stdio: 'pipe' });
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: false } });

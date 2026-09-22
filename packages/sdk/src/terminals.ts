@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { Pty, SpawnPty, Terminal, TerminalOptions } from './types/terminals.js';
-import type { TerminalStore } from './types/host.js';
+import type { Pty, SpawnPty, Terminal, TerminalOptions, TerminalStore } from './types/terminals.js';
 
 /**
  * A shell on the host machine, as a terminal channel.
@@ -16,6 +15,14 @@ import type { TerminalStore } from './types/host.js';
 
 /** What runs, when nothing else was asked for. */
 const shellOf = (asked?: string): string => asked ?? process.env.SHELL ?? '/bin/sh';
+
+/**
+ * One word, quoted for a POSIX shell.
+ *
+ * Single quotes keep everything literal except the quote itself, so a quote is
+ * written by closing, escaping and reopening: `it's` becomes `'it'\''s'`.
+ */
+const quoted = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
 
 /**
  * What a shell says about itself, in the escape sequences it says it with.
@@ -40,6 +47,18 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
   let cols = options.cols ?? 80;
   let rows = options.rows ?? 24;
   let exitCode: number | undefined;
+  /** The signal that ended the process, when the runtime named one. */
+  let signal: string | undefined;
+  /**
+   * Resolved once, when the process goes.
+   *
+   * `ended` is the single place that knows it has, so `waitForExit` is this
+   * promise rather than a second watcher racing the emitter. A terminal that
+   * has already gone hands back the resolved promise, which is what makes the
+   * call immediate rather than a wait that never ends.
+   */
+  let settle: ((exit: { exitCode?: number; signal?: string }) => void) | undefined;
+  const gone = new Promise<{ exitCode?: number; signal?: string }>((resolve) => { settle = resolve; });
   /**
    * Everything written so far, so a client that subscribes late sees it.
    *
@@ -60,10 +79,25 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
    * A shell given `-c` runs the one thing and exits. Under pipes that is the
    * only completion signal there is; under a pseudoterminal the shell says so
    * itself, in OSC 133.
+   *
+   * Two shapes arrive here and they are not the same thing. With `args` the
+   * caller is naming a program, so the argv is quoted word by word and the
+   * shell is asked to run exactly that. Without it the caller is handing over
+   * a line - the `!` prefix in the composer is one - and that line is already
+   * shell syntax: quoting it would ask the shell for a program named after the
+   * whole line, which is a command that never existed.
    */
-  const args = options.command === undefined ? [] : ['-c', options.command];
+  const args = options.command === undefined
+    ? []
+    : options.args === undefined
+      ? ['-c', options.command]
+      : ['-c', [options.command, ...options.args].map(quoted).join(' ')];
   const environment = {
     ...process.env,
+    // Asked for last, because the caller's variables sit over the host's and
+    // these three over the caller's: a terminal's own size and kind are not
+    // something a command may disagree with.
+    ...options.env,
     // A real terminal under a pty, and an honest `dumb` without one.
     TERM: pty ? (process.env.TERM ?? 'xterm-256color') : 'dumb',
     COLUMNS: String(cols),
@@ -165,16 +199,25 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
     if (announced) return;
     announced = true;
     emit('terminal', { type: 'terminal/exited', exitCode });
+    // The same moment, for a caller waiting rather than watching: the code is
+    // set before this runs, so what resolves here is what the event carried.
+    settle?.({
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    });
   };
   child?.on('error', (error: Error) => {
     said(`${error.message}\n`);
     exitCode = 127;
     ended();
   });
-  child?.on('exit', (code: number | null, signal: string | null) => {
+  child?.on('exit', (code: number | null, by: string | null) => {
     // A signal is not an exit code, and 128+n is the shell's own convention
     // for one - better than reporting nothing, which reads as still running.
-    exitCode = code ?? (signal ? 128 : 0);
+    exitCode = code ?? (by ? 128 : 0);
+    // Named, when it was: a caller told only `128` cannot tell somebody's
+    // SIGINT from a program that chose to exit 128.
+    if (by) signal = by;
   });
   /*
    * Announced on `close` rather than on `exit`, which is a race this lost.
@@ -196,6 +239,7 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
     title: () => title,
     claim: () => claim,
     exitCode: () => exitCode,
+    waitForExit: () => gone,
     lifecycle: () => (exitCode === undefined
       ? { status: 'running' }
       : { status: 'exited', exitCode }),

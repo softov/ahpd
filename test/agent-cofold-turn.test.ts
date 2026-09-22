@@ -5,6 +5,7 @@ import { expect, it } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { createHost } from '../packages/sdk/src/host.js';
+import { shellTerminals } from '../packages/sdk/src/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { cofoldAgent, cofoldTools, sessionIdOf } from '../packages/agent-cofold/src/index.js';
@@ -329,4 +330,45 @@ it('does not offer a tool a client runs, because nothing here can answer it', ()
   const mine: BoundTool = { definition, run: () => 'mine' };
   const theirs: BoundTool = { definition: { ...definition, name: 'theirs' }, owner: 'client-1' };
   expect(cofoldTools([mine, theirs]).map((one) => one.name)).toEqual(['lookup']);
+});
+
+it('runs a !command in a shell rather than asking a model', async () => {
+  const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-bang-'));
+  const host = createHost({
+    path,
+    agents: [cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'never asked' }], stream: true }), memory: true })],
+    terminals: shellTerminals(),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'ahp-session:/bang';
+  const chatUri = 'ahp-chat:/bang';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
+  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+
+  begin(client, chatUri, 't1', '!echo cofold-ran-it');
+  await until(() => ended(p, chatUri));
+
+  // The host's shell, not the model: one tool call named `terminal`, completed
+  // with what the shell printed. Before `ran` existed here this turn was handed
+  // to cofold as the prompt `!echo cofold-ran-it`.
+  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+  expect(start?.action).toMatchObject({ toolName: 'terminal' });
+  const completed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  expect((completed?.action.result as { success: boolean }).success).toBe(true);
+  expect(JSON.stringify(completed?.action.result)).toContain('cofold-ran-it');
+
+  // And in the snapshot, not only in the stream, with the call finished rather
+  // than left `streaming` for a client that subscribed afterwards.
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { kind?: string; toolCall?: { toolName: string; status: string } }[] }[] } };
+  }).snapshot.state.turns;
+  expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
+  expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
+  expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
 });
