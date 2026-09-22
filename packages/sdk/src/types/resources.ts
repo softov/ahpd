@@ -142,10 +142,11 @@ export interface ResourceStore {
    * a read-only mount, a fixture - simply leaves them out and says so by
    * omission rather than by throwing on every call.
    *
-   * The host has already checked the client's `resourceRequest` grant before
-   * any of these is reached. What is left to each is what the path means,
-   * which is a store's own business: a symlink, a directory, a parent that
-   * is not there.
+   * Nothing above these is gated: the write half is served to any connection,
+   * so what a store leaves out is the whole of its answer about writing, and a
+   * client the host will not write for is one the connection token never let
+   * in. What is left to each method is what the path means, which is a store's
+   * own business: a symlink, a directory, a parent that is not there.
    */
 
   /** Write, create or splice one file. */
