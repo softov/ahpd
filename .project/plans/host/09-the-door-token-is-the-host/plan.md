@@ -89,6 +89,7 @@ client -> ?tkn=<deployment token>   -> listen.identityOf: admitted, and the host
 ## Resume state
 
 - **Done so far:** both tasks, 2026-09-23. The door token is the host, a person's own token is that person, `authenticate` cannot downgrade root, and the prose says so. See [implemented.md](implemented.md).
+- **Superseded in part:** the half that made a person's own token arrive as them is superseded by [host 13](../13-the-door-is-a-door/plan.md) and decision [the-door-is-a-door](../../../decisions/the-door-is-a-door.md); root, as this plan built it, is unchanged.
 - **Next action:** none; the plan is built.
 - **Open questions:**
   1. Is root a person in the file? - answered by decision 1: no, it is the deployment's key and a property of the connection.

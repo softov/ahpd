@@ -109,6 +109,7 @@ client -> ws://host:port?tkn=<token>            -> listen.ts: root token, else t
 ## Resume state
 
 - **Done so far:** all four tasks, 2026-09-23. The record is true, the door resolves a person's own token before the first frame in all three runtimes, the daemon builds one directory and hands it to both doors, `ahpd user token --url` prints what a client pastes, and the prose says what the code does. See [implemented.md](implemented.md).
+- **Superseded in part:** the door no longer resolves a person from their own token; it admits the socket and names nobody, and `trustToken` is the opt-out. See [host 13](../13-the-door-is-a-door/plan.md) and decision [the-door-is-a-door](../../../decisions/the-door-is-a-door.md). What this plan built - the record, `identify`, the derived identifier - is unchanged.
 - **Next action:** none; the plan is built. The issuer option that gives `authorization_servers` a real value is `host/08`, and what this plan set aside is in [deferred.md](deferred.md).
 - **Open questions:**
   1. What identifier does a daemon advertise when the operator names none? - answered: `https://<host>:<port>/`, derived by `signInIdentifier`, with the machine's own name standing in for a wildcard address and the port left out when it is `0`.

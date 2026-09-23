@@ -9,7 +9,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubIssuer, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, oidcIssuer, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -64,10 +64,19 @@ interface Options {
   /**
    * An authorization server whose tokens this host also accepts.
    *
-   * `github`, or an https OpenID Connect issuer. Absent, the host is its own
-   * issuer and only secrets it minted are checked.
+   * `github`, or an issuer URL this host may reach. Absent, the host is its own
+   * issuer and only secrets it minted are checked. A record may name its own
+   * instead, and this is the default for the ones that do not.
    */
   issuer?: string;
+  /**
+   * Whether a person's connection token authorizes them as well as admits them.
+   *
+   * False, which is the default: the door admits and says nobody, and
+   * `authenticate` is what authorizes. A record's own `trustToken` overrides
+   * this per person, and the deployment's own token is root either way.
+   */
+  trustToken: boolean;
   /**
    * Where automations are kept, and whether a clock fires them.
    *
@@ -141,15 +150,24 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 already reachable by nobody else.
   --config-file <p>             Read this instead of the file below.
   --users <file>                The people who may use this host. A person's
-                                token is also a connection token, so a client
-                                that can only carry a URL arrives as them.
+                                token opens a socket and says nobody, so they
+                                sign in with authenticate; trustToken on the
+                                record or here makes the token authorize too.
   --resource <url>              The https identifier this host advertises for
                                 its own sign-in. Default: derived from --host
                                 and --port.
   --issuer <github|url>         An authorization server whose tokens are also
-                                accepted: github, or an https OpenID Connect
-                                issuer. Its identifier is advertised, so a
-                                client can resolve a provider for it.
+                                accepted: github, or an OpenID Connect issuer
+                                (https, or plain http on loopback). Its
+                                identifier is advertised, so a client can
+                                resolve a provider for it. A record may name
+                                its own issuer, and this is the default for
+                                the ones that do not.
+  --trust-token                 A person's connection token authorizes them as
+                                well as admits them. Off by default: the door
+                                admits and says nobody, and authenticate is
+                                what authorizes. A record's own trustToken
+                                overrides this per person.
   --automations <where>         file, the default, keeps them beside the
                                 configuration and fires their schedules;
                                 memory keeps them until this process ends and
@@ -178,10 +196,10 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
 connectionTokenFile, withoutConnectionToken, automations, sessions, wire,
-updateCheck, plugins, users, resource, issuer. A flag beats the file, because a
-flag is this run and a file is every run until somebody edits it. "plugins" is
-a list of the same specs --plugin takes, and --no-plugins is the one flag with
-no key: leaving plugins out is already the off.
+updateCheck, plugins, users, resource, issuer, trustToken. A flag beats the
+file, because a flag is this run and a file is every run until somebody edits
+it. "plugins" is a list of the same specs --plugin takes, and --no-plugins is
+the one flag with no key: leaving plugins out is already the off.
 
 Clients present the token as ?tkn=<secret> on the URL, or as an
 Authorization: Bearer <secret> header.
@@ -198,6 +216,7 @@ function parse(argv: string[]): Options {
     automations: 'file',
     sessions: 'file',
     open: false,
+    trustToken: false,
     plugins: [],
     noPlugins: false,
     help: false,
@@ -218,6 +237,7 @@ function parse(argv: string[]): Options {
       case '--users': options.users = String(argv[++i]); break;
       case '--resource': options.resource = String(argv[++i]); break;
       case '--issuer': options.issuer = String(argv[++i]); break;
+      case '--trust-token': options.trustToken = true; break;
       case '--automations': {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
@@ -277,6 +297,7 @@ function parse(argv: string[]): Options {
   if (options.users === undefined && typeof file.users === 'string') options.users = file.users;
   if (options.resource === undefined && typeof file.resource === 'string') options.resource = file.resource;
   if (options.issuer === undefined && typeof file.issuer === 'string') options.issuer = file.issuer;
+  if (!options.trustToken && file.trustToken === true) options.trustToken = true;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   /*
@@ -438,7 +459,14 @@ if (verb !== undefined) {
       host: typeof from.host === 'string' ? from.host : '127.0.0.1',
       port: typeof from.port === 'number' ? from.port : 9187,
     };
-    const directory = fileUsers({ path, onProblem: (line) => process.stderr.write(`${line}\n`) });
+    // The configuration's issuer is passed too, so `user list` says where a
+    // record that names none signs in. Nothing here asks a network: the name
+    // is only printed.
+    const directory = fileUsers({
+      path,
+      ...(typeof from.issuer === 'string' ? { issuer: from.issuer } : {}),
+      onProblem: (line) => process.stderr.write(`${line}\n`),
+    });
 
     // Flags are read out of the whole line and the positionals are what is
     // left, because `list` takes none and `add` takes one: assuming two would
@@ -476,15 +504,28 @@ if (verb !== undefined) {
 
     if (sub === 'list') {
       const rows = await directory.list();
+      // The roles they hold, what those roles resolve to, whether the door
+      // already identifies them or they still have to sign in, and through
+      // which issuer when it is not this host that vouches for them.
       process.stdout.write(rows.length === 0
         ? `no users in ${path}\n`
-        : `${rows.map((one) => `${one.id}${one.roles.length > 0 ? ` (${one.roles.join(', ')})` : ''}`).join('\n')}\n`);
+        : `${rows.map((one) => [
+          one.id,
+          one.roles.length > 0 ? `(${one.roles.join(', ')})` : '(no roles)',
+          one.grants.length > 0 ? one.grants.join(' ') : 'nothing',
+          one.trusted ? 'trusted' : 'sign-in',
+          ...(one.issuer === undefined ? [] : [one.issuer]),
+        ].join(' ')).join('\n')}\n`);
       process.exit(0);
     }
     if (sub === 'add') {
       if (id === undefined || id.startsWith('-')) stop('user add takes an id: ahpd user add <id> [--role <name>]');
-      const held = roles.length > 0 ? roles : ['member'];
-      await directory.add(id, held);
+      const held = roles.length > 0 ? roles : ['guest'];
+      // A role name that resolves to nothing is refused by the directory; said
+      // here so it reads as the verb's own refusal rather than a stack trace.
+      await directory.add(id, held).catch((error: unknown) => {
+        stop(error instanceof Error ? error.message : String(error));
+      });
       process.stdout.write(`Added ${id} (${held.join(', ')}). Give them a credential: ahpd user token ${id}\n`);
       process.exit(0);
     }
@@ -592,18 +633,17 @@ const advertisedResource = (): string => {
 /*
  * The authorization server this host accepts tokens from, when one is named.
  *
- * `github` is the preset a stock client can resolve with no client work, and an
- * https URL is an OpenID Connect issuer whose metadata is discovered. Absent,
- * the host is its own issuer and only secrets it minted are checked -
- * decision `the-issuer-option-takes-a-url-or-github`.
+ * `github` is the preset a stock client can resolve with no client work, and a
+ * URL this host may reach is an OpenID Connect issuer whose metadata is
+ * discovered. Absent, the host is its own issuer and only secrets it minted are
+ * checked. What is built here is only for the startup line: the directory
+ * builds its own from the same name, and a record may name another.
  */
 const named = options.issuer === undefined ? undefined : namedIssuer(options.issuer);
 if (options.issuer !== undefined && named === undefined) {
-  stop('--issuer takes github or an https issuer URL.');
+  stop('--issuer takes github or an issuer URL this host may reach.');
 }
-const issuer = named === undefined
-  ? undefined
-  : named.kind === 'github' ? githubIssuer() : oidcIssuer({ issuer: named.issuer });
+const issuer = options.issuer === undefined ? undefined : issuerFrom(options.issuer);
 
 /*
  * The people who may use this host, built once.
@@ -622,8 +662,12 @@ const users = options.users === undefined
   ? undefined
   : fileUsers({
     path: options.users,
-    resource: signInRecord(advertisedResource(), issuer),
-    ...(issuer === undefined ? {} : { issuer }),
+    // The directory fills `authorization_servers` itself, because the file is
+    // where a record's own issuer is written and the directory is what reads
+    // it. A record that names none uses the host's name, passed below.
+    resource: signInRecord(advertisedResource()),
+    ...(options.issuer === undefined ? {} : { issuer: options.issuer }),
+    trustToken: options.trustToken,
     onProblem: (line) => process.stderr.write(`${line}\n`),
   });
 
@@ -772,21 +816,30 @@ const tap = options.wire === undefined ? undefined : ((): Tap => {
 })();
 
 /*
- * The door, and the directory behind it.
+ * The door, and what a token presented at it means.
  *
- * `identify` is what makes a person's own connection token theirs: the
- * deployment's token still admits and names nobody, and anything else is put
- * to the directory, so a client that can only carry a URL arrives as somebody
- * without an `authenticate` - decision
- * `a-connection-token-may-carry-a-person`. With no directory there is nothing
- * to ask, so nothing is passed and the door refuses exactly what it refused.
+ * The deployment's own token is the host, and no other is. A person's token
+ * opens the socket and says nobody unless their record trusts it - decision
+ * `the-door-is-a-door` - so a client that presents only a connection token is
+ * admitted and then answers `-32007` until it authenticates. With no directory
+ * there is nothing to ask, so nothing is passed and the door refuses exactly
+ * what it refused.
  */
 const listener = await listen(
   {
     port: options.port,
     host: options.host,
     ...(token !== undefined ? { token } : {}),
-    ...(users === undefined ? {} : { identify: (presented: string) => users.verify(presented), root: true }),
+    ...(users === undefined
+      ? {}
+      : {
+        identify: async (presented: string) => {
+          const who = await users.verify(presented);
+          if (who === undefined) return undefined;
+          return who.trusted === true ? { principal: who } : {};
+        },
+        root: true,
+      }),
     ...(tap ? { tap } : {}),
   },
   (peer, principal, root) => host.accept(peer, principal, root),

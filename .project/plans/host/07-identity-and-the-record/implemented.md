@@ -23,6 +23,8 @@ A person's own token now opens a socket and is who they are, resolved against th
 The host advertises a record it can defend: the documentation page moved to `resource_documentation`, `authorization_servers` is absent because there is no issuer, and `resource` is an https identifier named by the operator or derived from where the daemon listens.
 A daemon with no `users` configured advertises nothing and refuses exactly what it refused before.
 
+Superseded in part by [host 13](../13-the-door-is-a-door/plan.md): the door no longer makes a person from their own token, and a record's `trustToken` is what does. The record, `identify` and the derived identifier are what this plan built and all three are still in force.
+
 ## What was built
 
 - `code://packages/sdk/src/users.ts` - `DEFAULT_RESOURCE` without `authorization_servers` and with `resource_documentation`, and `signInRecord`, which puts the same record under a deployment's identifier.

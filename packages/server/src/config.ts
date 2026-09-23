@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { PluginSpec } from '@ahpd/sdk';
+import { issuerKind, type PluginSpec } from '@ahpd/sdk';
 
 /** What a config file may say. Every key is what a flag would have said. */
 export interface Config {
@@ -52,12 +52,22 @@ export interface Config {
   /**
    * An authorization server whose tokens this host also accepts.
    *
-   * `github`, or an https OpenID Connect issuer. Absent, the host is its own
-   * issuer and only secrets it minted are checked. Configured, the record
-   * advertises the issuer in `authorization_servers`, so a client that
-   * acquires tokens through an OAuth provider has a provider to resolve.
+   * `github`, or an issuer URL this host may reach. Absent, the host is its own
+   * issuer and only secrets it minted are checked. Configured, it is the
+   * default for every record that names none of its own, and the record
+   * advertises it and the records' own in `authorization_servers`, so a client
+   * that acquires tokens through an OAuth provider has a provider to resolve.
    */
   issuer?: string;
+  /**
+   * Whether a person's connection token authorizes them as well as admits them.
+   *
+   * False, which is the default and the whole point: the door admits and says
+   * nobody, and `authenticate` is what authorizes. A host that trusts its
+   * connection tokens says so once here, and a record's own `trustToken`
+   * overrides it.
+   */
+  trustToken?: boolean;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**
@@ -230,15 +240,16 @@ export const isIdentifier = (value: string): boolean => /^https:\/\/[^\s#]+$/.te
 /**
  * An issuer named in the configuration, as the kind it is.
  *
- * `github` is the preset a stock client can resolve with no work at all, and an
- * https URL is an OpenID Connect issuer whose metadata is discovered. Anything
- * else answers nothing, so the daemon refuses the start with a sentence rather
- * than discovering a typo on the first sign-in.
+ * `github` is the preset a stock client can resolve with no work at all, and a
+ * URL this host may reach is an OpenID Connect issuer whose metadata is
+ * discovered. Anything else answers nothing, so the daemon refuses the start
+ * with a sentence rather than discovering a typo on the first sign-in.
+ *
+ * The rule itself is `issuerKind` in the SDK, beside `issuerFrom`, because a
+ * record's own `issuer` is resolved by the same rule and the two must not
+ * disagree.
  */
-export const namedIssuer = (value: string): { kind: 'github' } | { kind: 'oidc'; issuer: string } | undefined => {
-  if (value === 'github') return { kind: 'github' };
-  return isIdentifier(value) ? { kind: 'oidc', issuer: value } : undefined;
-};
+export const namedIssuer = issuerKind;
 
 /**
  * The URL a person pastes where a client asks for a host.

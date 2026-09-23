@@ -98,13 +98,30 @@ export interface OidcIssuerOptions {
   userinfo?: string;
 }
 
+/** Whether a URL names this machine. */
+const loopbackUrl = (value: string): boolean =>
+  /^https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?(?:[/?#]|$)/i.test(value);
+
+/**
+ * Whether this host may send a person's credential to a URL.
+ *
+ * https anywhere, and plain http only on loopback. A self-hosted issuer is
+ * common and on loopback nothing leaves the machine; a remote one over http
+ * would put a bearer token in clear - decision
+ * `an-issuer-may-be-plain-http-on-loopback`.
+ */
+export const isIssuerUrl = (value: string): boolean => {
+  if (/^https:\/\/[^\s#]+$/.test(value)) return true;
+  return /^http:\/\/[^\s#]+$/.test(value) && loopbackUrl(value);
+};
+
 /**
  * An OpenID Connect issuer, named by URL.
  *
  * Its metadata is discovered once from the well-known path, and the answer is
- * kept only when it names an https endpoint: the document is remote, and a
- * person's bearer token must not be sent over anything less. Discovery that
- * fails is tried again on the next sign-in rather than cached as a failure.
+ * kept only when it names an endpoint this host may send a token to: https, or
+ * plain http on loopback. Discovery that fails is tried again on the next
+ * sign-in rather than cached as a failure.
  */
 export const oidcIssuer = (options: OidcIssuerOptions): Issuer => {
   const fetcher = options.fetch ?? fetch as Fetcher;
@@ -114,7 +131,7 @@ export const oidcIssuer = (options: OidcIssuerOptions): Issuer => {
     if (known !== undefined) return known;
     const at = `${options.issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`;
     const endpoint = field(await get(fetcher, at), 'userinfo_endpoint');
-    if (endpoint !== undefined && endpoint.startsWith('https://')) known = endpoint;
+    if (endpoint !== undefined && isIssuerUrl(endpoint)) known = endpoint;
     return known;
   };
   return {
@@ -125,4 +142,35 @@ export const oidcIssuer = (options: OidcIssuerOptions): Issuer => {
       return endpoint === undefined ? undefined : field(await get(fetcher, endpoint, token), 'sub');
     },
   };
+};
+
+/**
+ * The kind of authorization server a name is.
+ *
+ * `github` is the preset a stock client can resolve with no work at all, and a
+ * URL this host may reach is an OpenID Connect issuer whose metadata is
+ * discovered. Anything else answers nothing, so a configuration refuses the
+ * start and a record is reported rather than silently never verifying. The
+ * rule is here so the daemon's `issuer` key and a record's own `issuer` field
+ * cannot disagree about what a name means.
+ */
+export type IssuerKind = { kind: 'github' } | { kind: 'oidc'; issuer: string };
+
+/** What a name turned out to be, or nothing when this host may not reach it. */
+export const issuerKind = (value: string): IssuerKind | undefined => {
+  if (value === 'github') return { kind: 'github' };
+  return isIssuerUrl(value) ? { kind: 'oidc', issuer: value } : undefined;
+};
+
+/**
+ * An authorization server, named the way a configuration or a record names one.
+ *
+ * A test that wants no network passes its own resolver through
+ * `FileUserOptions.issuerFor` instead of using this.
+ */
+export const issuerFrom = (value: string, fetcher?: Fetcher): Issuer | undefined => {
+  const kind = issuerKind(value);
+  if (kind === undefined) return undefined;
+  const reach = fetcher === undefined ? {} : { fetch: fetcher };
+  return kind.kind === 'github' ? githubIssuer(reach) : oidcIssuer({ issuer: kind.issuer, ...reach });
 };

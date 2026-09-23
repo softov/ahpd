@@ -123,55 +123,60 @@ const resolved = async (host: string, family: 4 | 6): Promise<{ address?: string
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
 
 /**
- * What each command needs, by capability.
+ * What each command needs, by subject and verb.
  *
- * One entry per gated method, grouped by the capability, so the shape of a role
- * is readable from here: a `member` has everything down to and including the
- * terminal group, and an `admin` has all of it.
+ * One entry per gated method, grouped the way a role reads: the file's verbs,
+ * then a session's, then a shell's, then the automation clock and the
+ * diagnostics a window asks for. The verb is what tells listing from acting,
+ * which the six-area vocabulary could not - decision
+ * `a-grant-is-a-subject-and-a-verb`.
  *
- * `subscribe` is not here because its answer depends on the channel rather than
- * on the method - `ahp-root://` and `ahp-session:/x` are not the same
- * permission - and `capabilityFor` is what reads it. A method with no entry
- * anywhere is served to anybody who is connected.
+ * `subscribe` is not here because its subject is the channel rather than the
+ * method, and `capabilityFor` is what reads it. A method with no entry anywhere
+ * is served to anybody who is connected.
  */
 const NEEDS: Record<string, Grant> = {
-  // read
-  resourceList: 'read',
-  resourceRead: 'read',
-  resourceResolve: 'read',
-  createResourceWatch: 'read',
-  completions: 'read',
+  // file:read
+  resourceList: 'file:read',
+  resourceRead: 'file:read',
+  resourceResolve: 'file:read',
+  createResourceWatch: 'file:read',
+  completions: 'file:read',
 
-  // write
-  resourceWrite: 'write',
-  resourceDelete: 'write',
-  resourceMkdir: 'write',
-  resourceMove: 'write',
-  resourceCopy: 'write',
-  resourceRequest: 'write',
-  invokeChangesetOperation: 'write',
+  // file:write
+  resourceWrite: 'file:write',
+  resourceDelete: 'file:write',
+  resourceMkdir: 'file:write',
+  resourceMove: 'file:write',
+  resourceCopy: 'file:write',
+  resourceRequest: 'file:write',
+  invokeChangesetOperation: 'file:write',
 
-  // session
-  listSessions: 'session',
-  fetchTurns: 'session',
-  createSession: 'session',
-  createChat: 'session',
-  disposeChat: 'session',
-  disposeSession: 'session',
-  resolveSessionConfig: 'session',
-  sessionConfigCompletions: 'session',
+  // session:read
+  listSessions: 'session:read',
+  fetchTurns: 'session:read',
+  resolveSessionConfig: 'session:read',
+  sessionConfigCompletions: 'session:read',
 
-  // terminal
-  createTerminal: 'terminal',
-  disposeTerminal: 'terminal',
+  // session:write
+  createSession: 'session:write',
+  createChat: 'session:write',
+  disposeChat: 'session:write',
+  disposeSession: 'session:write',
 
-  // automation
-  listAutomationTriggerDefinitions: 'automation',
-  runAutomation: 'automation',
-  fetchAutomationRuns: 'automation',
+  // terminal:write, because opening one is the act; reading one is the channel
+  createTerminal: 'terminal:write',
+  disposeTerminal: 'terminal:write',
 
-  // diagnostics
-  diagnosticsFetch: 'diagnostics',
+  // automation:read
+  listAutomationTriggerDefinitions: 'automation:read',
+  fetchAutomationRuns: 'automation:read',
+
+  // automation:write
+  runAutomation: 'automation:write',
+
+  // diagnostics:read
+  diagnosticsFetch: 'diagnostics:read',
 };
 
 /**
@@ -207,22 +212,22 @@ const UNGATED = new Set([
  * A dispatch is a notification, so what it gets on refusal is `rejectionReason`
  * on the channel rather than an error code - and what it is checked against is
  * the channel, because that is what says which part of the host is being
- * driven. A session and a chat are `session`; a terminal is `terminal`, which
- * is the one that runs commands; an automation is `automation`.
+ * driven. A dispatch is always a *write*: typing into a terminal, saying
+ * something in a chat, changing a root setting.
  *
- * `ahp-root://` is `write` because the only thing a client may dispatch there
- * is `root/configChanged`, which changes a setting for every client at once.
+ * `ahp-root://` is `file:write` because the only thing a client may dispatch
+ * there is `root/configChanged`, a setting that is the host's own.
  *
  * Anything else - a resource watch this client created, or a channel a later
- * plan adds - is `read`, the conservative answer and the one
+ * plan adds - is `file:read`, the conservative answer and the one
  * `createResourceWatch` already required to hand the channel over.
  */
 const dispatchNeeds = (channel: string): Grant => {
-  if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session';
-  if (channel.startsWith('ahp-terminal:')) return 'terminal';
-  if (channel.startsWith('ahp-automation')) return 'automation';
-  if (channel === ROOT || channel.startsWith('ahp-root')) return 'write';
-  return 'read';
+  if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session:write';
+  if (channel.startsWith('ahp-terminal:')) return 'terminal:write';
+  if (channel.startsWith('ahp-automation')) return 'automation:write';
+  if (channel === ROOT || channel.startsWith('ahp-root')) return 'file:write';
+  return 'file:read';
 };
 
 /**
@@ -4622,22 +4627,34 @@ export function createHost(options: HostOptions): Host {
         if (method === 'subscribe') {
           const channel = String(params.channel ?? '');
           if (channel === ROOT || channel.startsWith('ahp-root')) return undefined;
-          if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return ['session'];
-          if (channel.startsWith('ahp-automations')) return ['automation'];
-          if (channel.startsWith('ahp-terminal:')) return ['terminal'];
-          // Something a later plan added: the conservative answer.
-          return ['read'];
+          if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return ['session:read'];
+          if (channel.startsWith('ahp-automations')) return ['automation:read'];
+          if (channel.startsWith('ahp-terminal:')) return ['terminal:read'];
+          // Something a later plan added: the conservative answer, and the
+          // subject `createResourceWatch` already required to hand it over.
+          return ['file:read'];
         }
         const plain = NEEDS[method];
         if (plain === undefined) return undefined;
-        if (plain !== 'read' && plain !== 'write') return [plain];
+        const at = plain.indexOf(':');
+        const subject = plain.slice(0, at);
+        const verb = plain.slice(at + 1);
+        /*
+         * Only the file subject is scoped by the URI.
+         *
+         * A resource method is the only one that carries a URI, and its subject
+         * is the scheme that answers it, so `resourceRead` on `computer://` is
+         * `computer:read`. Every other method answers to its own area, which is
+         * a fixed subject and not something the request can name.
+         */
+        if (subject !== 'file') return [plain];
         const uris = [params.uri, params.source, params.destination]
           .filter((one): one is string => typeof one === 'string');
         if (uris.length === 0) return [plain];
         const needed = new Set<Grant>();
         for (const uri of uris) {
           const scheme = schemeOf(uri);
-          needed.add(scheme === '' || scheme === 'file' ? plain : `${plain}:${scheme}`);
+          needed.add((scheme === '' || scheme === 'file' ? plain : `${scheme}:${verb}`) as Grant);
         }
         return [...needed];
       };

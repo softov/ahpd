@@ -11,25 +11,30 @@
  */
 
 /**
- * One thing a role may be given.
+ * What a grant does to its subject.
  *
- * Six, and they are the host's whole surface: a file, a session, a shell, the
- * automation clock and the diagnostics the window asks for. A capability is
- * deliberately not a method name, so a handler renamed does not silently move
- * who may call it.
+ * Two, and they are the convention every scope list uses: `contents:read` in
+ * GitHub's app permissions, `channels:read` in Slack's, `s3:GetObject` in IAM.
+ * A verb-first spelling exists in GitHub's legacy OAuth scopes and beside
+ * subject-first entries in the same list, so it is not a convention.
  */
-export type Capability = 'read' | 'write' | 'session' | 'terminal' | 'automation' | 'diagnostics';
+export type Verb = 'read' | 'write';
 
 /**
- * A capability, or one scoped to a URI scheme.
+ * One thing a role may do, as `<subject>:<verb>`.
  *
- * `write` is a file write: it is what a role must have for a client to save the
- * file it has open, which is the behaviour `host/04` restored and this must not
- * take away. `write:computer` is a write to the `computer:` scheme, and holding
- * the plain one does not confer it. A plugin invents a scheme, so a role names
- * it explicitly; there is no list of them to enumerate and no wildcard.
+ * The subject is one of the host's own five - `file`, `session`, `automation`,
+ * `terminal`, `diagnostics` - or a plugin's URI scheme, which is what a
+ * scheme-scoped grant was always for. `*` stands in either position: `*:read`
+ * is every subject's read, `session:*` is every verb on sessions, and `*:*` is
+ * everything.
+ *
+ * There is no bare token. `file:read` is what `read` used to be, and holding
+ * `file:write` confers nothing on a plugin's scheme - a role reaches a scheme
+ * by naming it or by naming a wildcard that names it - decision
+ * `a-grant-is-a-subject-and-a-verb`.
  */
-export type Grant = Capability | `${'read' | 'write'}:${string}`;
+export type Grant = `${string}:${Verb | '*'}`;
 
 /** Somebody the host has checked, for as long as their connection lasts. */
 export interface Principal {
@@ -56,6 +61,16 @@ export interface Principal {
    * hand in a test or by an embedder without a file answers.
    */
   standing?(): boolean;
+  /**
+   * Whether this person's connection token is their authorization as well.
+   *
+   * The door admits and says nobody; `authenticate` is what authorizes a
+   * person - decision `the-door-is-a-door`. A record that sets `trustToken`,
+   * or a host whose default is that, makes the token enough on its own, which
+   * is what a client that cannot complete a sign-in needs. Absent is the
+   * default and means no.
+   */
+  trusted?: boolean;
 }
 
 /**
@@ -71,6 +86,18 @@ export interface UserRecord {
   roles: string[];
   /** `sha256:<hex>`, so the algorithm is on the record and a second can be added. */
   token: string;
+  /**
+   * The authorization server this person signs in through, when it is not the
+   * host's own.
+   *
+   * The same names the configuration takes: `github`, or an OpenID Connect
+   * issuer URL. Absent, the host's default is used; a host with no default and
+   * a record with no issuer is reached by a minted secret alone. The record's
+   * own is what lets two people on one host sign in through two providers.
+   */
+  issuer?: string;
+  /** Whether a connection token of theirs authorizes them, over the host's default. */
+  trustToken?: boolean;
 }
 
 /**
@@ -124,8 +151,14 @@ export interface Users {
   readonly resource: Record<string, unknown>;
   /** The person that token belongs to, or nothing when it belongs to nobody. */
   verify(token: string): Promise<Principal | undefined>;
-  /** Everybody, without their credentials. */
-  list(): Promise<Omit<UserRecord, 'token'>[]>;
+  /**
+   * Everybody, without their credentials, and what their roles resolve to.
+   *
+   * The resolved grants are here because only the directory knows both halves -
+   * the file's own roles and the built-ins - so a caller that wants to say what
+   * a person may do would otherwise have to repeat the resolution.
+   */
+  list(): Promise<(Omit<UserRecord, 'token'> & { grants: Grant[]; trusted: boolean })[]>;
   /** Add a person, or set the roles of one who is already there. */
   add(id: string, roles: string[]): Promise<void>;
   /** Remove a person. `true` when one was there. */

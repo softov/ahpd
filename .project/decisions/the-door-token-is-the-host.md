@@ -1,6 +1,7 @@
 ---
 title: The door token is the host, and a person's own token is that person
-status: accepted
+status: superseded
+superseded-by: decisions/the-door-is-a-door.md
 date: 2026-09-23
 supersedes: decisions/a-connection-token-may-carry-a-person.md
 refs:

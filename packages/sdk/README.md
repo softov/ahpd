@@ -121,6 +121,26 @@ See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) for 
 
 All types are exported. Nothing under `types/` imports a runtime value, so you can read the contract without loading the implementation.
 
+## Layout
+
+| | |
+| --- | --- |
+| [src/types/](src/types/)                 | Every shape, importing no runtime value. The contract. |
+| [src/rpc.ts](src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
+| [src/listen.ts](src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
+| [src/host.ts](src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
+| [src/resources.ts](src/resources.ts)     | The `resources` port: files, reads and writes. |
+| [src/terminals.ts](src/terminals.ts)     | The `terminals` port: a shell over pipes. |
+| [src/changes.ts](src/changes.ts)         | The `changes` port: a changeset out of git. |
+| [src/git.ts](src/git.ts)                 | The `directories` port: which branch a directory is on. |
+| [src/automations.ts](src/automations.ts) | The `automations` port, without a clock. |
+| [src/scheduled.ts](src/scheduled.ts)     | The same, with one. |
+| [src/sessiontools.ts](src/sessiontools.ts) | The tools a session's agent is given. |
+| [src/users.ts](src/users.ts)             | The user directory, the roles and the grants. |
+| [src/catalog.ts](src/catalog.ts)         | How a session is named, and what its status bits are worth. |
+| [src/paging.ts](src/paging.ts)           | A long list of turns, served a page at a time. |
+| [src/index.ts](src/index.ts)             | The library entry point. |
+
 ## Documentation
 
 | | |

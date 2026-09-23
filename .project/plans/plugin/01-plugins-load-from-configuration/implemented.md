@@ -58,5 +58,4 @@ The contract is the option object the daemon already builds, named back, so a pl
 
 ## Left for later
 
-- Customizations, MCP servers, hooks-as-data, a plugin configuration key, host methods, `needs` and `provides`, an installer, hot reload, ports through `Start` and the root configuration schema all wait; see [deferred.md](deferred.md).
-- Events are the next plan, [02 - Plugins subscribe to the host's own events](../02-plugins-subscribe-to-host-events/plan.md), which this one does not touch.
+- Customizations and MCP servers, a required-config gate, reading the port beneath, a plugin test runtime, `needs` and `provides` ordering, installer verbs, hot reload and the root configuration schema all wait; see [deferred.md](deferred.md).

@@ -42,6 +42,10 @@ anything has been let go of.
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
+| `--users <file>` | The user directory. See [USERS.md](USERS.md) |
+| `--resource <url>` | The https identifier this host advertises for its own sign-in. Default: derived from `--host` and `--port` |
+| `--issuer <github\|url>` | An authorization server whose tokens are also accepted. See [USERS.md](USERS.md) |
+| `--trust-token` | A person's connection token authorizes them as well as admits them. Off by default |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits and a session's settings go |
@@ -175,14 +179,21 @@ Every flag can be a key instead, spelled without the dashes:
 ```
 
 `users` turns on the directory described in [USERS.md](USERS.md): a person's own
-token then opens a socket and arrives as them, so a client that can only carry a
-URL needs no sign-in. `resource` is the https identifier this host advertises
-for its own sign-in, which a client names in `authenticate`; leave it out and
-the daemon derives one from `host` and `port`. `issuer` accepts `github` or an
-https OpenID Connect issuer, and the host then also accepts tokens that issuer
-mints, advertising it in `authorization_servers` so a client can resolve a
-provider for it; the roles still come from the user file, matched by the
-`subject` the issuer answers with.
+token then opens a socket and names nobody, so they sign in with `authenticate`
+before a gated command is served. `resource` is the https identifier this host
+advertises for its own sign-in, which a client names in `authenticate`; leave it
+out and the daemon derives one from `host` and `port`. `issuer` accepts `github`
+or an OpenID Connect issuer - https anywhere, or plain http on loopback - and
+the host then also accepts tokens that issuer mints, advertising it in
+`authorization_servers` so a client can resolve a provider for it; the roles
+still come from the user file, matched by the `subject` the issuer answers with.
+A record may name its own issuer instead, and the record then advertises every
+provider the file uses, so one host can take GitHub for one person and a company
+identity provider for another. `node scripts/dev-issuer.mjs 9310` is a throwaway
+issuer for trying it.
+`trustToken` (or `--trust-token`) trusts every person's connection token as
+their authorization; off by default, so the door admits and `authenticate`
+authorizes, and a record's own `trustToken` overrides it.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
@@ -219,8 +230,10 @@ ahpc --host ws://192.168.1.10:9187 --token "$SECRET"
 Only stdout says where the token came from, never what it is.
 
 This is the *connection* token, which is about who may reach the host at all.
-The token a client pushes with `authenticate` is a different thing and is
-covered in [AHP.md](AHP.md#authentication).
+With a user directory a person's own token reaches it too, and the deployment's
+token is the host itself; [USERS.md](USERS.md) is the two layers. The token a
+client pushes with `authenticate` is a different thing again and is covered in
+[AHP.md](AHP.md#authentication).
 
 ## Clients
 

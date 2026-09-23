@@ -87,13 +87,14 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   /**
    * Who, if anyone, this handshake carries.
    *
-   * The deployment's own token admits the socket and names nobody, which is
-   * what it has always done. Anything else is put to `identify`, which a
-   * daemon wires to its user directory: a person's own secret is then answered
-   * at the door, and the principal reaches the connection before its first
-   * frame rather than through `authenticate`. A host with no directory passes
-   * no `identify`, so nothing changes for it. An unguarded host admits any
-   * socket and still names the person when the token it was given is theirs.
+   * The deployment's own token admits the socket and is the host, which is
+   * what it has always done and the one thing that does not change. Anything
+   * else is put to `identify`, which a daemon wires to its user directory: the
+   * answer says whether the token opens the door at all, and whether it also
+   * says who they are. A person's own token opens it and says nobody unless
+   * their record trusts it - decision `the-door-is-a-door` - so the socket is
+   * admitted and `authenticate` is what authorizes them. A host with no
+   * directory passes no `identify`, so nothing changes for it.
    */
   const identityOf = async (
     url: string | undefined,
@@ -101,10 +102,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   ): Promise<{ admitted: true; principal?: Principal; root?: boolean } | { admitted: false }> => {
     const held = presented(url, authorization);
     if (token === undefined) {
-      const principal = held === undefined || held === '' || options.identify === undefined
+      const arrival = held === undefined || held === '' || options.identify === undefined
         ? undefined
         : await options.identify(held);
-      return principal === undefined ? { admitted: true } : { admitted: true, principal };
+      return arrival?.principal === undefined ? { admitted: true } : { admitted: true, principal: arrival.principal };
     }
     // The deployment's own token. It is the host's key, so a socket on it is
     // the host when the caller says so, and is only admitted otherwise.
@@ -112,8 +113,12 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       return options.root === true ? { admitted: true, root: true } : { admitted: true };
     }
     if (held !== undefined && held !== '' && options.identify !== undefined) {
-      const principal = await options.identify(held);
-      if (principal !== undefined) return { admitted: true, principal };
+      const arrival = await options.identify(held);
+      if (arrival !== undefined) {
+        return arrival.principal === undefined
+          ? { admitted: true }
+          : { admitted: true, principal: arrival.principal };
+      }
     }
     return { admitted: false };
   };

@@ -128,7 +128,7 @@ it('refuses nothing at all with no user directory', async () => {
 });
 
 it('asks a connection to sign in before it may do anything, and serves the way in', async () => {
-  const client = host({ users: directory({ m: ['read'] }) }).accept(peer());
+  const client = host({ users: directory({ m: ['file:read'] }) }).accept(peer());
   await hello(client);
 
   const refused = await call(client, 'listSessions', { channel: ROOT });
@@ -146,7 +146,7 @@ it('asks a connection to sign in before it may do anything, and serves the way i
 });
 
 it('serves a member what it has, and refuses what it has not with nothing to negotiate', async () => {
-  const client = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }) }).accept(peer());
+  const client = host({ users: directory({ m: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) }).accept(peer());
   await hello(client);
   await signIn(client, 'm');
 
@@ -166,8 +166,8 @@ it('serves a connection that arrived as somebody, with no authenticate', async (
   // connection before the first frame, so the first command is served as them
   // and no `authenticate` is needed - decision
   // `a-connection-token-may-carry-a-person`.
-  const made = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }) });
-  const granted: Grant[] = ['read', 'write', 'session', 'terminal'];
+  const made = host({ users: directory({ m: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
+  const granted: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'];
   const client = made.accept(peer(), { id: 'm', roles: ['r'], can: (one: Grant) => granted.includes(one) });
   await hello(client);
   expect(await call(client, 'listSessions', {})).toMatchObject({ result: {} });
@@ -180,7 +180,7 @@ it('serves a connection that arrived as somebody, with no authenticate', async (
 });
 
 it('serves a read-only role reads and refuses its writes', async () => {
-  const client = host({ users: directory({ v: ['read'] }) }).accept(peer());
+  const client = host({ users: directory({ v: ['file:read'] }) }).accept(peer());
   await hello(client);
   await signIn(client, 'v');
 
@@ -194,16 +194,16 @@ it('serves a read-only role reads and refuses its writes', async () => {
 it('scopes a capability to the URI scheme, so plain write is not a plugin\'s scheme', async () => {
   const provider: ResourceProvider = { read: async () => ({ data: 'machine', encoding: 'utf-8' }) };
 
-  const plain = host({ users: directory({ p: ['read', 'write'] }), resourceProviders: { computer: provider } }).accept(peer());
+  const plain = host({ users: directory({ p: ['file:read', 'file:write'] }), resourceProviders: { computer: provider } }).accept(peer());
   await hello(plain);
   await signIn(plain, 'p');
   expect(await call(plain, 'resourceRead', { channel: ROOT, uri: uriOf(file) })).toMatchObject({ result: { data: 'on disk' } });
   const refused = await call(plain, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' });
   expect(refused).toMatchObject({ code: -32009 });
-  expect((refused as { message: string }).message).toContain('read:computer');
+  expect((refused as { message: string }).message).toContain('computer:read');
 
   // Named, and it is then served there and not on the file it never named.
-  const named = host({ users: directory({ q: ['read:computer'] }), resourceProviders: { computer: provider } }).accept(peer());
+  const named = host({ users: directory({ q: ['computer:read'] }), resourceProviders: { computer: provider } }).accept(peer());
   await hello(named);
   await signIn(named, 'q');
   expect(await call(named, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' }))
@@ -219,12 +219,12 @@ it('lets a socket on the deployment token do everything, and nothing demotes it'
    * `the-door-token-is-the-host`.
    */
   const provider: ResourceProvider = { read: async () => ({ data: 'machine', encoding: 'utf-8' }) };
-  const made = host({ users: directory({ m: ['read'] }), resourceProviders: { computer: provider } });
+  const made = host({ users: directory({ m: ['file:read'] }), resourceProviders: { computer: provider } });
   const client = made.accept(peer(), undefined, true);
   await hello(client);
 
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
-  // `read:computer` is a scheme no role here names, and it is served anyway.
+  // `computer:read` is a subject no role here names, and it is served anyway.
   expect(await call(client, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' }))
     .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
 
@@ -244,7 +244,11 @@ it('reads the roles again on every command, so removal and a role change land at
    * on the next command rather than the next connection - decision
    * `a-role-is-read-on-every-command`.
    */
-  const people = fileUsers({ path: join(root, 'users.json') });
+  const usersPath = join(root, 'users.json');
+  // A role of this deployment's own, so the change below is from a role that
+  // lists sessions to one that only reads files.
+  writeFileSync(usersPath, JSON.stringify({ roles: { files: ['file:read'] }, users: [] }));
+  const people = fileUsers({ path: usersPath });
   await people.add('ana', ['member']);
   const secret = await people.mint('ana');
 
@@ -254,9 +258,8 @@ it('reads the roles again on every command, so removal and a role change land at
   await signIn(client, secret);
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
 
-  // A role change is in force on the next command, with no reconnection: a
-  // role nothing defines contributes nothing.
-  await people.add('ana', ['ghost']);
+  // A role change is in force on the next command, with no reconnection.
+  await people.add('ana', ['files']);
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ code: -32009 });
 
   // And removal is "sign in again" rather than "your role does not cover that".
@@ -265,7 +268,7 @@ it('reads the roles again on every command, so removal and a role change land at
 });
 
 it('takes the capability away the moment the credential is given back', async () => {
-  const client = host({ users: directory({ m: ['session'] }) }).accept(peer());
+  const client = host({ users: directory({ m: ['session:read'] }) }).accept(peer());
   await hello(client);
   await signIn(client, 'm');
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
@@ -286,7 +289,7 @@ it('takes the capability away the moment the credential is given back', async ()
 
 it('refuses a dispatch from a connection that never signed in, and root state still names the terminal', async () => {
   const owner = watching();
-  const made = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() });
+  const made = host({ users: directory({ m: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }), terminals: shellTerminals() });
   const client = made.accept(owner);
   await hello(client);
   await signIn(client, 'm');
@@ -324,7 +327,7 @@ it('refuses a dispatch from a connection that never signed in, and root state st
 
 it('refuses a dispatch into a channel the role does not cover', async () => {
   const seen = watching();
-  const made = host({ users: directory({ r: ['read', 'session'] }), terminals: shellTerminals() });
+  const made = host({ users: directory({ r: ['file:read', 'session:read'] }), terminals: shellTerminals() });
   const client = made.accept(seen);
   await hello(client);
   await signIn(client, 'r');
@@ -337,14 +340,14 @@ it('refuses a dispatch into a channel the role does not cover', async () => {
 });
 
 it('classifies a dispatch by its channel', () => {
-  expect(GATE.dispatchNeeds('ahp-terminal:/x')).toBe('terminal');
-  expect(GATE.dispatchNeeds('ahp-session:/x')).toBe('session');
-  expect(GATE.dispatchNeeds('ahp-chat:/x')).toBe('session');
-  expect(GATE.dispatchNeeds('ahp-session:/x/marks')).toBe('session');
-  expect(GATE.dispatchNeeds('ahp-automations://')).toBe('automation');
-  expect(GATE.dispatchNeeds(ROOT)).toBe('write');
+  expect(GATE.dispatchNeeds('ahp-terminal:/x')).toBe('terminal:write');
+  expect(GATE.dispatchNeeds('ahp-session:/x')).toBe('session:write');
+  expect(GATE.dispatchNeeds('ahp-chat:/x')).toBe('session:write');
+  expect(GATE.dispatchNeeds('ahp-session:/x/marks')).toBe('session:write');
+  expect(GATE.dispatchNeeds('ahp-automations://')).toBe('automation:write');
+  expect(GATE.dispatchNeeds(ROOT)).toBe('file:write');
   // A channel a later plan adds: the conservative answer, not nothing.
-  expect(GATE.dispatchNeeds('ahp-resource-watch:/x')).toBe('read');
+  expect(GATE.dispatchNeeds('ahp-resource-watch:/x')).toBe('file:read');
 });
 
 it('dispatches freely with no user directory', async () => {
@@ -388,7 +391,7 @@ const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['acc
 };
 
 it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {
-  const made = host({ users: directory({ a: ['read', 'write', 'session', 'terminal'], b: ['read', 'write', 'session', 'terminal'] }) });
+  const made = host({ users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'], b: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
   const first = made.accept(peer());
   const other = watching();
   const second = made.accept(other);
@@ -415,7 +418,7 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
 });
 
 it('opens a client terminal with that connection\'s own shell', async () => {
-  const made = host({ users: directory({ a: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() });
+  const made = host({ users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }), terminals: shellTerminals() });
   const client = made.accept(peer());
   await hello(client); await signIn(client, 'a');
   await configChanged(client, { defaultShell: '/bin/sh' });
@@ -431,7 +434,7 @@ it('opens a client terminal with that connection\'s own shell', async () => {
 });
 
 it('lets a role that may not open a terminal set a shell that reaches nothing', async () => {
-  const made = host({ users: directory({ w: ['read', 'write', 'session'] }), terminals: shellTerminals() });
+  const made = host({ users: directory({ w: ['file:read', 'file:write', 'session:read', 'session:write'] }), terminals: shellTerminals() });
   const seen = watching();
   const client = made.accept(seen);
   await hello(client); await signIn(client, 'w');

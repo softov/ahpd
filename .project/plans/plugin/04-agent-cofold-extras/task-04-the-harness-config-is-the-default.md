@@ -7,7 +7,6 @@ refs:
   - code://packages/agent-cofold/src/config.ts - `harnessConfig`, the file it reads and what it keeps
   - code://packages/agent-cofold/src/agent.ts - `modelOf` and `resourceOf`, which consult it
   - code://packages/agent-cofold/src/session.ts - the instructions fallback
-  - file:///github/cofold/packages/config/src/index.ts - `resolveConfig`, the harness's own layered reader
   - file:///github/cofold/packages/papo/src/config.ts - `userConfigPath`, `providersOf` and `splitModel`, the wiring this mirrors
   - file:///github/cofold/packages/model-openai-compat/src/index.ts - the adapter the provider builds
 ---
@@ -46,4 +45,3 @@ Done 2026-09-20.
 `config.ts` holds `harnessConfig`, `harnessConfigPath` and `splitModel`; `agent.ts` reads the file once per backend and uses it for `modelOf`, `resourceOf`, `defaults` and `probe`; `session.ts` falls back to its instructions and passes it to the model factory; `index.ts` exports it; `docs/PLUGINS.md` gained a "The harness configuration is the default" section with the precedence.
 Verified: the seven facio test files 51 passed, `pnpm typecheck` green.
 By hand, through the daemon on the harness configuration alone: provider `facio` was registered, a session ran a turn that streamed `harness config works` and completed, the endpoint received `Bearer harness-key` for `test-model`, and after a restart the session was listed and its transcript read back - so the config path is exercised from `config.json` to a served conversation and not only through `modelOf`.
-Departure from the plan: `@facio/config`'s layered `resolveConfig` is not used; the file is read directly, so the project file, `$FACIO_CONFIG` and `--config` layers are not consulted. That is enough for the case that prompted it and avoids a fourth linked facio package plus a store-relocating install; adopting the layered reader is a later task if the extra layers matter.

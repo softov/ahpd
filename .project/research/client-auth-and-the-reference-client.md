@@ -35,7 +35,9 @@ Until then, the issuers that work with stock clients are the ones a provider is 
 Add Remote Agent Host takes a host, a `host:port`, or a WebSocket URL, and keeps a `?tkn=` query string as the connection's `connectionToken`; the node transports append the same parameter.
 AHP does not define the transport, so this is the client's own door, and it is the same convention `ahpd`'s `listen.ts` reads.
 
-That is why a per-user connection token is enough for this client: a person pastes what `ahpd user token <id> --url` printed, and arrives as themselves with no sign-in flow at all - decision `a-connection-token-may-carry-a-person`.
+That is why a per-user connection token reaches this client at all: a person pastes what `ahpd user token <id> --url` printed, and the socket is admitted.
+The finding was written when that token also arrived as its owner - decision `a-connection-token-may-carry-a-person`, since superseded.
+Under decision `the-door-is-a-door` the door says nobody, so the same paste needs the record's `trustToken` for the window to be that person without a sign-in flow.
 
 ## The host-level login has no home in the protocol
 
@@ -44,4 +46,4 @@ A host-wide login therefore has nowhere correct to sit: advertising it on every 
 Putting it in `RootState._meta` would be honest ("implementation-defined metadata about the agent host itself") and invisible, since no client acts on it for sign-in.
 
 The fix that does not invent anything is a host-level protected resource in AHP, raised upstream rather than worked around here.
-What `ahpd` can do meanwhile is tell the truth in the record and give a client a way in that does not depend on the field.
+What `ahpd` can do meanwhile is tell the truth in the record and give a client a way in that does not depend on the field: an issuer when the client has a provider for it, and `trustToken` on the record when it has none.

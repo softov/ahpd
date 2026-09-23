@@ -1,18 +1,19 @@
 import { afterEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { listen } from '../packages/sdk/src/listen.js';
-import type { Connected, Listener } from '../packages/sdk/src/types/listen.js';
+import type { Arrival, Connected, Listener } from '../packages/sdk/src/types/listen.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
 import type { Principal } from '../packages/sdk/src/types/users.js';
 
 /*
  * The door, and who it lets in.
  *
- * The deployment's own token admits the socket and names nobody. A person's
- * own token admits it and arrives as their principal before the first frame,
- * which is the whole reason a client that can only carry a URL works. Worth a
- * real socket rather than a unit test of the resolution: what is being
- * checked is what the handshake decided.
+ * The deployment's own token admits the socket and is the host. A person's own
+ * token admits it and says nobody unless their record trusts it, which the
+ * daemon decides through `identify` - so what is under test is that the door
+ * takes the answer as given: a principal, or an empty object for a token that
+ * opens the socket and nothing more. Worth a real socket rather than a unit
+ * test of the resolution: what is being checked is what the handshake decided.
  */
 
 let running: Listener | undefined;
@@ -24,8 +25,12 @@ afterEach(async () => {
 
 const ROOT = 'sesame';
 
-const ana = (token: string): Principal | undefined =>
-  (token === 'ana-secret' ? { id: 'ana', roles: ['admin'], can: () => true } : undefined);
+const ana = (token: string): Arrival | undefined =>
+  (token === 'ana-secret' ? { principal: { id: 'ana', roles: ['admin'], can: () => true } } : undefined);
+
+/** A directory that knows the token and does not trust it: door only. */
+const doorOnly = (token: string): Arrival | undefined =>
+  (token === 'ana-secret' ? {} : undefined);
 
 /** What each connection arrived as, in the order they were accepted. */
 const arrived: (Principal | undefined)[] = [];
@@ -54,12 +59,25 @@ it('admits the deployment token and names nobody', async () => {
   expect(arrived).toEqual([undefined]);
 });
 
-it('admits a person\'s own token and arrives as them', async () => {
+it('admits a person\'s own token and arrives as them when the record trusts it', async () => {
   arrived.length = 0;
   running = await listen({ port: 0, token: ROOT, identify: ana }, watching);
   const url = `ws://127.0.0.1:${running.port}`;
   expect(await knock(`${url}/?tkn=ana-secret`)).toBe('open');
   expect(arrived[0]?.id).toBe('ana');
+});
+
+it('admits a door-only token and names nobody, which is the default', async () => {
+  arrived.length = 0;
+  running = await listen({ port: 0, token: ROOT, identify: doorOnly }, watching);
+  const url = `ws://127.0.0.1:${running.port}`;
+  // The socket opens and the connection is nobody, so the first gated command
+  // answers -32007 and the client signs in - decision `the-door-is-a-door`.
+  expect(await knock(`${url}/?tkn=ana-secret`)).toBe('open');
+  expect(arrived).toEqual([undefined]);
+  // A token the directory does not know is still refused, which is the
+  // difference between "door only" and "not a door at all".
+  expect(await knock(`${url}/?tkn=nope`)).toContain('401');
 });
 
 it('makes the deployment token the host itself when it is told to', async () => {

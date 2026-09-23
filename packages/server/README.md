@@ -128,6 +128,15 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 If you want a host of a different shape, build it from `@ahpd/sdk` and skip this package. To serve a different agent, write an `Agent` and add it to `agents`. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md).
 
+## Layout
+
+| | |
+| --- | --- |
+| [src/main.ts](src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
+| [src/daemon.ts](src/daemon.ts) | Running detached, and finding the one that is. |
+| [src/config.ts](src/config.ts) | The config file, and where this tool keeps its things. |
+| [src/update.ts](src/update.ts) | Asking npm whether a newer version exists, in the background. |
+
 ## Documentation
 
 | | |

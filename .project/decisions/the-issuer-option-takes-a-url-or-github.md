@@ -1,6 +1,7 @@
 ---
 title: The issuer option names an OpenID Connect issuer by URL, with GitHub as a preset
-status: accepted
+status: superseded
+superseded-by: decisions/an-issuer-may-be-plain-http-on-loopback.md
 date: 2026-09-23
 refs:
   - "[file:///github/externals/vscode/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostAuth.ts#L362-L395](file:///github/externals/vscode/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostAuth.ts#L362-L395) - a client resolves a provider by matching the issuer identifier"

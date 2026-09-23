@@ -3,24 +3,29 @@
 [![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
 [![@ahpd/server](https://img.shields.io/npm/v/%40ahpd%2Fserver?label=%40ahpd%2Fserver)](https://www.npmjs.com/package/@ahpd/server)
 [![@ahpd/sdk](https://img.shields.io/npm/v/%40ahpd%2Fsdk?label=%40ahpd%2Fsdk)](https://www.npmjs.com/package/@ahpd/sdk)
-[![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 ![runs on Node, Bun, Deno](https://img.shields.io/badge/runs%20on-Node%20%7C%20Bun%20%7C%20Deno-495057)
 
-An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself. It ships with a Claude backend, and two more backends - cofold and ACP - are published packages of their own.
+[![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
+[![@ahpd/agent-cofold](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold?label=%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
+[![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
+
+An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself.
+
+For now it ships with a Claude backend; cofold (see more below) and ACP are separate packages, each loaded as a plugin ([Load a plugin](#load-a-plugin)).
 
 `ahpd` can be used in two ways:
 
-- **`@ahpd/server`**: a process that serves the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions behind it. It installs the `ahpd` command.
-- **`@ahpd/sdk`**: the library it is built from, `createHost()` and the ports around it.
+- **[@ahpd/server](https://www.npmjs.com/package/@ahpd/server)**: a process that serves the [@microsoft/agent-host-protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions and plugins behind it. It installs the `ahpd` command.
+- **[@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk)**: the library it is built from, `createHost()` and the ports around it.
 
 ## Why
 
 AHP's model is a **sessions server**: several clients watch and drive the same agent sessions, and none of them owns the process running the agent. That is what makes a session watchable from somewhere other than where it runs.
 
-Today the only host that speaks it is an editor - so a session is only watchable while somebody's VS Code is open. This is the missing piece: the same protocol, the same clients, no editor.
+Today the only host that speaks it is `code agent` - the VS Code implementation - so a session is only watchable while somebody's VS Code is open or someone runs it locally. This is the missing piece: the same protocol, the same clients, no editor.
 
 The Claude Agent SDK is the opposite shape - it spawns a CLI that your process alone owns. `ahpd` bridges the two.
 
@@ -31,7 +36,7 @@ flowchart LR
     OTHER["Other AHP client"]
 
     HOST["ahpd<br/>AHP host"]
-    CLAUDE["Claude Code"]
+    CLAUDE["agents (claude, acp, ...)"]
 
     AHPC -->|AHP / WebSocket| HOST
     VSC -->|AHP / WebSocket| HOST
@@ -49,11 +54,11 @@ The clients on the left are interchangeable and none of them owns the session. `
 
 ## What you can do with it
 
-- Run agent sessions on one machine and drive them from another, from more than one client at a time, with the turn surviving the client that started it.
-- Point **VS Code** at it (`chat.remoteAgentHosts`) or any other AHP client; [`ahpc`](https://github.com/softov/ahpc) is the terminal one used here.
-- Read and write files, open a shell, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
-- Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
-- Serve a backend that is not Claude, on the same host, with none of the protocol re-implemented.
+- `Run agent sessions` on one machine and drive them from another, from more than one client at a time, with the turn surviving the client that started it.
+- Point **VS Code** at it (`chat.remoteAgentHosts`) or any other AHP client; [`ahpc`](https://github.com/softov/ahpc) is the terminal one developed alongside it.
+- `Read and write files`, open a `shell`, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
+- `Automations`: Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
+- `Plugins`: Serve another Agents implementation or feature, on the same host, with none of the protocol re-implemented: a backend is a plugin, loaded with `--plugin` or named in the configuration.
 
 ## Install and run the daemon
 
@@ -279,64 +284,32 @@ fail silently rather than loudly.
 
 ## Layout
 
-Three packages in one repository, on pnpm: the protocol library, one backend, and the daemon that serves them. The root manifest is private and holds the workspace together.
+Six packages in one repository, on pnpm: the protocol library, [`@ahpd/server`](packages/server/) which serves it, three harnesses, and `@ahpd/computer`. The root manifest is private and holds the workspace together.
 
 ### `@ahpd/sdk` - the protocol, and the parts to build a host
 
-The library. It implements the protocol and everything a host needs except the agent, which is passed in. [`@ahpd/sdk` on npm](https://www.npmjs.com/package/@ahpd/sdk).
+The library. It implements the protocol and everything a host needs except the agent, which is passed in. [Its README](packages/sdk/README.md) has the files and the options; it is [`@ahpd/sdk` on npm](https://www.npmjs.com/package/@ahpd/sdk).
+
+### Agents and harnesses
+
+One package per harness, each an implementation of the same `Agent` seam and
+each loaded as a plugin rather than built into the daemon. A new harness is a
+package and a `--plugin` line, not a change to this file.
 
 | | |
 | --- | --- |
-| [packages/sdk/src/types/](packages/sdk/src/types/)                 | Every shape, importing no runtime value. The contract. |
-| [packages/sdk/src/rpc.ts](packages/sdk/src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
-| [packages/sdk/src/listen.ts](packages/sdk/src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
-| [packages/sdk/src/host.ts](packages/sdk/src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
-| [packages/sdk/src/resources.ts](packages/sdk/src/resources.ts)     | The `resources` port: files, reads and writes. |
-| [packages/sdk/src/terminals.ts](packages/sdk/src/terminals.ts)     | The `terminals` port: a shell over pipes. |
-| [packages/sdk/src/changes.ts](packages/sdk/src/changes.ts)         | The `changes` port: a changeset out of git. |
-| [packages/sdk/src/git.ts](packages/sdk/src/git.ts)                 | The `directories` port: which branch a directory is on. |
-| [packages/sdk/src/automations.ts](packages/sdk/src/automations.ts) | The `automations` port, without a clock. |
-| [packages/sdk/src/scheduled.ts](packages/sdk/src/scheduled.ts)     | The same, with one. |
-| [packages/sdk/src/catalog.ts](packages/sdk/src/catalog.ts)         | How a session is named, and what its status bits are worth. |
-| [packages/sdk/src/paging.ts](packages/sdk/src/paging.ts)           | A long list of turns, served a page at a time. |
-| [packages/sdk/src/index.ts](packages/sdk/src/index.ts)             | The library entry point. |
-
-### `@ahpd/agent-claude` - one backend
-
-Claude Code, behind the one seam a host knows: `Agent`. [`@ahpd/agent-claude` on npm](https://www.npmjs.com/package/@ahpd/agent-claude).
-
-| | |
-| --- | --- |
-| [packages/agent-claude/src/claude.ts](packages/agent-claude/src/claude.ts)         | The `Agent`: what this harness is and how to start one. |
-| [packages/agent-claude/src/catalog.ts](packages/agent-claude/src/catalog.ts)       | Claude's own sessions, as rows a host can list. |
-| [packages/agent-claude/src/session.ts](packages/agent-claude/src/session.ts)       | One live Claude session, reduced into its channels' state. |
-| [packages/agent-claude/src/transcript.ts](packages/agent-claude/src/transcript.ts) | A past Claude session read as turns. |
-| [packages/agent-claude/src/probe.ts](packages/agent-claude/src/probe.ts)           | One CLI at startup, to learn what Claude offers. |
-
-### `@ahpd/agent-cofold` and `@ahpd/agent-acp` - the other two backends
-
-Two more implementations of the same `Agent` seam, each in its own package and
-each loaded as a plugin rather than built into the daemon.
-
-| | |
-| --- | --- |
-| [`@ahpd/agent-cofold`](packages/agent-cofold/) | The cofold runtime: every model its endpoint serves is a model inside one provider. |
+| [`@ahpd/agent-claude`](packages/agent-claude/) | Claude Code, through the Claude Agent SDK. |
+| [`@ahpd/agent-cofold`](packages/agent-cofold/) | An OpenAI-compatible endpoint - a `baseUrl` and a key - through the cofold runtime: every model it serves is a model inside one provider. |
 | [`@ahpd/agent-acp`](packages/agent-acp/) | Any [Agent Client Protocol](https://agentclientprotocol.com/) server - `copilot --acp`, `codex-acp`, `gemini --experimental-acp` - as one provider per configured command. |
 
-Both are documented in [`docs/PLUGINS.md`](docs/PLUGINS.md), including their
-options and the `--plugin` line that loads each.
+What each one is and the options it takes live with the package; the `--plugin`
+line that loads one, and how to write another, are in
+[`docs/PLUGINS.md`](docs/PLUGINS.md).
 
-### `ahpd` - the daemon
-
-The server: argv, the configuration file, and the record it keeps of itself. [`@ahpd/server` on npm](https://www.npmjs.com/package/@ahpd/server).
-
-| | |
-| --- | --- |
-| [packages/server/src/main.ts](packages/server/src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
-| [packages/server/src/daemon.ts](packages/server/src/daemon.ts) | Running detached, and finding the one that is. |
-| [packages/server/src/config.ts](packages/server/src/config.ts) | The config file, and where this tool keeps its things. |
-
-Everything Claude is reached only through `Agent`. It used to be duplicated: `ahpc` had a `--claude` mode that reached the Agent SDK in-process, with its own translation of it. That is gone, and the client now depends on no agent SDK at all - two implementations of one translation meant two answers to every question, and the one nobody is looking at is the one that drifts. This is the only copy.
+Nothing above the seam is reached any other way. It used to be: `ahpc` had a
+`--claude` mode that reached the Agent SDK in-process, with a second translation
+of it, and two translations meant two answers to every question. The client
+depends on no agent SDK at all now.
 
 ## Examples
 
@@ -357,7 +330,7 @@ ahpc --host ws://127.0.0.1:9201
 ## Development
 
 ```bash
-pnpm test        # ~640 tests, no socket and no network
+pnpm test        # 948 tests, no network
 pnpm typecheck
 pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```

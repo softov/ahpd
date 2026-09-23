@@ -33,4 +33,4 @@ export type { Claim, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTer
 export type { Worktree, Worktrees } from './worktrees.js';
 export type { NewPullRequest, PullRequest, PullRequests } from './github.js';
 export type { Automation, AutomationRun, AutomationStore, RunEnding, StartSession } from './automations.js';
-export type { Capability, Grant, Principal, UserFile, UserRecord, Users } from './users.js';
+export type { Grant, Principal, UserFile, UserRecord, Users, Verb } from './users.js';

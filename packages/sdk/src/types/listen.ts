@@ -70,24 +70,36 @@ export interface ListenOptions {
    */
   token?: string;
   /**
-   * Who a token belongs to, when it is not the deployment's own.
+   * What a token presented at the door turned out to be.
    *
-   * Asked only about a token that is not `token`, and only when one was
-   * presented. A daemon wires this to its user directory, so a person's own
-   * secret opens the socket and arrives as their principal before the first
-   * frame. A host with no directory passes none, and the door refuses exactly
-   * what it refused before. The answer may be a promise, since the directory
-   * is a port.
+   * `undefined` is a token this host does not know, and the socket is refused.
+   * An object is a token that opens the door: with a `principal` it is also who
+   * they are, and without one it says nobody. A person's own token answers the
+   * second unless their record trusts it - decision `the-door-is-a-door`.
    */
-  identify?: (token: string) => Promise<Principal | undefined> | Principal | undefined;
+  identify?: (token: string) => Promise<Arrival | undefined> | Arrival | undefined;
   /**
    * Whether the deployment's own token is the host itself.
    *
    * True and a socket admitted on `token` is the host: every capability, and
    * no sign-in. Absent and that token only opens the door, which is what a
-   * host that has no directory behind it wants.
+   * host that has no directory behind it wants. The host's own key is exempt
+   * from having to authorize itself, which is the one thing this does not
+   * change.
    */
   root?: boolean;
   /** Sees every frame, both ways. Nothing is recorded without one. */
   tap?: Tap;
+}
+
+/**
+ * What a presented token turned out to be, as `identify` answers it.
+ *
+ * An empty object is a door token that says nobody: the socket is admitted and
+ * every gated command answers `-32007` until somebody signs in. A `principal`
+ * is a door token that authorizes its holder as well, which is what a person's
+ * own token does only when their record says `trustToken`.
+ */
+export interface Arrival {
+  principal?: Principal;
 }

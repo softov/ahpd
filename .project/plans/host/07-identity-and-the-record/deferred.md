@@ -3,13 +3,9 @@ title: A person reaches the host as themselves, and the host advertises only wha
 date: 2026-09-23
 ---
 
-The transport identity lands first; what waits below needs either a later plan or an answer the reference clients have not given yet.
+Two things this plan found are not this repository's to build, and both are written up in `research/` with the evidence.
 
 | What | Why it waits | Where it goes |
 | --- | --- | --- |
-| The shared connection token becomes a root login | The user, 2026-09-23: it is the host's own key and was always meant to be root, which became a problem the moment a directory locked the operator out. Built as `host/09` | [host/09](../09-the-door-token-is-the-host/plan.md) |
-| Removal refusing the next command rather than the next connection | The page already claimed it and the code did not do it; the gate now asks whether the record is still there before it asks what the role covers. Built as `host/10` | [host/10](../10-revocation-on-the-next-command/plan.md) |
-| The issuer option behind the `Users` port | Scope: this plan made the record true by omitting what it could not support, and the issuer gives the field a real value. Built as `host/08` | [host/08](../08-an-issuer-behind-the-users-port/plan.md) |
-| An issuer's token accepted at the door | A client obtains one only after it has connected, so there is nothing to present at the upgrade. | unplanned |
-| A host-level protected resource in AHP | Discovery is per agent, so this host's own login rides on every agent and makes each one read as required. The correct fix is a protocol field, not a host workaround. | an upstream note to the agent-host-protocol repository |
-| The reference client's dynamic authentication provider path extended to agent protected resources | It exists for MCP servers and would let any conformant issuer work with no extension. It is the reference client's to change, not this repository's. | an upstream note to the reference client |
+| A host-level protected resource in AHP | Discovery is per agent, so this host's own login rides on every agent and makes each one read as required. The correct fix is a protocol field, not a host workaround | an upstream note to the agent-host-protocol repository, sketched in [`research/a-host-level-protected-resource.md`](../../../research/a-host-level-protected-resource.md) |
+| The reference client's dynamic authentication provider path extended to agent protected resources | It exists for MCP servers and would let any conformant issuer work with no extension | an upstream note to the reference client, sketched in [`research/client-auth-and-the-reference-client.md`](../../../research/client-auth-and-the-reference-client.md) |

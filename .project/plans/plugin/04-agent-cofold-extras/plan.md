@@ -91,7 +91,6 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Done so far:** all four tasks, 2026-09-20. Task 01, a host tool's effects; task 02, the fork and the rewind over the cut facio gained; task 03, a client's own tool; task 04, the harness configuration.
 - **Next action:** none; the plan is built and [implemented.md](implemented.md) records it.
 - **Open questions:** none. The cut decision was settled by [facio-fork-and-rewind-needs-a-cut](../../../decisions/facio-fork-and-rewind-needs-a-cut.md) as two store primitives and a loop that keeps reading the session, and the cut is made before the first turn, so the run it drops is never left writing.
-- **Watch out for:** the `@facio/*` dependencies are `link:` to a sibling checkout, so the cut these two tasks depend on lives in `/github/cofold` and is not committed by this repository; see [deferred.md](deferred.md) for what waits on facio publishing.
 
 ## Final verification checklist
 

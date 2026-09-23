@@ -58,9 +58,14 @@ describe('namedIssuer', () => {
   it('is an OpenID Connect issuer when an https URL is named', () => {
     expect(namedIssuer('https://idp.test')).toEqual({ kind: 'oidc', issuer: 'https://idp.test' });
   });
+  it('is one on loopback over plain http too, which is where a local issuer lives', () => {
+    expect(namedIssuer('http://127.0.0.1:9310')).toEqual({ kind: 'oidc', issuer: 'http://127.0.0.1:9310' });
+    expect(namedIssuer('http://localhost:9310')).toEqual({ kind: 'oidc', issuer: 'http://localhost:9310' });
+  });
   it('answers nothing for anything else, so the daemon refuses the start', () => {
     expect(namedIssuer('GitHub')).toBeUndefined();
     expect(namedIssuer('http://idp.test')).toBeUndefined();
+    expect(namedIssuer('http://192.168.1.5:9310')).toBeUndefined();
     expect(namedIssuer('idp.test')).toBeUndefined();
     expect(namedIssuer('https://idp.test/#fragment')).toBeUndefined();
   });

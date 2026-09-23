@@ -3,36 +3,54 @@
 `ahpd` has one secret by default: the connection token. Everybody who holds it
 is the same caller, and the host has no idea who anybody is.
 
-A **user directory** changes that. A person holds a credential of their own, the
-host checks it against a file it owns, and what they may do comes from the roles
-on their record. There are three ways that credential reaches the host, and they
-are distinct: the deployment's token opens a socket and names nobody, a person's
-own token opens one and is who they are, and the protocol's `authenticate`
-command answers a client that speaks it. Nothing here is on unless a file is
-configured: a daemon with no `users` key behaves exactly as it did before this
-existed.
+A **user directory** changes that. There are two layers, and they are separate:
 
-## Three ways in
+- **The door** decides whether a socket may exist. The deployment's own token
+  opens one and is the host. A person's own token opens one and, by default,
+  says nobody.
+- **Authorization** is the protocol's `authenticate`. A person is nobody until
+  they do it, whichever door let them in.
+
+Nothing here is on unless a file is configured: a daemon with no `users` key
+behaves exactly as it did before this existed.
+
+## The door and the authorization
 
 | | The deployment's token | A person's own token | `authenticate` |
 | --- | --- | --- | --- |
 | Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | the same, with the secret `ahpd user token` printed | the command, against the resource the host advertises |
-| What it answers | whether a socket may exist at all | that, and who is on the other end | who is on the other end, for a socket that arrived as nobody |
-| Identity | the host itself when a directory is configured, and nothing when there is none | the person whose record the secret hashes to | the person the directory resolves the token to, whether it minted it or an issuer did |
-| How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next connection is refused |
+| What it answers | whether a socket may exist at all | that, and nothing else | who is on the other end, for a socket that arrived as nobody |
+| Identity | the host itself, when a directory is configured | nobody, unless the record sets `trustToken` | the person the directory or the issuer resolves the token to |
+| How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next command is refused |
 | How many | one, shared | one per person | one per person |
 | Expiry | none | none | `expiresIn`, honoured |
 
 The deployment's token needs no credential. A socket on it is the host: every
 capability, including a scheme no role names, because the key to the door is the
-operator's own. A person who should be limited is given a token of their own
-instead of the shared one, and signing in or out on the operator's connection
-does not change what it may do.
+operator's own. It is the one thing `authenticate` cannot demote or revoke, and
+the one thing never asked to justify itself.
 
-A person's own token is a connection token and a credential at once, which is
-what lets a client that can only carry a URL arrive as somebody with no sign-in
-step at all. `authenticate` is unchanged and remains the protocol's way in, and
-it is the only way in for a credential an issuer mints rather than this file.
+Everything else is a door and nothing more. A person's own token opens the
+socket and the first gated command answers `-32007`, so the client signs in.
+That is the default because a token in a URL can end up in a log and a login
+does not. Two things opt out of it:
+
+```json
+{
+  "trustToken": true,
+  "users": [
+    { "id": "normal", "roles": ["guest"], "token": "sha256:…", "trustToken": true }
+  ]
+}
+```
+
+`trustToken` at the top of the configuration trusts everybody's connection
+token; on a record it decides for that one person and wins over the host. Use it
+for a client that cannot complete a sign-in, such as a phone with only a URL to
+paste. A host that wants the token to be enough everywhere sets it once.
+
+`authenticate` is unchanged and remains the protocol's way in, and it is the
+only way in for a credential an issuer mints rather than this file.
 
 Removing a user **does not close their socket**, but the next command on it is
 refused `-32007`: the directory is read again for every command, so removal and a
@@ -45,9 +63,9 @@ token is the host itself.
 1. **One person, the deployment token only.** No `users` key, no directory.
    This is the default and it is unchanged.
 2. **Several people.** A deployment token for the door, when the port is not
-   loopback, and a token per person. Each person is given
-   `ahpd user token <id> --url` and pastes it where their client asks for a
-   host; a client that speaks `authenticate` may push the same secret instead.
+   loopback, and a token per person. Each person signs in with `authenticate`,
+   against their issuer or with the secret `ahpd user token` minted, and a
+   person whose client cannot do that is given `trustToken` instead.
 3. **No deployment token at all.** `--without-connection-token`, so a person's
    own token is the only secret and who may reach the port is the network's
    business. A token nobody recognises is then simply a socket that is nobody:
@@ -75,7 +93,9 @@ The URL is composed from the configuration's `host` and `port`, or from the
 `--host` and `--port` passed here when the daemon was started with them. It is
 the `?tkn=` form the door already reads, which is what VS Code's Add Remote
 Agent Host prompt takes and what a browser can use, since a browser cannot set
-headers on a WebSocket.
+headers on a WebSocket. It opens the door and says nobody, so the person still
+signs in with `authenticate` unless the record is trusted - the URL is a
+convenience for reaching the socket, not the credential itself.
 
 The secret alone goes to stdout so it can be piped, and the warning that it is
 shown once goes to stderr. Only its hash is stored, and minting again replaces
@@ -161,6 +181,105 @@ file, because the file is the only place that says who may do what.
 }
 ```
 
+### An issuer per person
+
+The `issuer` key is the **default**: a record that names one of its own uses
+that instead. So one host can take a GitHub login for one person and a token
+from a company identity provider for another, without a second daemon:
+
+```json
+{
+  "users": [
+    { "id": "octocat", "roles": ["member"], "token": "", "issuer": "github" },
+    { "id": "ana", "roles": ["member"], "token": "", "issuer": "https://idp.example.com" },
+    { "id": "sam", "roles": ["guest"], "token": "" }
+  ]
+}
+```
+
+`sam` names none, so he signs in through whatever the configuration's `issuer`
+is, or through a minted secret when there is none. A record's `issuer` is the
+same name the configuration takes: `github`, or an issuer URL this host may
+reach. A name that is neither is reported on stderr and never verifies, the way
+a grant that is not `<subject>:<verb>` is.
+
+The advertised record lists every provider any of this answers for, because that
+is the list a client resolves one from:
+
+```json
+{
+  "resource": "https://127.0.0.1:9187/",
+  "authorization_servers": ["https://github.com/login/oauth", "https://idp.example.com"],
+  "scopes_supported": ["read:user", "openid"],
+  "required": true
+}
+```
+
+`scopes_supported` is the union, so a client that asks for all of them asks one
+provider for a scope it does not know. A client picks the provider it has and
+asks for what that one wants; the union is there because the field is flat.
+
+Which provider minted a token is not something the token says, so a token that
+matched no minted secret is offered to the host's default first and then to each
+issuer a record names, in the order the file lists them. The first subject that
+names a record wins. A host with several issuers therefore shows a token to more
+than one of them, which is the cost of the feature rather than an accident.
+
+### The issuer has to be reachable, and what counts as reachable
+
+The host fetches `<issuer>/.well-known/openid-configuration`, reads
+`userinfo_endpoint` from it, and asks that endpoint with
+`Authorization: Bearer <token>`, taking `sub` as the subject. So the issuer must
+publish both, and an identity provider that does not is one this option cannot
+use.
+
+An issuer URL is accepted over **https anywhere**, and over plain **http only on
+loopback** - `127.0.0.1`, `::1` or `localhost`. A local issuer is common and
+nothing leaves the machine there; a remote one over http would put a bearer
+token in clear. A remote issuer with a self-signed certificate needs its CA
+trusted, or `fetch` fails and every token reads as nobody: start the daemon with
+`NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
+
+### Trying it
+
+Three ways, in the order they take to set up:
+
+- **GitHub**, which needs no issuer to run: `"issuer": "github"`, then a person
+  with the id of their GitHub login, and a token from GitHub with `read:user`.
+  A stock VS Code resolves its own GitHub provider for it.
+- **The dev issuer**, which verifies nothing and answers any token as its own
+  subject: `node scripts/dev-issuer.mjs 9310`, then
+  `--issuer http://127.0.0.1:9310`. `Bearer ana` answers `sub: ana`, so a record
+  with id `ana` can sign in with the token `ana`.
+- **A real identity provider** - Keycloak, Authentik, Zitadel, Entra, Auth0 -
+  named by its issuer URL.
+
+Two run at once: the dev issuer is the default, and one record names GitHub
+instead, so a token from either signs in the person whose record says so:
+
+```json
+{
+  "issuer": "http://127.0.0.1:9310",
+  "users": [
+    { "id": "ana", "roles": ["admin"], "token": "" },
+    { "id": "octocat", "roles": ["guest"], "token": "", "issuer": "github" }
+  ]
+}
+```
+
+`ahpd user list` says where each record signs in, so the file and the answer can
+be compared without signing in:
+
+```
+ana (admin) *:* sign-in http://127.0.0.1:9310
+octocat (guest) session:read automation:read sign-in github
+```
+
+An issuer adds a way in and takes nothing away, so configuring one does not
+close the local one. A person is challenged once, at the first command that
+needs a grant, and the deployment's own connection token is the host, so the
+operator is never challenged at all.
+
 Three things worth knowing:
 
 - A secret this host minted is checked first, and the issuer is asked only when
@@ -176,31 +295,53 @@ Three things worth knowing:
 
 ## Roles
 
-Six capabilities: `read`, `write`, `session`, `terminal`, `automation`,
-`diagnostics`.
+A grant is a **subject** and a **verb**: `session:read`, `file:write`,
+`computer:read`. The verb comes last, which is the convention every scope list
+uses - `contents:read` in GitHub's app permissions, `channels:read` in Slack's,
+`s3:GetObject` in IAM.
+
+The subjects are the host's own five and any plugin's URI scheme:
+
+| Subject | Verbs | What they cover |
+| --- | --- | --- |
+| `file` | `read`, `write` | Resources, and a write is anything that changes one: save, delete, move, copy |
+| `session` | `read`, `write` | Read lists sessions, their turns and their config; write creates and disposes them |
+| `automation` | `read`, `write` | Read lists the triggers and the runs; write runs one |
+| `terminal` | `read`, `write` | Read watches a shell's output; write opens one, types into it and closes it |
+| `diagnostics` | `read` | `diagnosticsFetch` |
+| a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
+
+`*` stands in either position: `*:read` is every subject's read, `session:*` is
+every verb on sessions, `*:*` is everything.
 
 | Role | Has |
 | --- | --- |
-| `admin` | all six |
-| `member` | `read`, `write`, `session`, `terminal` |
+| `admin` | `*:*` |
+| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write` |
+| `guest` | `session:read`, `automation:read` |
 
-A role can also be scoped to a URI scheme - `read:computer`, `write:computer` -
-and holding the plain capability does **not** confer the scoped one. That is
-deliberate: a role that may save your files may not, by that alone, start a
-container on your host. A plugin invents a scheme, so a role names it.
+`guest` is the default for `ahpd user add` with no `--role`, and it is the one
+worth looking at twice: it lists the sessions and the automations and can do
+nothing about either - no file, no shell, no session of its own, no automation
+run.
 
-`admin` is the six capabilities and no scheme: there is no wildcard, and nothing
-enumerates the schemes a plugin might register, so even an admin names
-`read:computer` to read one. The refusal tells you exactly what to add - the
-`-32009` message is `<person> may not read:computer here` - so the way to
-discover a scope is to try it once and read the answer.
+A plugin's scheme is never conferred by a plain subject. `file:write` is not
+`computer:write`; a role reaches a scheme by naming it (`computer:write`) or by
+naming a wildcard that covers it (`*:*`). That is deliberate: a role that may
+save your files may not, by that alone, start a container on your host. The
+refusal tells you what to add - the `-32009` message is
+`<person> may not computer:write here` - so the way to discover a subject is to
+try it once and read the answer.
 
 Define your own in the same file; a file role overrides a built-in of the same
 name:
 
 ```json
 {
-  "roles": { "viewer": ["read"] },
+  "roles": {
+    "viewer": ["*:read"],
+    "editor": ["file:read", "file:write", "session:read", "session:write"]
+  },
   "users": [
     { "id": "ana", "roles": ["admin"], "token": "sha256:…" },
     { "id": "sam", "roles": ["viewer"], "token": "sha256:…" }
@@ -208,25 +349,37 @@ name:
 }
 ```
 
-A role a record names and nothing defines contributes nothing and is logged,
-so one bad line does not lock everybody out. A file that is malformed is read
-as nobody - it fails closed - and it is never written over.
+A role name that is neither built in nor defined in the file is refused when the
+person is added, so a typo is a refusal rather than a person who may do nothing.
+A grant that is not a subject and a verb is reported when the file is read and
+dropped. A file that is malformed is read as nobody - it fails closed - and it
+is never written over.
+
+`ahpd user list` prints the roles, the grants they resolved to, whether the door
+already identifies the record or the person still has to sign in, and the issuer
+when their credential comes from one:
+
+```
+normal (guest) session:read automation:read sign-in http://127.0.0.1:9310
+sam (member) file:read file:write session:read session:write terminal:read terminal:write trusted
+```
 
 ## What a client is told
 
 | | |
 | --- | --- |
-| Not signed in, command needs a capability | `-32007` `AuthRequired`, with `data.resources` carrying the record to sign in against |
+| Not signed in, command needs a grant | `-32007` `AuthRequired`, with `data.resources` carrying the record to sign in against |
 | Signed in, role does not cover the command | `-32009` `PermissionDenied`, with **no** `data.request` |
 
 A dispatched action is refused differently, because it has to be. `dispatchAction`
 is a notification and carries no id, so there is nowhere to put an error code:
 what comes back is the ordinary `action` notification with `rejectionReason` on
 it, the same way every other refused action is answered. What it is checked
-against is the **channel**, not the action: a session or a chat needs `session`,
-a terminal needs `terminal`, an automation needs `automation`, `ahp-root://`
-needs `write` because the one thing a client may dispatch there changes a
-setting for everybody, and anything else needs `read`.
+against is the **channel**, not the action, and a dispatch is always a write: a
+session or a chat needs `session:write`, a terminal needs `terminal:write`, an
+automation needs `automation:write`, `ahp-root://` needs `file:write` because the
+one thing a client may dispatch there changes a setting for everybody, and
+anything else needs `file:read`.
 
 That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
@@ -280,10 +433,12 @@ acquires a token only from an authentication provider it can match through
 `authorization_servers`, and it has no field for a pasted secret, so a
 self-issued credential has no route through its sign-in flow: it reports the
 `-32007` as a plain error with nothing to click, which is what a directory used
-to produce. What it does have is a connection token - Add Remote Agent Host
-takes a WebSocket URL - so a person pastes what `ahpd user token <id> --url`
-printed and is themselves from the first frame. No extension and no change in
-the client.
+to produce. It does take a WebSocket URL in Add Remote Agent Host, so the URL
+from `ahpd user token <id> --url` reaches the socket. That URL is a door and not
+a credential now, so the window is connected and still nobody: a deployment that
+reaches VS Code with minted secrets sets `trustToken` on the record, which makes
+that one person's token their authorization, and a deployment with an issuer
+needs neither.
 
 An issuer is what lets a client acquire a credential through its own OAuth flow
 rather than being handed one, and it is configured with `issuer`. With `github`
