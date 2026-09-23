@@ -19,7 +19,7 @@ export interface Connected {
  * directory resolves nobody. It is passed here rather than looked up later
  * because the door is the only place the token is still in hand.
  */
-export type OnConnect = (peer: Peer, principal?: Principal) => Connected;
+export type OnConnect = (peer: Peer, principal?: Principal, root?: boolean) => Connected;
 
 /**
  * Called with every frame, in either direction, as it crosses the socket.
@@ -80,6 +80,14 @@ export interface ListenOptions {
    * is a port.
    */
   identify?: (token: string) => Promise<Principal | undefined> | Principal | undefined;
+  /**
+   * Whether the deployment's own token is the host itself.
+   *
+   * True and a socket admitted on `token` is the host: every capability, and
+   * no sign-in. Absent and that token only opens the door, which is what a
+   * host that has no directory behind it wants.
+   */
+  root?: boolean;
   /** Sees every frame, both ways. Nothing is recorded without one. */
   tap?: Tap;
 }

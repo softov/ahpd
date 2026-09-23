@@ -786,10 +786,10 @@ const listener = await listen(
     port: options.port,
     host: options.host,
     ...(token !== undefined ? { token } : {}),
-    ...(users === undefined ? {} : { identify: (presented: string) => users.verify(presented) }),
+    ...(users === undefined ? {} : { identify: (presented: string) => users.verify(presented), root: true }),
     ...(tap ? { tap } : {}),
   },
-  (peer, principal) => host.accept(peer, principal),
+  (peer, principal, root) => host.accept(peer, principal, root),
 );
 
 process.stdout.write(

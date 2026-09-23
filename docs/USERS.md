@@ -18,10 +18,16 @@ existed.
 | --- | --- | --- | --- |
 | Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | the same, with the secret `ahpd user token` printed | the command, against the resource the host advertises |
 | What it answers | whether a socket may exist at all | that, and who is on the other end | who is on the other end, for a socket that arrived as nobody |
-| Identity | none: every holder is the same caller | the person whose record the secret hashes to | the person the directory resolves the token to, whether it minted it or an issuer did |
+| Identity | the host itself when a directory is configured, and nothing when there is none | the person whose record the secret hashes to | the person the directory resolves the token to, whether it minted it or an issuer did |
 | How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next connection is refused |
 | How many | one, shared | one per person | one per person |
 | Expiry | none | none | `expiresIn`, honoured |
+
+The deployment's token needs no credential. A socket on it is the host: every
+capability, including a scheme no role names, because the key to the door is the
+operator's own. A person who should be limited is given a token of their own
+instead of the shared one, and signing in or out on the operator's connection
+does not change what it may do.
 
 A person's own token is a connection token and a credential at once, which is
 what lets a client that can only carry a URL arrive as somebody with no sign-in

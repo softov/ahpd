@@ -436,6 +436,16 @@ export interface Connection {
    */
   principal?: Principal;
   /**
+   * Whether this socket arrived on the deployment's own connection token.
+   *
+   * That token is the host's key, so a socket that presented it is the host:
+   * every capability, including a scheme no role names, and it stays the host
+   * when somebody signs in or out on it. It is a property of the connection and
+   * not a person, so there is no record for it and `authenticate` cannot
+   * replace it.
+   */
+  root?: boolean;
+  /**
    * When their credential runs out, if they said.
    *
    * The credential itself is never kept: it is verified once and what is left
@@ -544,7 +554,7 @@ export interface Host {
    * without an `authenticate`. Absent is a connection that is nobody, which is
    * what the deployment's own token has always produced.
    */
-  accept(peer: Peer, principal?: Principal): {
+  accept(peer: Peer, principal?: Principal, root?: boolean): {
     /** Answer one request from this client. */
     handle(request: Request): Promise<unknown>;
     /** Drop this client's subscriptions and state. */

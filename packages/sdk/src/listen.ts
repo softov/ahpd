@@ -98,7 +98,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   const identityOf = async (
     url: string | undefined,
     authorization: string | null,
-  ): Promise<{ admitted: true; principal?: Principal } | { admitted: false }> => {
+  ): Promise<{ admitted: true; principal?: Principal; root?: boolean } | { admitted: false }> => {
     const held = presented(url, authorization);
     if (token === undefined) {
       const principal = held === undefined || held === '' || options.identify === undefined
@@ -106,7 +106,11 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         : await options.identify(held);
       return principal === undefined ? { admitted: true } : { admitted: true, principal };
     }
-    if (held !== undefined && same(token, held)) return { admitted: true };
+    // The deployment's own token. It is the host's key, so a socket on it is
+    // the host when the caller says so, and is only admitted otherwise.
+    if (held !== undefined && same(token, held)) {
+      return options.root === true ? { admitted: true, root: true } : { admitted: true };
+    }
     if (held !== undefined && held !== '' && options.identify !== undefined) {
       const principal = await options.identify(held);
       if (principal !== undefined) return { admitted: true, principal };
@@ -133,7 +137,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         }
         // The principal rides on the socket, because Bun's `open` is handed
         // the socket and not the request this answer came from.
-        if (server_.upgrade(request, { data: identity.principal })) return undefined;
+        if (server_.upgrade(request, { data: { principal: identity.principal, root: identity.root } })) return undefined;
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       },
       websocket: {
@@ -144,7 +148,8 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
             close: () => ws.close(),
             isOpen: () => ws.readyState === 1,
           });
-          bound.set(ws, { peer, connected: onConnect(peer, ws.data as Principal | undefined), seen });
+          const arrival = ws.data as { principal?: Principal; root?: boolean } | undefined;
+          bound.set(ws, { peer, connected: onConnect(peer, arrival?.principal, arrival?.root), seen });
         },
         message(ws: BunSocket, raw: string | Uint8Array) {
           const held = bound.get(ws);
@@ -193,7 +198,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         });
         // Closed over rather than carried on the socket: this handler already
         // has the answer the upgrade was decided on.
-        held = { peer, connected: onConnect(peer, identity.principal), seen };
+        held = { peer, connected: onConnect(peer, identity.principal, identity.root), seen };
       };
       socket.onmessage = (event) => {
         const open = held;
@@ -235,7 +240,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
    * it is the key. A `WeakMap` rather than a `Map` because nothing has to be
    * cleaned up when a handshake is refused.
    */
-  const decided = new WeakMap<object, Principal | undefined>();
+  const decided = new WeakMap<object, { principal?: Principal | undefined; root?: boolean | undefined }>();
   const server = new WebSocketServer({
     port: options.port,
     host,
@@ -245,7 +250,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     verifyClient: (info, accept) => {
       void identityOf(info.req.url, info.req.headers.authorization ?? null).then((identity) => {
         if (identity.admitted) {
-          decided.set(info.req, identity.principal);
+          decided.set(info.req, { principal: identity.principal, root: identity.root });
           accept(true);
           return;
         }
@@ -260,7 +265,8 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       close: () => socket.close(),
       isOpen: () => socket.readyState === 1,
     });
-    const connected = onConnect(peer, decided.get(request));
+    const arrival = decided.get(request);
+    const connected = onConnect(peer, arrival?.principal, arrival?.root);
     decided.delete(request);
     socket.on('message', (raw) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');

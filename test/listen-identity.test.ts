@@ -29,8 +29,11 @@ const ana = (token: string): Principal | undefined =>
 
 /** What each connection arrived as, in the order they were accepted. */
 const arrived: (Principal | undefined)[] = [];
-const watching = (_peer: Peer, principal?: Principal): Connected => {
+/** And whether each was admitted as the host itself. */
+const roots: (boolean | undefined)[] = [];
+const watching = (_peer: Peer, principal?: Principal, root?: boolean): Connected => {
   arrived.push(principal);
+  roots.push(root);
   return { handle: async () => ({}), close: () => {} };
 };
 
@@ -57,6 +60,20 @@ it('admits a person\'s own token and arrives as them', async () => {
   const url = `ws://127.0.0.1:${running.port}`;
   expect(await knock(`${url}/?tkn=ana-secret`)).toBe('open');
   expect(arrived[0]?.id).toBe('ana');
+});
+
+it('makes the deployment token the host itself when it is told to', async () => {
+  arrived.length = 0;
+  roots.length = 0;
+  running = await listen({ port: 0, token: ROOT, identify: ana, root: true }, watching);
+  const url = `ws://127.0.0.1:${running.port}`;
+  expect(await knock(`${url}/?tkn=${ROOT}`)).toBe('open');
+  expect(arrived).toEqual([undefined]);
+  expect(roots).toEqual([true]);
+  // And a person's own token is still a person, not the host.
+  expect(await knock(`${url}/?tkn=ana-secret`)).toBe('open');
+  expect(arrived[1]?.id).toBe('ana');
+  expect(roots[1]).toBeUndefined();
 });
 
 it('reads the token from a bearer header too, because a browser cannot set one on a URL', async () => {

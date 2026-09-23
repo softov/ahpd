@@ -1,6 +1,7 @@
 ---
 title: A connection token may carry a person, beside the one that only opens the door
-status: accepted
+status: superseded
+superseded-by: decisions/the-door-token-is-the-host.md
 date: 2026-09-23
 supersedes: decisions/a-person-signs-in-through-authenticate.md
 refs:

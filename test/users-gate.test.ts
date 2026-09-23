@@ -210,6 +210,32 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
   expect(await call(named, 'resourceRead', { channel: ROOT, uri: uriOf(file) })).toMatchObject({ code: -32009 });
 });
 
+it('lets a socket on the deployment token do everything, and nothing demotes it', async () => {
+  /*
+   * The deployment's token is the host's own key, so it is the host: no
+   * `authenticate`, every capability including a scheme no role names, and
+   * signing in or out on that connection does not change it - decision
+   * `the-door-token-is-the-host`.
+   */
+  const provider: ResourceProvider = { read: async () => ({ data: 'machine', encoding: 'utf-8' }) };
+  const made = host({ users: directory({ m: ['read'] }), resourceProviders: { computer: provider } });
+  const client = made.accept(peer(), undefined, true);
+  await hello(client);
+
+  expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
+  // `read:computer` is a scheme no role here names, and it is served anyway.
+  expect(await call(client, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' }))
+    .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
+
+  // Signing in as somebody with `read` only, and then signing out, leaves the
+  // connection exactly as able as it was.
+  await signIn(client, 'm');
+  expect(await call(client, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' }))
+    .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
+  await signIn(client, '');
+  expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
+});
+
 it('takes the capability away the moment the credential is given back', async () => {
   const client = host({ users: directory({ m: ['session'] }) }).accept(peer());
   await hello(client);

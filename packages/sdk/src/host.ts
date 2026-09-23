@@ -4471,7 +4471,7 @@ export function createHost(options: HostOptions): Host {
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
     connections: () => connections.size,
-    accept(peer: Peer, principal?: Principal) {
+    accept(peer: Peer, principal?: Principal, root?: boolean) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
         tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
@@ -4479,6 +4479,8 @@ export function createHost(options: HostOptions): Host {
         // somebody, so the gate reads this before the first command rather
         // than waiting for an `authenticate` the client may never send.
         ...(principal === undefined ? {} : { principal }),
+        // And one admitted on the deployment's own token is the host itself.
+        ...(root === true ? { root: true } : {}),
       };
       /**
        * Whether this connection has been introduced.
@@ -5387,7 +5389,8 @@ export function createHost(options: HostOptions): Host {
           if (token === '') {
             const had = connection.tokens.delete(resource);
             forgetExpiry(resource);
-            const signedOut = options.users !== undefined && resource === loginId() && connection.principal !== undefined;
+            const signedOut = options.users !== undefined && resource === loginId()
+              && connection.principal !== undefined && connection.root !== true;
             if (signedOut) {
               delete connection.principal;
               delete connection.principalUntil;
@@ -5408,6 +5411,15 @@ export function createHost(options: HostOptions): Host {
           if (expiresIn !== undefined && !(typeof expiresIn === 'number' && Number.isInteger(expiresIn) && expiresIn > 0)) {
             throw new RpcError(-32602, 'expiresIn must be a positive integer of seconds');
           }
+          /*
+           * The deployment's own key needs no credential.
+           *
+           * A socket on it is already the host, so signing in here could only
+           * demote it and signing out could only lose the key - decision
+           * `the-door-token-is-the-host`. Answered as accepted and otherwise
+           * ignored, because the client asked for something that is already so.
+           */
+          if (connection.root === true && options.users !== undefined && resource === loginId()) return {};
           /*
            * The host's own resource: the one credential here that is checked.
            *
@@ -6343,7 +6355,7 @@ export function createHost(options: HostOptions): Host {
          * A host with no user directory refuses nothing, exactly as at the
          * other boundary.
          */
-        if (options.users !== undefined) {
+        if (options.users !== undefined && connection.root !== true) {
           const needed = dispatchNeeds(channel);
           const who = connection.principal;
           if (who === undefined) {
@@ -7538,7 +7550,7 @@ export function createHost(options: HostOptions): Host {
            * which is what keeps every install that never configured one exactly
            * as it was.
            */
-          if (options.users !== undefined) {
+          if (options.users !== undefined && connection.root !== true) {
             const needed = capabilityFor(request.method, (request.params ?? {}) as Record<string, unknown>);
             if (needed !== undefined && needed.length > 0) {
               const who = connection.principal;
