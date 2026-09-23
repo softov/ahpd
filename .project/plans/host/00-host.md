@@ -40,3 +40,4 @@ createHost({ agents, resources, terminals, git, github, worktrees, automations }
 - The artifact tools answer with a description rather than the reference's status and id, and a reference is never promoted to an artifact in place; plan [01 - Artifact tools](01-artifact-tools/plan.md).
 - The root config declares `defaultShell` and nothing else, so a window setting mapped to a host key has nothing to set; plan [02 - Session config and titles](02-session-config-and-titles/plan.md).
 - `_meta.github` reports the pull requests a branch has and no baseline, so a client cannot tell the session's own from inherited ones; plan [03 - Pull request baseline](03-pull-request-baseline/plan.md).
+- Nobody signs in unless a `users` file is configured: plan [06 - Users and permissions](06-users-and-permissions/plan.md) built the directory, the sign-in resource and the one gate, and a daemon with no file refuses nothing.
