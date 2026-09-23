@@ -52,13 +52,40 @@ export interface Principal {
  *
  * `token` is the hash and never the secret. A record may exist with no token at
  * all - `add` makes one and `mint` is what gives it a credential - and such a
- * record can never verify anything.
+ * record can never verify anything. With an issuer configured it is also the
+ * record an issuer's subject is matched against, by `id`.
  */
 export interface UserRecord {
   id: string;
   roles: string[];
   /** `sha256:<hex>`, so the algorithm is on the record and a second can be added. */
   token: string;
+}
+
+/**
+ * An authorization server this host accepts a credential from.
+ *
+ * Normally the host is its own issuer and compares a hash, which a client that
+ * only acquires tokens through an OAuth provider cannot use: there is no
+ * provider to resolve for a secret this host minted. This is that other
+ * authorization server, as the host reaches it - an identifier a client
+ * matches a provider through, the scopes to ask for, and one question.
+ */
+export interface Issuer {
+  /** The RFC 8414 issuer identifier, which is what `authorization_servers` holds. */
+  readonly id: string;
+  /** The scopes a client should ask it for. */
+  readonly scopes: readonly string[];
+  /**
+   * Who a token belongs to, or nothing when it belongs to nobody.
+   *
+   * The answer is matched against a record's `id`, so it is the subject a
+   * deployment wrote down: a GitHub login, an OpenID Connect `sub`. Nothing is
+   * the answer for a token the issuer refuses, and for one this host could not
+   * ask about at all, which is the fail-closed reading of a network it cannot
+   * reach.
+   */
+  subject(token: string): Promise<string | undefined>;
 }
 
 /** What the file holds: the roles this install defines, and the people. */

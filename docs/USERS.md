@@ -18,7 +18,7 @@ existed.
 | --- | --- | --- | --- |
 | Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | the same, with the secret `ahpd user token` printed | the command, against the resource the host advertises |
 | What it answers | whether a socket may exist at all | that, and who is on the other end | who is on the other end, for a socket that arrived as nobody |
-| Identity | none: every holder is the same caller | the person whose record the secret hashes to | the person the directory resolves the token to |
+| Identity | none: every holder is the same caller | the person whose record the secret hashes to | the person the directory resolves the token to, whether it minted it or an issuer did |
 | How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next connection is refused |
 | How many | one, shared | one per person | one per person |
 | Expiry | none | none | `expiresIn`, honoured |
@@ -114,6 +114,59 @@ issuer option that would fill it honestly is a later plan.
 answers `-32007` until a person is known. The daemon prints the identifier at
 startup on a `sign-in` line, so an operator can see what a client will be told
 without reading root state.
+
+## An issuer, when a client needs one
+
+A host that is its own issuer mints every secret and prints it for a person to
+paste. A client that only acquires tokens through an OAuth provider cannot do
+anything with a pasted secret, so a deployment can name an authorization server
+instead:
+
+```json
+{ "users": "/home/me/.config/ahpd/users.json", "issuer": "github" }
+```
+
+or `--issuer github`, or `--issuer https://login.example.com` for an OpenID
+Connect issuer. The record then carries it, which is the field plan 07 left
+empty on purpose:
+
+```json
+{
+  "resource": "https://127.0.0.1:9187/",
+  "resource_name": "ahpd users",
+  "authorization_servers": ["https://github.com/login/oauth"],
+  "scopes_supported": ["read:user"],
+  "resource_documentation": "https://github.com/softov/ahpd/blob/main/docs/USERS.md",
+  "required": true
+}
+```
+
+A client resolves a provider for that identifier, obtains a token, and pushes it
+through `authenticate` exactly as the protocol says. This host then asks the
+issuer who the token belongs to, and the answer is matched against a record's
+`id`: a GitHub login, or an OpenID Connect `sub`. The roles still come from the
+file, because the file is the only place that says who may do what.
+
+```json
+{
+  "users": [
+    { "id": "octocat", "roles": ["member"], "token": "" }
+  ]
+}
+```
+
+Three things worth knowing:
+
+- A secret this host minted is checked first, and the issuer is asked only when
+  nothing matched. A deployment can run both, and a person holding a minted
+  secret never depends on the issuer being reachable.
+- A token the issuer refuses and an issuer that cannot be reached both answer
+  `-32007`. The host does not pretend to know which it was, and a client cannot
+  tell either, so the advice is the same in both cases: sign in again.
+- A record with no minted secret is a protocol credential and not a connection
+  token. The door is decided before the socket exists, and the issuer is not
+  asked there, so such a person pastes nothing and signs in through
+  `authenticate`.
 
 ## Roles
 
@@ -226,7 +279,9 @@ takes a WebSocket URL - so a person pastes what `ahpd user token <id> --url`
 printed and is themselves from the first frame. No extension and no change in
 the client.
 
-An identity provider behind the same `Users` port is a later plan. The host asks
-its port whether a token is somebody's, and an issuer such as GitHub could
-answer that instead of the file, which is what would let a client acquire a
-credential through its own OAuth flow rather than being handed one.
+An issuer is what lets a client acquire a credential through its own OAuth flow
+rather than being handed one, and it is configured with `issuer`. With `github`
+in the configuration a stock client resolves its GitHub provider and signs in
+with no extension; an enterprise names its own OpenID Connect issuer instead.
+Plan 07's research file records what the reference client does with the field
+and why it could not carry a pasted secret.

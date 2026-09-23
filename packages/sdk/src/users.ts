@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { same } from './listen.js';
-import type { Grant, Principal, UserFile, UserRecord, Users } from './types/users.js';
+import type { Grant, Issuer, Principal, UserFile, UserRecord, Users } from './types/users.js';
 
 /**
  * The user directory, in a file.
@@ -54,11 +54,23 @@ export const DEFAULT_RESOURCE = {
  * The same record under an identifier the deployment answers to.
  *
  * The daemon builds this from the address it listens on, so what a client is
- * told is an https identifier rather than the fallback above.
+ * told is an https identifier rather than the fallback above. An issuer, when
+ * one is configured, is what fills `authorization_servers`: it is a real
+ * RFC 8414 identifier, which is the field's one job and the reason it stays
+ * empty otherwise - decision `a-host-advertises-only-what-is-true`.
  */
-export const signInRecord = (resource: string): Record<string, unknown> => ({
+export const signInRecord = (
+  resource: string,
+  issuer?: Pick<Issuer, 'id' | 'scopes'>,
+): Record<string, unknown> => ({
   ...DEFAULT_RESOURCE,
   resource,
+  ...(issuer === undefined
+    ? {}
+    : {
+      authorization_servers: [issuer.id],
+      ...(issuer.scopes.length === 0 ? {} : { scopes_supported: [...issuer.scopes] }),
+    }),
 });
 
 /** What `fileUsers` is given. */
@@ -74,6 +86,15 @@ export interface FileUserOptions {
   path: string;
   /** The record to advertise, when a deployment needs an id of its own. */
   resource?: Record<string, unknown>;
+  /**
+   * An authorization server whose tokens this host also accepts.
+   *
+   * Asked only when no local hash matched, so a deployment that mints secrets
+   * keeps working exactly as it does and the issuer is the second way in. Its
+   * subject is matched against a record's `id` - decision
+   * `an-issuer-answers-for-a-subject`.
+   */
+  issuer?: Issuer;
   /** One line for a role a record names and nothing defines. */
   onProblem?(message: string): void;
 }
@@ -159,7 +180,7 @@ export function fileUsers(options: FileUserOptions): Users {
   };
 
   return {
-    resource: options.resource ?? DEFAULT_RESOURCE,
+    resource: options.resource ?? signInRecord(String(DEFAULT_RESOURCE.resource), options.issuer),
 
     verify: async (token) => {
       if (token === '') return undefined;
@@ -170,6 +191,21 @@ export function fileUsers(options: FileUserOptions): Users {
       let found: UserRecord | undefined;
       for (const record of file.users ?? []) {
         if (record.token !== '' && same(record.token, hash)) found = record;
+      }
+      /*
+       * The issuer, only when nothing local matched.
+       *
+       * A deployment that mints secrets keeps working because this branch is
+       * never reached for one, and a record with no hash can only be reached
+       * here: the subject an issuer answers with is that record's id, so the
+       * file still says who may do what - decision
+       * `an-issuer-answers-for-a-subject`.
+       */
+      if (found === undefined && options.issuer !== undefined) {
+        const subject = await options.issuer.subject(token);
+        if (subject !== undefined && subject !== '') {
+          found = (file.users ?? []).find((one) => one.id === subject);
+        }
       }
       return found === undefined ? undefined : principalOf(found, file);
     },

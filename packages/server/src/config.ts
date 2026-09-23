@@ -49,6 +49,15 @@ export interface Config {
    * is told is where the host actually answers.
    */
   resource?: string;
+  /**
+   * An authorization server whose tokens this host also accepts.
+   *
+   * `github`, or an https OpenID Connect issuer. Absent, the host is its own
+   * issuer and only secrets it minted are checked. Configured, the record
+   * advertises the issuer in `authorization_servers`, so a client that
+   * acquires tokens through an OAuth provider has a provider to resolve.
+   */
+  issuer?: string;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**
@@ -217,6 +226,19 @@ export const signInIdentifier = (
 
 /** Whether a value is the identifier the record requires: https, and no fragment. */
 export const isIdentifier = (value: string): boolean => /^https:\/\/[^\s#]+$/.test(value);
+
+/**
+ * An issuer named in the configuration, as the kind it is.
+ *
+ * `github` is the preset a stock client can resolve with no work at all, and an
+ * https URL is an OpenID Connect issuer whose metadata is discovered. Anything
+ * else answers nothing, so the daemon refuses the start with a sentence rather
+ * than discovering a typo on the first sign-in.
+ */
+export const namedIssuer = (value: string): { kind: 'github' } | { kind: 'oidc'; issuer: string } | undefined => {
+  if (value === 'github') return { kind: 'github' };
+  return isIdentifier(value) ? { kind: 'oidc', issuer: value } : undefined;
+};
 
 /**
  * The URL a person pastes where a client asks for a host.

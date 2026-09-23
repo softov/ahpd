@@ -169,7 +169,8 @@ Every flag can be a key instead, spelled without the dashes:
   "paths": ["/work/api", "/work/web"],
   "connectionTokenFile": "/home/you/.ahpd/token",
   "users": "/home/you/.config/ahpd/users.json",
-  "resource": "https://ahpd.example.com/"
+  "resource": "https://ahpd.example.com/",
+  "issuer": "github"
 }
 ```
 
@@ -177,7 +178,11 @@ Every flag can be a key instead, spelled without the dashes:
 token then opens a socket and arrives as them, so a client that can only carry a
 URL needs no sign-in. `resource` is the https identifier this host advertises
 for its own sign-in, which a client names in `authenticate`; leave it out and
-the daemon derives one from `host` and `port`.
+the daemon derives one from `host` and `port`. `issuer` accepts `github` or an
+https OpenID Connect issuer, and the host then also accepts tokens that issuer
+mints, advertising it in `authorization_servers` so a client can resolve a
+provider for it; the roles still come from the user file, matched by the
+`subject` the issuer answers with.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a

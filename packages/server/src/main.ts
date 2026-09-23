@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { asSpec, automationsPath, configDir, configPath, daemonLog, isIdentifier, loadConfig, personalUrl, sessionsPath, signInIdentifier } from './config.js';
+import { asSpec, automationsPath, configDir, configPath, daemonLog, isIdentifier, loadConfig, namedIssuer, personalUrl, sessionsPath, signInIdentifier } from './config.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
@@ -9,7 +9,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubIssuer, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, oidcIssuer, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -61,6 +61,13 @@ interface Options {
    * told is where the host actually answers.
    */
   resource?: string;
+  /**
+   * An authorization server whose tokens this host also accepts.
+   *
+   * `github`, or an https OpenID Connect issuer. Absent, the host is its own
+   * issuer and only secrets it minted are checked.
+   */
+  issuer?: string;
   /**
    * Where automations are kept, and whether a clock fires them.
    *
@@ -139,6 +146,10 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   --resource <url>              The https identifier this host advertises for
                                 its own sign-in. Default: derived from --host
                                 and --port.
+  --issuer <github|url>         An authorization server whose tokens are also
+                                accepted: github, or an https OpenID Connect
+                                issuer. Its identifier is advertised, so a
+                                client can resolve a provider for it.
   --automations <where>         file, the default, keeps them beside the
                                 configuration and fires their schedules;
                                 memory keeps them until this process ends and
@@ -167,7 +178,7 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
 connectionTokenFile, withoutConnectionToken, automations, sessions, wire,
-updateCheck, plugins, users, resource. A flag beats the file, because a
+updateCheck, plugins, users, resource, issuer. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it. "plugins" is
 a list of the same specs --plugin takes, and --no-plugins is the one flag with
 no key: leaving plugins out is already the off.
@@ -206,6 +217,7 @@ function parse(argv: string[]): Options {
       case '--config-file': options.configFile = String(argv[++i]); break;
       case '--users': options.users = String(argv[++i]); break;
       case '--resource': options.resource = String(argv[++i]); break;
+      case '--issuer': options.issuer = String(argv[++i]); break;
       case '--automations': {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
@@ -264,6 +276,7 @@ function parse(argv: string[]): Options {
   if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
   if (options.users === undefined && typeof file.users === 'string') options.users = file.users;
   if (options.resource === undefined && typeof file.resource === 'string') options.resource = file.resource;
+  if (options.issuer === undefined && typeof file.issuer === 'string') options.issuer = file.issuer;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   /*
@@ -577,6 +590,22 @@ const advertisedResource = (): string => {
 };
 
 /*
+ * The authorization server this host accepts tokens from, when one is named.
+ *
+ * `github` is the preset a stock client can resolve with no client work, and an
+ * https URL is an OpenID Connect issuer whose metadata is discovered. Absent,
+ * the host is its own issuer and only secrets it minted are checked -
+ * decision `the-issuer-option-takes-a-url-or-github`.
+ */
+const named = options.issuer === undefined ? undefined : namedIssuer(options.issuer);
+if (options.issuer !== undefined && named === undefined) {
+  stop('--issuer takes github or an https issuer URL.');
+}
+const issuer = named === undefined
+  ? undefined
+  : named.kind === 'github' ? githubIssuer() : oidcIssuer({ issuer: named.issuer });
+
+/*
  * The people who may use this host, built once.
  *
  * One port answers two doors: `createHost` asks whether a command may proceed,
@@ -593,7 +622,8 @@ const users = options.users === undefined
   ? undefined
   : fileUsers({
     path: options.users,
-    resource: signInRecord(advertisedResource()),
+    resource: signInRecord(advertisedResource(), issuer),
+    ...(issuer === undefined ? {} : { issuer }),
     onProblem: (line) => process.stderr.write(`${line}\n`),
   });
 
@@ -773,9 +803,12 @@ process.stdout.write(
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`
-  // What a client is told to sign in against, so an operator can see it
-  // without reading root state. Absent when there is nobody to sign in.
-  + (options.users === undefined ? '' : `sign-in ${advertisedResource()}\n`)
+  // What a client is told to sign in against, and which issuer it may use, so
+  // an operator can see both without reading root state. Absent when there is
+  // nobody to sign in.
+  + (users === undefined
+    ? ''
+    : `sign-in ${advertisedResource()}${issuer === undefined ? '' : ` (issuer ${issuer.id})`}\n`)
   + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
   + (checkingUpdates(options.updateCheck) ? updateLine(manifest()) ?? '' : ''),
 );

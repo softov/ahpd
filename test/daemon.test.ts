@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readyUrl, recordOf, running, statusLine } from '../packages/server/src/daemon.js';
-import { isIdentifier, personalUrl, signInIdentifier } from '../packages/server/src/config.js';
+import { isIdentifier, namedIssuer, personalUrl, signInIdentifier } from '../packages/server/src/config.js';
 import type { Running } from '../packages/server/src/daemon.js';
 
 const ANNOUNCED = 'ahpd on ws://127.0.0.1:9187 (node), sessions in /a, /b\nautomations in /c, schedules fire\n';
@@ -48,6 +48,21 @@ describe('readyUrl', () => {
   });
   it('is the bare origin when no token was given', () => {
     expect(readyUrl('ws://127.0.0.1:9187', undefined)).toBe('ws://127.0.0.1:9187/');
+  });
+});
+
+describe('namedIssuer', () => {
+  it('is the GitHub preset', () => {
+    expect(namedIssuer('github')).toEqual({ kind: 'github' });
+  });
+  it('is an OpenID Connect issuer when an https URL is named', () => {
+    expect(namedIssuer('https://idp.test')).toEqual({ kind: 'oidc', issuer: 'https://idp.test' });
+  });
+  it('answers nothing for anything else, so the daemon refuses the start', () => {
+    expect(namedIssuer('GitHub')).toBeUndefined();
+    expect(namedIssuer('http://idp.test')).toBeUndefined();
+    expect(namedIssuer('idp.test')).toBeUndefined();
+    expect(namedIssuer('https://idp.test/#fragment')).toBeUndefined();
   });
 });
 
