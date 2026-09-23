@@ -31,6 +31,15 @@ export interface Config {
    * beside this configuration, or `memory` until the process ends.
    */
   sessions?: 'file' | 'memory';
+  /**
+   * The file the people who may use this host are in.
+   *
+   * Absent, there are no people: every gate this host has is inert and the
+   * connection token is the whole of who may be here. A path that is not there
+   * yet is a host with nobody on it rather than an error, and `ahpd user add`
+   * is what writes one.
+   */
+  users?: string;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

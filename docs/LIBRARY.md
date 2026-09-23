@@ -77,6 +77,7 @@ would fail part-way through instead.
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
 | `directories` | facts about a served directory - the branch it is on | sessions carry their project and nothing more | `gitBranches()` |
 | `github` | what GitHub knows about that branch - its pull request and the state of it | no row carries `_meta.github`, and no backend advertises a GitHub resource | `githubPullRequests()` |
+| `users` | who may sign in, and what a role may do | no sign-in resource is advertised, and every gate the host has stays inert | `fileUsers({ path })` |
 | `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `scheduledAutomations({ file })`, or `memoryAutomations()` without the clock |
 
 ### `resources`

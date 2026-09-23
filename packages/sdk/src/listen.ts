@@ -57,7 +57,7 @@ const presented = (url: string | undefined, authorization: string | null): strin
  * The lengths still differ observably, which is why a token is generated
  * rather than chosen: they are all the same length.
  */
-const same = (a: string, b: string): boolean => {
+export const same = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false;
   let differing = 0;
   for (let i = 0; i < a.length; i++) differing |= a.charCodeAt(i) ^ b.charCodeAt(i);

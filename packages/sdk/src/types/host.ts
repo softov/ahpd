@@ -4,6 +4,7 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, ToolEffects } from './agent.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
+import type { Principal, Users } from './users.js';
 import type { TerminalStore } from './terminals.js';
 import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
@@ -144,6 +145,16 @@ export interface HostOptions {
    * ships with this package, and the daemon uses it.
    */
   github?: PullRequests;
+  /**
+   * The people who may use this host, when there are any.
+   *
+   * Left out, there are none: the host advertises no sign-in resource, every
+   * gate it has is inert, and the connection token is the whole of who may be
+   * here - which is what every install that has not configured a directory
+   * gets. `fileUsers()` is the one that ships, and the daemon uses it when the
+   * configuration names a file.
+   */
+  users?: Users;
   /**
    * The automations this host offers.
    *
@@ -414,6 +425,23 @@ export interface Connection {
    * not stop the other's stream.
    */
   watching: Set<string>;
+  /**
+   * The person this connection signed in as, when it did.
+   *
+   * Per connection for the same reason `tokens` is: the specification says
+   * authentication status is per connection, so one person's sign-in is not
+   * another's, and it dies with the socket. Absent is not "nobody may do
+   * anything" - a host with no user directory has no principal anywhere and
+   * refuses nothing.
+   */
+  principal?: Principal;
+  /**
+   * When their credential runs out, if they said.
+   *
+   * The credential itself is never kept: it is verified once and what is left
+   * is who it was, so this is the only thing the expiry path needs beside it.
+   */
+  principalUntil?: number;
   /**
    * Tokens this client pushed, by protected resource identifier.
    *

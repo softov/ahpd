@@ -38,6 +38,7 @@ import type { ChangesetOperationContext, ChangesetState } from './types/changes.
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
 import type { EventName, HostEvent } from './types/events.js';
 import type { PluginContext } from './types/plugin.js';
+import type { Grant } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -120,6 +121,96 @@ const resolved = async (host: string, family: 4 | 6): Promise<{ address?: string
 };
 
 const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
+
+/**
+ * What each command needs, by capability.
+ *
+ * One entry per gated method, grouped by the capability, so the shape of a role
+ * is readable from here: a `member` has everything down to and including the
+ * terminal group, and an `admin` has all of it.
+ *
+ * `subscribe` is not here because its answer depends on the channel rather than
+ * on the method - `ahp-root://` and `ahp-session:/x` are not the same
+ * permission - and `capabilityFor` is what reads it. A method with no entry
+ * anywhere is served to anybody who is connected.
+ */
+const NEEDS: Record<string, Grant> = {
+  // read
+  resourceList: 'read',
+  resourceRead: 'read',
+  resourceResolve: 'read',
+  createResourceWatch: 'read',
+  completions: 'read',
+
+  // write
+  resourceWrite: 'write',
+  resourceDelete: 'write',
+  resourceMkdir: 'write',
+  resourceMove: 'write',
+  resourceCopy: 'write',
+  resourceRequest: 'write',
+  invokeChangesetOperation: 'write',
+
+  // session
+  listSessions: 'session',
+  fetchTurns: 'session',
+  createSession: 'session',
+  createChat: 'session',
+  disposeChat: 'session',
+  disposeSession: 'session',
+  resolveSessionConfig: 'session',
+  sessionConfigCompletions: 'session',
+
+  // terminal
+  createTerminal: 'terminal',
+  disposeTerminal: 'terminal',
+
+  // automation
+  listAutomationTriggerDefinitions: 'automation',
+  runAutomation: 'automation',
+  fetchAutomationRuns: 'automation',
+
+  // diagnostics
+  diagnosticsFetch: 'diagnostics',
+};
+
+/**
+ * The methods no capability covers, and why each.
+ *
+ * `initialize`, `reconnect` and `ping` are the handshake: a client that cannot
+ * reach them cannot be told where to sign in, so gating them is a door with the
+ * key on the inside. `authenticate` is how a person signs in, and gating it
+ * would be a loop with no way out. `subscribe` is classified by its channel in
+ * `capabilityFor` rather than by name, and is listed here only so the staleness
+ * test sees it accounted for.
+ */
+const UNGATED = new Set([
+  'initialize', 'reconnect', 'ping', 'authenticate', 'subscribe',
+  /*
+   * Notifications, which never reach the gate: the notification path returns
+   * before it, because a frame with no id has nowhere to carry a refusal.
+   *
+   * `unsubscribe` costs nothing to allow. `dispatchAction` does not: starting a
+   * turn is one, so a connection that never signed in can still run a session.
+   * Refusing an action needs the check inside `applyDispatch` rather than at
+   * this boundary, which is a change `host/06` deliberately did not make - see
+   * its `implemented.md`, which records it as the next gap.
+   */
+  'dispatchAction', 'unsubscribe',
+]);
+
+/** The scheme a URI names, lowercased, or the empty string when it names none. */
+const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
+
+/**
+ * The method names this host serves, and what each needs, for the suite.
+ *
+ * Exported so a test can assert that every handler is classified: a handler
+ * added to the literal and to neither set is a method nobody decided about, and
+ * the test that names both sets fails on the next run rather than the method
+ * being served to anybody.
+ */
+export const GATE = { NEEDS, UNGATED };
 
 /**
  * The most rows this host will serve in one page, however many were asked for.
@@ -2008,12 +2099,19 @@ export function createHost(options: HostOptions): Host {
    * branch - whichever backend the session runs on. So it is listed here the
    * same way, when there is a lookup to spend it on.
    */
+  const loginId = (): string => String(options.users?.resource.resource ?? '');
   const resourcesOf = (agent: Agent): Bag[] => [
     ...(agent.protectedResources ?? []) as Bag[],
     ...(options.github ? [options.github.resource] : []),
+    // The host's own sign-in resource, listed here for the same reason GitHub's
+    // is: it is the host's, whichever backend the session runs on.
+    ...(options.users ? [options.users.resource as Bag] : []),
   ];
   /** A token any connected client lent for a resource, and has not run out. */
   const lent = (resource: string): string | undefined => {
+    // A person's sign-in is not a credential the host spends on its own work:
+    // one client's sign-in must not become another client's session.
+    if (options.users !== undefined && resource === loginId()) return undefined;
     for (const connection of connections) {
       const held = connection.tokens.get(resource);
       if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) return held.token;
@@ -4359,6 +4457,32 @@ export function createHost(options: HostOptions): Host {
       const expiring = new Map<string, ReturnType<typeof setTimeout>>();
       const LONGEST = 2 ** 31 - 1;
       const expire = (resource: string): void => {
+        /*
+         * The host's own resource holds no token to expire - what it leaves is
+         * a principal - so it is the one case this path answers differently.
+         * The notification is the same either way, because what a client has
+         * to do about it is the same.
+         */
+        if (options.users !== undefined && resource === loginId()) {
+          const until = connection.principalUntil;
+          if (until === undefined) return;
+          const left = until - Date.now();
+          if (left > 0) {
+            expiring.set(resource, setTimeout(() => expire(resource), Math.min(left, LONGEST)));
+            expiring.get(resource)?.unref?.();
+            return;
+          }
+          expiring.delete(resource);
+          delete connection.principal;
+          delete connection.principalUntil;
+          log(`${connection.clientId || 'a client'}'s sign-in expired`);
+          connection.peer.notify('auth/required', {
+            channel: channelAwaiting(resource),
+            resource: metadataFor(resource),
+            reason: 'expired',
+          });
+          return;
+        }
         const held = connection.tokens.get(resource);
         if (held?.expiresAt === undefined) return;
         const left = held.expiresAt - Date.now();
@@ -4398,9 +4522,49 @@ export function createHost(options: HostOptions): Host {
        * a plugin from shadowing a client's own resources.
        */
       const storeFor = (uri: string) => {
-        const scheme = (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
+        const scheme = schemeOf(uri);
         if (scheme === '' || scheme === 'file') return options.resources;
         return options.resourceProviders?.[scheme] ?? options.resources;
+      };
+
+      /**
+       * What a command needs, or nothing when it needs nothing.
+       *
+       * Most methods are one entry in `NEEDS`. Two kinds are not:
+       *
+       * `subscribe` reads the channel, because `ahp-root://` is the discovery a
+       * client reads to find out where to sign in and a session channel is not.
+       *
+       * Every resource method reads the URI's scheme, because `resourceWrite`
+       * on `file:` and `resourceWrite` on a plugin's scheme are the same method
+       * and not the same act. `file:` answers the plain capability, which is
+       * what a role must have for a client to save the file it has open; any
+       * other scheme answers the scoped one, so a role that names plain `write`
+       * does not acquire a plugin's scheme by accident. That is what `HANDOFF`'s
+       * pending step 9 means by scoping the gate rather than restoring it.
+       */
+      const capabilityFor = (method: string, params: Record<string, unknown>): Grant[] | undefined => {
+        if (method === 'subscribe') {
+          const channel = String(params.channel ?? '');
+          if (channel === ROOT || channel.startsWith('ahp-root')) return undefined;
+          if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return ['session'];
+          if (channel.startsWith('ahp-automations')) return ['automation'];
+          if (channel.startsWith('ahp-terminal:')) return ['terminal'];
+          // Something a later plan added: the conservative answer.
+          return ['read'];
+        }
+        const plain = NEEDS[method];
+        if (plain === undefined) return undefined;
+        if (plain !== 'read' && plain !== 'write') return [plain];
+        const uris = [params.uri, params.source, params.destination]
+          .filter((one): one is string => typeof one === 'string');
+        if (uris.length === 0) return [plain];
+        const needed = new Set<Grant>();
+        for (const uri of uris) {
+          const scheme = schemeOf(uri);
+          needed.add(scheme === '' || scheme === 'file' ? plain : `${plain}:${scheme}`);
+        }
+        return [...needed];
       };
 
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
@@ -5146,7 +5310,12 @@ export function createHost(options: HostOptions): Host {
           if (token === '') {
             const had = connection.tokens.delete(resource);
             forgetExpiry(resource);
-            log(`${connection.clientId || 'a client'} ${had ? 'revoked' : 'had no'} token for ${resource}`);
+            const signedOut = options.users !== undefined && resource === loginId() && connection.principal !== undefined;
+            if (signedOut) {
+              delete connection.principal;
+              delete connection.principalUntil;
+            }
+            log(`${connection.clientId || 'a client'} ${had ? 'revoked' : 'had no'} token for ${resource}${signedOut ? ' and signed out' : ''}`);
             return {};
           }
           /*
@@ -5161,6 +5330,33 @@ export function createHost(options: HostOptions): Host {
           const expiresIn = params.expiresIn;
           if (expiresIn !== undefined && !(typeof expiresIn === 'number' && Number.isInteger(expiresIn) && expiresIn > 0)) {
             throw new RpcError(-32602, 'expiresIn must be a positive integer of seconds');
+          }
+          /*
+           * The host's own resource: the one credential here that is checked.
+           *
+           * Every other token is a backend's or an MCP server's, held
+           * unverified and spent elsewhere, which is what the block below
+           * still does. This one is a person, and the directory is the only
+           * thing that can say whether the token belongs to one.
+           */
+          if (options.users !== undefined && resource === loginId()) {
+            const held = await options.users.verify(token);
+            if (held === undefined) {
+              throw new RpcError(-32007, 'That credential is not one this host knows', {
+                resources: [options.users.resource],
+              });
+            }
+            connection.principal = held;
+            if (expiresIn !== undefined) {
+              connection.principalUntil = Date.now() + expiresIn * 1000;
+              expire(resource);
+            }
+            else delete connection.principalUntil;
+            // A person's id rather than the clientId, which is the thing about
+            // this connection that was actually checked.
+            void fire('authenticated', { type: 'authenticated', client: held.id, resource });
+            log(`${held.id} signed in${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
+            return {};
           }
           /*
            * Applied where it belongs, rather than only remembered.
@@ -7183,6 +7379,39 @@ export function createHost(options: HostOptions): Host {
           // half-open socket from a busy one.
           if (!handshook && !GREETINGS.has(request.method)) {
             throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${request.method} before initialize`);
+          }
+          /*
+           * The one gate.
+           *
+           * Every command passes here, so a handler added later is refused
+           * rather than served by omission - which is the property `needsWrite`
+           * did not have when five handlers each remembered to call it. It sits
+           * before the client relay below on purpose: a URI another client owns
+           * is that client's to answer, and this host's roles do not reach into
+           * it.
+           *
+           * A host with no user directory has no principal and refuses nothing,
+           * which is what keeps every install that never configured one exactly
+           * as it was.
+           */
+          if (options.users !== undefined) {
+            const needed = capabilityFor(request.method, (request.params ?? {}) as Record<string, unknown>);
+            if (needed !== undefined && needed.length > 0) {
+              const who = connection.principal;
+              if (who === undefined) {
+                throw new RpcError(-32007, `Sign in to use this host`, {
+                  resources: [options.users.resource],
+                });
+              }
+              const missing = needed.find((one) => !who.can(one));
+              if (missing !== undefined) {
+                // No `request` key: a role is not something a client can
+                // negotiate, and the protocol says that field is omitted when
+                // no grant would resolve the denial. Its absence is what tells
+                // a client to stop rather than retry.
+                throw new RpcError(-32009, `${who.id} may not ${missing} here`, {});
+              }
+            }
           }
           // And a second `initialize` is no longer one of them: the version
           // is agreed, and re-agreeing it would re-key every subscription

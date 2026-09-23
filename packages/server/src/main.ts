@@ -8,7 +8,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -49,6 +49,8 @@ interface Options {
   open: boolean;
   /** Read this configuration instead of the one XDG names. */
   configFile?: string;
+  /** The file the people who may use this host are in, when there are any. */
+  users?: string;
   /**
    * Where automations are kept, and whether a clock fires them.
    *
@@ -102,6 +104,10 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   ahpd config                 say where the configuration is, and what it says
   ahpd plugin list            what the configuration names, and what a run
                               would load, without loading any of it
+  ahpd user add <id>          add a person, with --role <name> once per role
+  ahpd user token <id>        mint their credential, shown once
+  ahpd user list              who is in the file
+  ahpd user rm <id>           take a person out of it
 
   --port <n>                    Listen here. Default 9187; 0 picks a free one.
   --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
@@ -181,6 +187,7 @@ function parse(argv: string[]): Options {
       case '--connection-token-file': options.tokenFile = String(argv[++i]); break;
       case '--without-connection-token': options.open = true; break;
       case '--config-file': options.configFile = String(argv[++i]); break;
+      case '--users': options.users = String(argv[++i]); break;
       case '--automations': {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
@@ -237,6 +244,7 @@ function parse(argv: string[]): Options {
     options.sessions = file.sessions;
   }
   if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
+  if (options.users === undefined && typeof file.users === 'string') options.users = file.users;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   /*
@@ -266,7 +274,12 @@ function parse(argv: string[]): Options {
   return options;
 }
 
-const stop = (message: string): never => {
+/*
+ * The return type is on the variable rather than the arrow, which is what tells
+ * TypeScript a call to this never comes back: with it, a check like
+ * `if (path === undefined) stop(...)` narrows `path` for every line after.
+ */
+const stop: (message: string) => never = (message) => {
   process.stderr.write(`${message}\n`);
   process.exit(2);
 };
@@ -372,6 +385,73 @@ if (verb !== undefined) {
       : `${rows.map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`).join('\n')}\n`);
     process.exit(0);
   }
+  if (verb === 'user') {
+    /*
+     * The people who may use this host, managed without one running.
+     *
+     * The path comes from `--users` or the configuration key and from nowhere
+     * else: a verb that invented a file because neither was set would write a
+     * directory nobody asked for, and the next daemon to start would not be the
+     * one that reads it.
+     */
+    const named = rest.includes('--users') ? rest[rest.indexOf('--users') + 1] : undefined;
+    const from = loadConfig(argv.includes('--config-file') ? argv[argv.indexOf('--config-file') + 1] : undefined);
+    const path = named ?? from.users;
+    if (path === undefined) stop('No user file. Pass --users <file> or set "users" in the configuration.');
+    const users = fileUsers({ path, onProblem: (line) => process.stderr.write(`${line}\n`) });
+
+    // Flags are read out of the whole line and the positionals are what is
+    // left, because `list` takes none and `add` takes one: assuming two would
+    // read the path as an unknown option.
+    const [sub, ...more] = rest;
+    const positionals: string[] = [];
+    const roles: string[] = [];
+    for (let i = 0; i < more.length; i++) {
+      const one = more[i];
+      if (one === '--users') { i++; continue; }
+      if (one === '--role') {
+        const held = more[++i];
+        if (held === undefined) stop('--role needs a name.');
+        roles.push(held);
+        continue;
+      }
+      if (one !== undefined && one.startsWith('-')) stop(`Unknown option ${one}.`);
+      if (one !== undefined) positionals.push(one);
+    }
+    const id = positionals[0];
+
+    if (sub === 'list') {
+      const rows = await users.list();
+      process.stdout.write(rows.length === 0
+        ? `no users in ${path}\n`
+        : `${rows.map((one) => `${one.id}${one.roles.length > 0 ? ` (${one.roles.join(', ')})` : ''}`).join('\n')}\n`);
+      process.exit(0);
+    }
+    if (sub === 'add') {
+      if (id === undefined || id.startsWith('-')) stop('user add takes an id: ahpd user add <id> [--role <name>]');
+      const held = roles.length > 0 ? roles : ['member'];
+      await users.add(id, held);
+      process.stdout.write(`Added ${id} (${held.join(', ')}). Give them a credential: ahpd user token ${id}\n`);
+      process.exit(0);
+    }
+    if (sub === 'rm') {
+      if (id === undefined || id.startsWith('-')) stop('user rm takes an id: ahpd user rm <id>');
+      const gone = await users.remove(id);
+      process.stdout.write(gone
+        ? `Removed ${id}. Their socket stays open; their next command is refused.\n`
+        : `No user called ${id}.\n`);
+      process.exit(gone ? 0 : 1);
+    }
+    if (sub === 'token') {
+      if (id === undefined || id.startsWith('-')) stop('user token takes an id: ahpd user token <id>');
+      const secret = await users.mint(id);
+      // The secret alone on stdout, so it can be piped; the warning on stderr.
+      process.stderr.write('Shown once. Only its hash is stored, and minting again replaces it.\n');
+      process.stdout.write(`${secret}\n`);
+      process.exit(0);
+    }
+    stop('user takes add, rm, list or token.');
+  }
   if (verb === 'plugin') {
     /*
      * A listing, and the reason the `ahpd` key exists: what a run would load,
@@ -459,6 +539,17 @@ const base: HostOptions = {
   changes: gitChanges(),
   worktrees: gitWorktrees(),
   github: githubPullRequests(),
+  /*
+   * The people who may use this host, when the configuration names a file.
+   *
+   * Absent, the host advertises no sign-in resource and every gate it has is
+   * inert, which is what every install that has not configured a directory
+   * gets. The path is read once, here: the directory itself re-reads the file
+   * on every question, so `ahpd user rm` lands on the next command.
+   */
+  ...(options.users === undefined
+    ? {}
+    : { users: fileUsers({ path: options.users, onProblem: (line) => process.stderr.write(`${line}\n`) }) }),
   /*
    * The host's own tools, offered to every session's model.
    *
