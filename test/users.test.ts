@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { fileUsers } from '../packages/sdk/src/users.js';
+import { fileUsers, signInRecord } from '../packages/sdk/src/users.js';
 import type { Capability } from '../packages/sdk/src/types/users.js';
 
 /*
@@ -25,6 +25,24 @@ const open = (onProblem?: (message: string) => void) =>
   fileUsers({ path, ...(onProblem === undefined ? {} : { onProblem }) });
 
 const EVERY: Capability[] = ['read', 'write', 'session', 'terminal', 'automation', 'diagnostics'];
+
+it('advertises a record the standard recognises: a page field and no invented issuer', () => {
+  const record = open().resource;
+  expect(record.resource_documentation).toBe('https://github.com/softov/ahpd/blob/main/docs/USERS.md');
+  expect(record).not.toHaveProperty('authorization_servers');
+  expect(record.required).toBe(true);
+  expect(record.resource_name).toBe('ahpd users');
+});
+
+it('advertises the identifier a deployment names, and keeps the rest of the record', () => {
+  // What the daemon builds from where it listens, so a client is told an https
+  // identifier rather than the library fallback.
+  const record = signInRecord('https://ahpd.example.com/');
+  expect(record.resource).toBe('https://ahpd.example.com/');
+  expect(record.resource_name).toBe('ahpd users');
+  expect(record.resource_documentation).toBe('https://github.com/softov/ahpd/blob/main/docs/USERS.md');
+  expect(record).not.toHaveProperty('authorization_servers');
+});
 
 it('verifies a minted token and answers the record\'s roles', async () => {
   const users = open();

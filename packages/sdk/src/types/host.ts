@@ -537,8 +537,14 @@ export interface Host {
    *
    * The result's `handle` answers requests; its `close` must be called when
    * the connection drops, or the client's subscriptions leak.
+   *
+   * The person is the one the socket resolved to, when it resolved to
+   * somebody: a caller that admitted the connection on a personal connection
+   * token passes what it found, so the first command is served as them
+   * without an `authenticate`. Absent is a connection that is nobody, which is
+   * what the deployment's own token has always produced.
    */
-  accept(peer: Peer): {
+  accept(peer: Peer, principal?: Principal): {
     /** Answer one request from this client. */
     handle(request: Request): Promise<unknown>;
     /** Drop this client's subscriptions and state. */

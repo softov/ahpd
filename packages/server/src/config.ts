@@ -40,6 +40,15 @@ export interface Config {
    * is what writes one.
    */
   users?: string;
+  /**
+   * The identifier this host advertises for its own sign-in.
+   *
+   * RFC 9728 wants a resource identifier that uses the https scheme, and a
+   * daemon derives one from the address it listens on when this names none.
+   * A deployment behind a proxy names the public one instead, so what a client
+   * is told is where the host actually answers.
+   */
+  resource?: string;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**
@@ -182,4 +191,43 @@ export const asSpec = (value: unknown): PluginSpec | undefined => {
   if (held.options !== undefined) spec.options = held.options as Record<string, unknown>;
   if (held.enabled !== undefined) spec.enabled = held.enabled;
   return spec;
+};
+
+/**
+ * The identifier a host advertises for its own sign-in.
+ *
+ * The operator's when they named one, and otherwise one derived from where the
+ * daemon listens: RFC 9728 wants a resource identifier that uses the https
+ * scheme, and a LAN daemon has no other name to offer. A wildcard address is
+ * not a name, so the machine's own stands in for it, and port `0`, which asks
+ * the OS to choose one, is left out rather than advertised as a zero.
+ *
+ * Pure and given the machine name, so what a client will be told is testable
+ * without binding a port.
+ */
+export const signInIdentifier = (
+  options: { resource?: string; host: string; port: number },
+  machine: string,
+): string => {
+  if (options.resource !== undefined) return options.resource;
+  const wildcard = options.host === '' || options.host === '0.0.0.0' || options.host === '::';
+  const named = wildcard ? machine : options.host;
+  return `https://${named}${options.port === 0 ? '' : `:${options.port}`}/`;
+};
+
+/** Whether a value is the identifier the record requires: https, and no fragment. */
+export const isIdentifier = (value: string): boolean => /^https:\/\/[^\s#]+$/.test(value);
+
+/**
+ * The URL a person pastes where a client asks for a host.
+ *
+ * The token in the query, which is the shape this daemon's door and the
+ * reference client's remote-host prompt both speak. A wildcard bind address is
+ * not a name a client can reach, so the machine's own stands in for it. Pure
+ * and given the machine name, so the line `ahpd user token --url` prints is
+ * testable without a daemon.
+ */
+export const personalUrl = (secret: string, host: string, port: number, machine: string): string => {
+  const wildcard = host === '' || host === '0.0.0.0' || host === '::';
+  return `ws://${wildcard ? machine : host}:${port}/?tkn=${encodeURIComponent(secret)}`;
 };

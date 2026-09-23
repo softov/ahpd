@@ -1,6 +1,7 @@
 /** Accepting connections, on whichever JavaScript runtime is running. */
 
 import type { Peer, Request } from './rpc.js';
+import type { Principal } from './users.js';
 
 /** One accepted client, for as long as its connection lasts. */
 export interface Connected {
@@ -10,8 +11,15 @@ export interface Connected {
   close(): void;
 }
 
-/** Called per connection, to hand it to whatever will answer it. */
-export type OnConnect = (peer: Peer) => Connected;
+/**
+ * Called per connection, to hand it to whatever will answer it.
+ *
+ * The person is the one the presented token resolved to, when it resolved to
+ * somebody: the deployment's own token names nobody, and a host with no
+ * directory resolves nobody. It is passed here rather than looked up later
+ * because the door is the only place the token is still in hand.
+ */
+export type OnConnect = (peer: Peer, principal?: Principal) => Connected;
 
 /**
  * Called with every frame, in either direction, as it crosses the socket.
@@ -61,6 +69,17 @@ export interface ListenOptions {
    * WebSocket, which is why the query string is the one that always works.
    */
   token?: string;
+  /**
+   * Who a token belongs to, when it is not the deployment's own.
+   *
+   * Asked only about a token that is not `token`, and only when one was
+   * presented. A daemon wires this to its user directory, so a person's own
+   * secret opens the socket and arrives as their principal before the first
+   * frame. A host with no directory passes none, and the door refuses exactly
+   * what it refused before. The answer may be a promise, since the directory
+   * is a port.
+   */
+  identify?: (token: string) => Promise<Principal | undefined> | Principal | undefined;
   /** Sees every frame, both ways. Nothing is recorded without one. */
   tap?: Tap;
 }

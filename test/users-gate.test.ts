@@ -160,6 +160,24 @@ it('serves a member what it has, and refuses what it has not with nothing to neg
   expect((refused as { data?: unknown }).data).toEqual({});
 });
 
+it('serves a connection that arrived as somebody, with no authenticate', async () => {
+  // A socket admitted on a personal connection token: the principal is on the
+  // connection before the first frame, so the first command is served as them
+  // and no `authenticate` is needed - decision
+  // `a-connection-token-may-carry-a-person`.
+  const made = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }) });
+  const granted: Grant[] = ['read', 'write', 'session', 'terminal'];
+  const client = made.accept(peer(), { id: 'm', roles: ['r'], can: (one: Grant) => granted.includes(one) });
+  await hello(client);
+  expect(await call(client, 'listSessions', {})).toMatchObject({ result: {} });
+
+  // And a connection admitted by the deployment's own token, which names
+  // nobody, is refused exactly as it was until it signs in.
+  const anonymous = made.accept(peer());
+  await hello(anonymous);
+  expect(await call(anonymous, 'listSessions', {})).toMatchObject({ code: -32007 });
+});
+
 it('serves a read-only role reads and refuses its writes', async () => {
   const client = host({ users: directory({ v: ['read'] }) }).accept(peer());
   await hello(client);

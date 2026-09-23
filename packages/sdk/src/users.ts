@@ -26,15 +26,17 @@ const BUILT_IN: Record<string, Grant[]> = {
 /**
  * The record the host advertises for its own sign-in.
  *
- * `authorization_servers` is required by the format and points at this host's
- * own documentation rather than at an OAuth endpoint, because the host is its
- * own issuer - the one place being one's own issuer shows through the standard
- * shape, as decision `ahpd-keeps-its-own-user-directory` says.
+ * It is the library's fallback, and a deployment that knows where it is
+ * listening names its own through `resource`, which is what the daemon does.
+ * RFC 9728 wants a resource identifier that uses the https scheme, so the one
+ * here is only what a library with no address to advertise can offer, and the
+ * documentation link sits in `resource_documentation` where the format
+ * provides for it - decision `a-host-advertises-only-what-is-true`.
  */
 export const DEFAULT_RESOURCE = {
   resource: 'ahpd://users',
   resource_name: 'ahpd users',
-  authorization_servers: ['https://github.com/softov/ahpd/blob/main/docs/USERS.md'],
+  resource_documentation: 'https://github.com/softov/ahpd/blob/main/docs/USERS.md',
   /*
    * True, which is also the format's default.
    *
@@ -47,6 +49,17 @@ export const DEFAULT_RESOURCE = {
    */
   required: true,
 };
+
+/**
+ * The same record under an identifier the deployment answers to.
+ *
+ * The daemon builds this from the address it listens on, so what a client is
+ * told is an https identifier rather than the fallback above.
+ */
+export const signInRecord = (resource: string): Record<string, unknown> => ({
+  ...DEFAULT_RESOURCE,
+  resource,
+});
 
 /** What `fileUsers` is given. */
 export interface FileUserOptions {

@@ -45,7 +45,7 @@ export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
 export { fileSessions, memorySessions } from './sessions.js';
 export type { FileSessionOptions } from './sessions.js';
-export { fileUsers } from './users.js';
+export { fileUsers, signInRecord } from './users.js';
 export type { FileUserOptions } from './users.js';
 export type { SessionStore } from './types/sessions.js';
 export type { ScheduledOptions } from './scheduled.js';

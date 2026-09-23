@@ -1,5 +1,6 @@
 import { createPeer, receive } from './rpc.js';
 import type { Connected, Listener, ListenOptions, OnConnect, Runtime, Tap } from './types/listen.js';
+import type { Principal } from './types/users.js';
 
 /**
  * Accepts WebSocket connections on Node, Bun or Deno.
@@ -83,9 +84,35 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   const host = options.host ?? '127.0.0.1';
   let accepted = 0;
   const token = options.token;
-  /** Whether this handshake may proceed. No token configured accepts any. */
-  const allowed = (url: string | undefined, authorization: string | null): boolean =>
-    token === undefined || same(token, presented(url, authorization) ?? '');
+  /**
+   * Who, if anyone, this handshake carries.
+   *
+   * The deployment's own token admits the socket and names nobody, which is
+   * what it has always done. Anything else is put to `identify`, which a
+   * daemon wires to its user directory: a person's own secret is then answered
+   * at the door, and the principal reaches the connection before its first
+   * frame rather than through `authenticate`. A host with no directory passes
+   * no `identify`, so nothing changes for it. An unguarded host admits any
+   * socket and still names the person when the token it was given is theirs.
+   */
+  const identityOf = async (
+    url: string | undefined,
+    authorization: string | null,
+  ): Promise<{ admitted: true; principal?: Principal } | { admitted: false }> => {
+    const held = presented(url, authorization);
+    if (token === undefined) {
+      const principal = held === undefined || held === '' || options.identify === undefined
+        ? undefined
+        : await options.identify(held);
+      return principal === undefined ? { admitted: true } : { admitted: true, principal };
+    }
+    if (held !== undefined && same(token, held)) return { admitted: true };
+    if (held !== undefined && held !== '' && options.identify !== undefined) {
+      const principal = await options.identify(held);
+      if (principal !== undefined) return { admitted: true, principal };
+    }
+    return { admitted: false };
+  };
 
   if (here === 'bun') {
     const Bun = (globalThis as unknown as { Bun: {
@@ -97,13 +124,16 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     const server = Bun.serve({
       port: options.port,
       hostname: host,
-      fetch(request: Request_, server_: { upgrade(r: Request_): boolean }) {
+      async fetch(request: Request_, server_: { upgrade(r: Request_, options?: { data?: unknown }): boolean }) {
         // Refused before the upgrade, so an unauthorised client is told in
         // HTTP rather than handed a socket that closes on its first message.
-        if (!allowed(request.url, request.headers.get('authorization'))) {
+        const identity = await identityOf(request.url, request.headers.get('authorization'));
+        if (!identity.admitted) {
           return new Response('A connection token is required', { status: 401 });
         }
-        if (server_.upgrade(request)) return undefined;
+        // The principal rides on the socket, because Bun's `open` is handed
+        // the socket and not the request this answer came from.
+        if (server_.upgrade(request, { data: identity.principal })) return undefined;
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       },
       websocket: {
@@ -114,7 +144,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
             close: () => ws.close(),
             isOpen: () => ws.readyState === 1,
           });
-          bound.set(ws, { peer, connected: onConnect(peer), seen });
+          bound.set(ws, { peer, connected: onConnect(peer, ws.data as Principal | undefined), seen });
         },
         message(ws: BunSocket, raw: string | Uint8Array) {
           const held = bound.get(ws);
@@ -138,14 +168,15 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
 
   if (here === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
-      serve(options: { port: number; hostname: string }, handler: (r: Request_) => Response): {
+      serve(options: { port: number; hostname: string }, handler: (r: Request_) => Response | Promise<Response>): {
         shutdown(): Promise<void>;
         addr: { port: number };
       };
       upgradeWebSocket(r: Request_): { socket: DenoSocket; response: Response };
     } }).Deno;
-    const server = Deno.serve({ port: options.port, hostname: host }, (request) => {
-      if (!allowed(request.url, request.headers.get('authorization'))) {
+    const server = Deno.serve({ port: options.port, hostname: host }, async (request) => {
+      const identity = await identityOf(request.url, request.headers.get('authorization'));
+      if (!identity.admitted) {
         return new Response('A connection token is required', { status: 401 });
       }
       if ((request.headers.get('upgrade') ?? '').toLowerCase() !== 'websocket') {
@@ -160,7 +191,9 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
           close: () => socket.close(),
           isOpen: () => socket.readyState === 1,
         });
-        held = { peer, connected: onConnect(peer), seen };
+        // Closed over rather than carried on the socket: this handler already
+        // has the answer the upgrade was decided on.
+        held = { peer, connected: onConnect(peer, identity.principal), seen };
       };
       socket.onmessage = (event) => {
         const open = held;
@@ -194,6 +227,15 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     );
   }
 
+  /*
+   * What `verifyClient` decided, waiting for the connection it decided about.
+   *
+   * `ws` answers the handshake from one callback and reports the connection
+   * from another, and the request object is the one thing both are handed, so
+   * it is the key. A `WeakMap` rather than a `Map` because nothing has to be
+   * cleaned up when a handshake is refused.
+   */
+  const decided = new WeakMap<object, Principal | undefined>();
   const server = new WebSocketServer({
     port: options.port,
     host,
@@ -201,18 +243,25 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     // an unauthorised client reads 401 rather than a socket that opened and
     // then closed for no stated reason.
     verifyClient: (info, accept) => {
-      if (allowed(info.req.url, info.req.headers.authorization ?? null)) accept(true);
-      else accept(false, 401, 'A connection token is required');
+      void identityOf(info.req.url, info.req.headers.authorization ?? null).then((identity) => {
+        if (identity.admitted) {
+          decided.set(info.req, identity.principal);
+          accept(true);
+          return;
+        }
+        accept(false, 401, 'A connection token is required');
+      });
     },
   });
-  server.on('connection', (socket) => {
+  server.on('connection', (socket, request) => {
     const seen = tapping(options.tap, ++accepted);
     const peer = createPeer({
       send: (text) => { seen.out(text); socket.send(text); },
       close: () => socket.close(),
       isOpen: () => socket.readyState === 1,
     });
-    const connected = onConnect(peer);
+    const connected = onConnect(peer, decided.get(request));
+    decided.delete(request);
     socket.on('message', (raw) => {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8');
       seen.in(text);
@@ -239,7 +288,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
 
 type Request_ = { url: string; headers: { get(name: string): string | null } };
 
-interface BunSocket { send(text: string): unknown; close(): void; readyState: number }
+interface BunSocket { send(text: string): unknown; close(): void; readyState: number; data?: unknown }
 
 interface DenoSocket {
   send(text: string): void;
@@ -250,17 +299,24 @@ interface DenoSocket {
   onclose: (() => void) | null;
 }
 
+interface NodeRequest {
+  url?: string;
+  headers: { authorization?: string };
+}
+
 interface NodeOptions {
   port: number;
   host: string;
   verifyClient(
-    info: { req: { url?: string; headers: { authorization?: string } } },
+    info: { req: NodeRequest },
     accept: (allow: boolean, code?: number, message?: string) => void,
   ): void;
 }
 
 interface NodeServer {
-  on(event: 'connection', handler: (socket: NodeSocket) => void): void;
+  // The request as well as the socket, because it is the key the answer
+  // `verifyClient` reached is waiting under.
+  on(event: 'connection', handler: (socket: NodeSocket, request: NodeRequest) => void): void;
   once(event: 'listening' | 'error', handler: (error?: unknown) => void): void;
   address(): { port: number } | null;
   close(): void;

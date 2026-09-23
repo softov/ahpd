@@ -38,7 +38,7 @@ import type { ChangesetOperationContext, ChangesetState } from './types/changes.
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
 import type { EventName, HostEvent } from './types/events.js';
 import type { PluginContext } from './types/plugin.js';
-import type { Grant } from './types/users.js';
+import type { Grant, Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
 import type { Bag } from './types/common.js';
@@ -4471,10 +4471,14 @@ export function createHost(options: HostOptions): Host {
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
     connections: () => connections.size,
-    accept(peer: Peer) {
+    accept(peer: Peer, principal?: Principal) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
         tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
+        // A socket that arrived on a personal connection token is already
+        // somebody, so the gate reads this before the first command rather
+        // than waiting for an `authenticate` the client may never send.
+        ...(principal === undefined ? {} : { principal }),
       };
       /**
        * Whether this connection has been introduced.

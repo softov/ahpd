@@ -3,36 +3,51 @@
 `ahpd` has one secret by default: the connection token. Everybody who holds it
 is the same caller, and the host has no idea who anybody is.
 
-A **user directory** changes that. A person signs in with a credential of their
-own, the host checks it against a file it owns, and what they may do comes from
-the roles on their record. Nothing here is on unless a file is configured: a
-daemon with no `users` key behaves exactly as it did before this existed.
+A **user directory** changes that. A person holds a credential of their own, the
+host checks it against a file it owns, and what they may do comes from the roles
+on their record. There are three ways that credential reaches the host, and they
+are distinct: the deployment's token opens a socket and names nobody, a person's
+own token opens one and is who they are, and the protocol's `authenticate`
+command answers a client that speaks it. Nothing here is on unless a file is
+configured: a daemon with no `users` key behaves exactly as it did before this
+existed.
 
-## Two secrets
+## Three ways in
 
-| | Connection token | Credential |
-| --- | --- | --- |
-| Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | `authenticate`, against the resource the host advertises |
-| What it answers | whether a socket may exist at all | who is on the other end, and what they may do |
-| How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next command is refused |
-| How many | one, shared | one per person |
-| Expiry | none | `expiresIn`, honoured |
+| | The deployment's token | A person's own token | `authenticate` |
+| --- | --- | --- | --- |
+| Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | the same, with the secret `ahpd user token` printed | the command, against the resource the host advertises |
+| What it answers | whether a socket may exist at all | that, and who is on the other end | who is on the other end, for a socket that arrived as nobody |
+| Identity | none: every holder is the same caller | the person whose record the secret hashes to | the person the directory resolves the token to |
+| How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next connection is refused |
+| How many | one, shared | one per person | one per person |
+| Expiry | none | none | `expiresIn`, honoured |
 
-Removing a user **does not close their socket**. They still hold the connection
-token, so they can open one and read the root state; what they lose is every
-command behind the gate. Rotating the connection token is what locks somebody
-out of the door.
+A person's own token is a connection token and a credential at once, which is
+what lets a client that can only carry a URL arrive as somebody with no sign-in
+step at all. `authenticate` is unchanged and remains the protocol's way in, and
+it is the only way in for a credential an issuer mints rather than this file.
+
+Removing a user **does not close their socket**, and it does not take away what
+an open one was already given: a connection that arrived keeps its principal
+until it drops. What removal takes away is the next connection and the next
+`authenticate`. Rotating the deployment's token is what locks somebody out of
+the door entirely.
 
 ## Three shapes
 
-1. **One person, connection token only.** No `users` key, no directory, no
-   sign-in. This is the default and it is unchanged.
-2. **Several people, both secrets.** A connection token for the door and a
-   credential per person. The shape the directory is for.
-3. **No connection token at all.** `--without-connection-token`, so the
-   credential is the only secret and who may reach the port is the network's
-   business. `--host 0.0.0.0` with no token is this shape whether you meant it
-   or not.
+1. **One person, the deployment token only.** No `users` key, no directory.
+   This is the default and it is unchanged.
+2. **Several people.** A deployment token for the door, when the port is not
+   loopback, and a token per person. Each person is given
+   `ahpd user token <id> --url` and pastes it where their client asks for a
+   host; a client that speaks `authenticate` may push the same secret instead.
+3. **No deployment token at all.** `--without-connection-token`, so a person's
+   own token is the only secret and who may reach the port is the network's
+   business. A token nobody recognises is then simply a socket that is nobody:
+   it is admitted, it may read root state, and every command behind the gate
+   answers `-32007`. `--host 0.0.0.0` with no token is this shape whether you
+   meant it or not.
 
 ## Turning it on
 
@@ -44,21 +59,61 @@ or `--users <file>`. Then:
 
 ```sh
 ahpd user add ana --role admin
-ahpd user token ana          # shown once, only its hash is stored
+ahpd user token ana --url    # the whole ws:// URL, shown once
+ahpd user token ana          # the secret alone, for a script
 ahpd user list
 ahpd user rm ana
 ```
 
-`token` writes the secret alone on stdout so it can be piped; the warning that
-it is shown once goes to stderr. A client presents it like this:
+The URL is composed from the configuration's `host` and `port`, or from the
+`--host` and `--port` passed here when the daemon was started with them. It is
+the `?tkn=` form the door already reads, which is what VS Code's Add Remote
+Agent Host prompt takes and what a browser can use, since a browser cannot set
+headers on a WebSocket.
+
+The secret alone goes to stdout so it can be piped, and the warning that it is
+shown once goes to stderr. Only its hash is stored, and minting again replaces
+it.
+
+A client that speaks the protocol pushes the same secret through the command
+instead:
 
 ```json
-{ "method": "authenticate", "params": { "resource": "ahpd://users", "token": "<the secret>" } }
+{ "method": "authenticate", "params": { "resource": "<the advertised identifier>", "token": "<the secret>" } }
 ```
 
-`ahpd://users` is what the host advertises on every agent. A deployment that
-fronts several hosts should give each its own id, so clients do not confuse
-them.
+## The record the host advertises
+
+The host advertises, on every agent, an RFC 9728 record describing its own
+sign-in:
+
+```json
+{
+  "resource": "https://127.0.0.1:9187/",
+  "resource_name": "ahpd users",
+  "resource_documentation": "https://github.com/softov/ahpd/blob/main/docs/USERS.md",
+  "required": true
+}
+```
+
+`resource` is the identifier a client names in `authenticate`, and it is an
+https URL: the operator's when `--resource` names one, and one derived from the
+host and port the daemon listens on otherwise. `resource_documentation` is this
+page.
+
+There is no `authorization_servers`. That field is a list of RFC 8414 issuer
+identifiers, and this host is not an authorization server, so it is left out
+rather than filled with something that is not one. An earlier version put this
+page's URL there, which is worse than saying nothing: a client matches each
+entry against the authentication providers it has, so an entry on `github.com`
+can resolve GitHub's provider and send a person to sign in somewhere that knows
+nothing about this host. The field is optional for exactly this reason. An
+issuer option that would fill it honestly is a later plan.
+
+`required` is true because every command but the handshake and `authenticate`
+answers `-32007` until a person is known. The daemon prints the identifier at
+startup on a `sign-in` line, so an operator can see what a client will be told
+without reading root state.
 
 ## Roles
 
@@ -156,12 +211,22 @@ giving every connection its own sequence numbers - decision
 says why, and `protectedResources` is the reason it must be readable at all: it
 is what tells a client where to sign in.
 
-## Not yet
+## Clients
 
-`ahpc` and `ahpapp` do not send `authenticate` for a host-level resource, so a
-directory is usable today only from a client that has learned the flow. Both
-need that work before a user directory is useful from them.
+`ahpc` and `ahpapp` both push a token through `authenticate`, and both accept a
+token pasted by hand, so a directory works from either one today.
 
-An identity provider is a later port implementation: the host asks its `Users`
-port whether a token is somebody's, and a master that mints route tickets can
-answer that question instead of the file.
+VS Code is the client that could not, and the reason this page changed. It
+acquires a token only from an authentication provider it can match through
+`authorization_servers`, and it has no field for a pasted secret, so a
+self-issued credential has no route through its sign-in flow: it reports the
+`-32007` as a plain error with nothing to click, which is what a directory used
+to produce. What it does have is a connection token - Add Remote Agent Host
+takes a WebSocket URL - so a person pastes what `ahpd user token <id> --url`
+printed and is themselves from the first frame. No extension and no change in
+the client.
+
+An identity provider behind the same `Users` port is a later plan. The host asks
+its port whether a token is somebody's, and an issuer such as GitHub could
+answer that instead of the file, which is what would let a client acquire a
+credential through its own OAuth flow rather than being handed one.

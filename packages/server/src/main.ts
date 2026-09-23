@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { asSpec, automationsPath, configDir, configPath, daemonLog, loadConfig, sessionsPath } from './config.js';
+import { hostname } from 'node:os';
+import { asSpec, automationsPath, configDir, configPath, daemonLog, isIdentifier, loadConfig, personalUrl, sessionsPath, signInIdentifier } from './config.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale, updateLine } from './update.js';
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
@@ -8,7 +9,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -51,6 +52,15 @@ interface Options {
   configFile?: string;
   /** The file the people who may use this host are in, when there are any. */
   users?: string;
+  /**
+   * The identifier this host advertises for its own sign-in.
+   *
+   * RFC 9728 wants a resource identifier that uses the https scheme, and this
+   * daemon derives one from the address it listens on when this names none.
+   * A deployment behind a proxy names the public one here, so what a client is
+   * told is where the host actually answers.
+   */
+  resource?: string;
   /**
    * Where automations are kept, and whether a clock fires them.
    *
@@ -105,7 +115,8 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   ahpd plugin list            what the configuration names, and what a run
                               would load, without loading any of it
   ahpd user add <id>          add a person, with --role <name> once per role
-  ahpd user token <id>        mint their credential, shown once
+  ahpd user token <id>        mint their credential, shown once. --url prints
+                              the whole ws:// URL a client can be given
   ahpd user list              who is in the file
   ahpd user rm <id>           take a person out of it
 
@@ -122,6 +133,12 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   --without-connection-token    Accept any connection. Only when the port is
                                 already reachable by nobody else.
   --config-file <p>             Read this instead of the file below.
+  --users <file>                The people who may use this host. A person's
+                                token is also a connection token, so a client
+                                that can only carry a URL arrives as them.
+  --resource <url>              The https identifier this host advertises for
+                                its own sign-in. Default: derived from --host
+                                and --port.
   --automations <where>         file, the default, keeps them beside the
                                 configuration and fires their schedules;
                                 memory keeps them until this process ends and
@@ -150,7 +167,7 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
 connectionTokenFile, withoutConnectionToken, automations, sessions, wire,
-updateCheck, plugins. A flag beats the file, because a
+updateCheck, plugins, users, resource. A flag beats the file, because a
 flag is this run and a file is every run until somebody edits it. "plugins" is
 a list of the same specs --plugin takes, and --no-plugins is the one flag with
 no key: leaving plugins out is already the off.
@@ -188,6 +205,7 @@ function parse(argv: string[]): Options {
       case '--without-connection-token': options.open = true; break;
       case '--config-file': options.configFile = String(argv[++i]); break;
       case '--users': options.users = String(argv[++i]); break;
+      case '--resource': options.resource = String(argv[++i]); break;
       case '--automations': {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
@@ -245,6 +263,7 @@ function parse(argv: string[]): Options {
   }
   if (!argv.includes('--wire') && typeof file.wire === 'string') options.wire = file.wire;
   if (options.users === undefined && typeof file.users === 'string') options.users = file.users;
+  if (options.resource === undefined && typeof file.resource === 'string') options.resource = file.resource;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   /*
@@ -398,7 +417,15 @@ if (verb !== undefined) {
     const from = loadConfig(argv.includes('--config-file') ? argv[argv.indexOf('--config-file') + 1] : undefined);
     const path = named ?? from.users;
     if (path === undefined) stop('No user file. Pass --users <file> or set "users" in the configuration.');
-    const users = fileUsers({ path, onProblem: (line) => process.stderr.write(`${line}\n`) });
+    // Where the daemon answers, for the URL form: the configuration's address
+    // or the same defaults the daemon itself uses. `--host` and `--port` here
+    // are for the daemon that was started with those flags rather than with a
+    // configuration file, so the URL names where it actually is.
+    const where = {
+      host: typeof from.host === 'string' ? from.host : '127.0.0.1',
+      port: typeof from.port === 'number' ? from.port : 9187,
+    };
+    const directory = fileUsers({ path, onProblem: (line) => process.stderr.write(`${line}\n`) });
 
     // Flags are read out of the whole line and the positionals are what is
     // left, because `list` takes none and `add` takes one: assuming two would
@@ -406,9 +433,23 @@ if (verb !== undefined) {
     const [sub, ...more] = rest;
     const positionals: string[] = [];
     const roles: string[] = [];
+    let asUrl = false;
     for (let i = 0; i < more.length; i++) {
       const one = more[i];
       if (one === '--users') { i++; continue; }
+      if (one === '--url') { asUrl = true; continue; }
+      if (one === '--host') {
+        const said = more[++i];
+        if (said === undefined) stop('--host needs an address.');
+        where.host = said;
+        continue;
+      }
+      if (one === '--port') {
+        const said = Number(more[++i]);
+        if (!Number.isInteger(said)) stop('--port needs a number.');
+        where.port = said;
+        continue;
+      }
       if (one === '--role') {
         const held = more[++i];
         if (held === undefined) stop('--role needs a name.');
@@ -421,7 +462,7 @@ if (verb !== undefined) {
     const id = positionals[0];
 
     if (sub === 'list') {
-      const rows = await users.list();
+      const rows = await directory.list();
       process.stdout.write(rows.length === 0
         ? `no users in ${path}\n`
         : `${rows.map((one) => `${one.id}${one.roles.length > 0 ? ` (${one.roles.join(', ')})` : ''}`).join('\n')}\n`);
@@ -430,24 +471,32 @@ if (verb !== undefined) {
     if (sub === 'add') {
       if (id === undefined || id.startsWith('-')) stop('user add takes an id: ahpd user add <id> [--role <name>]');
       const held = roles.length > 0 ? roles : ['member'];
-      await users.add(id, held);
+      await directory.add(id, held);
       process.stdout.write(`Added ${id} (${held.join(', ')}). Give them a credential: ahpd user token ${id}\n`);
       process.exit(0);
     }
     if (sub === 'rm') {
       if (id === undefined || id.startsWith('-')) stop('user rm takes an id: ahpd user rm <id>');
-      const gone = await users.remove(id);
+      const gone = await directory.remove(id);
       process.stdout.write(gone
-        ? `Removed ${id}. Their socket stays open; their next command is refused.\n`
+        ? `Removed ${id}. Their socket stays open; their next connection is refused.\n`
         : `No user called ${id}.\n`);
       process.exit(gone ? 0 : 1);
     }
     if (sub === 'token') {
       if (id === undefined || id.startsWith('-')) stop('user token takes an id: ahpd user token <id>');
-      const secret = await users.mint(id);
-      // The secret alone on stdout, so it can be piped; the warning on stderr.
-      process.stderr.write('Shown once. Only its hash is stored, and minting again replaces it.\n');
-      process.stdout.write(`${secret}\n`);
+      const secret = await directory.mint(id);
+      /*
+       * The bare secret by default, so it can be piped, and the whole URL when
+       * asked for: a client that can only carry a connection token is given
+       * one thing to paste rather than two to assemble. The warning goes to
+       * stderr either way, so stdout stays the credential alone.
+       */
+      const shown = asUrl ? personalUrl(secret, where.host, where.port, hostname()) : secret;
+      process.stderr.write(asUrl
+        ? 'Shown once. Only its hash is stored, and minting again replaces it. Paste the URL where a client asks for a host.\n'
+        : 'Shown once. Only its hash is stored, and minting again replaces it.\n');
+      process.stdout.write(`${shown}\n`);
       process.exit(0);
     }
     stop('user takes add, rm, list or token.');
@@ -512,6 +561,43 @@ const memory = options.automations === 'memory';
 const stamp = (line: string): void => { process.stdout.write(`${new Date().toISOString()} ${line}\n`); };
 
 /*
+ * What this host calls its own sign-in resource.
+ *
+ * The operator's identifier when they named one, and otherwise one derived
+ * from where this daemon listens. `signInIdentifier` does the deriving, so
+ * what a client will be told is testable without binding a port, and this
+ * only refuses an identifier the format would not accept.
+ */
+const advertisedResource = (): string => {
+  const said = options.resource;
+  if (said !== undefined && !isIdentifier(said)) {
+    stop('--resource must be an https URL with no fragment, for example https://ahpd.example.com/');
+  }
+  return signInIdentifier({ ...(said === undefined ? {} : { resource: said }), host: options.host, port: options.port }, hostname());
+};
+
+/*
+ * The people who may use this host, built once.
+ *
+ * One port answers two doors: `createHost` asks whether a command may proceed,
+ * and `listen` asks whose a connection token is. One instance, so a token is
+ * asked one question and there is no second opinion about who somebody is.
+ * Absent, the host advertises no sign-in resource and every gate is inert.
+ *
+ * The path is read once here: the directory itself re-reads the file on every
+ * question, so the directory stays current even though the record is built
+ * once. The record is this host's own identifier, because RFC 9728 wants an
+ * https URL and a client is told where the host actually answers.
+ */
+const users = options.users === undefined
+  ? undefined
+  : fileUsers({
+    path: options.users,
+    resource: signInRecord(advertisedResource()),
+    onProblem: (line) => process.stderr.write(`${line}\n`),
+  });
+
+/*
  * What the daemon contributes before any plugin does.
  *
  * This is the literal it has always been, named so a plugin's contributions
@@ -540,16 +626,11 @@ const base: HostOptions = {
   worktrees: gitWorktrees(),
   github: githubPullRequests(),
   /*
-   * The people who may use this host, when the configuration names a file.
+   * The directory built above, handed to the host as its `users` port.
    *
-   * Absent, the host advertises no sign-in resource and every gate it has is
-   * inert, which is what every install that has not configured a directory
-   * gets. The path is read once, here: the directory itself re-reads the file
-   * on every question, so `ahpd user rm` lands on the next command.
+   * Absent stays absent, which is the install that never configured people.
    */
-  ...(options.users === undefined
-    ? {}
-    : { users: fileUsers({ path: options.users, onProblem: (line) => process.stderr.write(`${line}\n`) }) }),
+  ...(users === undefined ? {} : { users }),
   /*
    * The host's own tools, offered to every session's model.
    *
@@ -660,9 +741,25 @@ const tap = options.wire === undefined ? undefined : ((): Tap => {
   };
 })();
 
+/*
+ * The door, and the directory behind it.
+ *
+ * `identify` is what makes a person's own connection token theirs: the
+ * deployment's token still admits and names nobody, and anything else is put
+ * to the directory, so a client that can only carry a URL arrives as somebody
+ * without an `authenticate` - decision
+ * `a-connection-token-may-carry-a-person`. With no directory there is nothing
+ * to ask, so nothing is passed and the door refuses exactly what it refused.
+ */
 const listener = await listen(
-  { port: options.port, host: options.host, ...(token !== undefined ? { token } : {}), ...(tap ? { tap } : {}) },
-  (peer) => host.accept(peer),
+  {
+    port: options.port,
+    host: options.host,
+    ...(token !== undefined ? { token } : {}),
+    ...(users === undefined ? {} : { identify: (presented: string) => users.verify(presented) }),
+    ...(tap ? { tap } : {}),
+  },
+  (peer, principal) => host.accept(peer, principal),
 );
 
 process.stdout.write(
@@ -676,6 +773,9 @@ process.stdout.write(
   // Where the secret came from, never the secret: stdout is a log, and a log
   // is the one place a credential should not end up.
   + `${from}\n`
+  // What a client is told to sign in against, so an operator can see it
+  // without reading root state. Absent when there is nobody to sign in.
+  + (options.users === undefined ? '' : `sign-in ${advertisedResource()}\n`)
   + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
   + (checkingUpdates(options.updateCheck) ? updateLine(manifest()) ?? '' : ''),
 );

@@ -1,6 +1,7 @@
 ---
 title: A person signs in through `authenticate`, not through the connection token
-status: accepted
+status: superseded
+superseded-by: decisions/a-connection-token-may-carry-a-person.md
 date: 2026-09-23
 refs:
   - "[code://packages/sdk/src/host.ts#L5118-L5185](../../packages/sdk/src/host.ts#L5118-L5185) - the `authenticate` handler, which already holds a credential per connection and is where a person's now lands"
