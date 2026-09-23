@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, GATE, ROOT } from '../packages/sdk/src/host.js';
 import { fileResources, uriOf } from '../packages/sdk/src/resources.js';
+import { shellTerminals } from '../packages/sdk/src/terminals.js';
 import { echo } from '../examples/echo/agent.js';
 import type { HostOptions } from '../packages/sdk/src/types/host.js';
 import type { ResourceProvider } from '../packages/sdk/src/types/resources.js';
@@ -31,6 +32,33 @@ beforeEach(() => {
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 const peer = (): Peer => ({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} });
+
+/** A peer that keeps what it was told, for the half that answers with a notification. */
+const watching = (): Peer & { seen: { method: string; params: Bag }[] } => {
+  const seen: { method: string; params: Bag }[] = [];
+  return {
+    seen,
+    send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    notify: (method: string, params: unknown) => { seen.push({ method, params: params as Bag }); },
+  };
+};
+
+type Bag = Record<string, any>;
+
+/** Everything a terminal has said on its channel so far. */
+const said = (p: ReturnType<typeof watching>, uri: string): string => p.seen
+  .filter((one) => one.method === 'action' && one.params.channel === uri && one.params.action?.type === 'terminal/data')
+  .map((one) => String(one.params.action.data)).join('');
+
+/** Wait until the terminal has said it, so a negative can be asserted against a positive. */
+const until = async (p: ReturnType<typeof watching>, uri: string, text: string): Promise<string> => {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (said(p, uri).includes(text)) return said(p, uri);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return said(p, uri);
+};
 
 /** A directory whose tokens are decided by hand, so a role is one array. */
 const directory = (tokens: Record<string, Grant[]>): Users => ({
@@ -172,4 +200,88 @@ it('takes the capability away the moment the credential is given back', async ()
 
   await signIn(client, '');
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ code: -32007 });
+});
+
+/*
+ * The other half of the gate.
+ *
+ * A dispatch is a notification, so it returns before the boundary every command
+ * passes and has to be refused one layer in. It is the half that matters most:
+ * root state hands every open terminal's URI to anybody who completes a
+ * handshake, and `terminal/input` writes to a shell - so an ungated dispatch is
+ * arbitrary command execution by somebody who never signed in.
+ */
+
+it('refuses a dispatch from a connection that never signed in, and root state still names the terminal', async () => {
+  const owner = watching();
+  const made = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() });
+  const client = made.accept(owner);
+  await hello(client);
+  await signIn(client, 'm');
+
+  const uri = 'ahp-terminal:/gate';
+  expect(await call(client, 'createTerminal', {
+    channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}`,
+  })).toHaveProperty('result');
+  await call(client, 'subscribe', { channel: uri });
+
+  // Somebody who never signed in, who is handed the URI by the handshake.
+  const quiet = watching();
+  const stranger = made.accept(quiet);
+  const shook = await stranger.handle({
+    method: 'initialize',
+    params: { clientId: 'stranger', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+  }) as Bag;
+  expect(JSON.stringify(shook.snapshots)).toContain(uri);
+
+  stranger.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'terminal/input', data: 'echo STRANGER-RAN-THIS\n' } } });
+
+  // The owner's own command is the clock: once it has been echoed, anything the
+  // stranger sent would have been too. A negative asserted against a positive
+  // rather than against a sleep.
+  client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'terminal/input', data: 'echo OWNER-RAN-THIS\n' } } });
+  const after = await until(owner, uri, 'OWNER-RAN-THIS');
+  expect(after).toContain('OWNER-RAN-THIS');
+  expect(after).not.toContain('STRANGER-RAN-THIS');
+
+  // And the stranger was told why, in the only way a notification can be.
+  const rejected = quiet.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string');
+  expect(rejected.length).toBeGreaterThan(0);
+  expect(String(rejected[0]?.params.rejectionReason)).toContain('Sign in');
+});
+
+it('refuses a dispatch into a channel the role does not cover', async () => {
+  const seen = watching();
+  const made = host({ users: directory({ r: ['read', 'session'] }), terminals: shellTerminals() });
+  const client = made.accept(seen);
+  await hello(client);
+  await signIn(client, 'r');
+
+  // No `terminal`, so the channel is refused even though the person signed in.
+  client.handle({ method: 'dispatchAction', params: { channel: 'ahp-terminal:/nope', action: { type: 'terminal/input', data: 'echo no\n' } } });
+  const rejected = seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string');
+  expect(rejected.length).toBeGreaterThan(0);
+  expect(String(rejected[0]?.params.rejectionReason)).toContain('may not terminal');
+});
+
+it('classifies a dispatch by its channel', () => {
+  expect(GATE.dispatchNeeds('ahp-terminal:/x')).toBe('terminal');
+  expect(GATE.dispatchNeeds('ahp-session:/x')).toBe('session');
+  expect(GATE.dispatchNeeds('ahp-chat:/x')).toBe('session');
+  expect(GATE.dispatchNeeds('ahp-session:/x/marks')).toBe('session');
+  expect(GATE.dispatchNeeds('ahp-automations://')).toBe('automation');
+  expect(GATE.dispatchNeeds(ROOT)).toBe('write');
+  // A channel a later plan adds: the conservative answer, not nothing.
+  expect(GATE.dispatchNeeds('ahp-resource-watch:/x')).toBe('read');
+});
+
+it('dispatches freely with no user directory', async () => {
+  const seen = watching();
+  const client = host({ terminals: shellTerminals() }).accept(seen);
+  await hello(client);
+  const uri = 'ahp-terminal:/open';
+  await call(client, 'createTerminal', { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}` });
+  await call(client, 'subscribe', { channel: uri });
+  client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'terminal/input', data: 'echo STILL-OPEN\n' } } });
+  expect(await until(seen, uri, 'STILL-OPEN')).toContain('STILL-OPEN');
 });

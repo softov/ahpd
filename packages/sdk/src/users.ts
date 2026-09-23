@@ -35,7 +35,17 @@ export const DEFAULT_RESOURCE = {
   resource: 'ahpd://users',
   resource_name: 'ahpd users',
   authorization_servers: ['https://github.com/softov/ahpd/blob/main/docs/USERS.md'],
-  required: false,
+  /*
+   * True, which is also the format's default.
+   *
+   * The field says whether the agent works without this credential, and with a
+   * directory configured it does not: every command but the handshake and
+   * `authenticate` answers `-32007` until somebody signs in. `false` would tell
+   * a client it may defer the prompt, and the specification says outright that
+   * a client may read it to decide exactly that - so it would defer, and then
+   * every call would fail.
+   */
+  required: true,
 };
 
 /** What `fileUsers` is given. */

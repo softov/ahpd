@@ -187,17 +187,43 @@ const NEEDS: Record<string, Grant> = {
 const UNGATED = new Set([
   'initialize', 'reconnect', 'ping', 'authenticate', 'subscribe',
   /*
-   * Notifications, which never reach the gate: the notification path returns
-   * before it, because a frame with no id has nowhere to carry a refusal.
+   * Notifications, which cannot be refused *here*: the notification path
+   * returns before this boundary, because a frame with no id has nowhere to
+   * carry an error.
    *
-   * `unsubscribe` costs nothing to allow. `dispatchAction` does not: starting a
-   * turn is one, so a connection that never signed in can still run a session.
-   * Refusing an action needs the check inside `applyDispatch` rather than at
-   * this boundary, which is a change `host/06` deliberately did not make - see
-   * its `implemented.md`, which records it as the next gap.
+   * `unsubscribe` costs nothing to allow. `dispatchAction` is gated all the
+   * same, one layer in, at the top of `applyDispatch` and by the channel it
+   * names - see `dispatchNeeds`. It has to be: `terminal/input` writes to a
+   * shell, and root state hands every open terminal's URI to anybody who
+   * completes a handshake, so an ungated dispatch is arbitrary command
+   * execution by a connection that never signed in.
    */
   'dispatchAction', 'unsubscribe',
 ]);
+
+/**
+ * What dispatching into a channel needs, by the channel rather than the action.
+ *
+ * A dispatch is a notification, so what it gets on refusal is `rejectionReason`
+ * on the channel rather than an error code - and what it is checked against is
+ * the channel, because that is what says which part of the host is being
+ * driven. A session and a chat are `session`; a terminal is `terminal`, which
+ * is the one that runs commands; an automation is `automation`.
+ *
+ * `ahp-root://` is `write` because the only thing a client may dispatch there
+ * is `root/configChanged`, which changes a setting for every client at once.
+ *
+ * Anything else - a resource watch this client created, or a channel a later
+ * plan adds - is `read`, the conservative answer and the one
+ * `createResourceWatch` already required to hand the channel over.
+ */
+const dispatchNeeds = (channel: string): Grant => {
+  if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session';
+  if (channel.startsWith('ahp-terminal:')) return 'terminal';
+  if (channel.startsWith('ahp-automation')) return 'automation';
+  if (channel === ROOT || channel.startsWith('ahp-root')) return 'write';
+  return 'read';
+};
 
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
@@ -210,7 +236,7 @@ const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1]
  * the test that names both sets fails on the next run rather than the method
  * being served to anybody.
  */
-export const GATE = { NEEDS, UNGATED };
+export const GATE = { NEEDS, UNGATED, dispatchNeeds };
 
 /**
  * The most rows this host will serve in one page, however many were asked for.
@@ -5346,6 +5372,11 @@ export function createHost(options: HostOptions): Host {
                 resources: [options.users.resource],
               });
             }
+            // The clock this replaces, stopped before a second one is armed:
+            // signing in again is the same thing to this resource that a
+            // replaced token is to any other, and the path below forgets that
+            // one for the same reason.
+            forgetExpiry(resource);
             connection.principal = held;
             if (expiresIn !== undefined) {
               connection.principalUntil = Date.now() + expiresIn * 1000;
@@ -6244,6 +6275,35 @@ export function createHost(options: HostOptions): Host {
         const type = String(action.type ?? '');
         /** Refuse this dispatch, in the words of whatever would not have it. */
         const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
+        /*
+         * The gate, for the half that arrives as a notification.
+         *
+         * The one at the dispatch boundary cannot reach this: a notification
+         * carries no id, so it returns before the boundary and there is nowhere
+         * to put a `-32007`. What it gets instead is the same `rejectionReason`
+         * every other refused action gets, which is the only "no" this
+         * direction has.
+         *
+         * First in the function, before the relayed watch below and before
+         * anything is read or written, because every branch under here drives
+         * something: `terminal/input` runs a command, `chat/turnStarted` runs a
+         * model, `root/configChanged` changes a setting for everybody.
+         *
+         * A host with no user directory refuses nothing, exactly as at the
+         * other boundary.
+         */
+        if (options.users !== undefined) {
+          const needed = dispatchNeeds(channel);
+          const who = connection.principal;
+          if (who === undefined) {
+            no(`Sign in to use this host: ${channel} needs ${needed}`);
+            return;
+          }
+          if (!who.can(needed)) {
+            no(`${who.id} may not ${needed} here`);
+            return;
+          }
+        }
         /*
          * Whether a client is allowed to originate this at all, asked of the
          * protocol rather than answered here.
