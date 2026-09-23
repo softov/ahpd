@@ -118,13 +118,25 @@ That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
 anybody can run.
 
-One key inside `ahp-root://` needs more than the channel does. `defaultShell`
-names the binary a host-managed terminal opens, and one of the paths that reads
-it is the factory a backend opens a terminal with - so what it names is run by
-the next tool call in anybody's session. Setting it therefore needs `terminal`,
-not `write`; clearing it with `null` is the safe direction and needs neither.
-A `member` has `terminal` already, so a normal client pushing its shell
-preference on connect is unaffected.
+One key inside `ahp-root://` is not the host's at all. `defaultShell` names the
+binary a host-managed terminal opens, and the host's own note calls these "the
+preferences a *client* holds" - VS Code pushes it out of a per-person setting
+the moment it connects. It is kept on the connection that pushed it and read
+from nowhere else, so two people on one daemon each get their own shell and
+neither can name the binary the other's terminal opens.
+
+The paths with no connection in hand take the daemon's own shell, `$SHELL` and
+then `/bin/sh`, and no person's preference at all: a `!command` typed in a chat,
+and the factory a backend opens a terminal with during a tool call. That is
+deliberate. It costs an agent's terminal the shell you chose in your client, and
+it closes the path where writing a file and naming it here would have made the
+next tool call in anybody's session run it.
+
+One wrinkle worth knowing: the action is still echoed to every client watching
+the root, because sequence numbers and the replay buffer are one per host. So a
+client can *see* another's shell go past in a live update. What it reads back in
+its own root state is its own or nothing, because the snapshot is taken per
+connection, and nothing on the host opens a shell with the shared copy.
 
 The absent `request` is the point: a grant would resolve the first, and nothing
 resolves the second, so a client that reads the field correctly stops instead of

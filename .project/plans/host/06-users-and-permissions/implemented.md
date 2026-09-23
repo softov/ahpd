@@ -32,9 +32,10 @@ A daemon with no `users` configured advertises nothing new, refuses nothing, and
 - `test/users.test.ts` - 7 cases: verification, the built-in roles, a file role overriding one, minting twice, removal, listing without hashes, and a file that is absent, empty or malformed.
 - `test/users-host.test.ts` - 6 cases: the advertised resource with and without a directory, a good token, a bad one, a sign-out, a backend's token passing through unverified, and an expiry. The advertised record declares `required: true`, the format's own default: with a directory configured the host does refuse every command until somebody signs in, and `false` would tell a client it may defer the prompt.
 - `test/users-gate.test.ts` - 11 cases: the handler classification (read out of the source), an unconfigured host refusing nothing, `-32007` before signing in, `-32009` with no `request` after, a read-only role, the scheme-scoped `computer:` case, and a credential given back taking the capability with it; plus four for the notification half: a stranger refused the terminal they were handed the URI for (asserted against the owner's own command as the clock, so the negative is not a sleep), a signed-in role refused a channel it does not cover, `dispatchNeeds` over every channel kind, and an unconfigured host dispatching freely.
-- `pnpm test` green: 70 files, 896 tests, with `test/host.test.ts`, `test/writes.test.ts` and `test/operations.test.ts` unmodified.
+- `pnpm test` green: 70 files, 900 tests, with `test/host.test.ts`, `test/writes.test.ts` and `test/operations.test.ts` unmodified.
 - `pnpm typecheck`, `pnpm boundary` and `pnpm build` green.
 - By hand: `user add`, `user token`, `user list`, `user rm` and a bogus sub-verb against a real file, with the hash and only the hash on disk.
+- By hand, against the real daemon over a WebSocket, with a two-person file and a `viewer` role of `read` alone: `-32007` before signing in, on a bad credential, and again after signing out with an empty token; `ana` (admin) listing sessions and writing a file; `sam` reading it and refused `-32009` on `resourceWrite`, `createTerminal` and `listSessions`, each naming the capability; and the root snapshot carrying the sign-in record with `required: true`.
 
 ## Departures from the plan
 
@@ -44,9 +45,16 @@ A daemon with no `users` configured advertises nothing new, refuses nothing, and
 - `expire` gained a branch for the login resource, which keeps no token in `connection.tokens`: `principalUntil` is what its clock reads.
 - The by-hand daemon-with-a-directory case and the no-dist rehearsal were not run here; CI runs the latter.
 
+## What task 05 changed after the review
+
+`defaultShell` is the connection's, not the host's. `Connection.config` holds the `PER_CONNECTION` keys and is the only place anything reads them from: `createTerminal` uses the asking connection's, and the two paths with no connection in hand - a `!command` through a session, and the factory a backend opens a terminal with - name no shell at all, so `shellOf` takes the daemon's `$SHELL` and then `/bin/sh`. The narrow rule that setting it needed `terminal` is gone with it, because a preference nobody else reads cannot aim anybody else's shell.
+
+The wire did not move, and that was the finding. Splitting the echo per connection fails twice over: `test/conformance.test.ts` pins one `root/configChanged` echo per dispatch, and `serverSeq` and the replay buffer are one per host, so a per-connection action would be replayed to whoever reconnects next. Everything therefore still lands in `rootConfig` and is echoed whole; what moved is who acts on a key. `rootState` drops the `PER_CONNECTION` keys from the host's half of `values` and puts the connection's own over the top, so a connection reads back its own or nothing.
+
+What is left is cosmetic and recorded in `docs/USERS.md`: a live echo carries another person's shell past a watching client. A snapshot corrects it, and nothing on the host opens a shell with the shared copy.
+
 ## Left for later
 
-- **`defaultShell` is patched, not fixed.** Setting it needs `terminal` now, because three paths read it and one is the factory a backend opens a terminal with, so `write` alone could have named the binary the next tool call in anybody's session runs. What is left is the design fault under it: `rootConfig` holds what the host's own comment calls "the preferences a *client* holds", in one record shared by every connection, so on a multi-user daemon the last client to connect sets everybody's shell. [task-05](task-05-a-client-preference-is-not-host-state.md) replaces the rule with a per-connection preference and carries the open question of whose shell a backend's terminal uses.
 - A capability for host configuration of its own. `root/configChanged` is the only root action a client may dispatch and it is gated as `write`, which is tighter than what it had and still not what it is.
 - `HANDOFF.md`'s pending step 9 tool half, unchanged.
 - `ahpc` and `ahpapp` sign-in, which is cross-repo and the reason a directory is usable only from a client that learned the flow.

@@ -1,6 +1,6 @@
 ---
 title: A client preference is the connection's, not the host's
-status: todo
+status: done
 depends:
   - task-03-one-gate-decides-every-command.md
 layer: packages/sdk
@@ -64,3 +64,8 @@ This is the reason the task exists separately rather than being folded into 03.
 
 ## Resume
 
+Done 2026-09-23.
+`Connection.config` holds the `PER_CONNECTION` keys (`defaultShell` today); `createTerminal` reads that connection's, and `commanded` and the backend factory read nothing and take the daemon's own shell. The narrow rule that setting `defaultShell` needed `terminal` is gone, because a preference nobody else reads cannot aim anybody else's shell.
+Answered, the open question: the host's default only (the user, 2026-09-23), chosen over the session's owner because a session records no creator today and adding one would change the session store format.
+Found, and it changed the design: splitting the *echo* per connection does not work. `test/conformance.test.ts` pins one `root/configChanged` echo per dispatch, and `serverSeq` and the replay buffer are one per host, so a per-connection action would be replayed to whoever reconnects next. The wire is therefore untouched - everything still lands in `rootConfig` and is echoed whole - and what moved is who *acts* on a key. `rootState` then drops the `PER_CONNECTION` keys from the host's half of `values` and puts the connection's own over the top, so a snapshot reads back its own or nothing.
+Left: a live echo still carries another person's shell past a watching client, which a snapshot corrects and which nothing on the host reads. Recorded in `docs/USERS.md`.

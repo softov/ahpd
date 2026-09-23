@@ -443,6 +443,19 @@ export interface Connection {
    */
   principalUntil?: number;
   /**
+   * The preferences this client pushed that are its own, not the host's.
+   *
+   * `root/configChanged` carries two kinds of key. Some describe the host and
+   * are one setting for everybody, like whether artifact prompts are compact.
+   * `defaultShell` is not one of those: the host's own note calls these "the
+   * preferences a *client* holds about how the host should behave for it", and
+   * VS Code pushes the shell out of a per-person setting the moment it
+   * connects. Kept in one shared record, the last client to connect decided
+   * everybody's shell - so the person's half is kept here instead, and each
+   * connection reads its own back in root state.
+   */
+  config?: Record<string, unknown>;
+  /**
    * Tokens this client pushed, by protected resource identifier.
    *
    * Per connection for the same reason `watching` is, and the specification says

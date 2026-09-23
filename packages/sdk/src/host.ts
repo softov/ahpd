@@ -225,6 +225,21 @@ const dispatchNeeds = (channel: string): Grant => {
   return 'read';
 };
 
+/**
+ * The root config keys that are a person's, not the host's.
+ *
+ * The record a client pushes to `ahp-root://` carries both kinds. Whether
+ * artifact prompts are compact changes what every session is told, so it is one
+ * setting for the host. `defaultShell` is the person's: the host's own note by
+ * `rootConfig` says so, and names VS Code pushing it out of
+ * `terminal.integrated.agentHostProfile.<os>` on connect.
+ *
+ * Kept in one shared record they are the same thing on a one-person daemon and
+ * not on any other: whoever connected last decided everybody's shell. So these
+ * live on the `Connection`, and a connection reads its own back.
+ */
+const PER_CONNECTION = new Set(['defaultShell']);
+
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
 
@@ -3412,7 +3427,11 @@ export function createHost(options: HostOptions): Host {
         claim,
         command,
         name: 'Terminal',
-        ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
+        // No shell named, so `shellOf` takes the daemon's own: `$SHELL`, then
+        // `/bin/sh`. `defaultShell` is a connection's preference and this runs
+        // through a session, which has no connection - and a person's shell
+        // must not be what a turn runs, because that is the escalation the
+        // review found.
         emit: (_channel, action) => {
           dispatch(uri, action);
           if ((action as Bag).type !== 'terminal/exited') return;
@@ -3485,9 +3504,17 @@ export function createHost(options: HostOptions): Host {
         ...(asked.args !== undefined ? { args: asked.args } : {}),
         ...(asked.env !== undefined ? { env: asked.env } : {}),
         ...(asked.name !== undefined ? { name: asked.name } : {}),
-        // The configured shell, the way the client path opens one: a backend
-        // asking for a shell means the one this host was told to use.
-        ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
+        /*
+         * No shell named, so the daemon's own is used.
+         *
+         * A backend opening a terminal has a session and no connection, and an
+         * automation fires with nobody connected at all - so there is no person
+         * here whose preference this could be. Answered deliberately (the user,
+         * 2026-09-23): the host's default only, never somebody's. It costs an
+         * agent's terminal the shell you chose in your client, and it closes by
+         * construction the path where writing a file and naming it in
+         * `defaultShell` made the next tool call run it.
+         */
         emit: (_channel, action) => {
           dispatch(uri, action);
           // The root list says whether a terminal is still running, so it is
@@ -3871,7 +3898,7 @@ export function createHost(options: HostOptions): Host {
       },
     },
   };
-  const rootState = async () => ({
+  const rootState = async (mine: Record<string, unknown> = {}) => ({
     agents: descriptors(),
     // What this host is running, not what is on disk beside it.
     activeSessions: sessions.size,
@@ -3884,7 +3911,23 @@ export function createHost(options: HostOptions): Host {
      * `root/configChanged` a no-op on every client - including the one that
      * had just pushed it.
      */
-    config: { schema: ROOT_CONFIG_SCHEMA, values: { ...rootConfig } },
+    /*
+     * The host's keys, then this connection's own preferences.
+     *
+     * A `PER_CONNECTION` key is dropped from the host's half rather than
+     * merged under: `rootConfig` still holds whatever was pushed last, because
+     * the echo and the replay buffer are one per host, but that copy belongs to
+     * nobody and showing it would tell a client that somebody else's shell was
+     * its own. So what a connection reads back here is what it pushed, or
+     * nothing.
+     */
+    config: {
+      schema: ROOT_CONFIG_SCHEMA,
+      values: {
+        ...Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !PER_CONNECTION.has(key))),
+        ...mine,
+      },
+    },
   });
   /**
    * A session that already happened, read from its transcript.
@@ -3979,9 +4022,9 @@ export function createHost(options: HostOptions): Host {
   const value = (snapshot: Record<string, unknown>): Record<string, unknown> =>
     structuredClone(snapshot);
 
-  const snapshotOf = async (channel: string): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
     if (channel === ROOT) {
-      return value({ resource: ROOT, state: await rootState(), fromSeq: serverSeq });
+      return value({ resource: ROOT, state: await rootState(mine), fromSeq: serverSeq });
     }
     const terminal = terminals.get(channel);
     if (terminal)
@@ -4630,7 +4673,7 @@ export function createHost(options: HostOptions): Host {
             // A handshake that fails because one requested channel is gone is
             // a client that cannot connect at all. Take what can be taken.
             try {
-              snapshots.push(await snapshotOf(channel));
+              snapshots.push(await snapshotOf(channel, connection.config ?? {}));
               connection.watching.add(channel);
             }
             catch { /* not subscribed, and the client will be told if it asks */ }
@@ -4758,7 +4801,7 @@ export function createHost(options: HostOptions): Host {
               // has gone - and is replayed, which is keyed by the name this
               // host dispatches under rather than the one the client used.
               const meant = meantBy(channel);
-              await snapshotOf(meant);
+              await snapshotOf(meant, connection.config ?? {});
               if (meant !== channel) connection.aliases.set(meant, channel);
               connection.watching.add(channel);
               resumed.push(meant);
@@ -4794,7 +4837,7 @@ export function createHost(options: HostOptions): Host {
           }
           log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
           const snapshots = [];
-          for (const channel of resumed) snapshots.push(await snapshotOf(channel));
+          for (const channel of resumed) snapshots.push(await snapshotOf(channel, connection.config ?? {}));
           return { type: 'snapshot', snapshots };
         },
         /**
@@ -4834,7 +4877,7 @@ export function createHost(options: HostOptions): Host {
           // taken of the channel and returned under the name the client used -
           // a client that asked about one URI and was answered about another
           // has been answered about something it is not watching.
-          const snapshot = await snapshotOf(meantBy(channel));
+          const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {});
           /*
            * Resolved again, after the snapshot rather than before it.
            *
@@ -5189,8 +5232,12 @@ export function createHost(options: HostOptions): Host {
             uri,
             cwd: asked,
             claim,
-            // What a client asked this host to open, if one did.
-            ...(typeof rootConfig.defaultShell === 'string' ? { shell: rootConfig.defaultShell } : {}),
+            // This connection's own shell, if it pushed one. Per connection
+            // rather than per host: two people on one daemon each get theirs,
+            // and neither can name the binary the other's terminal opens.
+            ...(typeof connection.config?.defaultShell === 'string'
+              ? { shell: connection.config.defaultShell }
+              : {}),
             ...(typeof params.name === 'string' ? { name: params.name } : {}),
             ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
             ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
@@ -6395,35 +6442,35 @@ export function createHost(options: HostOptions): Host {
             ? action.config
             : {}) as Record<string, unknown>;
           /*
-           * `defaultShell` is the one key here that runs something.
+           * Kept twice, because the keys are two kinds.
            *
-           * Three paths read it, and one of them is the factory a *backend*
-           * opens a terminal with - so what it names is executed by the next
-           * tool call in anybody's session, without a person doing anything.
-           * Writing a file and pointing this at it would otherwise be one
-           * capability's work, and `write` has to stay open for a client to
-           * save at all (`host/04`). So the key that decides which binary a
-           * shell runs needs the capability that runs commands, not the one
-           * that changes a setting.
+           * Everything still lands in `rootConfig`, so the wire does not move:
+           * one echo, one replay entry, and `values` reads back what was pushed
+           * exactly as the conformance suite pins it.
            *
-           * Taking it back is left alone: `null` restores the system shell,
-           * which is the safe direction and the one a client uses to clear it.
+           * What changed is who *acts* on a key. `PER_CONNECTION` names the
+           * person's - `defaultShell` today - and those are also written to
+           * this connection, which is the only place anything reads them from
+           * now. `rootConfig`'s copy is display state and nothing opens a shell
+           * with it. So two people on one daemon each get their own, and the
+           * paths with no connection in hand take the daemon's own shell and
+           * nobody's preference at all.
            */
-          const shell = Object.prototype.hasOwnProperty.call(config, 'defaultShell')
-            ? config.defaultShell
-            : undefined;
-          if (options.users !== undefined && shell !== undefined && shell !== null
-            && connection.principal?.can('terminal') !== true) {
-            no('defaultShell names the binary a terminal runs, so setting it needs terminal');
-            return;
+          const mine = Object.fromEntries(Object.entries(config).filter(([key]) => PER_CONNECTION.has(key)));
+          const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
+            for (const [key, value] of Object.entries(from)) {
+              // `undefined` is how a key is taken back, and JSON has no such
+              // value - so a client saying so sends the key with a null.
+              if (value === null || value === undefined) delete target[key];
+              else target[key] = value;
+            }
+          };
+          if (action.replace === true) {
+            for (const key of Object.keys(rootConfig)) delete rootConfig[key];
+            delete connection.config;
           }
-          if (action.replace === true) for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-          for (const [key, value] of Object.entries(config)) {
-            // `undefined` is how a key is taken back, and JSON has no such
-            // value - so a client saying so sends the key with a null.
-            if (value === null || value === undefined) delete rootConfig[key];
-            else rootConfig[key] = value;
-          }
+          into(rootConfig, config);
+          if (Object.keys(mine).length > 0) into(connection.config ??= {}, mine);
           log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
           /*
            * The artifact wording is read where the tools are built, so a
@@ -6437,9 +6484,19 @@ export function createHost(options: HostOptions): Host {
               retool(uri);
             }
           }
-          // Said back, like every other action a client originates: nothing
-          // in a client applies its own dispatch, and a second client
-          // watching the root learns of it only from here.
+          /*
+           * Said back whole, like every other action a client originates:
+           * nothing in a client applies its own dispatch, and a second client
+           * watching the root learns of it only from here.
+           *
+           * Not split per connection, although what is acted on is. `serverSeq`
+           * and the replay buffer are one per host, so a per-connection action
+           * would be replayed to whoever reconnects next - and two echoes for
+           * one dispatch is not what a client's write-ahead loop expects. The
+           * cost is that a *live* echo carries the other person's preference
+           * into what they display; a snapshot corrects it, because that is
+           * taken per connection with their own over the top.
+           */
           dispatch(ROOT, action);
           return;
         }

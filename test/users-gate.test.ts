@@ -287,53 +287,99 @@ it('dispatches freely with no user directory', async () => {
 });
 
 /*
- * The one root key that runs something.
+ * The root record is two kinds of key.
  *
- * `ahp-root://` is `write`, because a client pushes its preferences there the
- * moment it connects and VS Code pushes `defaultShell` among them. But that key
- * names the binary a host-managed terminal opens, and one of the three paths
- * that read it is the factory a *backend* opens a terminal with - so it is
- * executed by the next tool call in anybody's session. `write` alone must not
- * reach it, or writing a file and naming it here is one capability's work.
+ * `defaultShell` is the person's - the host's own note by `rootConfig` says so,
+ * and names VS Code pushing it on connect - so it lives on the connection and
+ * reaches only the terminals that connection opens. Everything else describes
+ * the host and is still one setting for everybody.
+ *
+ * That is also what retires the rule that setting it needed `terminal`: a
+ * preference nobody else reads cannot aim anybody else's shell, and the paths
+ * with no connection in hand (a `!command`, and the factory a backend opens a
+ * terminal with) take the daemon's own shell and no person's at all.
  */
 
 const configChanged = (client: ReturnType<ReturnType<typeof createHost>['accept']>, config: Record<string, unknown>) =>
   client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config } } });
 
-it('refuses defaultShell to a role that may write but may not run commands', async () => {
-  const seen = watching();
-  const client = host({ users: directory({ w: ['read', 'write', 'session'] }), terminals: shellTerminals() }).accept(seen);
-  await hello(client);
-  await signIn(client, 'w');
+/** What this connection reads back out of root state. */
+const values = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Record<string, unknown>> => {
+  const snap = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
+  return (snap.snapshot?.state?.config?.values ?? {}) as Record<string, unknown>;
+};
 
+/** Every terminal root state names for this connection. */
+const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Bag[]> => {
+  const snap = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
+  return (snap.snapshot?.state?.terminals ?? []) as Bag[];
+};
+
+it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {
+  const made = host({ users: directory({ a: ['read', 'write', 'session', 'terminal'], b: ['read', 'write', 'session', 'terminal'] }) });
+  const first = made.accept(peer());
+  const other = watching();
+  const second = made.accept(other);
+  await hello(first); await signIn(first, 'a');
+  await hello(second); await signIn(second, 'b');
+
+  await configChanged(first, { defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
+
+  // Its own, and the host's half with it.
+  expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
+  // The host's half reached the other connection; the person's did not.
+  const theirs = await values(second);
+  expect(theirs).toMatchObject({ artifactToolsCompactPrompts: true });
+  expect(theirs).not.toHaveProperty('defaultShell');
+  /*
+   * The live echo does carry it, and deliberately: `serverSeq` and the replay
+   * buffer are one per host, so the action is said back whole the way every
+   * other one is. The snapshot is what corrects it, which is why the assertion
+   * above is the one that matters - and why nothing reads a shell out of the
+   * shared record any more.
+   */
+  const told = other.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'root/configChanged');
+  expect(told.length).toBe(1);
+});
+
+it('opens a client terminal with that connection\'s own shell', async () => {
+  const made = host({ users: directory({ a: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() });
+  const client = made.accept(peer());
+  await hello(client); await signIn(client, 'a');
+  await configChanged(client, { defaultShell: '/bin/sh' });
+
+  const uri = 'ahp-terminal:/mine';
+  expect(await call(client, 'createTerminal', {
+    channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}`,
+  })).toHaveProperty('result');
+  // The title is the shell's own name when nobody named the terminal, which is
+  // how the chosen binary is visible from outside.
+  const shown = (await terminalsOf(client)).find((one) => one.resource === uri);
+  expect(shown?.title).toBe('sh');
+});
+
+it('lets a role that may not open a terminal set a shell that reaches nothing', async () => {
+  const made = host({ users: directory({ w: ['read', 'write', 'session'] }), terminals: shellTerminals() });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client); await signIn(client, 'w');
+
+  // Allowed now, because it is theirs: the rule that refused this is retired.
   await configChanged(client, { defaultShell: '/tmp/not-a-shell' });
-  const rejected = seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string');
-  expect(rejected.length).toBe(1);
-  expect(String(rejected[0]?.params.rejectionReason)).toContain('needs terminal');
+  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
+  expect(await values(client)).toMatchObject({ defaultShell: '/tmp/not-a-shell' });
 
-  // The rest of the record is still theirs to push, which is what keeps a
-  // client's own preferences working for somebody who may not open a shell.
-  await configChanged(client, { artifactToolsCompactPrompts: true });
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string').length).toBe(1);
-
-  // And taking it back is the safe direction, so it is left alone.
-  await configChanged(client, { defaultShell: null });
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string').length).toBe(1);
+  // And it reaches nothing: they may not open a terminal at all, and no other
+  // connection and no session-side path reads it.
+  expect(await call(client, 'createTerminal', { channel: 'ahp-terminal:/no', cwd: root })).toMatchObject({ code: -32009 });
 });
 
-it('lets a member set defaultShell, because a member may already open a shell', async () => {
-  const seen = watching();
-  const client = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() }).accept(seen);
-  await hello(client);
-  await signIn(client, 'm');
-  await configChanged(client, { defaultShell: '/bin/sh' });
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
-});
-
-it('leaves defaultShell alone with no user directory', async () => {
-  const seen = watching();
-  const client = host({ terminals: shellTerminals() }).accept(seen);
-  await hello(client);
-  await configChanged(client, { defaultShell: '/bin/sh' });
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
+it('keeps a shell to its connection with no user directory either', async () => {
+  const made = host({ terminals: shellTerminals() });
+  const first = made.accept(peer());
+  const second = made.accept(peer());
+  await hello(first); await hello(second);
+  await configChanged(first, { defaultShell: '/bin/sh' });
+  expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh' });
+  expect(await values(second)).not.toHaveProperty('defaultShell');
 });
