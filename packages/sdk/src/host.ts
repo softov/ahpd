@@ -6362,6 +6362,12 @@ export function createHost(options: HostOptions): Host {
             no(`Sign in to use this host: ${channel} needs ${needed}`);
             return;
           }
+          // Removed since they signed in: a sign-in again, not a role that
+          // does not cover this.
+          if (who.standing !== undefined && !who.standing()) {
+            no(`Sign in to use this host: ${channel} needs ${needed}`);
+            return;
+          }
           if (!who.can(needed)) {
             no(`${who.id} may not ${needed} here`);
             return;
@@ -7555,6 +7561,17 @@ export function createHost(options: HostOptions): Host {
             if (needed !== undefined && needed.length > 0) {
               const who = connection.principal;
               if (who === undefined) {
+                throw new RpcError(-32007, `Sign in to use this host`, {
+                  resources: [options.users.resource],
+                });
+              }
+              /*
+               * Removed since they signed in, which is a sign-in again and not
+               * a role that does not cover this. The directory re-reads its
+               * file on every question, so the answer is current as of this
+               * command - decision `a-role-is-read-on-every-command`.
+               */
+              if (who.standing !== undefined && !who.standing()) {
                 throw new RpcError(-32007, `Sign in to use this host`, {
                   resources: [options.users.resource],
                 });

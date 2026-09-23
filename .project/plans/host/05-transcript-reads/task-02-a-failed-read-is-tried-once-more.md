@@ -1,6 +1,6 @@
 ---
 title: A failed read is tried once more
-status: todo
+status: done
 depends:
   - task-01-an-empty-read-is-not-remembered.md
 layer: agents

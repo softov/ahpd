@@ -3,9 +3,9 @@ title: The cofold extras - deferred
 date: 2026-09-20
 ---
 
-The harness configuration is read with a small reader of its own, which covers the case that prompted it; the rest waits on whether the extra layers matter.
+The harness configuration is read with a small reader of its own, which covers the case that prompted it. The layered reader below is **dropped**, not waiting on a publish: see the row.
 The published-dependency row this file used to carry is closed and recorded under *Since built* in [implemented.md](implemented.md): the runtime shipped as `@cofold/*`, so the `link:` into a sibling checkout became ranges.
 
 | What | Why it waits | Where it goes |
 | --- | --- | --- |
-| The harness's layered configuration: the project file, the `COFOLD_CONFIG` environment layer and `--config` | `@cofold/config`'s `resolveConfig` would add a fourth runtime dependency and can relocate the store, which is more than the case that prompted it needed; the user-level `config.json` is enough for a person who has already pointed the runtime at a provider. It is also unpublished (`npm view @cofold/config` is a 404 as of 2026-09-22), so adopting it would make installing `@ahpd/agent-cofold` wait on a release in the other repository | unplanned; it is one function swap in `packages/agent-cofold/src/config.ts` if the layers are wanted, and the swap waits on `@cofold/config` shipping |
+| The harness's layered configuration: the project file, the `COFOLD_CONFIG` environment layer and `--config` | Dropped 2026-09-23, and `@cofold/config` shipping does not change it. The layers exist so a CLI started inside a project resolves that project; this plugin resolves when the daemon starts, from the daemon's working directory, while a session's project is its own `workingDirectory`, so adopting `resolveConfig` there would resolve the wrong project. The plugin needs `providers`, `model` and `instructions` and already reads exactly those from the user file | dropped, not waiting on anything; no change to `@cofold/config` and no republish is needed for it |

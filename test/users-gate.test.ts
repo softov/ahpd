@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, GATE, ROOT } from '../packages/sdk/src/host.js';
 import { fileResources, uriOf } from '../packages/sdk/src/resources.js';
+import { fileUsers } from '../packages/sdk/src/users.js';
 import { shellTerminals } from '../packages/sdk/src/terminals.js';
 import { echo } from '../examples/echo/agent.js';
 import type { HostOptions } from '../packages/sdk/src/types/host.js';
@@ -234,6 +235,33 @@ it('lets a socket on the deployment token do everything, and nothing demotes it'
     .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
   await signIn(client, '');
   expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
+});
+
+it('reads the roles again on every command, so removal and a role change land at once', async () => {
+  /*
+   * The directory re-reads its file on every question, and the principal it
+   * handed out resolves through that file as well, so `ahpd user rm` is refused
+   * on the next command rather than the next connection - decision
+   * `a-role-is-read-on-every-command`.
+   */
+  const people = fileUsers({ path: join(root, 'users.json') });
+  await people.add('ana', ['member']);
+  const secret = await people.mint('ana');
+
+  const made = host({ users: people });
+  const client = made.accept(peer());
+  await hello(client);
+  await signIn(client, secret);
+  expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ result: { items: [] } });
+
+  // A role change is in force on the next command, with no reconnection: a
+  // role nothing defines contributes nothing.
+  await people.add('ana', ['ghost']);
+  expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ code: -32009 });
+
+  // And removal is "sign in again" rather than "your role does not cover that".
+  await people.remove('ana');
+  expect(await call(client, 'listSessions', { channel: ROOT })).toMatchObject({ code: -32007 });
 });
 
 it('takes the capability away the moment the credential is given back', async () => {

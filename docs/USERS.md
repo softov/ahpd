@@ -34,11 +34,11 @@ what lets a client that can only carry a URL arrive as somebody with no sign-in
 step at all. `authenticate` is unchanged and remains the protocol's way in, and
 it is the only way in for a credential an issuer mints rather than this file.
 
-Removing a user **does not close their socket**, and it does not take away what
-an open one was already given: a connection that arrived keeps its principal
-until it drops. What removal takes away is the next connection and the next
-`authenticate`. Rotating the deployment's token is what locks somebody out of
-the door entirely.
+Removing a user **does not close their socket**, but the next command on it is
+refused `-32007`: the directory is read again for every command, so removal and a
+role change both take effect at once, with no reconnection. Rotating the
+deployment's token is what locks somebody out of the door entirely, and that
+token is the host itself.
 
 ## Three shapes
 

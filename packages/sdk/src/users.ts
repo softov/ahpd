@@ -156,7 +156,7 @@ export function fileUsers(options: FileUserOptions): Users {
   };
 
   /** The grants one record holds, saying so when a role answered nothing. */
-  const grantsOf = (record: UserRecord, file: UserFile): Set<string> => {
+  const grantsOf = (record: UserRecord, file: UserFile, complain = true): Set<string> => {
     const held = new Set<string>();
     for (const role of record.roles) {
       const defined = file.roles?.[role];
@@ -169,14 +169,39 @@ export function fileUsers(options: FileUserOptions): Users {
         for (const one of built) held.add(one);
         continue;
       }
-      told(`user ${record.id} names role ${role}, which the file does not define and no built-in has`);
+      // Said once per record as it is added or read, and not again on every
+      // command, which is why the live resolution below passes `false`.
+      if (complain) told(`user ${record.id} names role ${role}, which the file does not define and no built-in has`);
     }
     return held;
   };
 
-  const principalOf = (record: UserRecord, file: UserFile): Principal => {
-    const held = grantsOf(record, file);
-    return { id: record.id, roles: [...record.roles], can: (grant: Grant) => held.has(grant) };
+  /**
+   * The person, answered from the file every time the gate asks.
+   *
+   * The directory re-reads its file on every question, and this keeps that
+   * promise past the moment of sign-in: `standing` says whether the record is
+   * still there, and `can` resolves the roles it holds *now*. So `ahpd user rm`
+   * is refused on the next command rather than the next connection, and a role
+   * change is in force at the same point - decision
+   * `a-role-is-read-on-every-command`.
+   */
+  const principalOf = (record: UserRecord): Principal => {
+    // Said once, as the record is verified, so a role that nothing defines is
+    // in the log even though every command resolves the roles again below -
+    // and said only here, because a complaint per command is a log nobody
+    // reads.
+    grantsOf(record, read().file);
+    return {
+      id: record.id,
+      roles: [...record.roles],
+      standing: () => (read().file.users ?? []).some((one) => one.id === record.id),
+      can: (grant: Grant) => {
+        const { file } = read();
+        const now = (file.users ?? []).find((one) => one.id === record.id);
+        return now === undefined ? false : grantsOf(now, file, false).has(grant);
+      },
+    };
   };
 
   return {
@@ -207,7 +232,7 @@ export function fileUsers(options: FileUserOptions): Users {
           found = (file.users ?? []).find((one) => one.id === subject);
         }
       }
-      return found === undefined ? undefined : principalOf(found, file);
+      return found === undefined ? undefined : principalOf(found);
     },
 
     list: async () => (read().file.users ?? []).map((one) => ({ id: one.id, roles: [...one.roles] })),

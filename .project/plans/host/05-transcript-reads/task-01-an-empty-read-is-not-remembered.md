@@ -1,6 +1,6 @@
 ---
 title: An empty read is not remembered
-status: todo
+status: done
 depends: []
 layer: host
 refs:

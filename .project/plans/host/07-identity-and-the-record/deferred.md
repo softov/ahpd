@@ -8,7 +8,7 @@ The transport identity lands first; what waits below needs either a later plan o
 | What | Why it waits | Where it goes |
 | --- | --- | --- |
 | The shared connection token becomes a root login | The user, 2026-09-23: it is the host's own key and was always meant to be root, which became a problem the moment a directory locked the operator out. Built as `host/09` | [host/09](../09-the-door-token-is-the-host/plan.md) |
-| Removal refusing the next command rather than the next connection | The user, 2026-09-23: "we will see about the revocation after". It needs the gate to tell "no longer a person" from "role does not cover it", which is a change to the two error codes. | a later host plan |
+| Removal refusing the next command rather than the next connection | The page already claimed it and the code did not do it; the gate now asks whether the record is still there before it asks what the role covers. Built as `host/10` | [host/10](../10-revocation-on-the-next-command/plan.md) |
 | The issuer option behind the `Users` port | Scope: this plan made the record true by omitting what it could not support, and the issuer gives the field a real value. Built as `host/08` | [host/08](../08-an-issuer-behind-the-users-port/plan.md) |
 | An issuer's token accepted at the door | A client obtains one only after it has connected, so there is nothing to present at the upgrade. | unplanned |
 | A host-level protected resource in AHP | Discovery is per agent, so this host's own login rides on every agent and makes each one read as required. The correct fix is a protocol field, not a host workaround. | an upstream note to the agent-host-protocol repository |

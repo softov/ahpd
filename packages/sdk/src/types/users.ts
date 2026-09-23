@@ -45,6 +45,17 @@ export interface Principal {
    * roles resolve is a change here and not in the gate.
    */
   can(grant: Grant): boolean;
+  /**
+   * Whether they are still somebody this host knows.
+   *
+   * The directory re-reads its file on every question, and this is the promise
+   * kept past the moment of sign-in: a person who has been removed answers
+   * false here and the next command is refused `-32007` rather than `-32009`,
+   * because the honest answer is "sign in again" and not "your role does not
+   * cover that". Absent means "assume yes", which is what a principal built by
+   * hand in a test or by an embedder without a file answers.
+   */
+  standing?(): boolean;
 }
 
 /**
