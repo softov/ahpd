@@ -46,6 +46,7 @@ A daemon with no `users` configured advertises nothing new, refuses nothing, and
 
 ## Left for later
 
+- **`defaultShell` is patched, not fixed.** Setting it needs `terminal` now, because three paths read it and one is the factory a backend opens a terminal with, so `write` alone could have named the binary the next tool call in anybody's session runs. What is left is the design fault under it: `rootConfig` holds what the host's own comment calls "the preferences a *client* holds", in one record shared by every connection, so on a multi-user daemon the last client to connect sets everybody's shell. [task-05](task-05-a-client-preference-is-not-host-state.md) replaces the rule with a per-connection preference and carries the open question of whose shell a backend's terminal uses.
 - A capability for host configuration of its own. `root/configChanged` is the only root action a client may dispatch and it is gated as `write`, which is tighter than what it had and still not what it is.
 - `HANDOFF.md`'s pending step 9 tool half, unchanged.
 - `ahpc` and `ahpapp` sign-in, which is cross-repo and the reason a directory is usable only from a client that learned the flow.

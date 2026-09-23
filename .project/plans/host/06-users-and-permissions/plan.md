@@ -1,7 +1,7 @@
 ---
 title: A person signs in to the host, and a role decides what they may do
 domain: host
-status: built
+status: active
 priority: medium
 created: 2026-09-23
 revalidated: 2026-09-23
@@ -113,6 +113,7 @@ client -> WebSocket with ?tkn=      -> listen.ts, one shared secret, unchanged
 | [02 - The host advertises itself and verifies a person's token](task-02-the-host-verifies-a-person.md) | done | 01 |
 | [03 - One gate decides every command](task-03-one-gate-decides-every-command.md) | done | 02 |
 | [04 - The docs, and a daemon nobody configured](task-04-the-docs-and-the-default.md) | done | 03 |
+| [05 - A client preference is the connection's, not the host's](task-05-a-client-preference-is-not-host-state.md) | todo | 03 |
 
 ## Risks and tradeoffs
 
@@ -126,12 +127,14 @@ client -> WebSocket with ?tkn=      -> listen.ts, one shared secret, unchanged
 
 ## Resume state
 
-- **Done so far:** all four tasks, 2026-09-23. `Users` and `fileUsers`, the host's own sign-in resource, verification in `authenticate`, the one gate at the dispatch boundary with a scheme-scoped capability, the four `ahpd user` verbs, `docs/USERS.md` and the document moves. The suite is 70 files / 892 tests, with every existing suite unmodified. See [implemented.md](implemented.md).
-- **Next action:** none; the plan is built. Two things it named are still open and are recorded in `implemented.md`: `dispatchAction` is a notification and so never reaches the gate, and pending step 9's tool half is untouched.
+- **Done so far:** tasks 01 to 04, 2026-09-23, and the review that followed. `Users` and `fileUsers`, the host's own sign-in resource, verification in `authenticate`, the gate at the dispatch boundary with a scheme-scoped capability, the four `ahpd user` verbs, `docs/USERS.md` and the document moves. See [implemented.md](implemented.md).
+  The review found two holes and both were fixed the same day. `dispatchAction` is a notification and never reaches the boundary, so it is now gated at the top of `applyDispatch` by the channel it names; left open it was arbitrary command execution, because root state hands every open terminal's URI to anybody who completes a handshake. And `defaultShell` was reachable with `write` alone although it names the binary a backend's terminal runs, so setting it now needs `terminal`.
+- **Next action:** [task-05-a-client-preference-is-not-host-state.md](task-05-a-client-preference-is-not-host-state.md). The `defaultShell` rule is a patch on a design fault the host's own comment describes: these are a person's preferences kept in one record shared by every connection, so on a multi-user daemon the last client to connect sets everybody's shell. Task 05 replaces the rule with the per-connection preference. Pending step 9's tool half is still untouched and is not this plan's.
 - **Open questions:**
   1. What `resource` id does the host advertise for itself? - answered: `ahpd://users`, on `Users.resource`, so a deployment can name another.
   2. Do roles carry capabilities directly, or names that map to capability sets? - answered: a role is a name whose grants live in the same file, with `admin` and `member` built in.
-  3. Should this plan precede the pending step 9 plan? - answered: it did. The gate is the boundary that plan will refuse against, and the scheme-scoped capability is the half of it that is a client command.
+  3. Whose preference does a backend's terminal use, when it has a session and no connection? - open, and task 05 does not start without an answer; its three candidates are in that file.
+  4. Should this plan precede the pending step 9 plan? - answered: it did. The gate is the boundary that plan will refuse against, and the scheme-scoped capability is the half of it that is a client command.
 - **Watch out for:** `lent` skips the host's own resource explicitly, and `authenticate` must keep passing a backend's token through unverified; the suite has a case for each, and both are things a later change could quietly undo.
 
 ## Final verification checklist

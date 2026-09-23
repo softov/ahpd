@@ -285,3 +285,55 @@ it('dispatches freely with no user directory', async () => {
   client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'terminal/input', data: 'echo STILL-OPEN\n' } } });
   expect(await until(seen, uri, 'STILL-OPEN')).toContain('STILL-OPEN');
 });
+
+/*
+ * The one root key that runs something.
+ *
+ * `ahp-root://` is `write`, because a client pushes its preferences there the
+ * moment it connects and VS Code pushes `defaultShell` among them. But that key
+ * names the binary a host-managed terminal opens, and one of the three paths
+ * that read it is the factory a *backend* opens a terminal with - so it is
+ * executed by the next tool call in anybody's session. `write` alone must not
+ * reach it, or writing a file and naming it here is one capability's work.
+ */
+
+const configChanged = (client: ReturnType<ReturnType<typeof createHost>['accept']>, config: Record<string, unknown>) =>
+  client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config } } });
+
+it('refuses defaultShell to a role that may write but may not run commands', async () => {
+  const seen = watching();
+  const client = host({ users: directory({ w: ['read', 'write', 'session'] }), terminals: shellTerminals() }).accept(seen);
+  await hello(client);
+  await signIn(client, 'w');
+
+  await configChanged(client, { defaultShell: '/tmp/not-a-shell' });
+  const rejected = seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string');
+  expect(rejected.length).toBe(1);
+  expect(String(rejected[0]?.params.rejectionReason)).toContain('needs terminal');
+
+  // The rest of the record is still theirs to push, which is what keeps a
+  // client's own preferences working for somebody who may not open a shell.
+  await configChanged(client, { artifactToolsCompactPrompts: true });
+  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string').length).toBe(1);
+
+  // And taking it back is the safe direction, so it is left alone.
+  await configChanged(client, { defaultShell: null });
+  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string').length).toBe(1);
+});
+
+it('lets a member set defaultShell, because a member may already open a shell', async () => {
+  const seen = watching();
+  const client = host({ users: directory({ m: ['read', 'write', 'session', 'terminal'] }), terminals: shellTerminals() }).accept(seen);
+  await hello(client);
+  await signIn(client, 'm');
+  await configChanged(client, { defaultShell: '/bin/sh' });
+  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
+});
+
+it('leaves defaultShell alone with no user directory', async () => {
+  const seen = watching();
+  const client = host({ terminals: shellTerminals() }).accept(seen);
+  await hello(client);
+  await configChanged(client, { defaultShell: '/bin/sh' });
+  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
+});

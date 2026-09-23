@@ -118,6 +118,14 @@ That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
 anybody can run.
 
+One key inside `ahp-root://` needs more than the channel does. `defaultShell`
+names the binary a host-managed terminal opens, and one of the paths that reads
+it is the factory a backend opens a terminal with - so what it names is run by
+the next tool call in anybody's session. Setting it therefore needs `terminal`,
+not `write`; clearing it with `null` is the safe direction and needs neither.
+A `member` has `terminal` already, so a normal client pushing its shell
+preference on connect is unaffected.
+
 The absent `request` is the point: a grant would resolve the first, and nothing
 resolves the second, so a client that reads the field correctly stops instead of
 retrying. A VS Code window shows a read-only role as a `NoPermissions` dialog

@@ -6394,6 +6394,29 @@ export function createHost(options: HostOptions): Host {
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
+          /*
+           * `defaultShell` is the one key here that runs something.
+           *
+           * Three paths read it, and one of them is the factory a *backend*
+           * opens a terminal with - so what it names is executed by the next
+           * tool call in anybody's session, without a person doing anything.
+           * Writing a file and pointing this at it would otherwise be one
+           * capability's work, and `write` has to stay open for a client to
+           * save at all (`host/04`). So the key that decides which binary a
+           * shell runs needs the capability that runs commands, not the one
+           * that changes a setting.
+           *
+           * Taking it back is left alone: `null` restores the system shell,
+           * which is the safe direction and the one a client uses to clear it.
+           */
+          const shell = Object.prototype.hasOwnProperty.call(config, 'defaultShell')
+            ? config.defaultShell
+            : undefined;
+          if (options.users !== undefined && shell !== undefined && shell !== null
+            && connection.principal?.can('terminal') !== true) {
+            no('defaultShell names the binary a terminal runs, so setting it needs terminal');
+            return;
+          }
           if (action.replace === true) for (const key of Object.keys(rootConfig)) delete rootConfig[key];
           for (const [key, value] of Object.entries(config)) {
             // `undefined` is how a key is taken back, and JSON has no such
