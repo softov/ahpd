@@ -43,3 +43,10 @@ The safety of the write half is now exactly the connection boundary: loopback wi
 - **Keep the gate and pre-grant the served directories at `initialize`.** It fails the case that matters: a session's worktree lands beside its repository, outside every `--path`, and `--path` is a catalogue rather than a fence here, so a window still could not save in the worktree it is working in.
 - **Keep the gate and have the host ask through the server-to-client `resourceRequest`.** That direction is the host asking a client about the client's own resource, which is the opposite of this, and there is no person at a daemon to answer it.
 - **Keep the gate and enforce it only when a connection token was configured.** The default loopback daemon, which is the reported case, would still refuse every save, and the reference does not condition on a token.
+
+## Under revision 2026-09-22
+
+Reported by the user the same day, after `plugin/09` was built: the removal was too wide.
+Deleting the gate answered the save failure, and the mechanism it deleted - a per-connection grant, `resourceRequest` as the negotiation, and a refusal carrying the request that would unlock it - is what a host-owned scheme and a privileged action need.
+`@ahpd/computer` starts, destroys and runs code in a container on the host with nothing in front of it now.
+This decision is not withdrawn, because the file half must stay open or VS Code cannot save again; it is incomplete, and a plan for the validation is pending from the user. See `HANDOFF.md`'s pending step 9.
