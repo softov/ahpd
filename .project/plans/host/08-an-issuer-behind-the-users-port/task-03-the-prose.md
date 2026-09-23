@@ -9,7 +9,7 @@ refs:
   - "[code://docs/USERS.md](../../../../docs/USERS.md) - three ways in and a record with no issuer, which this completes"
   - "[code://docs/DAEMON.md](../../../../docs/DAEMON.md) - the keys, which gain `issuer`"
   - "[code://.project/working/HANDOFF.md](../../../working/HANDOFF.md) - pending 3 and 6, which this plan is"
-  - "[code://.project/plans/host/00-host.md](../../00-host.md) - the known gaps, one of which this closes"
+  - "[code://.project/plans/host/00-host.md](../00-host.md) - the known gaps, one of which this closes"
 ---
 
 ## Objective
