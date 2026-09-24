@@ -51,8 +51,45 @@ if (verb === 'inspect') {
     Name: `/${found.name}`,
     Image: found.image,
     Created: '2026-09-22T00:00:00Z',
-    State: { Status: 'running' },
+    State: { Status: found.state ?? 'running' },
     Config: { WorkingDir: found.workdir ?? '' },
+    // The limits as docker records them: nanoseconds of CPU per second, and
+    // bytes. A gauge is drawn against these, so the units have to be real.
+    HostConfig: {
+      ...(found.cpus === undefined ? {} : { NanoCpus: Number(found.cpus) * 1e9 }),
+      Memory: 0,
+    },
+    // As `docker inspect` reports them, because a caller's path is read
+    // through these to find where it is inside the machine.
+    Mounts: (found.mounts ?? []).map((one) => {
+      const [source, target] = one.split(':');
+      return { Type: 'bind', Source: source, Destination: target };
+    }),
+  })}\n`);
+  keep();
+  process.exit(0);
+}
+
+if (verb === 'stats') {
+  // As `docker stats --no-stream --format '{{json .}}'` answers: display text
+  // in every field, mixing binary and decimal units the way it really does,
+  // so the parsing under test is the parsing that runs.
+  const id = args[args.length - 1];
+  const found = held.machines.find((machine) => machine.name === id);
+  if (found === undefined) {
+    process.stderr.write(`Error: No such container: ${id}\n`);
+    keep();
+    process.exit(1);
+  }
+  process.stdout.write(`${JSON.stringify({
+    Container: id,
+    Name: id,
+    CPUPerc: found.cpuPerc ?? '12.50%',
+    MemUsage: found.memUsage ?? '444KiB / 512MiB',
+    MemPerc: found.memPerc ?? '0.08%',
+    PIDs: '7',
+    NetIO: '1.01kB / 126B',
+    BlockIO: '49.2kB / 0B',
   })}\n`);
   keep();
   process.exit(0);
@@ -78,7 +115,25 @@ if (verb === 'run') {
   process.exit(0);
 }
 
+if (verb === 'start' || verb === 'restart') {
+  const id = args[args.length - 1];
+  const found = held.machines.find((machine) => machine.name === id);
+  if (found === undefined) {
+    process.stderr.write(`Error: No such container: ${id}\n`);
+    keep();
+    process.exit(1);
+  }
+  found.state = 'running';
+  found.started = (found.started ?? 0) + 1;
+  keep();
+  process.exit(0);
+}
+
 if (verb === 'stop') {
+  const found = held.machines.find((machine) => machine.name === args[args.length - 1]);
+  // Recorded, so a `state` read after a stop answers what actually happened
+  // rather than the status the machine was made with.
+  if (found !== undefined) found.state = 'exited';
   keep();
   process.stdout.write(`${args[1]}\n`);
   process.exit(0);

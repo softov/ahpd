@@ -25,11 +25,12 @@ export type {
   SessionEndEvent, SessionStartEvent, TerminalOpenEvent, ToolCallEvent, TurnEndEvent, TurnStartEvent,
 } from './events.js';
 export type { Page } from './paging.js';
-export type { Connected, OnConnect, Runtime, Listener, Tap } from './listen.js';
+export type { Connected, OnConnect, Runtime, Listener, ListenOptions, StdioOptions, Tap } from './listen.js';
 export type { Offered } from './probe.js';
 export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects } from './agent.js';
 export type { Entry, Metadata, Read, ResourceProvider, ResourceStore, SchemeDescription, Write } from './resources.js';
 export type { ComputerPort, Spawn, SpawnOptions } from './computers.js';
+export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';
 export type { Claim, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals } from './terminals.js';
 export type { Worktree, Worktrees } from './worktrees.js';
 export type { NewPullRequest, PullRequest, PullRequests } from './github.js';

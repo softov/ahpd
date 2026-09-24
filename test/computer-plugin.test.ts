@@ -197,12 +197,15 @@ it('answers how to reach a machine, and nothing for one that is not there', asyn
   };
   await provider.write('computer://box', { data: JSON.stringify({}), encoding: 'utf-8' });
 
+  // A caller's `cwd` is a path on *this host*, so it only reaches `-w` when a
+  // mount makes it the same place inside; this machine has none, so the
+  // machine's own directory stands and a host path is not passed in.
   const how = await options.computers?.how('box', {
     command: 'node', args: ['server.mjs'], cwd: '/work', env: { A: '1' },
   });
   expect(how).toEqual({
     command: process.execPath,
-    args: [FIXTURE, 'exec', '-i', '-w', '/work', '-e', 'A=1', 'box', 'node', 'server.mjs'],
+    args: [FIXTURE, 'exec', '-i', '-e', 'A=1', 'box', 'node', 'server.mjs'],
     // The docker program's own environment, which is the plugin's and not the machine's.
     env: { DOCKER_FAKE_STATE: state },
   });
@@ -248,4 +251,195 @@ it('lists its manifest and title without importing the entry', async () => {
   expect(row.state).toBe('ready');
   expect(row.name).toBe('@ahpd/computer');
   expect(row.title).toBe('Computer');
+});
+
+it('reads a host path through the machine mounts, or falls back to its workdir', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-within-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  };
+  /*
+   * Two mounts, one nested inside the other, and a working directory besides.
+   *
+   * The nested one is the case a shortest-match would get wrong: `/srv` covers
+   * `/srv/app/x` too, and the answer a person means is the mount that actually
+   * holds it.
+   */
+  await provider.write('computer://box', {
+    data: JSON.stringify({
+      mounts: ['/srv:/mnt/srv', '/srv/app:/workspaces/app', '/home/me/.claude:/ahpd/claude'],
+      workdir: '/workspaces/app',
+    }),
+    encoding: 'utf-8',
+  });
+
+  const where = async (cwd?: string): Promise<string | undefined> => {
+    const said = await options.computers?.how('box', { command: 'node', ...(cwd === undefined ? {} : { cwd }) });
+    const at = said?.args.indexOf('-w') ?? -1;
+    return at === -1 ? undefined : said?.args[at + 1];
+  };
+
+  // The longest source wins, so the nested mount answers for its own subtree.
+  expect(await where('/srv/app')).toBe('/workspaces/app');
+  expect(await where('/srv/app/src/deep')).toBe('/workspaces/app/src/deep');
+  // And the outer one still answers for everything it alone covers.
+  expect(await where('/srv/other')).toBe('/mnt/srv/other');
+  // A mount's own root maps to the target itself, with no trailing slash.
+  expect(await where('/home/me/.claude')).toBe('/ahpd/claude');
+  // A path no mount covers is not a directory in there at all, so the
+  // machine's own working directory stands rather than a host path.
+  expect(await where('/elsewhere')).toBe('/workspaces/app');
+  // A near miss is not a match: `/srv` must not cover `/srvx`.
+  expect(await where('/srvx')).toBe('/workspaces/app');
+  // Nothing named is the machine's own, as before.
+  expect(await where()).toBe('/workspaces/app');
+});
+
+it('reports what a machine is using, as numbers a gauge can be drawn from', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-stats-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    read(uri: string): Promise<{ data: string }>;
+    list(uri: string): Promise<{ name: string }[]>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({ cpus: '2' }), encoding: 'utf-8' });
+
+  // The leaf is listed, so a client that browses finds it rather than having
+  // to know the name.
+  expect((await provider.list('computer://box')).map((one) => one.name)).toContain('stats');
+
+  const used = JSON.parse((await provider.read('computer://box/stats')).data) as {
+    running: boolean;
+    cpu: { percent: number; cores?: number };
+    memory: { used: number; limit: number; percent: number };
+    pids?: number;
+    network?: { rx: number; tx: number };
+  };
+  expect(used.running).toBe(true);
+  // The runtime's display text, read as numbers: `444KiB` is binary and
+  // `1.01kB` is decimal, in the same payload, which is docker's own habit.
+  expect(used.memory.used).toBe(444 * 1024);
+  expect(used.memory.limit).toBe(512 * 1024 * 1024);
+  expect(used.memory.percent).toBe(0.08);
+  expect(used.cpu.percent).toBe(12.5);
+  expect(used.network?.rx).toBe(1010);
+  expect(used.pids).toBe(7);
+  // The cores the machine was limited to, so a percentage of one core's time
+  // means something: 150% is busy on two and impossible on one.
+  expect(used.cpu.cores).toBe(2);
+});
+
+it('makes a machine from a named profile, and refuses one it does not define', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-profiles-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    // One line the operator writes, which is the whole point: what a machine
+    // is given stops being three mount strings a person retypes correctly.
+    mounts: ['/shared:/shared'],
+    profiles: {
+      claude: {
+        title: 'Claude',
+        description: 'The CLI and this host configuration.',
+        image: 'node:22',
+        cpus: '2',
+        memory: '512m',
+        mounts: ['/home/me/.claude:/ahpd/claude'],
+        workdir: '/work',
+      },
+      plain: { image: 'debian:bookworm-slim' },
+    },
+  });
+
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+  };
+
+  // Published in the schema, so a client draws the picker with no new
+  // protocol and no code of its own.
+  const picker = provider.describe().manifest?.properties?.profile;
+  expect(picker?.enum).toEqual(['claude', 'plain']);
+
+  await provider.write('computer://box', {
+    data: JSON.stringify({ profile: 'claude', workdir: '/mine' }),
+    encoding: 'utf-8',
+  });
+  const made = JSON.parse(readFileSync(state, 'utf-8')) as { machines: Record<string, unknown>[] };
+  const box = made.machines.find((one) => one.name === 'box') as Record<string, unknown>;
+  expect(box.image).toBe('node:22');
+  expect(box.cpus).toBe('2');
+  expect(box.memory).toBe('512m');
+  // The body's own field beats the profile's, so a profile is a default and
+  // never a ceiling.
+  expect(box.workdir).toBe('/mine');
+  // Widest first: the deployment's, then the profile's.
+  expect(box.mounts).toEqual(['/shared:/shared', '/home/me/.claude:/ahpd/claude']);
+
+  // Named and unknown is refused, because silently getting a machine with
+  // none of the profile's mounts fails later and further away.
+  await expect(provider.write('computer://other', {
+    data: JSON.stringify({ profile: 'nope' }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/no profile called nope; it has claude, plain/);
+});
+
+it('starts, stops and restarts a machine by writing what it should be', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-state-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    read(uri: string): Promise<{ data: string }>;
+    list(uri: string): Promise<{ name: string }[]>;
+  };
+  const put = (uri: string, said: string): Promise<void> =>
+    provider.write(uri, { data: said, encoding: 'utf-8' });
+
+  await put('computer://box', JSON.stringify({}));
+  expect((await provider.list('computer://box')).map((one) => one.name)).toContain('state');
+  expect((await provider.read('computer://box/state')).data.trim()).toBe('running');
+
+  /*
+   * A resource scheme has no `restart` verb, so the action is a write to what
+   * the machine is. That keeps it inside `computer:write`, the same grant that
+   * makes and destroys one, rather than needing a method of its own.
+   */
+  await put('computer://box/state', 'stopped');
+  expect((await provider.read('computer://box/state')).data.trim()).toBe('exited');
+  await put('computer://box/state', 'running');
+  expect((await provider.read('computer://box/state')).data.trim()).toBe('running');
+  await put('computer://box/state', 'restarted');
+  expect((await provider.read('computer://box/state')).data.trim()).toBe('running');
+
+  // A word nobody serves is a sentence about the body, not a docker error.
+  await expect(put('computer://box/state', 'rebooted'))
+    .rejects.toThrow(/state is one of running, stopped, restarted/);
+  // And a leaf that is not writable says what is.
+  await expect(put('computer://box/status', 'anything'))
+    .rejects.toThrow(/not something to write/);
+  // A machine that is not there is not a thing to start.
+  await expect(put('computer://gone/state', 'running')).rejects.toThrow();
 });

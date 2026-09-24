@@ -65,10 +65,13 @@
       "args": { "required": false },
       "env": { "required": false },
       "image": { "required": false },
+      "mounts": { "required": false },
+      "profiles": { "required": false },
       "cpus": { "required": false },
       "memory": { "required": false },
       "max": { "required": false },
-      "label": { "required": false }
+      "label": { "required": false },
+      "devcontainer": { "required": false }
     }
   }
 }

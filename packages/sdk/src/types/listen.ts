@@ -1,5 +1,6 @@
 /** Accepting connections, on whichever JavaScript runtime is running. */
 
+import type { Readable, Writable } from 'node:stream';
 import type { Peer, Request } from './rpc.js';
 import type { Principal } from './users.js';
 
@@ -102,4 +103,35 @@ export interface ListenOptions {
  */
 export interface Arrival {
   principal?: Principal;
+}
+
+/**
+ * Where to accept one connection, when the connection is a pipe.
+ *
+ * There is no port and no token because there is nothing to bind and nobody to
+ * refuse: a process holding this one's stdin and stdout is the only thing that
+ * can reach it, and whoever started it decided that. A host is run this way to
+ * be carried by another host - decision `a-nested-host-speaks-stdio` - so the
+ * connection is the host itself unless the caller says otherwise.
+ */
+export interface StdioOptions {
+  /**
+   * Whether this connection is the host itself.
+   *
+   * True by default, which is what a nested host wants. False is for a caller
+   * that spawned this process on somebody else's behalf and wants the
+   * connection to arrive as nobody, with `authenticate` left to authorize it.
+   */
+  root?: boolean;
+  /** Sees every frame, both ways. Nothing is recorded without one. */
+  tap?: Tap;
+  /**
+   * Where frames are read from and written to.
+   *
+   * This process's own stdin and stdout unless a caller names others, which is
+   * what makes the transport testable without taking over the test runner's
+   * own pipes.
+   */
+  input?: Readable;
+  output?: Writable;
 }

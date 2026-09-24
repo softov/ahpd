@@ -86,7 +86,17 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 Next free number in `plugin`: `13`.
 
+## container
+
+Reference: [00-container.md](container/00-container.md)
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - A session in a dev container, with its whole host inside it](container/01-a-session-in-a-dev-container/plan.md) | high | built 2026-09-24, except its `ahpapp` half ([implemented.md](container/01-a-session-in-a-dev-container/implemented.md)) | plugin 11, plugin 12 | an ahpapp plan, which drives the same four methods |
+
+Next free number in `container`: `02`.
+
 ## Domains without a plan
 
-None. `host`, `claude`, `documentation` and `plugin` were the domains listed here, and each has a plan above now.
+None. `host`, `claude`, `documentation`, `plugin` and `container` were the domains listed here, and each has a plan above now.
 Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md).

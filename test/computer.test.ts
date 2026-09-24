@@ -54,6 +54,11 @@ it('lists a machine, reads its status and its capabilities', async () => {
   expect(await provider.list('computer://box')).toEqual([
     { name: 'status', type: 'file' },
     { name: 'capabilities', type: 'file' },
+    // What it is using now, beside what it is: a gauge reads this one.
+    { name: 'stats', type: 'file' },
+    // The one leaf that is written as well as read: stopping a machine is a
+    // word sent here rather than a verb of its own.
+    { name: 'state', type: 'file' },
   ]);
   expect(await provider.resolve('computer://box')).toMatchObject({ type: 'directory' });
   expect(await provider.resolve('computer://box/status')).toMatchObject({ type: 'file' });

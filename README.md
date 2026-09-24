@@ -60,6 +60,7 @@ The clients on the left are interchangeable and none of them owns the session. `
 - `Automations`: Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
 - `Plugins`: Serve another Agents implementation or feature, on the same host, with none of the protocol re-implemented: a backend is a plugin, loaded with `--plugin` or named in the configuration.
 - `Computers`: Make a container with a resource write, name it in a session so the agent runs inside it, and destroy it with a resource delete. See [docs/COMPUTER.md](docs/COMPUTER.md).
+- `Dev containers`: Run a whole host inside the container a workspace's own `devcontainer.json` asks for, and carry its frames, so the reference client's dev container flow works. See [docs/CONTAINERS.md](docs/CONTAINERS.md).
 
 ## Install and run the daemon
 
@@ -279,6 +280,7 @@ fail silently rather than loudly.
 | [docs/AGENT.md](docs/AGENT.md) | The `Agent` and `Session` contracts, for writing a backend |
 | [docs/AHP.md](docs/AHP.md) | Compatibility area by area, emitted actions, and the rules that fail silently |
 | [docs/COMPUTER.md](docs/COMPUTER.md) | A disposable computer on Docker, and the Docker/KVM group commands |
+| [docs/CONTAINERS.md](docs/CONTAINERS.md) | A session in a workspace's dev container, the surface the reference client drives, and `--stdio` |
 | [docs/USERS.md](docs/USERS.md) | A person signs in, a role decides what they may do, and what a client is told when it may not |
 | [REFERENCE.md](REFERENCE.md) | The specification and the reference host, and what each has settled |
 | [DEVELOPER.md](DEVELOPER.md) | How to run and develop the project from source |

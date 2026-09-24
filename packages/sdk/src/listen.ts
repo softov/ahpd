@@ -1,5 +1,5 @@
 import { createPeer, receive } from './rpc.js';
-import type { Connected, Listener, ListenOptions, OnConnect, Runtime, Tap } from './types/listen.js';
+import type { Connected, Listener, ListenOptions, OnConnect, Runtime, StdioOptions, Tap } from './types/listen.js';
 import type { Principal } from './types/users.js';
 
 /**
@@ -292,6 +292,98 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     port: server.address()?.port ?? options.port,
     guarded: token !== undefined,
     close: () => { server.close(); },
+  };
+}
+
+/**
+ * Serves one client over this process's own stdin and stdout.
+ *
+ * The second transport, and the whole of it: a frame is one line of JSON, so
+ * reading a line and writing a line is the same two calls every socket path
+ * makes. Nothing is bound and nothing is refused at a door, because a process
+ * holding these pipes is the only thing that can reach them.
+ *
+ * It exists so a host can be carried by another host: a container runs one of
+ * these and the outer host relays its frames - decision
+ * `a-nested-host-speaks-stdio`. The connection is the host itself by default,
+ * because the process that started this one decided whether it may exist.
+ */
+export async function overStdio(options: StdioOptions, onConnect: OnConnect): Promise<Listener> {
+  const seen = tapping(options.tap, 1);
+  const input = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
+  let running = true;
+  /**
+   * What is left of a line whose newline has not arrived yet.
+   *
+   * Held rather than parsed, because a frame that straddles two reads is one
+   * frame: a message split across a pipe is ordinary, and reporting it as two
+   * would be a parse error the client never caused.
+   */
+  let tail = '';
+
+  const peer = createPeer({
+    send: (text) => {
+      seen.out(text);
+      output.write(`${text}\n`);
+    },
+    // The pipe stays open until the process ends: closing the read side of
+    // something another process owns is that process's business, not ours.
+    close: () => { input.pause(); },
+    isOpen: () => running,
+  });
+  const connected: Connected = onConnect(peer, undefined, options.root !== false);
+
+  /** The one ending, so a close and an end cannot both release the connection. */
+  const finish = (): void => {
+    if (!running) return;
+    running = false;
+    peer.close();
+    connected.close();
+  };
+
+  /** One complete line, handed on the way a socket hands over a message. */
+  const frame = (line: string): void => {
+    if (line.trim() === '') return;
+    seen.in(line);
+    receive(line, peer, (request) => connected.handle(request));
+  };
+
+  input.setEncoding('utf8');
+  input.on('data', (chunk: string) => {
+    tail += chunk;
+    let at = tail.indexOf('\n');
+    while (at !== -1) {
+      // A carriage return before the newline is a terminal's doing, not a
+      // client's, and JSON whitespace either way.
+      frame(tail.slice(0, at).replace(/\r$/, ''));
+      tail = tail.slice(at + 1);
+      at = tail.indexOf('\n');
+    }
+  });
+  // A last line with no newline after it is still a frame: a socket message
+  // needs no terminator, and a writer that ends without one meant the same.
+  input.on('end', () => {
+    if (tail !== '') frame(tail.replace(/\r$/, ''));
+    tail = '';
+    finish();
+  });
+  input.on('error', finish);
+  // Paused by default when a process has other work; this one has none until
+  // a frame arrives, so it is asked to start reading.
+  input.resume();
+
+  return {
+    runtime: runtime(),
+    // Said in its own words rather than as a port nobody bound: a client
+    // reading this line should not go looking for a socket.
+    host: 'stdio',
+    port: 0,
+    guarded: false,
+    close: () => {
+      finish();
+      input.pause();
+    },
   };
 }
 

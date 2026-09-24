@@ -106,7 +106,21 @@ it('classifies every handler the host serves', () => {
    */
   const source = readFileSync(join(REPO, 'packages/sdk/src/host.ts'), 'utf8');
   const served = [...source.matchAll(/^ {8}([a-zA-Z][A-Za-z0-9]*): (?:async )?\(params\)/gm)].map((one) => one[1] as string);
-  expect(served.length).toBeGreaterThan(25);
+  /*
+   * And the quoted ones, which are the reference client's extension methods.
+   *
+   * They were served and classified nowhere: the pattern above reads a bare
+   * identifier, and every `vscode/*` handler is a string key, so nine methods
+   * nobody decided about passed this test. The pattern for them takes any
+   * parameter list, because a method that ignores its params is still a
+   * method - and only quoted keys, because inside a handler's own body there
+   * are object literals whose members look exactly like this and are not
+   * methods of this host.
+   */
+  const quoted = [...source.matchAll(/^ {8}'([^']+)': (?:async )?\([^)]*\)\s*=>/gm)].map((one) => one[1] as string);
+  expect(quoted.length).toBeGreaterThan(5);
+  served.push(...quoted);
+  expect(served.length).toBeGreaterThan(30);
 
   const classified = new Set([...Object.keys(GATE.NEEDS), ...GATE.UNGATED]);
   expect(served.filter((one) => !classified.has(one))).toEqual([]);

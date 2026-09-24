@@ -42,6 +42,7 @@ anything has been let go of.
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
+| `--stdio` | Serve one connection over stdin and stdout instead of binding a port. One line of JSON per frame, no token, and the connection is this host itself. This is how a container runs a host for another host to carry (see [CONTAINERS.md](CONTAINERS.md)) |
 | `--users <file>` | The user directory. See [USERS.md](USERS.md) |
 | `--resource <url>` | The https identifier this host advertises for its own sign-in. Default: derived from `--host` and `--port` |
 | `--issuer <github\|url>` | An authorization server whose tokens are also accepted. See [USERS.md](USERS.md) |

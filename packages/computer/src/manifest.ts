@@ -16,6 +16,27 @@ import type { SchemeDescription } from '@ahpd/sdk';
  * `"name": "other"` has said two things and one of them is the address.
  */
 
+/**
+ * A named set of machine settings an operator wrote down once.
+ *
+ * The point is control over what a machine is given rather than convenience:
+ * a `claude` profile shares this host's agent configuration, a `plain` one
+ * shares nothing, and which a person picked is visible in the object. Every
+ * field is what the body would otherwise have to say, so a profile is a
+ * default and never a ceiling - a body that names a field overrides it.
+ */
+export interface Profile {
+  /** What a client shows instead of the key. */
+  title?: string;
+  /** One line about what this profile is for, and what it shares. */
+  description?: string;
+  image?: string;
+  cpus?: string;
+  memory?: string;
+  mounts?: string[];
+  workdir?: string;
+}
+
 /** What the provider holds, and what a manifest may leave out. */
 export interface ManifestDefaults {
   /** The runtime this provider is, which the body must agree with when it says one. */
@@ -23,6 +44,17 @@ export interface ManifestDefaults {
   image: string;
   cpus?: string;
   memory?: string;
+  /**
+   * Mounts every machine this provider makes carries, before the body's own.
+   *
+   * The operator's, not the person's: a directory the deployment shares with
+   * every machine, such as the agent configuration a harness inside one reads.
+   * A body's own mounts are appended, so a machine can add to these and the
+   * later entry wins wherever a runtime resolves two at one target.
+   */
+  mounts?: string[];
+  /** The named sets a body may pick from, by key. */
+  profiles?: Record<string, Profile>;
 }
 
 /**
@@ -33,9 +65,32 @@ export interface ManifestDefaults {
  * is a field a client sends back unchanged rather than a choice, because this
  * host runs one.
  */
-export const MANIFEST_SCHEMA = (options: { runtime: string; image: string }): Record<string, unknown> => ({
+export const MANIFEST_SCHEMA = (
+  options: { runtime: string; image: string; profiles?: Record<string, Profile> },
+): Record<string, unknown> => {
+  const names = Object.keys(options.profiles ?? {});
+  return {
   type: 'object',
   properties: {
+    /*
+     * The profiles this host defines, as an `enum` a client draws a picker
+     * from. Absent when the deployment named none, because a picker with no
+     * choices is a control that only takes a screen up.
+     */
+    ...(names.length === 0 ? {} : {
+      profile: {
+        type: 'string',
+        title: 'Profile',
+        description: 'What this machine is made from, and what it is given.',
+        enum: names,
+        // What each one is, so a picker can say more than its key.
+        'x-choices': names.map((name) => ({
+          value: name,
+          title: (options.profiles ?? {})[name]?.title ?? name,
+          description: (options.profiles ?? {})[name]?.description,
+        })),
+      },
+    }),
     runtime: {
       type: 'string',
       title: 'Runtime',
@@ -63,7 +118,8 @@ export const MANIFEST_SCHEMA = (options: { runtime: string; image: string }): Re
       description: 'An absolute path inside the machine.',
     },
   },
-});
+  };
+};
 
 /** A Docker CPU count: a number, optionally fractional. */
 const CPUS = /^\d+(?:\.\d+)?$/;
@@ -80,11 +136,18 @@ const said = (held: Record<string, unknown>, key: string): string | undefined =>
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 };
 
+/**
+ * A write body as text, whatever encoding it arrived in.
+ *
+ * The one decoder both kinds of write share: a manifest is this parsed as
+ * JSON, and a state is this as a word.
+ */
+export const bodyText = (content: Write): string =>
+  (content.encoding === 'base64' ? Buffer.from(content.data, 'base64').toString('utf8') : content.data);
+
 /** The body, decoded and parsed, or a refusal saying what a body is. */
 const bodyOf = (content: Write): Record<string, unknown> => {
-  const text = content.encoding === 'base64'
-    ? Buffer.from(content.data, 'base64').toString('utf8')
-    : content.data;
+  const text = bodyText(content);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text === '' ? '{}' : text);
@@ -123,30 +186,60 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     throw new RpcError(-32602, `This host runs ${defaults.runtime}, and that body asks for ${runtime}`);
   }
 
+  /*
+   * The profile the body picked, which stands behind every field below.
+   *
+   * Named and unknown is refused rather than ignored: a person who asked for
+   * `claude` and silently got a machine with none of its mounts would find out
+   * when the agent could not sign in, which is the failure this exists to
+   * stop. The names are listed, because a client drawing the picker from the
+   * schema and a body written by hand are both possible.
+   */
+  const picked = said(held, 'profile');
+  const known = defaults.profiles ?? {};
+  if (picked !== undefined && known[picked] === undefined) {
+    const names = Object.keys(known);
+    throw new RpcError(-32602, names.length === 0
+      ? `This host defines no profiles, and that body asks for ${picked}`
+      : `This host has no profile called ${picked}; it has ${names.join(', ')}`);
+  }
+  const profile: Profile = picked === undefined ? {} : known[picked] ?? {};
+
   // Named and blank is a body saying the wrong thing; absent is the default.
   const named = held.image === undefined ? undefined : said(held, 'image');
   if (held.image !== undefined && named === undefined) {
     throw new RpcError(-32602, 'image is a non-empty string, and that body leaves it blank');
   }
-  const image = named ?? defaults.image;
+  const image = named ?? profile.image ?? defaults.image;
   if (image === '') {
     throw new RpcError(-32602, 'A computer is made from an image, and that body names none and this host has no default');
   }
 
-  const cpus = said(held, 'cpus') ?? defaults.cpus;
+  const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;
   if (cpus !== undefined && !CPUS.test(cpus)) {
     throw new RpcError(-32602, `cpus is a number, and ${cpus} is not one`);
   }
-  const memory = said(held, 'memory') ?? defaults.memory;
+  const memory = said(held, 'memory') ?? profile.memory ?? defaults.memory;
   if (memory !== undefined && !MEMORY.test(memory)) {
     throw new RpcError(-32602, `memory is a size such as 512m or 2g, and ${memory} is not one`);
   }
 
-  const mounts = list(held.mounts);
-  for (const mount of mounts ?? []) {
+  const asked = list(held.mounts);
+  for (const mount of asked ?? []) {
     if (!MOUNT.test(mount)) throw new RpcError(-32602, `mounts are "source:target" or "source:target:ro", and ${mount} is neither`);
   }
-  const workdir = said(held, 'workdir');
+  for (const mount of profile.mounts ?? []) {
+    if (!MOUNT.test(mount)) {
+      throw new RpcError(-32602, `profile ${picked ?? ''} names the mount ${mount}, which is not "source:target"`);
+    }
+  }
+  /*
+   * Widest first, so the narrower statement wins where two name one target:
+   * the deployment's every machine, then the profile this one was made from,
+   * then what this body itself asked for.
+   */
+  const mounts = [...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? [])];
+  const workdir = said(held, 'workdir') ?? profile.workdir;
   if (workdir !== undefined && !workdir.startsWith('/')) {
     throw new RpcError(-32602, `workdir is an absolute path inside the computer, and ${workdir} is not one`);
   }
@@ -156,7 +249,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     image,
     ...(cpus === undefined ? {} : { cpus }),
     ...(memory === undefined ? {} : { memory }),
-    ...(mounts === undefined || mounts.length === 0 ? {} : { mounts }),
+    ...(mounts.length === 0 ? {} : { mounts }),
     ...(workdir === undefined ? {} : { workdir }),
   };
 };

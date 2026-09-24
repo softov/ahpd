@@ -33,6 +33,7 @@ import { debugLogs, hostLogPath } from './debuglogs.js';
 import type { LogFile } from './debuglogs.js';
 import { lookup } from 'node:dns/promises';
 import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
+import type { ContainerConnectResult, ContainerSink } from './types/containers.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
@@ -144,6 +145,38 @@ const NEEDS: Record<string, Grant> = {
   createResourceWatch: 'file:read',
   completions: 'file:read',
 
+  // container:write
+  //
+  // Starting a container and running a host in it is this host's Docker access
+  // by proxy, so it is a grant of its own rather than the machine scheme's
+  // verb: the params name a workspace folder, not a `computer://` URI -
+  // decision `connecting-to-a-dev-container-needs-a-grant`.
+  'vscode/devContainers/connect': 'container:write',
+  'vscode/devContainers/disconnect': 'container:write',
+  'vscode/devContainers/relaySend': 'container:write',
+
+  // session:read
+  //
+  // The reference client's own methods, which were served and classified
+  // nowhere until the staleness test learned to see a quoted name. They act on
+  // a session's worktree, artifacts and state file, so they answer to the
+  // session's own pair - and a role that may not write a session may not make
+  // it a tree.
+  'vscode/getAgentHostSessionStateFile': 'session:read',
+
+  // session:write
+  'vscode/createAgentHostDetachedWorktree': 'session:write',
+  'vscode/claimAgentHostDetachedWorktree': 'session:write',
+  'vscode/setAgentHostDetachedWorktreeArchived': 'session:write',
+  'vscode/deleteAgentHostDetachedWorktree': 'session:write',
+  'vscode/reconcileAgentHostDetachedWorktrees': 'session:write',
+  'vscode/removeSessionArtifact': 'session:write',
+
+  // diagnostics:read
+  'vscode/collectAgentHostDebugLogs': 'diagnostics:read',
+  'vscode/readAgentHostDebugLogsChunk': 'diagnostics:read',
+  getNetworkDiagnosticsInfo: 'diagnostics:read',
+
   // file:write
   resourceWrite: 'file:write',
   resourceDelete: 'file:write',
@@ -192,6 +225,10 @@ const NEEDS: Record<string, Grant> = {
  */
 const UNGATED = new Set([
   'initialize', 'reconnect', 'ping', 'authenticate', 'subscribe',
+  // A boolean about whether this machine has Docker and the CLI. It starts
+  // nothing and reads nothing, and the reference client asks it before it can
+  // ask for anything else - `connecting-to-a-dev-container-needs-a-grant`.
+  'vscode/devContainers/isDockerAvailable',
   /*
    * Notifications, which cannot be refused *here*: the notification path
    * returns before this boundary, because a frame with no id has nowhere to
@@ -4732,6 +4769,62 @@ export function createHost(options: HostOptions): Host {
         return [...needed];
       };
 
+      /**
+       * Whether this connection is still here.
+       *
+       * A container takes time to build, and a client that went while its image
+       * was building must not leave a relay running behind it.
+       */
+      let alive = true;
+
+      /**
+       * The dev containers this connection opened, by the client's own name.
+       *
+       * Per connection, because a relay is one client's: the name is theirs,
+       * nothing another client can spell reaches it, and a socket that drops
+       * takes its containers with it. That is where the reference host keeps
+       * them too - decision `the-relay-surface-is-the-reference-one`.
+       */
+      const containers = new Map<string, { name: string; folder: string }>();
+
+      /**
+       * The three strings a connect carries, checked once.
+       *
+       * A `connectionId` is a name a client chose, so it is bounded: non-empty,
+       * no NUL, and short enough to be an identifier rather than a payload.
+       * Whether the folder exists and has a container definition is the
+       * launcher's to answer, because that is a question about a filesystem.
+       */
+      const containerAsk = (params: Record<string, unknown>): { connectionId: string; workspaceFolder: string; name: string } => {
+        const id = typeof params.connectionId === 'string' ? params.connectionId : '';
+        if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
+          throw new RpcError(-32602, 'connectionId must be a non-empty identifier');
+        }
+        const folder = typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '';
+        if (folder.trim() === '' || folder.includes('\0')) {
+          throw new RpcError(-32602, 'workspaceFolder must be a path on this host');
+        }
+        const name = typeof params.name === 'string' ? params.name : '';
+        if (name.trim() === '' || name.includes('\0')) {
+          throw new RpcError(-32602, 'name must be non-empty');
+        }
+        return { connectionId: id, workspaceFolder: folder, name };
+      };
+
+      /**
+       * The one string a `disconnect` or a `relaySend` carries.
+       *
+       * The reference sends `{ connectionId }` and `{ connectionId, data }`,
+       * so a folder is not asked for again: the connection was made with one.
+       */
+      const namedContainer = (params: Record<string, unknown>): string => {
+        const id = typeof params.connectionId === 'string' ? params.connectionId : '';
+        if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
+          throw new RpcError(-32602, 'connectionId must be a non-empty identifier');
+        }
+        return id;
+      };
+
       const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
         /**
          * The handshake.
@@ -4754,6 +4847,19 @@ export function createHost(options: HostOptions): Host {
             // `undefined`.
             throw new RpcError(-32005, 'No protocol version in common', { supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
           }
+          /*
+           * Whether a container can be made here, asked before the answer
+           * that says so.
+           *
+           * Once per handshake rather than once per host: the question costs
+           * two version probes, the answer can change under a running daemon
+           * - Docker started, the CLI installed - and a client that is told
+           * no is a client that never offers the flow. A probe that throws is
+           * a no, because it answered nothing.
+           */
+          const containersReady = options.containers === undefined
+            ? false
+            : await options.containers.available().catch(() => false);
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
           // Met, so a later `reconnect` under this id is answerable.
           known.add(connection.clientId);
@@ -4833,6 +4939,12 @@ export function createHost(options: HostOptions): Host {
               'vscode.removeSessionArtifact': true,
               'vscode.detachedWorktrees': true,
               'vscode.getAgentHostSessionStateFile.chat': true,
+              // The dev container surface. A client reads this before it
+              // offers the flow, so it is true only where a container can
+              // actually be made: a host with the launcher loaded and no
+              // Docker, or no Dev Container CLI, omits it and is never asked -
+              // decision `a-dev-container-is-made-by-the-dev-container-cli`.
+              ...(containersReady ? { 'vscode.devContainers': true } : {}),
               // What this host serves beside `file:`, so a client can draw a
               // screen for a scheme before it has a URI to ask.
               ...(advertisedSchemes() === undefined ? {} : { 'ahpd.resourceProviders': advertisedSchemes() }),
@@ -6314,6 +6426,91 @@ export function createHost(options: HostOptions): Host {
             return { url: params.url, dnsIpv4, dnsIpv6, error: reason(error), durationMs: Date.now() - began };
           }
         },
+        /*
+         * The dev container surface, name for name.
+         *
+         * The reference client asks these four, and it reads the capability key
+         * on `initialize` before it offers the flow at all, so the names and
+         * the shapes are another program's on purpose - decision
+         * `the-relay-surface-is-the-reference-one`. What crosses here is a
+         * nested host's own frames: this host carries them and does not read
+         * them, which is what makes the container the container's and not
+         * this host's pretending to be there.
+         */
+        'vscode/devContainers/isDockerAvailable': async () =>
+          need(options.containers, 'vscode/devContainers/isDockerAvailable').docker(),
+        'vscode/devContainers/connect': async (params) => {
+          const launcher = need(options.containers, 'vscode/devContainers/connect');
+          const one = containerAsk(params);
+          if (containers.has(one.connectionId)) {
+            throw new RpcError(-32602, `Dev Container connectionId ${one.connectionId} is already in use`);
+          }
+          // Held before the first await, so a second connect under the same
+          // name cannot slip in while this one is building an image.
+          containers.set(one.connectionId, { name: one.name, folder: one.workspaceFolder });
+          /**
+           * The relay ended, whoever ended it.
+           *
+           * The map is what says whether this connection still owns it: an
+           * explicit `disconnect` forgets the name first, so the client that
+           * asked is not told what it already knows.
+           */
+          const ended = (why?: string): void => {
+            if (!containers.delete(one.connectionId)) return;
+            connection.peer.notify('vscode/devContainers/relayClose', { connectionId: one.connectionId });
+            connection.peer.notify('vscode/devContainers/closeConnection', { connectionId: one.connectionId });
+            if (why !== undefined && why !== '') log(`dev container ${one.connectionId} ended: ${why}`);
+          };
+          const sink: ContainerSink = {
+            message: (data) => {
+              connection.peer.notify('vscode/devContainers/relayMessage', { connectionId: one.connectionId, data });
+            },
+            output: (data) => {
+              connection.peer.notify('vscode/devContainers/output', { connectionId: one.connectionId, data });
+            },
+            close: (why) => { ended(why); },
+          };
+          let result: ContainerConnectResult;
+          try {
+            result = await launcher.connect(one, sink);
+          }
+          catch (error) {
+            // Nothing left running: the launcher is told to release whatever it
+            // had begun, and the name is free again.
+            containers.delete(one.connectionId);
+            try { await launcher.disconnect(one.connectionId); } catch { /* already gone */ }
+            throw error;
+          }
+          if (!alive) {
+            // The client went while the image was building. Its containers are
+            // not something to leave behind for nobody.
+            containers.delete(one.connectionId);
+            try { await launcher.disconnect(one.connectionId); } catch { /* already gone */ }
+            throw new Error(`The connection went away while ${one.connectionId} was starting`);
+          }
+          return { connectionId: one.connectionId, name: one.name, ...result };
+        },
+        'vscode/devContainers/disconnect': async (params) => {
+          const launcher = need(options.containers, 'vscode/devContainers/disconnect');
+          const id = namedContainer(params);
+          if (!containers.delete(id)) {
+            throw new RpcError(-32008, `${id} is not a dev container this client opened`);
+          }
+          // Nothing is notified: the client asked for this, and the reference
+          // host's own client forgets the connection on its side as it does.
+          await launcher.disconnect(id);
+        },
+        'vscode/devContainers/relaySend': async (params) => {
+          const launcher = need(options.containers, 'vscode/devContainers/relaySend');
+          const id = namedContainer(params);
+          if (!containers.has(id)) {
+            throw new RpcError(-32008, `${id} is not a dev container this client opened`);
+          }
+          if (typeof params.data !== 'string') throw new RpcError(-32602, 'data must be a string');
+          // The frame is written and not read: the nested host is the one that
+          // answers it, and what it answers with comes back as `relayMessage`.
+          await launcher.send(id, params.data);
+        },
         /**
          * The configuration a session would have, before one exists.
          *
@@ -7728,6 +7925,16 @@ export function createHost(options: HostOptions): Host {
         },
         close() {
           const was = [...connection.watching];
+          // A container is this connection's own process, and a socket that
+          // drops takes its relays with it rather than leaving a host running
+          // in a container for nobody.
+          alive = false;
+          if (options.containers !== undefined) {
+            for (const id of [...containers.keys()]) {
+              containers.delete(id);
+              void Promise.resolve(options.containers.disconnect(id)).catch(() => { /* already gone */ });
+            }
+          }
           connections.delete(connection);
           void fire('client_disconnect', { type: 'client_disconnect', client: connection.clientId || 'anonymous' });
           // The tokens went with the connection; so do their clocks.

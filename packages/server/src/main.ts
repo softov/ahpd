@@ -9,7 +9,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, overStdio, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -34,6 +34,15 @@ interface Options {
   port: number;
   /** Address to bind. Loopback unless asked otherwise. */
   host: string;
+  /**
+   * Serve one connection over this process's own stdin and stdout.
+   *
+   * Nothing is bound, so no token is asked for at a door: the process holding
+   * these pipes is the only thing that can reach this host, and whoever
+   * started it decided that. It is how a container runs a host for another
+   * host to carry - decision `a-nested-host-speaks-stdio`.
+   */
+  stdio: boolean;
   /**
    * The directories whose sessions this host serves.
    *
@@ -147,6 +156,11 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   --port <n>                    Listen here. Default 9187; 0 picks a free one.
   --host <addr>                 Bind here. Default 127.0.0.1. Pass 0.0.0.0 to
                                 accept from other machines, which needs a token.
+  --stdio                       Serve one connection over stdin and stdout
+                                instead of binding a port. This is how a host
+                                runs inside a container for another host to
+                                carry: one line of JSON per frame, no token,
+                                and the connection is this host itself.
   --path <dir>                  A directory this host serves. Repeatable; the
                                 first is the default a client gets when it
                                 names none, and the catalogue is the union of
@@ -223,6 +237,7 @@ function parse(argv: string[]): Options {
   const options: Options = {
     port: 9187,
     host: '127.0.0.1',
+    stdio: false,
     paths: [],
     automations: 'file',
     sessions: 'file',
@@ -239,6 +254,8 @@ function parse(argv: string[]): Options {
     switch (argv[i]) {
       case '--port': options.port = Number(argv[++i]); break;
       case '--host': options.host = String(argv[++i]); break;
+      // A pipe instead of a port: one client, no token, nothing bound.
+      case '--stdio': options.stdio = true; break;
       // Repeatable. One host over two projects is one catalogue and one
       // process, which is the case a second `--path` is for.
       case '--path': options.paths.push(String(argv[++i])); break;
@@ -411,6 +428,9 @@ if (verb !== undefined) {
     // Parsed here as well as by the child, so a bad option is refused now
     // rather than by something that has already been let go of.
     const parsed = parse(rest);
+    // A detached process has no pipe to answer on, so it would read an
+    // immediate end and exit having served nobody.
+    if (parsed.stdio) stop('--stdio cannot be detached: it serves the process that started it.');
     // Derived here too, so the record the parent writes carries the ready URL
     // and the child is told nothing it did not already know.
     const { token } = secret(parsed);
@@ -636,7 +656,7 @@ const memory = options.automations === 'memory';
  * starting. It is also what makes this log line up against a client's, since
  * the two are separate programs and the only thing they share is a clock.
  */
-const stamp = (line: string): void => { process.stdout.write(`${new Date().toISOString()} ${line}\n`); };
+const stamp = (line: string): void => { process.stderr.write(`${new Date().toISOString()} ${line}\n`); };
 
 /*
  * What this host calls its own sign-in resource.
@@ -857,28 +877,50 @@ const tap = options.wire === undefined ? undefined : ((): Tap => {
  * there is nothing to ask, so nothing is passed and the door refuses exactly
  * what it refused.
  */
-const listener = await listen(
-  {
-    port: options.port,
-    host: options.host,
-    ...(token !== undefined ? { token } : {}),
-    ...(users === undefined
-      ? {}
-      : {
-        identify: async (presented: string) => {
-          const who = await users.verify(presented);
-          if (who === undefined) return undefined;
-          return who.trusted === true ? { principal: who } : {};
-        },
-        root: true,
-      }),
-    ...(tap ? { tap } : {}),
-  },
-  (peer, principal, root) => host.accept(peer, principal, root),
-);
+/*
+ * Which transport this host answers on.
+ *
+ * Over stdio there is no door to guard: the process that started this one
+ * holds the only handle to the pipes, so the connection is this host itself
+ * and the token and the directory are not consulted at all. That is the case
+ * a container runs in, and the outer host's own grant is what decided whether
+ * it may exist.
+ */
+const listener = options.stdio
+  ? await overStdio(
+    { ...(tap ? { tap } : {}) },
+    (peer, principal, root) => host.accept(peer, principal, root),
+  )
+  : await listen(
+    {
+      port: options.port,
+      host: options.host,
+      ...(token !== undefined ? { token } : {}),
+      ...(users === undefined
+        ? {}
+        : {
+          identify: async (presented: string) => {
+            const who = await users.verify(presented);
+            if (who === undefined) return undefined;
+            return who.trusted === true ? { principal: who } : {};
+          },
+          root: true,
+        }),
+      ...(tap ? { tap } : {}),
+    },
+    (peer, principal, root) => host.accept(peer, principal, root),
+  );
 
-process.stdout.write(
-  `ahpd on ws://${listener.host}:${listener.port} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
+/*
+ * Where this host says what it is.
+ *
+ * A socket host says it on stdout, which is a log a person reads. A stdio host
+ * says it on stderr, because its stdout is the wire: a reader there is parsing
+ * frames, and a status line would be the one frame nothing sent.
+ */
+const say = options.stdio ? process.stderr : process.stdout;
+say.write(
+  `${options.stdio ? 'ahpd over stdio' : `ahpd on ws://${listener.host}:${listener.port}`} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
   // Its own line rather than the end of the one above, which `daemon.ts`
   // reads the session directories off with a regular expression.
   + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`

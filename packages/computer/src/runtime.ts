@@ -80,8 +80,92 @@ export interface ComputerRuntime {
   remove(id: string): Promise<void>;
   /** Run a command inside one, and answer what it printed and what it exited with. */
   exec(id: string, command: string[]): Promise<ExecResult>;
+  /** Start one that is stopped. */
+  start(id: string): Promise<void>;
+  /** Stop and start one, whichever it was. */
+  restart(id: string): Promise<void>;
+  /** What one machine is using right now, or nothing when it is not running. */
+  stats(id: string): Promise<MachineStats | undefined>;
   capabilities(): RuntimeCapabilities;
 }
+
+/**
+ * What a machine is using, as numbers rather than as a runtime's display text.
+ *
+ * `docker stats` answers in strings meant for a terminal - `444KiB / 512MiB` -
+ * and a client that drew a dial from those would be parsing a human sentence.
+ * The parsing happens once, here, so every client is handed bytes and a
+ * percentage and a second runtime answers in the same units.
+ *
+ * A limit is the machine's own, which is what a gauge is drawn against: a
+ * machine made with no memory limit reports the host's, because that is what
+ * it may actually use.
+ */
+export interface MachineStats {
+  cpu: {
+    /** Percent of one core's worth of time, so two busy cores read 200. */
+    percent: number;
+    /** Cores this machine may use, when it was limited to some. */
+    cores?: number;
+  };
+  memory: {
+    /** Bytes in use. */
+    used: number;
+    /** Bytes it may use. */
+    limit: number;
+    /** `used` over `limit`, as the runtime itself computed it. */
+    percent: number;
+  };
+  /** Processes inside it. */
+  pids?: number;
+  /** Bytes in and out of its network. */
+  network?: { rx: number; tx: number };
+  /** Bytes read from and written to its filesystem. */
+  block?: { read: number; write: number };
+}
+
+
+/**
+ * A size a runtime printed, as bytes.
+ *
+ * `docker stats` writes `444KiB`, `1.01kB`, `512MiB` and `0B` in one column,
+ * mixing binary and decimal units in the same line, so both are read here and
+ * each is given the multiplier its suffix actually means. Anything that does
+ * not parse is nothing rather than a guess, because a gauge drawn from a
+ * misread number is worse than a gauge that is not drawn.
+ */
+const UNITS: Record<string, number> = {
+  b: 1,
+  kb: 1000, mb: 1000 ** 2, gb: 1000 ** 3, tb: 1000 ** 4,
+  kib: 1024, mib: 1024 ** 2, gib: 1024 ** 3, tib: 1024 ** 4,
+};
+
+export const bytesOf = (said: string): number | undefined => {
+  const found = /^\s*([0-9]*\.?[0-9]+)\s*([a-zA-Z]*)\s*$/.exec(said);
+  if (found === null) return undefined;
+  const size = Number(found[1]);
+  if (!Number.isFinite(size)) return undefined;
+  const unit = (found[2] ?? '').toLowerCase();
+  const scale = unit === '' ? 1 : UNITS[unit];
+  return scale === undefined ? undefined : size * scale;
+};
+
+/** A percentage a runtime printed, as a number. `0.00%` is 0. */
+const percentOf = (said: string): number | undefined => {
+  const found = /^\s*([0-9]*\.?[0-9]+)\s*%?\s*$/.exec(said);
+  if (found === null) return undefined;
+  const size = Number(found[1]);
+  return Number.isFinite(size) ? size : undefined;
+};
+
+/** The two halves of `444KiB / 512MiB`, or of `1.01kB / 126B`. */
+const pairOf = (said: string): [number, number] | undefined => {
+  const halves = said.split('/');
+  if (halves.length !== 2) return undefined;
+  const left = bytesOf(halves[0] as string);
+  const right = bytesOf(halves[1] as string);
+  return left === undefined || right === undefined ? undefined : [left, right];
+};
 
 /** Where the runtime's program is, and how to run it. */
 export interface CommandOptions {
@@ -196,6 +280,16 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     },
 
     stop: async (id) => { await must(['stop', id]); },
+    start: async (id) => { await must(['start', id]); },
+    /*
+     * One `restart` rather than a stop and a start.
+     *
+     * The runtime's own verb, so a machine that is already stopped is started
+     * and one that is running is cycled, both without this having to ask which
+     * it was: a stop-then-start of its own would race anybody else acting on
+     * the same machine between the two.
+     */
+    restart: async (id) => { await must(['restart', id]); },
     remove: async (id) => { await must(['rm', '-f', id]); },
 
     exec: async (id, command) => {
@@ -205,10 +299,43 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
     },
 
+    /**
+     * What one machine is using, once.
+     *
+     * `--no-stream` because this answers a question rather than opening a
+     * feed: a client that wants a moving dial asks again, and a stream held
+     * open here would be a subscription this provider does not have a way to
+     * end. A machine that is not running has nothing to report and is
+     * `undefined` rather than zeroes, which a gauge would draw as idle.
+     */
+    stats: async (id) => {
+      const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', id]);
+      if (held.code !== 0) return undefined;
+      const row = rows(held.stdout)[0];
+      if (row === undefined) return undefined;
+      const said = (key: string): string => (typeof row[key] === 'string' ? row[key] : '');
+      const memory = pairOf(said('MemUsage'));
+      if (memory === undefined) return undefined;
+      const network = pairOf(said('NetIO'));
+      const block = pairOf(said('BlockIO'));
+      const pids = Number(said('PIDs'));
+      return {
+        cpu: { percent: percentOf(said('CPUPerc')) ?? 0 },
+        memory: {
+          used: memory[0],
+          limit: memory[1],
+          percent: percentOf(said('MemPerc')) ?? 0,
+        },
+        ...(Number.isFinite(pids) && said('PIDs') !== '' ? { pids } : {}),
+        ...(network === undefined ? {} : { network: { rx: network[0], tx: network[1] } }),
+        ...(block === undefined ? {} : { block: { read: block[0], write: block[1] } }),
+      };
+    },
+
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec'],
-      resources: ['status', 'capabilities'],
+      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
+      resources: ['status', 'capabilities', 'stats', 'state'],
     }),
   };
 }

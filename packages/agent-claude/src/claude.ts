@@ -6,7 +6,9 @@ import { catalogue } from './catalog.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { refuseComputer } from '@ahpd/sdk';
+import { machineAsked, refuseComputer } from '@ahpd/sdk';
+import { spawnInside } from './spawn.js';
+import type { Asked, Spawned } from './spawn.js';
 import type { Agent, Bag, Start } from '@ahpd/sdk';
 
 /**
@@ -41,11 +43,32 @@ export interface ClaudeOptions {
   paths: string[];
   /** The id clients name. `claude` unless something else already is. */
   provider?: string;
+  /**
+   * Where the CLI is *inside a machine*, for a session that names one.
+   *
+   * `claude` on the image's PATH unless a deployment says otherwise, because
+   * an image that has the CLI installed normally has it there. It is never
+   * this host's own path: the executable that runs on this host is the SDK's
+   * to find, and this one has to exist in the image instead.
+   */
+  computerExecutable?: string;
+  /**
+   * The configuration directory the CLI reads *inside a machine*.
+   *
+   * Passed as `CLAUDE_CONFIG_DIR`, so a machine that mounts this host's
+   * `~/.claude` at the same path is a machine the CLI is already signed in on.
+   * Nothing here mounts it: the mount is the operator's, in the computer
+   * plugin's `mounts` or in the machine's own manifest, and this only says
+   * where to look. `false` says nothing at all and leaves the image's own.
+   */
+  computerConfigDir?: string | false;
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
 export function claude(options: ClaudeOptions): Agent {
   const dirs = options.paths;
+  const executable = options.computerExecutable ?? 'claude';
+  const configDir = options.computerConfigDir === undefined ? '/ahpd/claude' : options.computerConfigDir;
   const dir = dirs[0];
   if (dir === undefined)
     throw new Error('claude() needs at least one directory to work in.');
@@ -284,6 +307,37 @@ export function claude(options: ClaudeOptions): Agent {
     ...(style !== undefined ? { outputStyle: style } : {}),
   });
 
+  /**
+   * How to start the CLI for a session that named a machine, or nothing.
+   *
+   * Resolved per session rather than per agent, because the machine is the
+   * person's choice in `Start.settings` while the port is the host's, handed
+   * to each session. A named machine with no port is the refusal: this backend
+   * cannot reach it, and running on the host would be the silent failure the
+   * gate exists to stop.
+   */
+  const insideOf = (start: Start): ((asked: Asked) => Spawned) | undefined => {
+    const said = machineAsked(start);
+    if (said === undefined) return undefined;
+    const named = /^computer:\/\/([^/\s]+)$/.exec(said);
+    if (named === null) throw new Error(`${said} is not a computer URI; a session runs in computer://<id>`);
+    const id = named[1] as string;
+    const port = start.computers;
+    // Throws, and the `return` is what the compiler needs rather than a path.
+    if (port === undefined) { refuseComputer(start, 'Claude Code'); return undefined; }
+    return (asked) => spawnInside(asked, (given) => port.how(id, {
+      command: given.command,
+      args: given.args,
+      // An unset variable is not one to pass: `-e K=undefined` would put the
+      // word in the machine as the value.
+      env: Object.fromEntries(Object.entries(given.env)
+        .filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      // This host's path; the port reads it through the machine's mounts and
+      // falls back to the machine's own working directory.
+      ...(start.workingDirectory === undefined ? {} : { cwd: start.workingDirectory }),
+    }), said);
+  };
+
   return {
     provider: options.provider ?? 'claude',
     displayName: 'Claude Code',
@@ -378,14 +432,19 @@ export function claude(options: ClaudeOptions): Agent {
 
     create: (start: Start) => {
       /*
-       * This backend spawns the Claude CLI on this host, and no amount of
-       * settings moves it: a session that names a computer is refused here
-       * rather than run outside the machine it asked for. A backend reaches a
-       * machine through the host's `computers` port or not at all - decision
-       * `a-backend-reaches-a-computer-through-a-port`.
+       * The machine this session runs in, when it names one.
+       *
+       * The CLI is a child process, so it is moved by starting it somewhere
+       * else rather than by anything inside it: the SDK's own
+       * `spawnClaudeCodeProcess` is handed a spawn that goes through the
+       * host's `computers` port, and every other part of this backend is
+       * unchanged. A session that names a machine this host cannot reach is
+       * refused rather than run here, because a person told they are in a
+       * sandbox must not be on the host instead.
        */
-      refuseComputer(start, 'Claude Code');
+      const inside = insideOf(start);
       return createSession({
+      ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
       uri: start.uri,
       chatUri: start.chatUri,
       cwd: workingDirectory(start.workingDirectory),

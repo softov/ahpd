@@ -7,7 +7,7 @@ import type { Agent, Start } from '../packages/sdk/src/types/agent.js';
 import type { ComputerPort } from '../packages/sdk/src/types/computers.js';
 
 /*
- * A backend that cannot reach a machine refuses a session that names one.
+ * A backend that cannot enter a machine refuses a session that names one.
  *
  * The dangerous failure is silence: a session says `computer://box`, the
  * backend spawns its own process on the host anyway, and the person believes
@@ -16,8 +16,11 @@ import type { ComputerPort } from '../packages/sdk/src/types/computers.js';
  * catches one that does not - the ACP half lives in `computer-session.test.ts`,
  * where a real fixture proves which command ran.
  *
- * A backend that has the port refuses nothing: the machine may still be missing,
- * but that is that backend's error to report when it tries to reach it.
+ * **The port is not the permission.** The host hands `computers` to every
+ * backend, so a gate that read the port as the backend's own capability let
+ * Claude run on the host while the session said `computer://box`. What decides
+ * is whether the backend does something with it: Claude Code spawns the CLI
+ * through it, and cofold has no child process to move and so still refuses.
  */
 
 const port: ComputerPort = {
@@ -44,7 +47,7 @@ async function backends(): Promise<{ name: string; agent: Agent }[]> {
   ];
 }
 
-it('refuses a named machine when the host carries no computers port', async () => {
+it('refuses a named machine on a host with no computers port', async () => {
   for (const { name, agent } of await backends()) {
     // Synchronous, before anything is spawned: the refusal is the first thing
     // the factory does, so no backend that refuses has started a process yet.
@@ -56,12 +59,24 @@ it('refuses a named machine when the host carries no computers port', async () =
   }
 });
 
-it('does not refuse a backend that was handed the port', async () => {
-  // The gate asks one question - does this backend have a way to reach a
-  // machine - and a port is that way, whether or not it can reach *this* one.
-  expect(() => {
-    refuseComputer(asking('computer://box', port) as Start, 'Claude Code');
-  }).not.toThrow();
+it('refuses a backend that cannot enter one, port or no port', async () => {
+  // cofold's loop, tools and shell all run in this process, so there is no
+  // child to start anywhere else: a port changes nothing about that, and a
+  // session that named a machine must not quietly run here instead.
+  const { cofoldAgent } = await import('../packages/agent-cofold/src/agent.js');
+  const agent = cofoldAgent({ memory: true });
+  const failure = (): void => { void agent.create(asking('computer://box', port)); };
+  expect(failure).toThrow(/cannot run a session inside computer:\/\/box/);
+  expect(failure).toThrow('cofold');
+});
+
+it('lets Claude Code through, because it spawns the CLI in the machine', async () => {
+  // The other half of the same rule. Claude Code moves the process it starts,
+  // so a port is the whole of what it needs; the refusal above is for a
+  // backend that has nothing to move, not for every backend.
+  const { claude } = await import('../packages/agent-claude/src/claude.js');
+  const agent = claude({ paths: [mkdtempSync(join(tmpdir(), 'ahpd-refusal-'))] });
+  expect(() => { void agent.create(asking('computer://box', port)); }).not.toThrow();
 });
 
 it('treats an empty or absent machine as the host', () => {

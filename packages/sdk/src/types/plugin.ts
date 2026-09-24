@@ -35,7 +35,8 @@ export type PortKey =
   | 'automations'
   | 'sessions'
   | 'diagnostics'
-  | 'computers';
+  | 'computers'
+  | 'containers';
 
 /**
  * What one port key holds.
@@ -151,6 +152,13 @@ export interface PluginHost extends PluginContext {
    * decision `one-computer-provider-with-runtimes-as-options`.
    */
   registerComputers(computers: PortOf<'computers'>, when?: 'replace'): void;
+  /**
+   * Set `HostOptions.containers`, or take the daemon's over with `'replace'`.
+   *
+   * One host carries one container launcher: what a client asks for is a
+   * folder, and a second launcher would be two answers to the same question.
+   */
+  registerContainers(containers: PortOf<'containers'>, when?: 'replace'): void;
   /**
    * Subscribe to one of the host's own moments.
    *

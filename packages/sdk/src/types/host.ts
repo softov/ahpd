@@ -12,6 +12,7 @@ import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
+import type { ContainerPort } from './containers.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -184,6 +185,16 @@ export interface HostOptions {
    * `a-backend-reaches-a-computer-through-a-port`.
    */
   computers?: ComputerPort;
+  /**
+   * How this host runs another host inside a container, and carries its frames.
+   *
+   * Contributed by the plugin that can reach Docker and the Dev Container CLI.
+   * Present, this host serves `vscode/devContainers/*` and advertises
+   * `_meta['vscode.devContainers']`, so a client offers its dev container flow
+   * only where one can actually be made - decision
+   * `the-relay-surface-is-the-reference-one`.
+   */
+  containers?: ContainerPort;
   /**
    * Tools this host contributes to every session it runs.
    *

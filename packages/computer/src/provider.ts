@@ -1,6 +1,7 @@
 import { RpcError } from '@ahpd/sdk';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
-import { MANIFEST_SCHEMA, manifestOf } from './manifest.js';
+import { bodyText, MANIFEST_SCHEMA, manifestOf } from './manifest.js';
+import type { Profile } from './manifest.js';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
@@ -26,6 +27,10 @@ export interface ProviderOptions {
   max: number;
   /** The label every machine this provider made carries. */
   label: string;
+  /** Mounts every machine this provider makes carries, before the body's own. */
+  mounts?: string[];
+  /** The named sets a create body may pick from, by key. */
+  profiles?: Record<string, Profile>;
 }
 
 /**
@@ -97,11 +102,58 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     manifest: MANIFEST_SCHEMA({ runtime: runtime.kind, image: options.image }),
   }, null, 2);
 
-  /** One machine's two files, as listing entries. */
+  /** One machine's files, as listing entries. */
   const leaves = (): Entry[] => [
     { name: 'status', type: 'file' },
     { name: 'capabilities', type: 'file' },
+    { name: 'stats', type: 'file' },
+    { name: 'state', type: 'file' },
   ];
+
+  /**
+   * What a machine is using, with the cores it was limited to.
+   *
+   * The runtime reports a percentage of one core's time, which says nothing on
+   * its own: 150% is busy on two cores and impossible on one. `NanoCpus` is
+   * what the machine was actually given, so it travels beside the number a
+   * gauge is drawn from.
+   *
+   * A machine that is not running has no usage, and that is an empty body
+   * rather than zeroes - a dial reading zero says idle, which is not the same
+   * as stopped.
+   */
+  /**
+   * What a machine is doing, as one word a client can also write back.
+   *
+   * A resource scheme has four verbs and none of them is `restart`, so the
+   * action is a *write to what the machine is*: reading `state` answers
+   * `running` or `stopped`, and writing one of `running`, `stopped` or
+   * `restarted` puts it there. That keeps starting a machine inside the same
+   * `computer:write` grant that makes and destroys one, with no new method for
+   * a gate to be taught about - decision `a-grant-is-a-subject-and-a-verb`.
+   */
+  const STATES = ['running', 'stopped', 'restarted'] as const;
+
+  const stateOf = (found: Record<string, unknown>): string => {
+    const state = (typeof found.State === 'object' && found.State !== null
+      ? found.State
+      : {}) as Record<string, unknown>;
+    return typeof state.Status === 'string' && state.Status !== '' ? state.Status : 'unknown';
+  };
+
+  const statsOf = async (id: string, found: Record<string, unknown>): Promise<string> => {
+    const used = await runtime.stats(id);
+    if (used === undefined) return JSON.stringify({ running: false }, null, 2);
+    const host = (typeof found.HostConfig === 'object' && found.HostConfig !== null
+      ? found.HostConfig
+      : {}) as Record<string, unknown>;
+    const nano = typeof host.NanoCpus === 'number' && host.NanoCpus > 0 ? host.NanoCpus : undefined;
+    return JSON.stringify({
+      running: true,
+      ...used,
+      cpu: { ...used.cpu, ...(nano === undefined ? {} : { cores: nano / 1e9 }) },
+    }, null, 2);
+  };
 
   const asFile = (data: string): Read =>
     ({ data, encoding: 'utf-8', contentType: 'application/json' });
@@ -110,7 +162,11 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     describe: (): SchemeDescription => ({
       title: 'Computer',
       description: 'A machine a session can run in.',
-      manifest: MANIFEST_SCHEMA({ runtime: runtime.kind, image: options.image }),
+      manifest: MANIFEST_SCHEMA({
+        runtime: runtime.kind,
+        image: options.image,
+        ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+      }),
     }),
 
     list: async (uri) => {
@@ -136,7 +192,10 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         return { uri, type: 'directory', mtime: created, ctime: created };
       }
       if (!leaves().some((one) => one.name === held.leaf)) throw absent(uri);
-      const body = held.leaf === 'status' ? JSON.stringify(found, null, 2) : capabilities();
+      const body = held.leaf === 'status' ? JSON.stringify(found, null, 2)
+        : held.leaf === 'stats' ? await statsOf(held.id, found)
+          : held.leaf === 'state' ? `${stateOf(found)}\n`
+            : capabilities();
       return {
         uri,
         type: 'file',
@@ -155,6 +214,10 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       if (found === undefined) throw absent(uri);
       if (held.leaf === 'status') return asFile(JSON.stringify(found, null, 2));
       if (held.leaf === 'capabilities') return asFile(capabilities());
+      if (held.leaf === 'stats') return asFile(await statsOf(held.id, found));
+      if (held.leaf === 'state') {
+        return { data: `${stateOf(found)}\n`, encoding: 'utf-8', contentType: 'text/plain' };
+      }
       throw absent(uri);
     },
 
@@ -168,6 +231,25 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
      */
     write: async (uri, content) => {
       const held = at(uri);
+      /*
+       * A write to `state` acts on the machine rather than making one.
+       *
+       * Checked before the name check below, because `computer://box/state` is
+       * a leaf and not a name for a new machine: without this it would be
+       * refused as a bad name, which says nothing about what was asked.
+       */
+      if (held.leaf === 'state') {
+        if (await runtime.inspect(held.id) === undefined) throw absent(uri);
+        const said = bodyText(content).trim().toLowerCase();
+        if (!STATES.includes(said as typeof STATES[number])) {
+          throw new RpcError(-32602, `A computer's state is one of ${STATES.join(', ')}, and that body says ${said || 'nothing'}`);
+        }
+        if (said === 'running') await runtime.start(held.id);
+        else if (said === 'stopped') await runtime.stop(held.id);
+        else await runtime.restart(held.id);
+        return;
+      }
+      if (held.leaf !== '') throw new RpcError(-32602, `${uri} is not something to write; write to computer://<name> or computer://<name>/state`);
       if (held.id === '' || !isDirectory(held)) {
         throw new RpcError(-32602, `${uri} is not a name for a new computer; write to computer://<name>`);
       }
@@ -176,6 +258,8 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         image: options.image,
         ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
         ...(options.memory === undefined ? {} : { memory: options.memory }),
+        ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
+        ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
       });
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);

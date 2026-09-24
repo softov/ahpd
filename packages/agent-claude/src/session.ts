@@ -9,6 +9,7 @@ import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
+import type { Asked, Spawned } from './spawn.js';
 
 /**
  * The effort levels this backend has, weakest first.
@@ -539,7 +540,23 @@ const contributed = (
   }),
 }) as unknown;
 
-export function createSession(options: SessionOptions): Session {
+/**
+ * What this backend adds to a session's options.
+ *
+ * `SessionOptions` is every backend's, and none of this is: only the Claude
+ * CLI has a spawn hook to hand a command to. Set together or not at all, by
+ * `claude()` when the session named a machine.
+ */
+export interface ClaudeSessionOptions extends SessionOptions {
+  /** Start the CLI somewhere other than this host. */
+  spawn?: (asked: Asked) => Spawned;
+  /** Where the CLI is wherever `spawn` starts it. */
+  spawnExecutable?: string;
+  /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
+  spawnConfigDir?: string | false;
+}
+
+export function createSession(options: ClaudeSessionOptions): Session {
   const { uri, chatUri, cwd, emit } = options;
 
   const turns: Bag[] = [...(options.seed ?? [])];
@@ -581,6 +598,14 @@ export function createSession(options: SessionOptions): Session {
    * now.
    */
   let failed: string | undefined;
+  /**
+   * Why this session's CLI is gone, once it is.
+   *
+   * Survives `begin`, unlike `failed`: the query is built once and a session
+   * whose process has exited cannot run another turn however many are asked
+   * for. Set when the run loop ends, for whatever reason, and never cleared.
+   */
+  let gone: string | undefined;
   let startedAt = 0;
   /**
    * The model the turn now running actually answered on, as its own frames
@@ -1523,6 +1548,36 @@ export function createSession(options: SessionOptions): Session {
     prompt: input(),
     options: {
       cwd,
+      /*
+       * Where the CLI runs, when it is not here.
+       *
+       * The executable is named so the SDK builds a command for a *binary*
+       * rather than for a script it would run under this host's node: with a
+       * path that ends in `.js` it passes that path as an argument, and it is
+       * this host's path, which the machine does not have. `executableArgs`
+       * is empty by default, so what reaches the hook is the in-machine
+       * command and the CLI's own flags.
+       */
+      ...(options.spawn === undefined ? {} : {
+        pathToClaudeCodeExecutable: options.spawnExecutable ?? 'claude',
+        spawnClaudeCodeProcess: options.spawn as never,
+        /*
+         * Only what the CLI reads crosses into the machine.
+         *
+         * The SDK's env is this process's, and `HOME`, `PATH` and `PWD` in
+         * there are this host's: forwarded, they send the CLI looking for a
+         * home the machine does not have and a PATH that may not find it.
+         * `CLAUDE_CONFIG_DIR` is set last so a machine mounting this host's
+         * `~/.claude` is one the CLI is already signed in on.
+         */
+        env: {
+          ...Object.fromEntries(Object.entries(process.env)
+            .filter(([key]) => key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_'))),
+          ...(options.spawnConfigDir === false || options.spawnConfigDir === undefined
+            ? {}
+            : { CLAUDE_CONFIG_DIR: options.spawnConfigDir }),
+        },
+      }),
       // The peers of `cwd`, which the SDK takes at startup. The first entry is
       // the process root and is not one of these.
       ...(peers.length > 0 ? { additionalDirectories: [...peers] } : {}),
@@ -1652,6 +1707,51 @@ export function createSession(options: SessionOptions): Session {
   const ends = new Map<string, string>();
 
   const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): void => {
+    /*
+     * A session whose CLI has exited answers at once, and says why.
+     *
+     * The turn is recorded as one that failed rather than refused, because a
+     * person typed it and it belongs in the transcript beside the reason. The
+     * alternative is what this replaces: `active` set on a session with
+     * nothing left to answer it, which reads as thinking for ever and never
+     * says the CLI never started.
+     */
+    if (gone !== undefined) {
+      const turn = {
+        id: turnId,
+        startedAt: new Date().toISOString(),
+        message: {
+          text,
+          origin: from?.origin ?? { kind: 'user' },
+          ...(from?._meta ? { _meta: from._meta } : {}),
+        },
+        responseParts: [],
+        state: 'error',
+        duration: 0,
+      } as unknown as Bag;
+      const part = addFailure(turn, gone);
+      turns.push(turn);
+      failed = gone;
+      /*
+       * Started and then failed, which is the ordinary lifecycle compressed.
+       *
+       * Both events rather than the error alone, because `queuedMessageId`
+       * rides on the first: a turn taken from the queue has to clear its
+       * waiting row, and a client that is only told about the failure keeps
+       * showing a message it already sent.
+       */
+      emit('chat', {
+        type: 'chat/turnStarted',
+        turnId,
+        startedAt: turn.startedAt,
+        message: turn.message,
+        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+      });
+      emit('chat', { type: 'chat/error', turnId, duration: 0, part });
+      doing(undefined);
+      touch();
+      return;
+    }
     if (model !== undefined && model.id !== chosen) {
       chosen = model.id;
       void handle.setModel(model.id === 'default' ? undefined : model.id).catch(() => {});
@@ -2101,6 +2201,17 @@ export function createSession(options: SessionOptions): Session {
       }
     } catch (error) {
       failed = error instanceof Error ? error.message : String(error);
+      /*
+       * The CLI is gone, and it is not coming back on this session.
+       *
+       * Remembered separately from `failed`, which is about the last *turn*
+       * and is cleared by the next `begin`. This is about the session: the
+       * query is built once, at creation, so a CLI that dies before any turn
+       * exists leaves nothing for the branch below to report and a `begin`
+       * afterwards would start a turn nothing is left to answer. That is a
+       * session that says it is thinking for as long as anyone watches it.
+       */
+      gone = failed;
       const turn = active;
       if (turn) {
         turn.state = 'error';
@@ -2113,6 +2224,10 @@ export function createSession(options: SessionOptions): Session {
       doing(undefined);
       touch();
     }
+    // A loop that ended without throwing has ended all the same: the CLI
+    // exited and said nothing, and a later turn has as little to answer it.
+    gone ??= 'The agent stopped';
+    touch();
   })();
 
   /**

@@ -165,18 +165,140 @@ running on this host. With the ACP backend loaded, this is one command wrapped
 in `docker exec` inside that machine; a backend handed no way to reach a machine
 refuses rather than falling back.
 
-Only a backend that spawns its process through the host's `computers` port can
-run in one, which today is `@ahpd/agent-acp` alone. Claude Code spawns its own
-CLI and cofold runs in this process, so both refuse a session that names a
-machine - with a sentence naming the backend - rather than run on the host while
-the session says `computer://box`. The setting is honest in both directions: a
-session that opens has had its machine honoured.
+Only a backend that starts its process through the host's `computers` port can
+run in one, which today is `@ahpd/agent-acp` and `@ahpd/agent-claude`. Claude
+Code spawns a CLI, so it is moved by starting that CLI in the machine: the
+Claude SDK's own `spawnClaudeCodeProcess` is handed a spawn that goes through
+the port, and nothing else about the backend changes. cofold has no child
+process to move - its loop, its tools and its shell all run in this process -
+so it still refuses a session that names a machine, with a sentence naming the
+backend, rather than run on the host while the session says `computer://box`.
+The setting is honest in both directions: a session that opens has had its
+machine honoured.
 
 A machine's `-v` is this host's filesystem made visible and nothing more: the
 container is the isolation, not a boundary the daemon enforces. `-w` is where a
-command starts inside the machine, and it is the only working directory that
-means anything in there - the session's own directory on this host is not a path
-the machine has.
+command starts inside the machine, and a caller's working directory is read
+through the machine's mounts to find it: a path a mount covers is the same place
+under another name, so `/srv/app/x` with `/srv/app:/workspaces/app` starts at
+`/workspaces/app/x`. The longest mount wins, so one nested inside another is not
+shadowed by it, and a path no mount covers is not a directory in there at all -
+the machine's own working directory stands instead of a host path that only
+looks right.
+
+### Running Claude Code in one
+
+Two things have to be true of the image, and neither is something this host can
+arrange for you.
+
+**The CLI has to be in it.** The in-machine command is `claude` on the image's
+PATH; `computerExecutable` on `claude()` names it somewhere else. This is never
+this host's own path - the executable that runs here is the SDK's to find, and
+the one in the machine has to exist in the image.
+
+**Its configuration has to reach it.** The CLI reads `CLAUDE_CONFIG_DIR`, which
+this backend sets to `/ahpd/claude` unless `computerConfigDir` says otherwise or
+`false` leaves the image's own. Nothing here mounts anything: the mount is
+yours, and the plugin's `mounts` option is one line that gives it to every
+machine it makes.
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "mounts": [
+  "/home/you/.claude:/ahpd/claude",
+  "/home/you/.claude.json:/ahpd/claude/.claude.json"
+] } }] }
+```
+
+Both, because they are one directory to the CLI and two paths on this host:
+the credential lives *inside* `~/.claude` and `.claude.json` is its *sibling*,
+so a machine given only the first runs signed in but says its configuration file
+is missing. A subscription needs no `ANTHROPIC_API_KEY` and none is put on the
+docker command line; what reaches the machine is the mounted file.
+
+Only `CLAUDE_*` and `ANTHROPIC_*` cross into the machine. This host's `HOME`,
+`PATH` and `PWD` are this host's: forwarded, they send the CLI looking for a
+home the machine does not have and a PATH that may not find it, which is a
+container that fails with `executable file not found` for a reason that has
+nothing to do with the image.
+
+Sharing one `~/.claude` across machines shares one credential, and its refresh:
+anything running in such a machine can use that subscription. A machine made
+from an image you did not write is a machine you are handing it to. That is
+what profiles are for.
+
+## Profiles
+
+A profile is a named set of machine settings the operator wrote down once, so
+what a machine is *given* is a deployment decision rather than three mount
+strings a person retypes correctly every time.
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "profiles": {
+  "claude": {
+    "title": "Claude",
+    "description": "The CLI and this host's configuration, shared in.",
+    "image": "node:22", "cpus": "2", "memory": "512m", "workdir": "/work",
+    "mounts": [
+      "/home/you/.claude:/ahpd/claude",
+      "/home/you/.claude.json:/ahpd/claude/.claude.json",
+      "/home/you/.local/share/claude/versions/2.1.267:/usr/local/bin/claude:ro"
+    ]
+  },
+  "plain": { "title": "Plain", "description": "Nothing shared.", "memory": "256m" }
+} } }] }
+```
+
+A create body picks one by name, and what it says itself still wins:
+
+```json
+{ "profile": "claude", "mounts": ["/github/textui:/work"] }
+```
+
+Three sources, widest first, so the narrower statement stands where two name
+one target: the plugin's own `mounts`, then the profile's, then the body's.
+Every other field is the body's, then the profile's, then the host default.
+
+A profile the host does not define is refused rather than ignored, and the
+refusal lists the ones it has. Silently making a machine without the mounts the
+person asked for fails later and further away, when the agent cannot sign in.
+
+The names are published in the create schema as an `enum` with a
+`x-choices` list carrying each one's title and description, so a client draws
+the picker from what the host advertised and needs no code of its own. A
+deployment that defines no profiles publishes no such property, because a
+picker with no choices is a control that only takes up a screen.
+
+So `plain` and `claude` are two machines on one host, and only one of them can
+use your subscription.
+
+## What a machine is using
+
+`computer://<id>/stats` answers what it is doing right now, beside
+`status`, which is what it *is*.
+
+```json
+{ "running": true,
+  "cpu": { "percent": 34.2, "cores": 2 },
+  "memory": { "used": 421888, "limit": 536870912, "percent": 0.08 },
+  "pids": 7,
+  "network": { "rx": 266, "tx": 84 },
+  "block": { "read": 4100, "write": 0 } }
+```
+
+Numbers rather than the runtime's own display text: `docker stats` writes
+`444KiB / 512MiB` and `1.01kB / 126B` in one payload, mixing binary and decimal
+units, and a client drawing a dial from those would be parsing a human
+sentence. The parsing happens once, in the runtime, so a second runtime answers
+in the same units.
+
+`cpu.percent` is percent of one core's time, which is why `cores` travels with
+it: 150% is busy on two cores and impossible on one. `cores` is absent when the
+machine was given no CPU limit.
+
+A machine that is not running answers `{ "running": false }` rather than
+zeroes, because a dial reading zero says idle, which is not the same as
+stopped. Each read is one `docker stats --no-stream`: a client that wants a
+moving dial asks again, and there is no feed to leave open.
 
 ## The three tools
 
