@@ -91,7 +91,7 @@ can do with the resource commands it already has:
   "image": "debian:bookworm-slim",
   "cpus": "2",
   "memory": "2g",
-  "mounts": ["/github/api:/work", "/srv/server.mjs:/srv/server.mjs:ro"],
+  "profile": "claude",
   "workdir": "/work"
 }
 ```
@@ -100,8 +100,7 @@ can do with the resource commands it already has:
 { "method": "resourceWrite", "params": { "channel": "ahp-root://", "uri": "computer://box", "data": "<the manifest>", "encoding": "utf-8", "createOnly": true } }
 ```
 
-Only `image` is expected; `runtime` must be the one this host runs, the limits
-and mounts are optional, and `workdir` is where a command starts inside it.
+Only `image` is expected; `runtime` must be the one this host runs, the limits are optional, and `workdir` is where a command starts inside it. An image may not begin with a dash, because the image's place in the runtime's argument list is one a flag would be read in. What a machine can see is not in here unless the deployment says it may be - see [What a body may not say](#what-a-body-may-not-say).
 `createOnly` is what makes a create onto a name that is taken a refusal
 (`-32010`) rather than a silent no-op, and an invalid manifest is a sentence
 naming the field. `computer://<id>/capabilities` says the same thing in the
@@ -251,12 +250,10 @@ strings a person retypes correctly every time.
 A create body picks one by name, and what it says itself still wins:
 
 ```json
-{ "profile": "claude", "mounts": ["/github/textui:/work"] }
+{ "profile": "claude", "workdir": "/work" }
 ```
 
-Three sources, widest first, so the narrower statement stands where two name
-one target: the plugin's own `mounts`, then the profile's, then the body's.
-Every other field is the body's, then the profile's, then the host default.
+Three sources for the mounts, widest first, so the narrower statement stands where two name one target: the plugin's own `mounts`, then the profile's, then the body's where a body is allowed any. Every other field is the body's, then the profile's, then the host default.
 
 A profile the host does not define is refused rather than ignored, and the
 refusal lists the ones it has. Silently making a machine without the mounts the
@@ -317,6 +314,22 @@ The leaf answers in the words it accepts rather than the runtime's own, which ar
 Every machine this plugin makes carries a label, and every read and every act checks it. A container running on the same Docker that this plugin did not make is not a computer: `computer://<its name>` answers the same `-32008` as a name that does not exist, and stop, restart and destroy refuse with it. The two read the same on purpose, because a refusal that named the difference would answer whether a container exists.
 
 That is what bounds the grant. `computer:write` is a permission over the machines this host made, not over the Docker daemon it made them with.
+
+## What a body may not say
+
+A mount is the one field in a create body that reaches outside the machine. A body free to name `/:/host` can read and write this host as root from inside a machine it just made, which would make `computer:write` a permission over the host rather than over the machines the host makes.
+
+So a body may not name mounts unless the deployment says it may:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "bodyMounts": true } }] }
+```
+
+Off, which is the default, what a machine can see is the plugin's own `mounts` and the profile the body picked - the operator deciding what is shareable and a person picking from it. A body that names mounts anyway is refused, and the refusal lists the profiles this host has, rather than making a machine without what was asked for. The `mounts` property is left out of the create schema too, so a client drawing a form from it draws no field for something that would be refused; the refusal is still what does the work, because a body written by hand or by a client holding an older schema has to be answered.
+
+On is the older behaviour and a fair setting for a host with one person on it, where a machine is a convenience rather than a boundary. It is the setting to keep in mind when reading the rest of this page: with it on, `computer:write` and root on this host are the same permission.
+
+`image` is the other field in a body that the runtime reads as more than a value. It lands in the argument list at the position where `docker run` still parses flags, so an image is refused if it begins with a dash. Nothing else about it is checked: a registry, a port, a tag and a digest are all legal names and this host has no business having an opinion about which registry you use.
 
 ## The three tools
 
@@ -387,7 +400,7 @@ cat > /tmp/ahpd-computer.json <<'JSON'
   "withoutConnectionToken": true,
   "paths": ["/github/ahpd"],
   "plugins": [
-    { "name": "./packages/computer/src/index.ts", "options": { "image": "node:22" } },
+    { "name": "./packages/computer/src/index.ts", "options": { "image": "node:22", "bodyMounts": true } },
     { "name": "./packages/agent-acp/src/index.ts", "options": { "command": "node", "args": ["/srv/acp.mjs"], "provider": "acp" } }
   ]
 }
@@ -395,9 +408,7 @@ JSON
 node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /tmp/ahpd-computer.json
 ```
 
-Then, from a client: write a manifest to `computer://box` with
-`mounts: ["/github/ahpd/test/fixtures/acp-server.mjs:/srv/acp.mjs:ro"]` and
-`workdir: "/srv"`, create a session with `config: { "computer": "computer://box" }`,
+Then, from a client: write a manifest to `computer://box` with `mounts: ["/github/ahpd/test/fixtures/acp-server.mjs:/srv/acp.mjs:ro"]` (which is why the configuration above sets `bodyMounts`) and `workdir: "/srv"`, create a session with `config: { "computer": "computer://box" }`,
 and send it a turn. It answered `chat/turnComplete`, and `resourceDelete` on
 `computer://box` left `docker ps -a --filter label=ahpd.computer=1` empty.
 

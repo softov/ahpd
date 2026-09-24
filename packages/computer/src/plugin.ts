@@ -148,6 +148,16 @@ export const apply: Plugin['apply'] = (host, options) => {
    * which a person may pick is the operator saying so.
    */
   const profiles = profilesOf(options.profiles);
+  /*
+   * Whether a person making a machine may name mounts of their own.
+   *
+   * Off unless the deployment says otherwise, because a mount is the one field
+   * in a create body that reaches outside the machine: a body free to name
+   * `/:/host` makes `computer:write` a permission over this host rather than
+   * over the machines it makes. On is the older behaviour and a fair setting
+   * for a host with one person on it.
+   */
+  const bodyMounts = options.bodyMounts === true;
 
   const made = dockerRuntime({
     command,
@@ -164,6 +174,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(memory === undefined ? {} : { memory }),
     ...(mounts === undefined ? {} : { mounts }),
     ...(profiles === undefined ? {} : { profiles }),
+    bodyMounts,
   }));
 
   /*

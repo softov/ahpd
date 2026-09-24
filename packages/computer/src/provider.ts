@@ -31,6 +31,8 @@ export interface ProviderOptions {
   mounts?: string[];
   /** The named sets a create body may pick from, by key. */
   profiles?: Record<string, Profile>;
+  /** Whether a create body may name mounts of its own. Off unless an operator says so. */
+  bodyMounts?: boolean;
 }
 
 /**
@@ -99,7 +101,12 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
      * The create body, as the schema `describe` advertises too, so what a
      * client reads here and what it reads off the handshake cannot drift.
      */
-    manifest: MANIFEST_SCHEMA({ runtime: runtime.kind, image: options.image }),
+    manifest: MANIFEST_SCHEMA({
+      runtime: runtime.kind,
+      image: options.image,
+      ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+      ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
+    }),
   }, null, 2);
 
   /** One machine's files, as listing entries. */
@@ -175,6 +182,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         runtime: runtime.kind,
         image: options.image,
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+        ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
       }),
     }),
 
@@ -269,6 +277,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.memory === undefined ? {} : { memory: options.memory }),
         ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+        ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
       });
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);

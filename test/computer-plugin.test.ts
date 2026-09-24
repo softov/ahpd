@@ -261,6 +261,9 @@ it('reads a host path through the machine mounts, or falls back to its workdir',
     args: [FIXTURE],
     env: { DOCKER_FAKE_STATE: state },
     sessionSetting: false,
+    // The mapping is the same whoever named the mounts; a body is the shortest
+    // way to name three of them in one place.
+    bodyMounts: true,
   });
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;

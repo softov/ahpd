@@ -55,6 +55,21 @@ export interface ManifestDefaults {
   mounts?: string[];
   /** The named sets a body may pick from, by key. */
   profiles?: Record<string, Profile>;
+  /**
+   * Whether a create body may name mounts of its own. Off unless an operator
+   * says otherwise.
+   *
+   * A mount is the one field in a body that reaches outside the machine: a
+   * body that may name `/:/host` may read and write this host as root, so
+   * `computer:write` would be the whole machine rather than a permission over
+   * the machines this host makes. Off, what a machine can see is what the
+   * deployment's own `mounts` and the profile it was made from say, which is
+   * the operator deciding what is shareable and a person picking from it.
+   *
+   * On is the older behaviour and a reasonable setting for a host with one
+   * person on it, where a machine is a convenience rather than a boundary.
+   */
+  bodyMounts?: boolean;
 }
 
 /**
@@ -66,7 +81,7 @@ export interface ManifestDefaults {
  * host runs one.
  */
 export const MANIFEST_SCHEMA = (
-  options: { runtime: string; image: string; profiles?: Record<string, Profile> },
+  options: { runtime: string; image: string; profiles?: Record<string, Profile>; bodyMounts?: boolean },
 ): Record<string, unknown> => {
   const names = Object.keys(options.profiles ?? {});
   return {
@@ -106,12 +121,20 @@ export const MANIFEST_SCHEMA = (
     },
     cpus: { type: 'string', title: 'CPUs', description: 'A number, such as 2.' },
     memory: { type: 'string', title: 'Memory', description: 'A size, such as 512m or 2g.' },
-    mounts: {
-      type: 'array',
-      title: 'Mounts',
-      description: 'Host paths made visible in the machine, as "source:target".',
-      items: { type: 'string' },
-    },
+    /*
+     * Absent where a body may not name them, so a client drawing a form from
+     * this draws no field for something the host would refuse. The refusal in
+     * `manifestOf` is the gate: a body written by hand, or by a client that
+     * read an older schema, still has to be answered.
+     */
+    ...(options.bodyMounts !== true ? {} : {
+      mounts: {
+        type: 'array',
+        title: 'Mounts',
+        description: 'Host paths made visible in the machine, as "source:target".',
+        items: { type: 'string' },
+      },
+    }),
     workdir: {
       type: 'string',
       title: 'Working directory',
@@ -214,6 +237,18 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
   if (image === '') {
     throw new RpcError(-32602, 'A computer is made from an image, and that body names none and this host has no default');
   }
+  /*
+   * An image is a name, not a flag.
+   *
+   * It goes into the runtime's argument list in the position where the image
+   * belongs, and for `docker run` that position is still inside the part the
+   * flag parser reads: a body naming `--privileged` as its image would put a
+   * flag there and push the real image along by one. No legal reference
+   * begins with a dash, so refusing one costs nothing and closes the position.
+   */
+  if (image.startsWith('-')) {
+    throw new RpcError(-32602, `image is the name of an image, and ${image} is a flag`);
+  }
 
   const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;
   if (cpus !== undefined && !CPUS.test(cpus)) {
@@ -224,7 +259,20 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     throw new RpcError(-32602, `memory is a size such as 512m or 2g, and ${memory} is not one`);
   }
 
+  /*
+   * A body's own mounts, where the deployment allows a body to name any.
+   *
+   * Refused rather than dropped: a person who asked for a directory and
+   * silently got a machine without it would find out when whatever they meant
+   * to work on was not in there, which is the failure this is here to stop.
+   */
   const asked = list(held.mounts);
+  if (asked !== undefined && asked.length > 0 && defaults.bodyMounts !== true) {
+    const names = Object.keys(known);
+    throw new RpcError(-32602, names.length === 0
+      ? 'This host takes its mounts from its configuration, and that body names its own'
+      : `This host takes its mounts from its profiles, and that body names its own; its profiles are ${names.join(', ')}`);
+  }
   for (const mount of asked ?? []) {
     if (!MOUNT.test(mount)) throw new RpcError(-32602, `mounts are "source:target" or "source:target:ro", and ${mount} is neither`);
   }

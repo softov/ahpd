@@ -138,7 +138,9 @@ const made = (value: unknown, extra: Record<string, unknown> = {}): Write =>
 
 it('makes a machine from a manifest, with the limits and the mounts it names', async () => {
   const { runtime, calls } = fake();
-  const provider = computerProvider(runtime, options);
+  // Mounts in a body are the deployment's to allow, and this is the host that
+  // allows them: one person on it, where a machine is a convenience.
+  const provider = computerProvider(runtime, { ...options, bodyMounts: true });
 
   await provider.write('computer://box', made({
     image: 'node:22-slim',
@@ -156,6 +158,55 @@ it('makes a machine with the host\'s own defaults when the body names few', asyn
   const provider = computerProvider(runtime, options);
   await provider.write('computer://box', made({}));
   expect(calls[0]).toBe('run box debian:bookworm-slim 2 2g ahpd.computer=1');
+});
+
+/*
+ * A mount is the one field in a body that reaches outside the machine.
+ *
+ * A body free to name `/:/host` makes `computer:write` a permission over this
+ * host rather than over the machines it makes, so what a machine can see is
+ * the deployment's to say: its own `mounts` and the profile a body picked.
+ * Refused rather than dropped, because a person who asked for a directory and
+ * silently got a machine without it finds out much further away.
+ */
+it('will not take mounts from a body unless the deployment allows them', async () => {
+  const { runtime, calls } = fake();
+  const provider = computerProvider(runtime, {
+    ...options,
+    mounts: ['/shared:/shared'],
+    profiles: { claude: { mounts: ['/home/me/.claude:/ahpd/claude'] } },
+  });
+
+  const refused = await provider.write('computer://box', made({ mounts: ['/:/host'] }))
+    .catch((error: unknown) => error);
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toMatch(/takes its mounts from its profiles.*claude/);
+
+  // And what the operator named still reaches the machine, which is the point:
+  // the mounts are not gone, they are the deployment's to choose.
+  await provider.write('computer://box', made({ profile: 'claude' }));
+  expect(calls[0]).toContain('v=/shared:/shared,/home/me/.claude:/ahpd/claude');
+});
+
+/*
+ * An image is a name, not a flag.
+ *
+ * It lands in the runtime's argument list where the image belongs, and for
+ * `docker run` that is still inside the part the flag parser reads: a body
+ * naming `--privileged` would put a flag there and push the real image along
+ * by one. No legal reference begins with a dash.
+ */
+it('refuses an image that is a flag', async () => {
+  const { runtime, calls } = fake();
+  const provider = computerProvider(runtime, options);
+  const refused = await provider.write('computer://box', made({ image: '--privileged' }))
+    .catch((error: unknown) => error);
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toMatch(/is a flag/);
+  expect(calls).toEqual([]);
+  // A registry with a port is not a flag, and still works.
+  await provider.write('computer://box', made({ image: 'registry.example:5000/team/box:1.2' }));
+  expect(calls[0]).toContain('registry.example:5000/team/box:1.2');
 });
 
 it('refuses a body that is not a manifest, field by field', async () => {
@@ -212,7 +263,12 @@ it('says in capabilities what a create body may contain', async () => {
     manifest: { type: string; properties: Record<string, { default?: string }> };
   };
   expect(caps.actions).toEqual(['create', 'destroy', 'exec', 'start', 'stop', 'restart']);
-  expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir']);
+  // No `mounts`: this host does not let a body name any, so a client drawing a
+  // form from the schema draws no field for something it would be refused.
+  expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'image', 'cpus', 'memory', 'workdir']);
+  const open = computerProvider(runtime, { ...options, bodyMounts: true });
+  expect(Object.keys((open.describe().manifest as { properties: Record<string, unknown> }).properties))
+    .toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir']);
   // The same schema `describe` advertises, with this provider's own default.
   expect(caps.manifest).toEqual(provider.describe().manifest);
   expect(caps.manifest.properties.image?.default).toBe('debian:bookworm-slim');
