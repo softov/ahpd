@@ -13,7 +13,7 @@
 
 import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
-import type { EventHandler, EventListener, EventName, HostHandlers } from './types/events.js';
+import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
 import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
@@ -356,4 +356,41 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
   };
 
   return { host, contribution };
+}
+
+/**
+ * Call everyone subscribed to one event, in order, and let none of them fail it.
+ *
+ * The one implementation of what `on` promises - registration order, each
+ * handler awaited, a handler that throws reported against its plugin and the
+ * rest carrying on - so the host and the daemon raise an event the same way.
+ * Two copies would be two sets of semantics, and only one of them would be the
+ * one `plugin-events-are-observed-not-answered` describes.
+ *
+ * The key is `event.type` rather than a name beside it: they were always the
+ * same string, and a caller that could pass a different one is a caller that
+ * can deliver a `turn_end` to whoever subscribed to `turn_start`.
+ *
+ * Whatever a handler returns is dropped, which is the decision and not an
+ * oversight: a plugin that wants to change what happens contributes a tool, a
+ * port or an agent.
+ */
+export async function raise<K extends EventName>(
+  handlers: HostHandlers | undefined,
+  event: HostEventOf<K>,
+  onProblem?: (line: string) => void,
+): Promise<void> {
+  const listeners = handlers?.[event.type as K];
+  if (listeners === undefined || listeners.length === 0) return;
+  for (const listener of listeners) {
+    try {
+      await (listener.handle as (one: HostEvent, context: PluginContext) => void | Promise<void>)(
+        event,
+        listener.context,
+      );
+    }
+    catch (error) {
+      onProblem?.(`${listener.by} failed at ${event.type}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }

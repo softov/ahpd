@@ -9,7 +9,7 @@ import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
-import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, overStdio, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
+import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, overStdio, raise, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
 /**
  * The daemon.
@@ -834,11 +834,35 @@ const base: HostOptions = {
  * backend. Everything else - a plugin that does not resolve, one that throws,
  * one whose manifest is wrong - costs itself and nothing else.
  */
+/*
+ * What plugins asked to have said about this host.
+ *
+ * A plugin that made the daemon reachable somewhere - a tunnel, an
+ * announcement on the network - has to be able to put that address where a
+ * person looks for one, which is the block below and not the log: `ahpd
+ * status` parses stdout and shows what it finds. Collected here rather than
+ * written straight out, because the block is written once and in one order.
+ *
+ * `listening` is handled before the block is written, which is when a line
+ * like that can exist at all: the port is bound by then and the tunnel that
+ * forwards to it has been made.
+ */
+const said: string[] = [];
+let announced = false;
+
 const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
   base,
   configDir: configDir(),
   cwd: process.cwd(),
   log: stamp,
+  say: (line) => {
+    const one = line.trim();
+    // After the block is out there is nowhere for it to go, and a line
+    // written to stdout on its own would be a line `recordOf` reads as part
+    // of the announcement it already parsed.
+    if (one === '' || announced) return;
+    said.push(one);
+  },
 });
 for (const problem of problems) stamp(problem);
 if (problems.some((problem) => problem.startsWith(AGENT_CLASH))) process.exit(1);
@@ -912,6 +936,33 @@ const listener = options.stdio
   );
 
 /*
+ * The socket is open, and this is the first thing that could have wanted it.
+ *
+ * Raised before the announcement rather than after, because a plugin that
+ * stands something up here - a tunnel forwarding to the bound port, a record
+ * on the network - has a line to add to that announcement, and because a URL
+ * printed before it works is a URL somebody pastes into a client that then
+ * cannot reach it. A handler that is slow makes `ahpd start` slow, which is
+ * the honest cost of the thing it is doing.
+ *
+ * Not raised over stdio: there is no address for anybody to reach, and the
+ * process that started this one is already holding the only handle to it.
+ */
+if (!options.stdio) {
+  await raise(
+    folded.events,
+    {
+      type: 'listening',
+      runtime: listener.runtime,
+      host: listener.host,
+      port: listener.port,
+      guarded: listener.guarded,
+    },
+    stamp,
+  );
+}
+
+/*
  * Where this host says what it is.
  *
  * A socket host says it on stdout, which is a log a person reads. A stdio host
@@ -938,8 +989,12 @@ say.write(
     : `sign-in ${advertisedResource()}${issuer === undefined ? '' : ` (issuer ${issuer.id})`}\n`)
   + (options.advancedTools ? 'advanced tools: offered to every session\n' : '')
   + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
+  // What a plugin asked to have said, in the order the plugins were loaded,
+  // and last so the lines `daemon.ts` matches keep the places it expects.
+  + said.map((line) => `${line}\n`).join('')
   + (checkingUpdates(options.updateCheck) ? updateLine(manifest()) ?? '' : ''),
 );
+announced = true;
 
 /*
  * Ask npm, later and in the background.
@@ -954,8 +1009,25 @@ if (checkingUpdates(options.updateCheck)) {
   setInterval(ask, MAX_AGE_MS).unref();
 }
 
+/*
+ * Down in the order it went up.
+ *
+ * `stopping` before the socket closes, so a plugin that made a tunnel to the
+ * bound port can take it down while there is still a port to name. Raised
+ * whatever the signal was, and awaited like any other event - a handler that
+ * hangs here is a daemon that will not stop, which is the same deliberate cost
+ * awaiting has everywhere else.
+ */
+let stopping = false;
 const shutdown = (): void => {
-  void Promise.resolve(listener.close()).finally(() => process.exit(0));
+  // Both signals are wired, and `ahpd stop` sends one to a daemon a person may
+  // also be holding a terminal on: twice would take a tunnel down under the
+  // handler still bringing it down.
+  if (stopping) return;
+  stopping = true;
+  void raise(folded.events, { type: 'stopping' }, stamp)
+    .then(() => listener.close())
+    .finally(() => process.exit(0));
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

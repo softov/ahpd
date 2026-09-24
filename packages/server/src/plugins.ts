@@ -298,6 +298,16 @@ export interface LoadOneOptions {
   version: string;
   /** One line per notable thing, for the daemon's log. */
   log(message: string): void;
+  /**
+   * One line in what the daemon announces about itself, for a plugin that
+   * made the host reachable somewhere the daemon's own lines do not say.
+   *
+   * Optional here and required on `PluginContext`, because only the daemon has
+   * an announcement: a loader running in a test has nothing to add a line to,
+   * and the default drops what it is given rather than making every caller
+   * invent a sink.
+   */
+  say?(line: string): void;
 }
 
 /** What one `loadOne` managed: a plugin, or the reasons it is not one. */
@@ -400,7 +410,13 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(defaults === undefined ? {} : { defaults }),
   };
 
-  const { host, contribution } = pluginHost(name, { path: options.path, paths: options.paths, version: options.version, log: options.log });
+  const { host, contribution } = pluginHost(name, {
+    path: options.path,
+    paths: options.paths,
+    version: options.version,
+    log: options.log,
+    say: options.say ?? (() => {}),
+  });
   try {
     await apply.call(plugin, host, values);
   }
@@ -435,6 +451,8 @@ export interface LoadOptions {
   cwd: string;
   /** One line per notable thing. */
   log(message: string): void;
+  /** One line in the daemon's announcement; dropped when the caller has none. */
+  say?(line: string): void;
   /** Every directory the host serves; defaults to the base's one. */
   paths?: string[];
   /** The SDK version a peer range is checked against; defaults to this one. */
@@ -479,7 +497,13 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       problems.push(messageOf(error));
       continue;
     }
-    const one = await loadOne(resolved, { path: options.base.path, paths, version, log: options.log });
+    const one = await loadOne(resolved, {
+      path: options.base.path,
+      paths,
+      version,
+      log: options.log,
+      ...(options.say === undefined ? {} : { say: options.say }),
+    });
     problems.push(...one.problems);
     if (one.loaded !== undefined) loaded.push(one.loaded);
     if (one.contribution !== undefined) contributions.push(one.contribution);

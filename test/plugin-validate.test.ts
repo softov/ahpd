@@ -22,6 +22,7 @@ const context = (): PluginContext => ({
   paths: ['/tmp/validate'],
   version: sdkVersion(),
   log: () => {},
+  say: () => {},
 });
 
 const base = (): HostOptions => ({ path: '/tmp/validate', agents: [echo({ path: '/tmp/validate' })] });

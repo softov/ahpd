@@ -53,7 +53,7 @@ const agents = (): HostOptions['agents'] => [
 /** A host, with the `authenticated` event recorded the way a plugin records it. */
 function served(extra: Partial<HostOptions> = {}) {
   const seen: HostEvent[] = [];
-  const { host: plugin, contribution } = pluginHost('probe', { path: DIR, paths: [DIR], version: '0.0.0', log: () => {} });
+  const { host: plugin, contribution } = pluginHost('probe', { path: DIR, paths: [DIR], version: '0.0.0', log: () => {}, say: () => {} });
   plugin.on('authenticated', (event) => { seen.push(event); });
   const { options } = foldHostOptions({ path: DIR, agents: agents(), ...extra }, [contribution]);
   return { host: createHost(options), seen };

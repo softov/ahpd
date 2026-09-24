@@ -21,8 +21,8 @@ export type { HostOptions, Connection, Credential, Host, Diagnostics, HostTool, 
 export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, Contribution, PortContribution, PortKey, PortOf } from './plugin.js';
 export type {
   AuthenticatedEvent, AutomationFireEvent, ClientConnectEvent, ClientDisconnectEvent, EventHandler, EventListener,
-  EventName, HostEvent, HostEventOf, HostHandlers, LogEvent, MessageEvent, ResourceWriteEvent,
-  SessionEndEvent, SessionStartEvent, TerminalOpenEvent, ToolCallEvent, TurnEndEvent, TurnStartEvent,
+  EventName, HostEvent, HostEventOf, HostHandlers, ListeningEvent, LogEvent, MessageEvent, ResourceWriteEvent,
+  SessionEndEvent, SessionStartEvent, StoppingEvent, TerminalOpenEvent, ToolCallEvent, TurnEndEvent, TurnStartEvent,
 } from './events.js';
 export type { Page } from './paging.js';
 export type { Connected, OnConnect, Runtime, Listener, ListenOptions, StdioOptions, Tap } from './listen.js';

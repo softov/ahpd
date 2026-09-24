@@ -12,7 +12,7 @@
     "url": "git+https://github.com/softov/ahpd.git"
   },
   "scripts": {
-    "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/agent-cofold && tsc -p packages/agent-acp && tsc -p packages/computer && tsc -p packages/server",
+    "build": "tsc -p packages/sdk && tsc -p packages/agent-claude && tsc -p packages/agent-cofold && tsc -p packages/agent-acp && tsc -p packages/computer && tsc -p packages/tunnel-devtunnel && tsc -p packages/server",
     "start": "node packages/server/dist/main.js",
     "start:heap": "node --heapsnapshot-near-heap-limit=1 --max-old-space-size=4096 packages/server/dist/main.js",
     "dev": "node --watch --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts",

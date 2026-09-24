@@ -49,6 +49,7 @@ function built(subscriptions: Subscription[]) {
       paths: [DIR],
       version: sdkVersion(),
       log: (line) => { ctxLines.push(`${one.by}: ${line}`); },
+      say: () => {},
     };
     const { host, contribution } = pluginHost(one.by, context);
     host.on(one.event, one.handle);

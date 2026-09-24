@@ -4,6 +4,13 @@ A plugin is an installed package the daemon folds into the options it hands
 `createHost`, so a backend, a port, a server tool or a configuration default is
 an install and a configuration line rather than a fork of ahpd.
 
+One of them is not optional. The daemon bundles no agent of its own - decision
+[`the-daemon-bundles-no-agent`](../.project/decisions/the-daemon-bundles-no-agent.md) -
+so every backend it serves arrives this way, `@ahpd/agent-claude` included, and
+a daemon configured with none refuses to start. Reading this to add a tool or a
+port, rather than to write a backend, is still reading about how the backend got
+there.
+
 This is the author's guide: the contract, what you may register, the manifest,
 how a plugin is named, and what happens when one fails. The rules behind it are
 in [`.project/decisions/plugin-*`](../.project/decisions/) and the loader itself
@@ -161,6 +168,9 @@ nothing behaves exactly as it did before the field existed.
 | `paths` | Every directory the host serves |
 | `version` | The `@ahpd/sdk` version actually in use |
 | `log(line)` | One line to the daemon's log |
+| `say(line)` | One line in what the daemon announces about itself |
+
+`log` is stderr and a person reads it. `say` is stdout, which is what `ahpd status` parses, so it is where a plugin that made the host reachable somewhere new puts that address - a line only the log knows is an address nobody pastes. Say it while `listening` is being handled; the announcement is written once that event has been handled and a line offered after it is dropped.
 
 ### What is not a kind
 
@@ -215,7 +225,13 @@ does not stop the next handler or the action it observed.
 | `automation_fire` | `automation`, `run` |
 | `resource_write` | `uri` |
 | `terminal_open` | `terminal`, `cwd` |
+| `listening` | `runtime`, `host`, `port`, `guarded` |
+| `stopping` | nothing |
 | `log` | `line`, the same string `onEvent` receives |
+
+`listening` and `stopping` are the daemon's rather than the host's: a host answers connections and never opens one, so the socket is not its to report. `listening` arrives once the port is bound and before anything is announced, which makes it the place to stand up something that forwards to that port - a tunnel, a record on the network - rather than guessing the port beforehand. `stopping` arrives before the socket closes, so what was stood up has somewhere to come down. Neither is raised over stdio, where there is no address for anybody to reach.
+
+Both are awaited like any other event, so a handler that takes three seconds to make a tunnel delays the line saying the daemon is ready. That is the intended order: a URL printed before it works is a URL somebody pastes into a client that then cannot reach it.
 
 There is no per-token event: a plugin that wants the live stream of a turn is a
 client. The `chat` on a turn event is the host's own chat URI, which is not
@@ -655,12 +671,22 @@ when no agent asked for one.
 
 ## Trying one today
 
-No plugin is published yet. From a checkout, `@ahpd/agent-cofold`,
-`@ahpd/agent-acp` and the fixtures under [`test/fixtures/`](../test/fixtures/)
-are real plugins and are what the tests load:
+`@ahpd/agent-claude` is published, and is the one a daemon needs before it will
+start at all:
+
+```bash
+cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd --plugin @ahpd/agent-claude
+```
+
+The rest are not published yet. From a checkout, `@ahpd/agent-claude`,
+`@ahpd/agent-cofold`, `@ahpd/agent-acp` and the fixtures under
+[`test/fixtures/`](../test/fixtures/) are real plugins and are what the tests
+load:
 
 ```bash
 pnpm build
+node packages/server/dist/main.js --port 0 --plugin ./packages/agent-claude
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp
 node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo

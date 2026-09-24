@@ -38,8 +38,8 @@ import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
-import type { EventName, HostEvent } from './types/events.js';
-import type { PluginContext } from './types/plugin.js';
+import type { HostEvent } from './types/events.js';
+import { raise } from './plugins.js';
 import type { Grant, Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool } from './types/agent.js';
@@ -985,17 +985,18 @@ export function createHost(options: HostOptions): Host {
    * The listener carries the read-only context its plugin's `apply` was
    * handed, so a handler reads the same directories and the same log.
    */
-  const fire = async (name: EventName, event: HostEvent): Promise<void> => {
-    const listeners = options.events?.[name];
-    if (listeners === undefined || listeners.length === 0) return;
-    for (const listener of listeners) {
-      try {
-        await (listener.handle as (one: HostEvent, context: PluginContext) => void | Promise<void>)(event, listener.context);
-      }
-      catch (error) {
-        options.onEvent?.(`${listener.by} failed at ${name}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
+  /*
+   * `raise` is the shared implementation, so the daemon's own `listening` and
+   * `stopping` reach a plugin under exactly the semantics every other event
+   * does: registration order, each handler awaited, one that throws reported
+   * against its plugin and the rest carrying on.
+   *
+   * It keys on `event.type`. The name used to be a second argument beside it
+   * and was always the same string, which is one place for the two to differ
+   * and no way for a reader to tell which one routed.
+   */
+  const fire = async (event: HostEvent): Promise<void> => {
+    await raise(options.events, event, (line) => { options.onEvent?.(line); });
   };
   /**
    * Whether a `log` raise is already on the stack.
@@ -1017,7 +1018,7 @@ export function createHost(options: HostOptions): Host {
     if (options.events?.log !== undefined && !logging) {
       logging = true;
       try {
-        void fire('log', { type: 'log', line: message });
+        void fire({ type: 'log', line: message });
       }
       finally {
         logging = false;
@@ -2540,10 +2541,10 @@ export function createHost(options: HostOptions): Host {
         // began, and saying it finished or was stopped. A per-token delta is
         // not an event, because a plugin that wants the stream is a client.
         if (action.type === 'chat/turnStarted') {
-          void fire('turn_start', { type: 'turn_start', session: uri, chat: chatUri, turn: String(action.turnId ?? '') });
+          void fire({ type: 'turn_start', session: uri, chat: chatUri, turn: String(action.turnId ?? '') });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
-          void fire('turn_end', {
+          void fire({
             type: 'turn_end',
             session: uri,
             chat: chatUri,
@@ -3220,7 +3221,7 @@ export function createHost(options: HostOptions): Host {
     }
     sessions.delete(uri);
     // Gone from the map first, so a handler asking about it is told the truth.
-    void fire('session_end', { type: 'session_end', session: uri, reason: 'disposed' });
+    void fire({ type: 'session_end', session: uri, reason: 'disposed' });
     /*
      * And the run that started it, which is now holding a URI that
      * opens onto nothing.
@@ -3603,7 +3604,7 @@ export function createHost(options: HostOptions): Host {
       terminals.set(uri, terminal);
       // The same observation the client path makes, so a plugin watching for a
       // shell cannot tell which half of the host opened it.
-      void fire('terminal_open', { type: 'terminal_open', terminal: uri, cwd: asked.cwd });
+      void fire({ type: 'terminal_open', terminal: uri, cwd: asked.cwd });
       log(`opened ${uri} for ${sessionUri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return {
@@ -3912,11 +3913,11 @@ export function createHost(options: HostOptions): Host {
         run: async (input: Record<string, unknown>): Promise<string> => {
           try {
             const answer = await one.run(input, toolContext(uri, chatUri));
-            void fire('tool_call', { type: 'tool_call', session: uri, chat: chatUri, tool: definition.name, ok: true });
+            void fire({ type: 'tool_call', session: uri, chat: chatUri, tool: definition.name, ok: true });
             return answer;
           }
           catch (error) {
-            void fire('tool_call', {
+            void fire({
               type: 'tool_call',
               session: uri,
               chat: chatUri,
@@ -4506,7 +4507,7 @@ export function createHost(options: HostOptions): Host {
     sessionAdded(uri);
     activeSessionsMoved();
     // Named and in the map, which is the moment a handler can act on it.
-    void fire('session_start', { type: 'session_start', session: uri, provider });
+    void fire({ type: 'session_start', session: uri, provider });
   };
 
   /**
@@ -4535,7 +4536,7 @@ export function createHost(options: HostOptions): Host {
     // The only place that knows a session was started by a clock rather than a
     // person, and the run it belongs to.
     if (wanted.origin !== undefined) {
-      void fire('automation_fire', { type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
+      void fire({ type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
     }
     const chatUri = chatUriFor(uri);
     byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
@@ -4867,7 +4868,7 @@ export function createHost(options: HostOptions): Host {
           connection.clientId = typeof params.clientId === 'string' ? params.clientId : 'anonymous';
           // Met, so a later `reconnect` under this id is answerable.
           known.add(connection.clientId);
-          void fire('client_connect', { type: 'client_connect', client: connection.clientId });
+          void fire({ type: 'client_connect', client: connection.clientId });
           // Introduced. Said after the version is agreed, so a client this
           // host cannot speak to is not one it has shaken hands with.
           handshook = true;
@@ -4995,7 +4996,7 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
           }
           connection.clientId = clientId;
-          void fire('client_connect', { type: 'client_connect', client: connection.clientId });
+          void fire({ type: 'client_connect', client: connection.clientId });
           // The other way in. A client that dropped resumes with this rather
           // than a fresh `initialize`, and it is as much an introduction.
           handshook = true;
@@ -5480,7 +5481,7 @@ export function createHost(options: HostOptions): Host {
             },
           });
           terminals.set(uri, terminal);
-          void fire('terminal_open', { type: 'terminal_open', terminal: uri, cwd: asked });
+          void fire({ type: 'terminal_open', terminal: uri, cwd: asked });
           log(`opened ${uri} in ${asked}`);
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
           return {};
@@ -5661,7 +5662,7 @@ export function createHost(options: HostOptions): Host {
             else delete connection.principalUntil;
             // A person's id rather than the clientId, which is the thing about
             // this connection that was actually checked.
-            void fire('authenticated', { type: 'authenticated', client: held.id, resource });
+            void fire({ type: 'authenticated', client: held.id, resource });
             log(`${held.id} signed in${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
             return {};
           }
@@ -5679,7 +5680,7 @@ export function createHost(options: HostOptions): Host {
             token,
             ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
           });
-          void fire('authenticated', { type: 'authenticated', client: connection.clientId || 'anonymous', resource });
+          void fire({ type: 'authenticated', client: connection.clientId || 'anonymous', resource });
           if (expiresIn !== undefined) expire(resource);
           log(`${connection.clientId || 'a client'} authenticated for ${resource}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
           // A GitHub token is a reason to ask GitHub again: a lookup that
@@ -5773,7 +5774,7 @@ export function createHost(options: HostOptions): Host {
             ...(params.createOnly === true ? { createOnly: true } : {}),
             ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
           });
-          void fire('resource_write', { type: 'resource_write', uri });
+          void fire({ type: 'resource_write', uri });
           log(`${connection.clientId} wrote ${uri}`);
           return {};
         },
@@ -7132,7 +7133,7 @@ export function createHost(options: HostOptions): Host {
             const message = (typeof action.message === 'object' && action.message !== null
               ? action.message
               : {}) as Record<string, unknown>;
-            void fire('message', {
+            void fire({
               type: 'message',
               session: named,
               chat: chatUriFor(named),
@@ -7191,7 +7192,7 @@ export function createHost(options: HostOptions): Host {
             const turnId = String(action.turnId ?? '');
             // Before it is started or queued, so a handler sees it once
             // whether or not the backend is free to run it this moment.
-            void fire('message', { type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
+            void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
             /*
              * `!ls` is a command, and everything else is a question.
              *
@@ -7978,7 +7979,7 @@ export function createHost(options: HostOptions): Host {
             }
           }
           connections.delete(connection);
-          void fire('client_disconnect', { type: 'client_disconnect', client: connection.clientId || 'anonymous' });
+          void fire({ type: 'client_disconnect', client: connection.clientId || 'anonymous' });
           // The tokens went with the connection; so do their clocks.
           for (const resource of [...expiring.keys()]) forgetExpiry(resource);
           // And the watches it was keeping for other clients: the channel was

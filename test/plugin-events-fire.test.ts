@@ -49,7 +49,7 @@ const settle = async (times = 12): Promise<void> => {
 
 const wait = async (ms: number): Promise<void> => { await new Promise((r) => { setTimeout(r, ms); }); };
 
-const context = (): PluginContext => ({ path: DIR, paths: [DIR], version: sdkVersion(), log: () => {} });
+const context = (): PluginContext => ({ path: DIR, paths: [DIR], version: sdkVersion(), log: () => {}, say: () => {} });
 
 /** One host, one plugin subscribed to everything, and what it saw. */
 function watched(extra: Partial<HostOptions> = {}) {

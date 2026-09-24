@@ -1,0 +1,68 @@
+{
+  "name": "@ahpd/tunnel-devtunnel",
+  "version": "0.6.3",
+  "type": "module",
+  "description": "A Dev Tunnel plugin for ahpd: forwards the bound port through a Microsoft Dev Tunnel so VS Code can find and reach the daemon from anywhere",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "plugin",
+    "tunnel",
+    "devtunnel",
+    "dev-tunnels",
+    "vscode"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/tunnel-devtunnel"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": "^0.6"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "Dev Tunnel",
+    "options": {
+      "command": { "required": false },
+      "name": { "required": false },
+      "keep": { "required": false },
+      "anonymous": { "required": false }
+    }
+  }
+}

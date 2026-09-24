@@ -20,6 +20,7 @@ const context = (): PluginContext => ({
   paths: ['/tmp/events'],
   version: sdkVersion(),
   log: () => {},
+  say: () => {},
 });
 
 const base = (events?: HostHandlers): HostOptions => ({
