@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { HostTool } from '@ahpd/sdk';
+import { isFlag } from './manifest.js';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
@@ -70,9 +71,15 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         }
         const cpus = said(asked.cpus) ?? options.cpus;
         const memory = said(asked.memory) ?? options.memory;
+        const image = said(asked.image) ?? options.image;
+        // The same refusal a manifest gets: this path does not go through one,
+        // and an image is the one field the runtime reads as more than a value.
+        if (isFlag(image)) {
+          return `${image} is a flag rather than an image. Name an image, such as ${options.image}.`;
+        }
         const made = await runtime.run({
           name,
-          image: said(asked.image) ?? options.image,
+          image,
           label: options.label,
           ...(cpus === undefined ? {} : { cpus }),
           ...(memory === undefined ? {} : { memory }),

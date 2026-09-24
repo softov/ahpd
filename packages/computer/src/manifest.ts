@@ -144,6 +144,16 @@ export const MANIFEST_SCHEMA = (
   };
 };
 
+/**
+ * Whether a value would be read as a flag where the runtime puts the image.
+ *
+ * `docker run`'s image sits in the part of the argument list the flag parser
+ * still reads, so a value beginning with a dash lands there as a flag and
+ * pushes the real image along by one. Shared with the tools, which build a
+ * machine without going through a manifest at all.
+ */
+export const isFlag = (value: string): boolean => value.startsWith('-');
+
 /** A Docker CPU count: a number, optionally fractional. */
 const CPUS = /^\d+(?:\.\d+)?$/;
 
@@ -246,7 +256,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
    * flag there and push the real image along by one. No legal reference
    * begins with a dash, so refusing one costs nothing and closes the position.
    */
-  if (image.startsWith('-')) {
+  if (isFlag(image)) {
     throw new RpcError(-32602, `image is the name of an image, and ${image} is a flag`);
   }
 

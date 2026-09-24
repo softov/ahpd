@@ -207,6 +207,12 @@ it('refuses an image that is a flag', async () => {
   // A registry with a port is not a flag, and still works.
   await provider.write('computer://box', made({ image: 'registry.example:5000/team/box:1.2' }));
   expect(calls[0]).toContain('registry.example:5000/team/box:1.2');
+
+  // And the tools, which make a machine without a manifest anywhere near it.
+  const tools = computerTools(runtime, { ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer' });
+  const said = String(await by(tools, 'request_disposable_computer').run({ name: 'two', image: '--privileged' }, at));
+  expect(said).toMatch(/is a flag rather than an image/);
+  expect(calls).toHaveLength(1);
 });
 
 it('refuses a body that is not a manifest, field by field', async () => {
