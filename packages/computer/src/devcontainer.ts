@@ -120,12 +120,36 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
   /** The CLI's own environment: this process's, plus whatever the caller named. */
   const where = (): Record<string, string> => ({ ...process.env, ...env }) as Record<string, string>;
 
-  /** Whether one program answers its version flag. */
-  const there = (program: string, argv: string[]): Promise<boolean> => new Promise((resolve) => {
-    const child = spawn(program, argv, { stdio: 'ignore', env: where() });
-    child.once('error', () => resolve(false));
-    child.once('close', (code) => resolve(code === 0));
-  });
+  /**
+   * Whether one program answers its version flag, asked once.
+   *
+   * `isDockerAvailable` is ungated - the reference client asks it before it can
+   * ask for anything else - so anybody who completes a handshake could reach
+   * this, and every call was a process. `available()` is worse: the host asks
+   * it on every `initialize`, so two more spawns arrived with every client that
+   * connected.
+   *
+   * Held for the life of the daemon rather than for a while, because the
+   * question is whether a program is installed and a program does not appear
+   * between two connections. It is not whether the Docker *daemon* is up: that
+   * is answered by the command that needs it, which is `up`, and answered in
+   * its own words. An operator who installs Docker beside a running daemon
+   * restarts the daemon.
+   */
+  const asked = new Map<string, Promise<boolean>>();
+  const there = (program: string, argv: string[]): Promise<boolean> => {
+    const key = [program, ...argv].join('\u0000');
+    const held = asked.get(key);
+    if (held !== undefined) return held;
+    const answer = new Promise<boolean>((resolve) => {
+      const child = spawn(program, argv, { stdio: 'ignore', env: where() });
+      child.once('error', () => resolve(false));
+      child.once('close', (code) => resolve(code === 0));
+    });
+    // Held before it settles, so calls that arrive together are one spawn.
+    asked.set(key, answer);
+    return answer;
+  };
 
   /** One command, collected and streamed. */
   const run = (argv: string[], sink: ContainerSink): Promise<{ code: number; stdout: string; stderr: string }> =>

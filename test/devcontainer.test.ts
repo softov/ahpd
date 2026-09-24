@@ -82,6 +82,32 @@ it('answers Docker and the launcher as two questions', async () => {
   expect(await noCli.available()).toBe(false);
 });
 
+/*
+ * The two questions are asked once, however often they are put.
+ *
+ * `isDockerAvailable` is ungated, so a connection that never signed in reaches
+ * it, and `available()` is asked on every `initialize`: both were a process per
+ * call, which made a handshake a way to spawn programs on this host. Whether a
+ * program is installed does not change between two connections, so the answer
+ * is held for the life of the launcher.
+ */
+it('asks whether the programs are there once, not once per call', async () => {
+  wrote();
+  const one = launcher();
+  expect(await one.docker()).toBe(true);
+  expect(await one.available()).toBe(true);
+  // Together, which is the case a cache written after the answer would miss.
+  expect(await Promise.all([one.docker(), one.available(), one.docker()]))
+    .toEqual([true, true, true]);
+  // The CLI is the half this fixture sees; the Docker half is the same code.
+  expect(read().calls.filter((call) => call.includes('--version'))).toHaveLength(1);
+
+  // And it is the launcher's own, not shared between two of them.
+  const other = launcher();
+  expect(await other.available()).toBe(true);
+  expect(read().calls.filter((call) => call.includes('--version'))).toHaveLength(2);
+});
+
 it('knows a dev container by the CLI\'s own two names', () => {
   expect(hasDefinition(workspace())).toBe(true);
   const bare = mkdtempSync(join(root, 'bare-'));

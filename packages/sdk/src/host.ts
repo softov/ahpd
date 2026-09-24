@@ -225,9 +225,13 @@ const NEEDS: Record<string, Grant> = {
  */
 const UNGATED = new Set([
   'initialize', 'reconnect', 'ping', 'authenticate', 'subscribe',
-  // A boolean about whether this machine has Docker and the CLI. It starts
-  // nothing and reads nothing, and the reference client asks it before it can
-  // ask for anything else - `connecting-to-a-dev-container-needs-a-grant`.
+  // A boolean about whether this machine has Docker and the CLI, which the
+  // reference client asks before it can ask for anything else -
+  // `connecting-to-a-dev-container-needs-a-grant`. It does start something:
+  // the launcher runs `docker --version` to answer it. A port is expected to
+  // hold that answer rather than spawn per call, because this is reachable by
+  // a connection that has not signed in, and the one this repository ships
+  // does.
   'vscode/devContainers/isDockerAvailable',
   /*
    * Notifications, which cannot be refused *here*: the notification path
