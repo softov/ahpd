@@ -34,7 +34,8 @@ export type PortKey =
   | 'github'
   | 'automations'
   | 'sessions'
-  | 'diagnostics';
+  | 'diagnostics'
+  | 'computers';
 
 /**
  * What one port key holds.
@@ -101,6 +102,19 @@ export interface PluginHost extends PluginContext {
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */
   registerTool(tool: HostTool): void;
+  /**
+   * Contribute a setting a client draws on a session, beside the backend's own.
+   *
+   * The key appears in the session schema only while this plugin is loaded,
+   * which is what "if plugin is loaded" means, and its value reaches the
+   * backend in `Start.settings`. A key the backend's own schema already
+   * declares is a collision and is reported rather than merged, the way a
+   * duplicate scheme is - decision `a-plugin-may-contribute-a-session-key`.
+   *
+   * The schema is one property of a JSON Schema object: `type`, `title`,
+   * `description`, `default` and whatever a client draws from.
+   */
+  registerSessionConfig(key: string, schema: Record<string, unknown>): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
   /**
@@ -129,6 +143,14 @@ export interface PluginHost extends PluginContext {
   registerSessions(store: PortOf<'sessions'>, when?: 'replace'): void;
   /** Set `HostOptions.diagnostics`, or take the daemon's over with `'replace'`. */
   registerDiagnostics(diagnostics: PortOf<'diagnostics'>, when?: 'replace'): void;
+  /**
+   * Set `HostOptions.computers`, or take the daemon's over with `'replace'`.
+   *
+   * The port a backend asks how to run its process in a named machine. One per
+   * host, because a host serves one `computer:` provider -
+   * decision `one-computer-provider-with-runtimes-as-options`.
+   */
+  registerComputers(computers: PortOf<'computers'>, when?: 'replace'): void;
   /**
    * Subscribe to one of the host's own moments.
    *
@@ -185,6 +207,13 @@ export interface Contribution {
   agents: Agent[];
   /** Tools to append, in registration order. */
   tools: HostTool[];
+  /**
+   * The session settings this plugin contributes, keyed by name.
+   *
+   * An open key rather than a written union, like `providers`, because the
+   * name is the plugin's invention and the collision rule is the fold's.
+   */
+  sessionConfig: Record<string, Record<string, unknown>>;
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
   /**

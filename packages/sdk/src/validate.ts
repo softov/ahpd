@@ -142,6 +142,7 @@ const PORT_MEMBERS: Record<PortKey, Record<string, Kind>> = {
   // Every member of `Diagnostics` is optional, so any object is a diagnostics
   // and there is nothing to demand of one.
   diagnostics: {},
+  computers: { how: 'function' },
 };
 
 /** The method each port is reached through, for a message that names what was called. */
@@ -155,6 +156,7 @@ export const PORT_METHOD: Record<PortKey, string> = {
   automations: 'registerAutomations',
   sessions: 'registerSessions',
   diagnostics: 'registerDiagnostics',
+  computers: 'registerComputers',
 };
 
 /** Check one port registration against the contract its key names. */
@@ -179,6 +181,7 @@ const PROVIDER_OPTIONAL: Record<string, Kind> = {
   mkdir: 'function',
   move: 'function',
   copy: 'function',
+  describe: 'function',
 };
 
 /**

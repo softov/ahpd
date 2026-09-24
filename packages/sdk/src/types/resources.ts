@@ -201,6 +201,25 @@ export interface ResourceStore {
  * rooted at the session's own directory, and there is no scheme in it to route
  * by, so path completion stays with the `file:` store.
  */
+/**
+ * What a provider says about the scheme it serves.
+ *
+ * A claim, not a guarantee: the host advertises it so a client can draw a
+ * screen before it has a URI to ask, and every command is still answered on
+ * its own. `title` is what the scheme is called on screen, `description` is
+ * one line about it, and `manifest` is the body a write to the scheme's root
+ * makes something from - a JSON Schema, the same shape a config form is drawn
+ * from - when the provider serves one.
+ */
+export interface SchemeDescription {
+  /** What the scheme is called on screen. */
+  title: string;
+  /** One line about what it serves. */
+  description?: string;
+  /** The body a write to the scheme's root makes something from. */
+  manifest?: Record<string, unknown>;
+}
+
 export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'> & {
   /** One file's bytes, or the range of them that was asked for. */
   read(uri: string, wanted?: string): Promise<Read>;
@@ -208,4 +227,12 @@ export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' 
   list?(uri: string): Promise<Entry[]>;
   /** What a URI is, without reading it, for a client that browses. */
   resolve?(uri: string, followSymlinks?: boolean): Promise<Metadata>;
+  /**
+   * What this scheme is for, so a client can draw a screen before it asks one.
+   *
+   * Optional: a provider that does not answer is advertised by its scheme and
+   * the operations the host can see it implements - decision
+   * `a-resource-scheme-is-advertised-in-meta`.
+   */
+  describe?(): SchemeDescription;
 };

@@ -21,6 +21,7 @@ import { annotationsReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS
 import type { AnnotationsAction, AnnotationsState, ChangesetFile, TerminalInfo, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { OnWire } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
+import { notServed } from './resources.js';
 import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { worktreeFor, worktreesOf } from './worktrees.js';
@@ -2475,6 +2476,7 @@ export function createHost(options: HostOptions): Host {
        */
       ...(options.resources !== undefined ? { resources: options.resources } : {}),
       ...(options.terminals !== undefined ? { terminals: heldTerminals(options.terminals, uri, chatUri) } : {}),
+      ...(options.computers !== undefined ? { computers: options.computers } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -2483,8 +2485,8 @@ export function createHost(options: HostOptions): Host {
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
       ...(resuming?.rewindAt !== undefined ? { rewindAt: resuming.rewindAt } : {}),
       ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
-      settings: { ...agent.defaults(), ...config },
-      schema: () => published(agent.schema()),
+      settings: { ...agent.defaults(), ...contributedDefaults(), ...config },
+      schema: () => sessionSchema(agent),
       // What the boot probe already learned: the commands behind a slash, the
       // skills, the subagents and the MCP servers. A session that answered
       // `[]` until its own agent replied was empty for the first several
@@ -3063,6 +3065,34 @@ export function createHost(options: HostOptions): Host {
     };
   };
 
+  /**
+   * The session schema with what a plugin contributed, on the way out.
+   *
+   * A contributed key is a control a client draws beside the backend's own,
+   * and it exists only while its plugin is loaded. The backend's own property
+   * wins where both declare one, because the fold already reported that as a
+   * collision and a plugin may not quietly move a setting a backend owns -
+   * decision `a-plugin-may-contribute-a-session-key`.
+   */
+  const sessionSchema = (agent: Agent): Bag => {
+    const schema = published(agent.schema());
+    const extra = options.sessionConfig;
+    if (extra === undefined || Object.keys(extra).length === 0) return schema;
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Bag;
+    return { ...schema, type: 'object', properties: { ...extra, ...properties } };
+  };
+
+  /** The defaults a contributed key names, under the backend's own. */
+  const contributedDefaults = (): Record<string, unknown> => {
+    const held: Record<string, unknown> = {};
+    for (const [key, schema] of Object.entries(options.sessionConfig ?? {})) {
+      if (schema.default !== undefined) held[key] = schema.default;
+    }
+    return held;
+  };
+
   /** What this host answered, as strings, for saying back on the session. */
   const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
     Object.entries(config)
@@ -3573,7 +3603,17 @@ export function createHost(options: HostOptions): Host {
    * to every backend that can take tools, and replaced whole - which is what
    * `session/serverToolsChanged` means.
    */
-  let contributing: HostTool[] = [...(options.tools ?? [])];
+  /**
+   * The tools a session is offered, with the permission applied once.
+   *
+   * A tool that says it needs advanced permission is left out unless the host
+   * permits it, so it is neither reported in `serverTools` nor bound for a
+   * call - decision `a-tool-says-when-it-needs-advanced-permission`. Applied
+   * where the set is built, so `setTools` cannot put one back.
+   */
+  const permitted = (tools: readonly HostTool[]): HostTool[] =>
+    tools.filter((one) => options.advancedTools === true || one.advancedPermission !== true);
+  let contributing: HostTool[] = permitted(options.tools ?? []);
   /** Whether the client asked for the compact wording. */
   const compactPrompts = (): boolean => rootConfig.artifactToolsCompactPrompts === true;
   /**
@@ -3903,6 +3943,31 @@ export function createHost(options: HostOptions): Host {
       },
     },
   };
+  /**
+   * What this host serves beside `file:`, as one map a client reads.
+   *
+   * The provider's own claim plus what the host can see for itself: the root
+   * URI and the operations its methods implement. Absent when no provider is
+   * registered, because presence is how a client knows the key means anything
+   * - decision `a-resource-scheme-is-advertised-in-meta`.
+   */
+  const advertisedSchemes = (): Record<string, unknown> | undefined => {
+    const providers = options.resourceProviders;
+    if (providers === undefined) return undefined;
+    const entries = Object.entries(providers);
+    if (entries.length === 0) return undefined;
+    const order = ['read', 'list', 'resolve', 'write', 'delete', 'mkdir', 'move', 'copy'] as const;
+    return Object.fromEntries(entries.map(([scheme, provider]) => {
+      const said = typeof provider.describe === 'function' ? provider.describe() : undefined;
+      const held = provider as unknown as Record<string, unknown>;
+      return [scheme, {
+        ...(said ?? {}),
+        root: `${scheme}://`,
+        operations: order.filter((one) => typeof held[one === 'delete' ? 'remove' : one] === 'function'),
+      }];
+    }));
+  };
+
   const rootState = async (mine: Record<string, unknown> = {}) => ({
     agents: descriptors(),
     // What this host is running, not what is on disk beside it.
@@ -3933,6 +3998,9 @@ export function createHost(options: HostOptions): Host {
         ...mine,
       },
     },
+    // The same statement as the handshake's, so a client that subscribes later
+    // reads what a client that connected earlier was told.
+    ...(advertisedSchemes() === undefined ? {} : { _meta: { 'ahpd.resourceProviders': advertisedSchemes() } }),
   });
   /**
    * A session that already happened, read from its transcript.
@@ -4253,7 +4321,7 @@ export function createHost(options: HostOptions): Host {
           // controls at all on a browsed row - no permission mode, no effort -
           // which are the settings somebody wants *before* continuing one.
           config: {
-            schema: published(owner.schema()),
+            schema: sessionSchema(owner),
             values: { ...owner.defaults(), ...(kept.config(id) ?? {}) },
           },
         },
@@ -4471,7 +4539,7 @@ export function createHost(options: HostOptions): Host {
      * moves immediately is what a client is told the session has.
      */
     setTools: (tools) => {
-      contributing = [...tools];
+      contributing = permitted(tools);
       for (const uri of sessions.keys())
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
@@ -4604,7 +4672,12 @@ export function createHost(options: HostOptions): Host {
       const storeFor = (uri: string) => {
         const scheme = schemeOf(uri);
         if (scheme === '' || scheme === 'file') return options.resources;
-        return options.resourceProviders?.[scheme] ?? options.resources;
+        const provider = options.resourceProviders?.[scheme];
+        // A scheme nobody serves is not the file store's to read, and it is
+        // not a permission answer either: the host has nothing for it, which
+        // is `-32601` - decision `a-scheme-nobody-serves-is-not-a-permission-error`.
+        if (provider === undefined) throw notServed(uri);
+        return provider;
       };
 
       /**
@@ -4756,7 +4829,14 @@ export function createHost(options: HostOptions): Host {
              * is the close button on an artifact pill, and the detached
              * worktree five are its dev container flow.
              */
-            _meta: { 'vscode.removeSessionArtifact': true, 'vscode.detachedWorktrees': true, 'vscode.getAgentHostSessionStateFile.chat': true },
+            _meta: {
+              'vscode.removeSessionArtifact': true,
+              'vscode.detachedWorktrees': true,
+              'vscode.getAgentHostSessionStateFile.chat': true,
+              // What this host serves beside `file:`, so a client can draw a
+              // screen for a scheme before it has a URI to ask.
+              ...(advertisedSchemes() === undefined ? {} : { 'ahpd.resourceProviders': advertisedSchemes() }),
+            },
           };
         },
         ping: async () => ({}),
@@ -6285,7 +6365,7 @@ export function createHost(options: HostOptions): Host {
             typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir,
             typeof answered.isolation === 'string' ? answered.isolation : undefined,
           );
-          const theirs = published(agent.schema());
+          const theirs = sessionSchema(agent);
           const properties = {
             ...(typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}),
             ...(typeof mine.schema.properties === 'object' && mine.schema.properties !== null ? mine.schema.properties : {}),

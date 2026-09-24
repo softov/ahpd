@@ -41,6 +41,18 @@ export interface MachineSpec {
   label: string;
   cpus?: string;
   memory?: string;
+  /**
+   * Host paths made visible in the machine, as `source:target` or
+   * `source:target:ro`.
+   *
+   * A bind mount is the host's filesystem inside the machine, which is what
+   * lets a session work on the same files outside it. It is not a boundary
+   * this host enforces: the container is the isolation, and what is mounted
+   * is readable and writable in there.
+   */
+  mounts?: string[];
+  /** Where a command starts inside the machine. */
+  workdir?: string;
 }
 
 /** What running a command inside a machine answered. */
@@ -174,6 +186,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       const args = ['run', '-d', '--name', spec.name, '--label', spec.label];
       if (spec.cpus !== undefined) args.push('--cpus', spec.cpus);
       if (spec.memory !== undefined) args.push('--memory', spec.memory);
+      for (const mount of spec.mounts ?? []) args.push('-v', mount);
+      if (spec.workdir !== undefined) args.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine
       // waits for work.
       args.push(spec.image, 'sleep', 'infinity');
@@ -193,7 +207,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
 
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'release', 'exec'],
+      actions: ['create', 'destroy', 'exec'],
       resources: ['status', 'capabilities'],
     }),
   };

@@ -54,10 +54,9 @@ The rule it implements is [agent-package-only-when-it-brings-a-runtime](../../..
 
 ## Left for later
 
-- `Start.forkAt` and `rewindAt` are unmapped; facio has the slots and mapping them is a task of its own.
-- A non-streaming adapter (`features.streaming: false`) produces no text, because `model.completed` is not mapped; the shipped `openaiCompat` streams by default.
-- AHP host tool definitions carry no destructive hint, so a pause is configured through the plugin's `policy` option rather than inferred, and a configuration file cannot carry it.
-- `@ahpd/agent-acp` remains the next agent package, and `@deepseek-ai/dsh-acp` is one of the servers it will cover.
+- A browsed awaiting turn reads as complete - see [deferred.md](deferred.md).
+  A catalogue-only browse has no AHP turn state for a run that is waiting, so the open turn is drawn as finished; the live session owns the real state.
+- The four lines this section used to carry - `forkAt` and `rewindAt`, a non-streaming adapter saying nothing, the destructive hint a host tool could not declare, and `@ahpd/agent-acp` as the next package - are all closed and the lists below say how.
 
 ## Since built
 

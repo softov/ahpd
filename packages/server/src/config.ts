@@ -68,6 +68,16 @@ export interface Config {
    * overrides it.
    */
   trustToken?: boolean;
+  /**
+   * Whether a tool that declares `advancedPermission` is offered to sessions.
+   *
+   * False, so those tools are absent until this says otherwise: a plugin that
+   * starts containers on this host contributes them only to a host that asked
+   * for them. A tool that declares nothing is unaffected, and the reference
+   * host's own set declares nothing - decision
+   * `a-tool-says-when-it-needs-advanced-permission`.
+   */
+  advancedTools?: boolean;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

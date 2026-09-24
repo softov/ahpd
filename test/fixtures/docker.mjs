@@ -52,6 +52,7 @@ if (verb === 'inspect') {
     Image: found.image,
     Created: '2026-09-22T00:00:00Z',
     State: { Status: 'running' },
+    Config: { WorkingDir: found.workdir ?? '' },
   })}\n`);
   keep();
   process.exit(0);
@@ -60,11 +61,17 @@ if (verb === 'inspect') {
 if (verb === 'run') {
   const named = args.indexOf('--name');
   const image = args[args.length - 3];
+  const mounts = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-v') mounts.push(args[i + 1]);
+  }
   held.machines.push({
     name: named === -1 ? `unnamed-${held.machines.length}` : args[named + 1],
     image,
     cpus: args.includes('--cpus') ? args[args.indexOf('--cpus') + 1] : undefined,
     memory: args.includes('--memory') ? args[args.indexOf('--memory') + 1] : undefined,
+    mounts,
+    workdir: args.includes('-w') ? args[args.indexOf('-w') + 1] : undefined,
   });
   keep();
   process.stdout.write(`${'a'.repeat(64)}\n`);

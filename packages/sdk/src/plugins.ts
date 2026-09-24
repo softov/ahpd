@@ -27,7 +27,7 @@ import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, m
  */
 const PORT_KEYS = [
   'resources', 'terminals', 'changes', 'directories', 'worktrees',
-  'github', 'automations', 'sessions', 'diagnostics',
+  'github', 'automations', 'sessions', 'diagnostics', 'computers',
 ] as const satisfies readonly PortKey[];
 
 /*
@@ -185,6 +185,43 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     (options as unknown as Record<string, unknown>)[key] = value;
   }
 
+  /*
+   * The session settings, keyed by name and never merged over one another.
+   *
+   * A key the host already declares, or a backend's own schema declares, is a
+   * collision: two controls for one name. It is reported and the base's own
+   * property wins where it exists, because a plugin may not quietly move a
+   * setting a backend already owns - decision
+   * `a-plugin-may-contribute-a-session-key`.
+   */
+  const sessionConfig: Record<string, Record<string, unknown>> = { ...base.sessionConfig };
+  const holders = new Map<string, string>();
+  for (const key of Object.keys(sessionConfig)) holders.set(key, 'the host');
+  const backendKeys = new Set<string>();
+  for (const agent of options.agents) {
+    const schema = agent.schema();
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Record<string, unknown>;
+    for (const key of Object.keys(properties)) backendKeys.add(key);
+  }
+  for (const contribution of contributions) {
+    for (const [key, schema] of Object.entries(contribution.sessionConfig)) {
+      const held = holders.get(key);
+      if (held !== undefined) {
+        problems.push(`plugin ${contribution.by} registers session setting ${key}, which ${held === 'the host' ? 'the host' : `plugin ${held}`} already declares`);
+        continue;
+      }
+      if (backendKeys.has(key)) {
+        problems.push(`plugin ${contribution.by} registers session setting ${key}, which a backend's own schema already declares`);
+        continue;
+      }
+      holders.set(key, contribution.by);
+      sessionConfig[key] = schema;
+    }
+  }
+  if (Object.keys(sessionConfig).length > 0) options.sessionConfig = sessionConfig;
+
   if (Object.keys(resourceProviders).length > 0) options.resourceProviders = resourceProviders;
 
   return { options, problems };
@@ -220,12 +257,14 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
     by,
     agents: [],
     tools: [],
+    sessionConfig: {},
     ports: {},
     providers: {},
     events: events as unknown as HostHandlers,
   };
   const providers = new Set<string>();
   const tools = new Set<string>();
+  const sessionKeys = new Set<string>();
 
   const setPort = <K extends PortKey>(key: K, method: string, value: PortOf<K>, when?: 'replace'): void => {
     checkPort(key, value, by);
@@ -254,6 +293,18 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
       tools.add(name);
       contribution.tools.push(tool);
     },
+    registerSessionConfig(key, schema) {
+      const named = typeof key === 'string' ? key.trim() : '';
+      if (named === '') throw new Error(miss(by, 'registerSessionConfig', String(key), 'a non-empty key'));
+      if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+        throw new Error(miss(by, 'registerSessionConfig', named, 'a JSON Schema property object'));
+      }
+      if (sessionKeys.has(named)) {
+        throw new Error(miss(by, 'registerSessionConfig', named, 'a key no other setting in this plugin uses'));
+      }
+      sessionKeys.add(named);
+      contribution.sessionConfig[named] = schema as Record<string, unknown>;
+    },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
     registerResourceProvider(scheme, provider) {
       const named = checkScheme(scheme, by);
@@ -274,6 +325,7 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
     registerAutomations: (store, when) => { setPort('automations', 'registerAutomations', store, when); },
     registerSessions: (store, when) => { setPort('sessions', 'registerSessions', store, when); },
     registerDiagnostics: (diagnostics, when) => { setPort('diagnostics', 'registerDiagnostics', diagnostics, when); },
+    registerComputers: (computers, when) => { setPort('computers', 'registerComputers', computers, when); },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the
       // same read-only one `apply` was handed, and the host does not otherwise

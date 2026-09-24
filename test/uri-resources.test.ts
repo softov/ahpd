@@ -82,12 +82,14 @@ it('answers -32601 for a method the provider left out, as a read-only store does
   })).rejects.toMatchObject({ code: -32601 });
 });
 
-it('explains an unregistered scheme rather than reading it as a path', async () => {
+it('answers a scheme nobody serves with a code that says so, not a permission code', async () => {
   const client = await open(host({}));
   const refused = await client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'notes://local/x' },
   }).then(() => 'read', (error: { code: number; message: string }) => error);
-  expect(refused).toMatchObject({ code: -32009 });
+  // The host has nothing that serves `notes:`, which is `-32601`; `-32009` is
+  // for a person whose role does not cover a command it does serve.
+  expect(refused).toMatchObject({ code: -32601 });
   expect((refused as { message: string }).message).toContain('nothing here serves notes:');
 });
 

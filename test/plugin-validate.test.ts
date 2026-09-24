@@ -145,6 +145,11 @@ describe('pluginHost', () => {
     // Everything else is optional, which says it may be left out and not that
     // it may be anything.
     expect(() => host.registerResourceProvider('notes', { read: () => {}, list: 'nope' } as never)).toThrow(/list/);
+    // `describe` is optional and is a function when it is there, so a provider
+    // that says what its scheme is for is accepted and a value that is not a
+    // method is not.
+    expect(() => host.registerResourceProvider('notes', { read: () => {}, describe: () => ({ title: 'Notes' }) } as never)).not.toThrow();
+    expect(() => host.registerResourceProvider('notes', { read: () => {}, describe: 'Notes' } as never)).toThrow(/describe/);
   });
 
   it('refuses a scheme that is not one, and the schemes the host already owns', () => {

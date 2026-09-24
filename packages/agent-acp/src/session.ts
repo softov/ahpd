@@ -46,8 +46,8 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, OpenedTerminal, Ran, Session, Start } from '@ahpd/sdk';
+import { machineAsked, Status } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
 import { mapUpdate } from './mapping.js';
@@ -445,6 +445,42 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * The machine this session was told to run in, as something to spawn.
+   *
+   * A session whose settings name a computer runs the server there, through
+   * the port the host carries - decision
+   * `a-backend-reaches-a-computer-through-a-port`. A name that cannot be
+   * reached throws rather than falling back to this host: a session that asked
+   * for a sandbox and silently ran outside one is worse than one that did not
+   * start.
+   */
+  const placed = async (): Promise<Spawn | undefined> => {
+    // Trimmed and emptiness-checked in one place, because the computer plugin's
+    // schema says an empty value runs on the host and that arrives as often as
+    // an absent one does.
+    const said = machineAsked(start);
+    if (said === undefined) return undefined;
+    const named = /^computer:\/\/([^/\s]+)$/.exec(said);
+    if (named === null) throw new Error(`${said} is not a computer URI; a session runs in computer://<id>`);
+    const id = named[1] as string;
+    if (start.computers === undefined) {
+      throw new Error(`This session asked to run in ${id}, and this host has no computer plugin to run it in`);
+    }
+    /*
+     * No `cwd` here: `where` is this host's directory, and the only paths that
+     * mean anything inside the machine are its own. The port uses the
+     * machine's working directory when the caller names none.
+     */
+    const spawn = await start.computers.how(id, {
+      command: options.command,
+      ...(options.args === undefined ? {} : { args: options.args }),
+      ...(options.env === undefined ? {} : { env: options.env }),
+    });
+    if (spawn === undefined) throw new Error(`There is no computer called ${id}`);
+    return spawn;
+  };
+
+  /**
    * Spawn the server, hand it a client, and open the one session on it.
    *
    * One promise for the whole of it, so a second turn that arrives while the
@@ -459,11 +495,16 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   const open = (): Promise<{ connection: AcpConnection; sessionId: string }> => {
     if (opening !== undefined) return opening;
     const pending = (async () => {
+      const moved = await placed();
       const connection = connectAcp({
-        command: options.command,
-        ...(options.args === undefined ? {} : { args: options.args }),
-        ...(options.env === undefined ? {} : { env: options.env }),
-        cwd: where,
+        command: moved?.command ?? options.command,
+        ...(moved !== undefined
+          ? { args: moved.args }
+          : options.args === undefined ? {} : { args: options.args }),
+        ...(moved?.env !== undefined
+          ? { env: moved.env }
+          : moved === undefined && options.env !== undefined ? { env: options.env } : {}),
+        ...(moved?.cwd !== undefined ? { cwd: moved.cwd } : moved === undefined ? { cwd: where } : {}),
         handlers: {
           update: receivedUpdate,
           permission: askPermission,

@@ -96,8 +96,37 @@ export interface UserRecord {
    * own is what lets two people on one host sign in through two providers.
    */
   issuer?: string;
+  /**
+   * The claim the issuer's answer carries the person's roles in.
+   *
+   * A field of the answer, such as `groups` or `roles`, whose values are role
+   * names this file defines or built-ins. The values are added to the record's
+   * own `roles`, and a value that names nothing is reported and dropped. The
+   * claim is read once, at sign-in, because the token that would ask again is
+   * not kept - so a change at the issuer lands on the next sign-in and a change
+   * in this file lands on the next command.
+   *
+   * A record reached by a minted secret has no issuer answer to read, so this
+   * does nothing for one.
+   */
+  rolesFrom?: string;
   /** Whether a connection token of theirs authorizes them, over the host's default. */
   trustToken?: boolean;
+}
+
+/**
+ * What an issuer answered for a token.
+ *
+ * `subject` is the one field the host matches against a record's `id` - a
+ * GitHub login, an OpenID Connect `sub`. `claims` is the whole answer, because
+ * a record that reads its roles out of a claim needs more than the subject and
+ * asking twice would be a second request for one sign-in.
+ */
+export interface IssuerAnswer {
+  /** Who the token belongs to, as the record's `id` spells them. */
+  readonly subject: string;
+  /** Everything the endpoint said, field by field, unread unless a record names one. */
+  readonly claims: Record<string, unknown>;
 }
 
 /**
@@ -115,15 +144,14 @@ export interface Issuer {
   /** The scopes a client should ask it for. */
   readonly scopes: readonly string[];
   /**
-   * Who a token belongs to, or nothing when it belongs to nobody.
+   * Who a token belongs to, and what else the issuer said about them, or
+   * nothing when the token belongs to nobody.
    *
-   * The answer is matched against a record's `id`, so it is the subject a
-   * deployment wrote down: a GitHub login, an OpenID Connect `sub`. Nothing is
-   * the answer for a token the issuer refuses, and for one this host could not
-   * ask about at all, which is the fail-closed reading of a network it cannot
-   * reach.
+   * Nothing is the answer for a token the issuer refuses, and for one this
+   * host could not ask about at all, which is the fail-closed reading of a
+   * network it cannot reach.
    */
-  subject(token: string): Promise<string | undefined>;
+  who(token: string): Promise<IssuerAnswer | undefined>;
 }
 
 /** What the file holds: the roles this install defines, and the people. */
@@ -160,7 +188,7 @@ export interface Users {
    */
   list(): Promise<(Omit<UserRecord, 'token'> & { grants: Grant[]; trusted: boolean })[]>;
   /** Add a person, or set the roles of one who is already there. */
-  add(id: string, roles: string[]): Promise<void>;
+  add(id: string, roles: string[], options?: { issuer?: string }): Promise<void>;
   /** Remove a person. `true` when one was there. */
   remove(id: string): Promise<boolean>;
   /** A fresh secret for one person, answered once and stored only as its hash. */

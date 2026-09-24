@@ -78,6 +78,13 @@ interface Options {
    */
   trustToken: boolean;
   /**
+   * Whether a tool that declares `advancedPermission` is offered to sessions.
+   *
+   * False: those tools are absent from every session until this says
+   * otherwise, which is the host's answer and not a plugin's.
+   */
+  advancedTools: boolean;
+  /**
    * Where automations are kept, and whether a clock fires them.
    *
    * `file` is a store that survives a restart and runs a schedule; `memory`
@@ -131,6 +138,7 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   ahpd plugin list            what the configuration names, and what a run
                               would load, without loading any of it
   ahpd user add <id>          add a person, with --role <name> once per role
+                              and --issuer <name> for a provider of their own
   ahpd user token <id>        mint their credential, shown once. --url prints
                               the whole ws:// URL a client can be given
   ahpd user list              who is in the file
@@ -163,6 +171,9 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
                                 resolve a provider for it. A record may name
                                 its own issuer, and this is the default for
                                 the ones that do not.
+  --advanced-tools              Offer the tools that declare they need advanced
+                                permission, such as the computer's three. Off by
+                                default; the host's own tools are unaffected.
   --trust-token                 A person's connection token authorizes them as
                                 well as admits them. Off by default: the door
                                 admits and says nobody, and authenticate is
@@ -196,7 +207,7 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
 Every option above can be a key in the configuration file instead, spelled the
 way it is here without the dashes: port, host, paths, connectionToken,
 connectionTokenFile, withoutConnectionToken, automations, sessions, wire,
-updateCheck, plugins, users, resource, issuer, trustToken. A flag beats the
+updateCheck, plugins, users, resource, issuer, trustToken, advancedTools. A flag beats the
 file, because a flag is this run and a file is every run until somebody edits
 it. "plugins" is a list of the same specs --plugin takes, and --no-plugins is
 the one flag with no key: leaving plugins out is already the off.
@@ -217,6 +228,7 @@ function parse(argv: string[]): Options {
     sessions: 'file',
     open: false,
     trustToken: false,
+    advancedTools: false,
     plugins: [],
     noPlugins: false,
     help: false,
@@ -238,6 +250,7 @@ function parse(argv: string[]): Options {
       case '--resource': options.resource = String(argv[++i]); break;
       case '--issuer': options.issuer = String(argv[++i]); break;
       case '--trust-token': options.trustToken = true; break;
+      case '--advanced-tools': options.advancedTools = true; break;
       case '--automations': {
         const said = String(argv[++i]);
         if (said === 'file' || said === 'memory') options.automations = said;
@@ -298,6 +311,7 @@ function parse(argv: string[]): Options {
   if (options.resource === undefined && typeof file.resource === 'string') options.resource = file.resource;
   if (options.issuer === undefined && typeof file.issuer === 'string') options.issuer = file.issuer;
   if (!options.trustToken && file.trustToken === true) options.trustToken = true;
+  if (!options.advancedTools && file.advancedTools === true) options.advancedTools = true;
   if (!argv.includes('--no-update-check') && file.updateCheck === false) options.updateCheck = false;
 
   /*
@@ -475,10 +489,17 @@ if (verb !== undefined) {
     const positionals: string[] = [];
     const roles: string[] = [];
     let asUrl = false;
+    let theirIssuer: string | undefined;
     for (let i = 0; i < more.length; i++) {
       const one = more[i];
       if (one === '--users') { i++; continue; }
       if (one === '--url') { asUrl = true; continue; }
+      if (one === '--issuer') {
+        const said = more[++i];
+        if (said === undefined) stop('--issuer needs github or an issuer URL.');
+        theirIssuer = said;
+        continue;
+      }
       if (one === '--host') {
         const said = more[++i];
         if (said === undefined) stop('--host needs an address.');
@@ -515,18 +536,21 @@ if (verb !== undefined) {
           one.grants.length > 0 ? one.grants.join(' ') : 'nothing',
           one.trusted ? 'trusted' : 'sign-in',
           ...(one.issuer === undefined ? [] : [one.issuer]),
+          ...(one.rolesFrom === undefined ? [] : [`rolesFrom=${one.rolesFrom}`]),
         ].join(' ')).join('\n')}\n`);
       process.exit(0);
     }
     if (sub === 'add') {
-      if (id === undefined || id.startsWith('-')) stop('user add takes an id: ahpd user add <id> [--role <name>]');
+      if (id === undefined || id.startsWith('-')) stop('user add takes an id: ahpd user add <id> [--role <name>] [--issuer <name>]');
       const held = roles.length > 0 ? roles : ['guest'];
-      // A role name that resolves to nothing is refused by the directory; said
-      // here so it reads as the verb's own refusal rather than a stack trace.
-      await directory.add(id, held).catch((error: unknown) => {
-        stop(error instanceof Error ? error.message : String(error));
-      });
-      process.stdout.write(`Added ${id} (${held.join(', ')}). Give them a credential: ahpd user token ${id}\n`);
+      // A role name or an issuer name that resolves to nothing is refused by
+      // the directory; said here so it reads as the verb's own refusal rather
+      // than a stack trace.
+      await directory.add(id, held, theirIssuer === undefined ? {} : { issuer: theirIssuer })
+        .catch((error: unknown) => {
+          stop(error instanceof Error ? error.message : String(error));
+        });
+      process.stdout.write(`Added ${id} (${held.join(', ')})${theirIssuer === undefined ? '' : ` through ${theirIssuer}`}. Give them a credential: ahpd user token ${id}\n`);
       process.exit(0);
     }
     if (sub === 'rm') {
@@ -714,6 +738,14 @@ const base: HostOptions = {
    */
   tools: hostTools(),
   /*
+   * Whether a tool that declares it needs advanced permission is offered.
+   *
+   * The host's own answer, and false unless the operator says otherwise, so a
+   * plugin cannot decide for the operator that a model may start containers
+   * here.
+   */
+  advancedTools: options.advancedTools,
+  /*
    * Automations, with a clock unless asked otherwise.
    *
    * A daemon is the case the port was written for: it is already running at
@@ -862,6 +894,7 @@ process.stdout.write(
   + (users === undefined
     ? ''
     : `sign-in ${advertisedResource()}${issuer === undefined ? '' : ` (issuer ${issuer.id})`}\n`)
+  + (options.advancedTools ? 'advanced tools: offered to every session\n' : '')
   + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
   + (checkingUpdates(options.updateCheck) ? updateLine(manifest()) ?? '' : ''),
 );

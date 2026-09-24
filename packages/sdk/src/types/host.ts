@@ -11,6 +11,7 @@ import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { SessionStore } from './sessions.js';
+import type { ComputerPort } from './computers.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -175,6 +176,15 @@ export interface HostOptions {
    */
   sessions?: SessionStore;
   /**
+   * How a backend runs its process inside a named machine.
+   *
+   * Contributed by the plugin that owns the `computer:` scheme and handed to
+   * every backend through `Start`, so a backend reaches a machine without
+   * depending on the package that made it - decision
+   * `a-backend-reaches-a-computer-through-a-port`.
+   */
+  computers?: ComputerPort;
+  /**
    * Tools this host contributes to every session it runs.
    *
    * The protocol's `serverTools`: tools that are the *host's* rather than a
@@ -184,6 +194,26 @@ export interface HostOptions {
    * passes none contributes none, which is what an absent `serverTools` says.
    */
   tools?: HostTool[];
+  /**
+   * Session settings a plugin contributed, merged into every session's schema.
+   *
+   * The fold fills this from `registerSessionConfig`, so a client draws the
+   * key and a backend receives its value in `Start.settings`. A host that
+   * sets this itself is contributing settings without a plugin, which is what
+   * an embedder with its own control wants - decision
+   * `a-plugin-may-contribute-a-session-key`.
+   */
+  sessionConfig?: Record<string, Record<string, unknown>>;
+  /**
+   * Whether the tools that declare they need advanced permission are offered.
+   *
+   * False, so a tool that marks itself `advancedPermission` is absent from
+   * every session until the host says otherwise: it is not reported in
+   * `serverTools` and it is not bound, so a model is never offered it. A tool
+   * that declares nothing is unaffected by this and by the flag - decision
+   * `a-tool-says-when-it-needs-advanced-permission`.
+   */
+  advancedTools?: boolean;
   /**
    * What this host says about itself when a window asks.
    *
@@ -254,6 +284,18 @@ export interface HostTool {
    * changeset or a network policy that wants it.
    */
   effects?: ToolEffects;
+  /**
+   * Whether this tool does more than a session's ordinary work.
+   *
+   * The tool's own claim, and the host's permission decides: a tool that sets
+   * this is absent from every session unless `HostOptions.advancedTools` is
+   * true, so it is never reported and never bound. A tool that says nothing is
+   * unaffected, whoever contributed it - decision
+   * `a-tool-says-when-it-needs-advanced-permission`. This is a different
+   * question from `effects`: one says what running the tool does, which a
+   * backend's policy reads, and this says whether the host offers it at all.
+   */
+  advancedPermission?: boolean;
   /**
    * What to tell the model about when to call it, beyond the description.
    *

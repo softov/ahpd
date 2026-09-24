@@ -33,7 +33,7 @@ const contributed: Agent = {
   displayName: 'Contributed backend',
 };
 
-const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], ports: {}, providers: {}, events: {} };
+const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, ports: {}, providers: {}, events: {} };
 
 it('serves a backend a plugin contributed, beside the daemon\'s own', async () => {
   const { options, problems } = foldHostOptions(base(), [contribution]);
@@ -55,9 +55,108 @@ it('serves a backend a plugin contributed, beside the daemon\'s own', async () =
   expect(listed).toMatchObject({ items: [] });
 });
 
+it('publishes a session setting a plugin contributed, with its value on the session', async () => {
+  const { options, problems } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: { computer: { type: 'string', title: 'Computer', default: 'computer://box' } },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+  expect(problems).toEqual([]);
+
+  const host = createHost(options);
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  const shown = async (channel: string) => {
+    const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
+      snapshot: { state: { config?: { schema?: { properties?: Record<string, unknown> }; values?: Record<string, unknown> } } };
+    }).snapshot.state;
+    return state.config;
+  };
+
+  // The default is the plugin's, under the backend's own settings.
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/default', provider: 'echo' } });
+  const ordinary = await shown('ahp-session:/default');
+  expect(Object.keys(ordinary?.schema?.properties ?? {})).toContain('computer');
+  expect(ordinary?.values?.computer).toBe('computer://box');
+
+  // A client that names one gets its own, and the backend's key is still there.
+  await client.handle({
+    method: 'createSession',
+    params: { channel: 'ahp-session:/named', provider: 'echo', config: { computer: 'computer://other', voice: 'shouty' } },
+  });
+  const named = await shown('ahp-session:/named');
+  expect(named?.values?.computer).toBe('computer://other');
+  expect(named?.values?.voice).toBe('shouty');
+});
+
+it('advertises every scheme it serves on the handshake and on the root state', async () => {
+  const notes = {
+    read: async () => ({ data: 'x', encoding: 'utf-8' as const }),
+    list: async () => [],
+    write: async () => {},
+    remove: async () => {},
+    describe: () => ({ title: 'Notes', description: 'Files a session keeps.', manifest: { type: 'object', properties: {} } }),
+  };
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: {},
+    ports: {},
+    providers: { notes },
+    events: {},
+  }]);
+
+  const host = createHost(options);
+  const client = host.accept(peer());
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as {
+    _meta?: Record<string, unknown>;
+    snapshots: { resource: string; state: { _meta?: Record<string, unknown> } }[];
+  };
+
+  // The provider's claim, plus the root and the operations the host can see.
+  expect(ready._meta?.['ahpd.resourceProviders']).toEqual({
+    notes: {
+      title: 'Notes',
+      description: 'Files a session keeps.',
+      manifest: { type: 'object', properties: {} },
+      root: 'notes://',
+      operations: ['read', 'list', 'write', 'delete'],
+    },
+  });
+  // The same statement on the root snapshot, so a client that subscribes later
+  // reads what the handshake said.
+  expect(ready.snapshots[0]?.state._meta?.['ahpd.resourceProviders'])
+    .toEqual(ready._meta?.['ahpd.resourceProviders']);
+
+  // The `vscode.*` flags the reference client reads are still there beside it.
+  expect(ready._meta?.['vscode.removeSessionArtifact']).toBe(true);
+});
+
+it('advertises nothing when it serves no scheme beside file:', async () => {
+  const host = createHost(base());
+  const client = host.accept(peer());
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { _meta?: Record<string, unknown>; snapshots: { state: { _meta?: unknown } }[] };
+
+  // Absent rather than empty: presence is how a client knows the key means
+  // anything at all.
+  expect(ready._meta?.['ahpd.resourceProviders']).toBeUndefined();
+  expect(ready.snapshots[0]?.state._meta).toBeUndefined();
+});
+
 it('marks a provider clash so a caller can refuse over one without reading prose', () => {
   const twice = foldHostOptions(base(), [
-    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], ports: {}, providers: {}, events: {} },
+    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], sessionConfig: {}, ports: {}, providers: {}, events: {} },
   ]);
   expect(twice.problems).toHaveLength(1);
   expect(twice.problems[0]?.startsWith(AGENT_CLASH)).toBe(true);

@@ -8,6 +8,7 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { StartTerminals } from './terminals.js';
+import type { ComputerPort } from './computers.js';
 
 /**
  * What running a tool does to the world.
@@ -147,6 +148,14 @@ export interface Start {
    * without.
    */
   terminals?: StartTerminals;
+  /**
+   * How to run a process in a machine, when the host holds a computer plugin.
+   *
+   * Absent on a host with no `computer:` provider. A backend that was asked to
+   * run in a machine and is handed nothing must refuse rather than run on the
+   * host - decision `a-backend-reaches-a-computer-through-a-port`.
+   */
+  computers?: ComputerPort;
   /** The config schema to report on the session channel. This agent's own. */
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */

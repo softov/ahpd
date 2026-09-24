@@ -59,6 +59,7 @@ The clients on the left are interchangeable and none of them owns the session. `
 - `Read and write files`, open a `shell`, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
 - `Automations`: Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
 - `Plugins`: Serve another Agents implementation or feature, on the same host, with none of the protocol re-implemented: a backend is a plugin, loaded with `--plugin` or named in the configuration.
+- `Computers`: Make a container with a resource write, name it in a session so the agent runs inside it, and destroy it with a resource delete. See [docs/COMPUTER.md](docs/COMPUTER.md).
 
 ## Install and run the daemon
 
@@ -330,7 +331,7 @@ ahpc --host ws://127.0.0.1:9201
 ## Development
 
 ```bash
-pnpm test        # 948 tests, no network
+pnpm test        # 975 tests, no network
 pnpm typecheck
 pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
 ```

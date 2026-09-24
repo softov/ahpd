@@ -42,11 +42,13 @@ const contribution = (
     tools?: HostTool[];
     ports?: Partial<Record<PortKey, PortContribution>>;
     providers?: Record<string, unknown>;
+    sessionConfig?: Record<string, Record<string, unknown>>;
   } = {},
 ): Contribution => ({
   by,
   agents: parts.agents ?? [],
   tools: parts.tools ?? [],
+  sessionConfig: parts.sessionConfig ?? {},
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   events: {},
@@ -190,4 +192,22 @@ describe('sdkVersion', () => {
     expect(sdkVersion()).toBe(manifest.version);
     expect(sdkVersion()).toMatch(/^\d+\.\d+\.\d+/);
   });
+});
+
+it('takes a session setting from a plugin, and reports a second one with the same name', () => {
+  const one = contribution('one', { sessionConfig: { computer: { type: 'string', title: 'Computer' } } });
+  const two = contribution('two', { sessionConfig: { computer: { type: 'string' } } });
+  const folded = foldHostOptions(base(), [one, two]);
+
+  expect(folded.options.sessionConfig).toEqual({ computer: { type: 'string', title: 'Computer' } });
+  expect(folded.problems).toHaveLength(1);
+  expect(folded.problems[0]).toContain('session setting computer');
+  expect(folded.problems[0]).toContain('plugin one');
+});
+
+it('refuses a session setting a backend already declares', () => {
+  // The example backend declares `voice`, so a plugin may not move it.
+  const folded = foldHostOptions(base(), [contribution('one', { sessionConfig: { voice: { type: 'string' } } })]);
+  expect(folded.options.sessionConfig?.voice).toBeUndefined();
+  expect(folded.problems[0]).toContain("a backend's own schema already declares");
 });

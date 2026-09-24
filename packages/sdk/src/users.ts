@@ -204,6 +204,9 @@ export function fileUsers(options: FileUserOptions): Users {
   /** The server a record signs in through: its own, or the host's default. */
   const issuerNameOf = (record: UserRecord): string | undefined => record.issuer ?? options.issuer;
 
+  /** Whether a name is one this directory can resolve, saying nothing. */
+  const knows = (name: string): boolean => (options.issuerFor ?? issuerFrom)(name) !== undefined;
+
   /** What the file says, and whether it said nothing because it is broken. */
   const read = (): { file: UserFile; broken: boolean } => {
     let text: string;
@@ -242,6 +245,7 @@ export function fileUsers(options: FileUserOptions): Users {
               // Both flags are kept rather than dropped, or a file would lose
               // them the next time anything wrote to it.
               ...(typeof one.issuer === 'string' && one.issuer !== '' ? { issuer: one.issuer } : {}),
+              ...(typeof one.rolesFrom === 'string' && one.rolesFrom !== '' ? { rolesFrom: one.rolesFrom } : {}),
               ...(typeof one.trustToken === 'boolean' ? { trustToken: one.trustToken } : {}),
             })),
         },
@@ -336,15 +340,24 @@ export function fileUsers(options: FileUserOptions): Users {
    * change is in force at the same point - decision
    * `a-role-is-read-on-every-command`.
    */
-  const principalOf = (record: UserRecord): Principal => {
+  const principalOf = (record: UserRecord, fromIssuer: string[] = []): Principal => {
     // Said once, as the record is verified, so a role that nothing defines is
     // in the log even though every command resolves the roles again below -
     // and said only here, because a complaint per command is a log nobody
     // reads.
     grantsOf(record, read().file);
+    /*
+     * The claim's roles, resolved once.
+     *
+     * The token that would ask the issuer again is not kept, so what a claim
+     * said is stamped here and the file is what is re-read below: a change at
+     * the issuer lands on the next sign-in, and a change in this file lands on
+     * the next command.
+     */
+    const stamped = grantsOf({ id: record.id, roles: fromIssuer, token: '' }, read().file, false);
     return {
       id: record.id,
-      roles: [...record.roles],
+      roles: [...record.roles, ...fromIssuer],
       // The record's own answer, or the host's default. Stamped once, because
       // the door asks once per connection, and the person's answer does not
       // change while their socket is open.
@@ -353,9 +366,33 @@ export function fileUsers(options: FileUserOptions): Users {
       can: (grant: Grant) => {
         const { file } = read();
         const now = (file.users ?? []).find((one) => one.id === record.id);
-        return now === undefined ? false : holds(grantsOf(now, file, false), grant);
+        if (now === undefined) return false;
+        return holds(grantsOf(now, file, false), grant) || holds(stamped, grant);
       },
     };
+  };
+
+  /**
+   * The roles an issuer's answer carries in the claim a record names.
+   *
+   * A value is a role name this file defines or a built-in; one that names
+   * nothing is reported once and dropped, the way a role on a record is. An
+   * absent claim contributes nothing rather than failing the sign-in, because
+   * an issuer that omits a group is answering, not refusing.
+   */
+  const rolesFromClaim = (record: UserRecord, claims: Record<string, unknown> | undefined): string[] => {
+    const claim = record.rolesFrom;
+    if (claim === undefined) return [];
+    const held = claims?.[claim];
+    const values = typeof held === 'string' ? [held] : strings(held);
+    if (values.length === 0) return [];
+    const { file } = read();
+    const defined = new Set([...Object.keys(file.roles ?? {}), ...Object.keys(BUILT_IN)]);
+    return values.filter((one) => {
+      if (defined.has(one)) return true;
+      once(`user ${record.id} has ${claim} ${one}, which names no role this host defines`);
+      return false;
+    });
   };
 
   return {
@@ -400,12 +437,16 @@ export function fileUsers(options: FileUserOptions): Users {
         if (people.length === 0) continue;
         const issuer = adapterFor(name);
         if (issuer === undefined) continue;
-        const subject = await issuer.subject(token);
-        if (subject === undefined || subject === '') continue;
-        found = people.find((one) => one.id === subject);
-        if (found !== undefined) break;
+        const answer = await issuer.who(token);
+        if (answer === undefined) continue;
+        found = people.find((one) => one.id === answer.subject);
+        if (found !== undefined) {
+          // The claim is read from the same answer, so a sign-in is one
+          // question to the issuer and not two.
+          return principalOf(found, rolesFromClaim(found, answer.claims));
+        }
       }
-      return found === undefined ? undefined : principalOf(found);
+      return undefined;
     },
 
     list: async () => {
@@ -421,11 +462,13 @@ export function fileUsers(options: FileUserOptions): Users {
           // credential comes from.
           trusted: one.trustToken ?? trustAll,
           ...(issuer === undefined ? {} : { issuer }),
+          ...(one.rolesFrom === undefined ? {} : { rolesFrom: one.rolesFrom }),
         };
       });
     },
 
-    add: async (id, roles) => {
+    add: async (id, roles, options) => {
+      const issuer = options?.issuer;
       const { file, broken } = read();
       /*
        * A role name that resolves to nothing is refused here.
@@ -438,14 +481,25 @@ export function fileUsers(options: FileUserOptions): Users {
       if (!broken) {
         const unknown = roles.find((role) => file.roles?.[role] === undefined && BUILT_IN[role] === undefined);
         if (unknown !== undefined) {
-          const known = [...new Set([...Object.keys(file.roles ?? {}), ...Object.keys(BUILT_IN)])].sort();
-          throw new Error(`no role called ${unknown}; this host has ${known.join(', ')}`);
+          const has = [...new Set([...Object.keys(file.roles ?? {}), ...Object.keys(BUILT_IN)])].sort();
+          throw new Error(`no role called ${unknown}; this host has ${has.join(', ')}`);
+        }
+        // A provider nothing can resolve is refused here for the same reason:
+        // a record that names one can only ever be reached by a minted secret,
+        // which looks like a sign-in that never arrives.
+        if (issuer !== undefined && !knows(issuer)) {
+          throw new Error(`no issuer called ${issuer}; this host takes github or an issuer URL it may reach`);
         }
       }
       const users = file.users ?? [];
       const held = users.find((one) => one.id === id);
-      if (held === undefined) users.push({ id, roles: [...roles], token: '' });
-      else held.roles = [...roles];
+      if (held === undefined) users.push({ id, roles: [...roles], token: '', ...(issuer === undefined ? {} : { issuer }) });
+      else {
+        held.roles = [...roles];
+        // Left alone when the verb names none, so setting a role does not
+        // silently move somebody to the host's default provider.
+        if (issuer !== undefined) held.issuer = issuer;
+      }
       write({ ...file, users });
     },
 

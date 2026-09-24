@@ -17,6 +17,7 @@ import { createMemoryStore, textOf } from '@cofold/agents';
 import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@cofold/agents';
 import { openaiCompat } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
+import { refuseComputer } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { harnessConfig, splitModel } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
@@ -594,7 +595,16 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      * doing the work before the first turn runs. `session.ts` refuses a turn if
      * the cut could not be made, rather than carrying on from the wrong place.
      */
-    create: (start) => cofoldSession(options, start, store, harness, (settings, credentials) =>
-      knownCatalogue(connectionOf(options, settings, credentials, harness, false))),
+    create: (start) => {
+      /*
+       * cofold runs in this process, against a connection this host holds: it
+       * cannot be moved into a machine. A session that names one is refused
+       * rather than run on the host - decision
+       * `a-backend-reaches-a-computer-through-a-port`.
+       */
+      refuseComputer(start, 'cofold');
+      return cofoldSession(options, start, store, harness, (settings, credentials) =>
+        knownCatalogue(connectionOf(options, settings, credentials, harness, false)));
+    },
   };
 }

@@ -203,6 +203,52 @@ same name the configuration takes: `github`, or an issuer URL this host may
 reach. A name that is neither is reported on stderr and never verifies, the way
 a grant that is not `<subject>:<verb>` is.
 
+It can be set from the command line instead of by hand:
+
+```sh
+ahpd user add ana --role member --issuer github
+ahpd user add sam --role guest                  # the configuration's default
+```
+
+`--issuer` on a record that already exists moves that person to that provider,
+and leaving it off never moves them to the default: `add` sets the roles, and
+the provider only when the flag names one. A name nothing can resolve is refused
+before anything is written.
+
+### Roles from the issuer
+
+A record may name the claim its roles arrive in:
+
+```json
+{
+  "roles": { "operators": ["file:read", "file:write", "terminal:read", "terminal:write"] },
+  "users": [
+    { "id": "ana", "roles": ["guest"], "token": "", "issuer": "https://idp.example.com", "rolesFrom": "groups" }
+  ]
+}
+```
+
+The claim's values are **role names this file defines** or built-ins, and they
+are added to the roles on the record. The issuer never names a grant: a
+`groups` value of `operators` reaches the grants above because this file wrote
+them, and a value that names no role here is reported on stderr and dropped. An
+issuer that omits the claim contributes nothing, which is not a refusal.
+
+That is the one place the issuer is half an authority, and it is deliberate: an
+administrator of that provider can put somebody into a role this host defines,
+and cannot invent one.
+
+The two halves move on different clocks. The claim is read once, at sign-in,
+because asking again would mean keeping the token. The record's own roles are
+read on every command, so removing a person still lands at once and a change at
+the issuer lands the next time they sign in.
+
+`ahpd user list` prints the claim so the file and the answer can be compared:
+
+```
+ana (guest) session:read automation:read sign-in https://idp.example.com rolesFrom=groups
+```
+
 The advertised record lists every provider any of this answers for, because that
 is the list a client resolves one from:
 
@@ -250,7 +296,8 @@ Three ways, in the order they take to set up:
 - **The dev issuer**, which verifies nothing and answers any token as its own
   subject: `node scripts/dev-issuer.mjs 9310`, then
   `--issuer http://127.0.0.1:9310`. `Bearer ana` answers `sub: ana`, so a record
-  with id `ana` can sign in with the token `ana`.
+  with id `ana` can sign in with the token `ana`. `Bearer ana|ops,eng` answers
+  `groups: [ops, eng]` as well, which is a record's `rolesFrom` reading a claim.
 - **A real identity provider** - Keycloak, Authentik, Zitadel, Entra, Auth0 -
   named by its issuer URL.
 
@@ -327,7 +374,10 @@ run.
 
 A plugin's scheme is never conferred by a plain subject. `file:write` is not
 `computer:write`; a role reaches a scheme by naming it (`computer:write`) or by
-naming a wildcard that covers it (`*:*`). That is deliberate: a role that may
+naming a wildcard that covers it (`*:*`). The computer is the worked example:
+reading a machine is `computer:read` and making or destroying one is
+`computer:write`, so a person who may save a file may not, by that alone, start
+a container - see [COMPUTER.md](COMPUTER.md). That is deliberate: a role that may
 save your files may not, by that alone, start a container on your host. The
 refusal tells you what to add - the `-32009` message is
 `<person> may not computer:write here` - so the way to discover a subject is to

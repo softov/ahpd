@@ -1,17 +1,19 @@
 import { RpcError } from '@ahpd/sdk';
-import type { Entry, Metadata, Read, ResourceProvider } from '@ahpd/sdk';
+import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
+import { MANIFEST_SCHEMA, manifestOf } from './manifest.js';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
- * The `computer:` scheme, read-only.
+ * The `computer:` scheme.
  *
  * A machine is a directory with two files in it: `status`, which is the
  * runtime's own record of it, and `capabilities`, which is what this host can
  * be asked for. The root lists what exists.
  *
- * Nothing here is written. A machine is made, used and released by a tool,
- * because a resource write carries a URI and a mode and can express neither an
- * image nor a limit - decision `a-machine-is-made-by-a-host-tool`.
+ * A write to `computer://<name>` makes one and a delete destroys it, which is
+ * the person's route: the body is a JSON manifest and the URI is the name -
+ * decision `the-computer-is-an-object-a-person-manages`. The three tools still
+ * exist for a model, marked as needing advanced permission.
  */
 
 /** What the provider was configured with, which `capabilities` reports. */
@@ -22,6 +24,8 @@ export interface ProviderOptions {
   memory?: string;
   /** How many this provider will have at once. */
   max: number;
+  /** The label every machine this provider made carries. */
+  label: string;
 }
 
 /**
@@ -35,6 +39,9 @@ export interface ComputerProvider extends ResourceProvider {
   list(uri: string): Promise<Entry[]>;
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
+  write(uri: string, content: Write): Promise<void>;
+  remove(uri: string, recursive?: boolean): Promise<void>;
+  describe(): SchemeDescription;
 }
 
 /** A URI, split into the machine it names and the leaf under it. */
@@ -83,6 +90,11 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       ...(options.memory === undefined ? {} : { memory: options.memory }),
     },
     max: options.max,
+    /*
+     * The create body, as the schema `describe` advertises too, so what a
+     * client reads here and what it reads off the handshake cannot drift.
+     */
+    manifest: MANIFEST_SCHEMA({ runtime: runtime.kind, image: options.image }),
   }, null, 2);
 
   /** One machine's two files, as listing entries. */
@@ -95,6 +107,12 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     ({ data, encoding: 'utf-8', contentType: 'application/json' });
 
   return {
+    describe: (): SchemeDescription => ({
+      title: 'Computer',
+      description: 'A machine a session can run in.',
+      manifest: MANIFEST_SCHEMA({ runtime: runtime.kind, image: options.image }),
+    }),
+
     list: async (uri) => {
       const held = at(uri);
       if (!isDirectory(held)) throw absent(uri);
@@ -140,10 +158,58 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       throw absent(uri);
     },
 
-    /*
-     * Nothing above, and nothing below: no `watch`, because a machine's record
-     * changes when the runtime says so and this provider is asked rather than
-     * told, and no write half, because a machine is made by a tool.
+    /**
+     * A machine is made here.
+     *
+     * The body is the manifest and the URI is the name, so a client that
+     * writes twice with `createOnly` gets `-32010` and one that writes over a
+     * machine without it is refused the same way: a machine is not a file and
+     * has nothing to splice.
      */
+    write: async (uri, content) => {
+      const held = at(uri);
+      if (held.id === '' || !isDirectory(held)) {
+        throw new RpcError(-32602, `${uri} is not a name for a new computer; write to computer://<name>`);
+      }
+      const spec = manifestOf(held.id, content, {
+        runtime: runtime.kind,
+        image: options.image,
+        ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
+        ...(options.memory === undefined ? {} : { memory: options.memory }),
+      });
+      if (await runtime.inspect(held.id) !== undefined) {
+        throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);
+      }
+      const existing = await runtime.list();
+      if (existing.length >= options.max) {
+        throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${held.id} would be one more`);
+      }
+      try {
+        await runtime.run({ ...spec, label: options.label });
+      }
+      catch (error) {
+        throw new RpcError(-32603, error instanceof Error ? error.message : String(error));
+      }
+    },
+
+    /**
+     * A machine is destroyed here.
+     *
+     * A leaf under a machine is not a thing to delete, and the root is a
+     * listing: both are refused rather than passed to the runtime as a name.
+     */
+    remove: async (uri) => {
+      const held = at(uri);
+      if (held.id === '' || !isDirectory(held)) {
+        throw new RpcError(-32602, `${uri} is not a computer to destroy; delete computer://<name>`);
+      }
+      if (await runtime.inspect(held.id) === undefined) throw absent(uri);
+      try {
+        await runtime.remove(held.id);
+      }
+      catch (error) {
+        throw new RpcError(-32603, error instanceof Error ? error.message : String(error));
+      }
+    },
   };
 }

@@ -16,6 +16,9 @@
  * Then a record whose id is `ana` signs in with the token `ana`:
  *
  *   ws://127.0.0.1:9187  ->  authenticate({ resource, token: 'ana' })
+ *
+ * A token may also carry groups, which is what a record with `rolesFrom`
+ * reads: `Bearer ana|eng,ops` answers `sub: ana` with `groups: [eng, ops]`.
  */
 import { createServer } from 'node:http';
 
@@ -47,7 +50,19 @@ const server = createServer((request, response) => {
       answer(response, 401, { error: 'invalid_token' });
       return;
     }
-    answer(response, 200, { sub: held });
+    /*
+     * `Bearer ana` is the subject `ana`, and `Bearer ana|eng,ops` carries the
+     * two groups as well, which is what a record with `rolesFrom` reads. The
+     * separator is not standard: a real issuer publishes its own claim shape,
+     * and this is a test double standing in for one.
+     */
+    const [subject, groups] = held.split('|', 2);
+    answer(response, 200, {
+      sub: subject,
+      ...(groups === undefined || groups === ''
+        ? {}
+        : { groups: groups.split(',').map((one) => one.trim()).filter((one) => one !== '') }),
+    });
     return;
   }
   answer(response, 404, { error: 'not_found' });

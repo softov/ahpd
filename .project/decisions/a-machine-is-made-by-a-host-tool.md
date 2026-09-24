@@ -1,6 +1,7 @@
 ---
 title: A machine is made by a host tool, not by a resource write
-status: accepted
+status: superseded
+superseded-by: decisions/the-computer-is-an-object-a-person-manages.md
 date: 2026-09-22
 refs:
   - code://packages/sdk/src/types/host.ts#L232-L254 - `HostTool` and `effects`, the contract a tool is written against

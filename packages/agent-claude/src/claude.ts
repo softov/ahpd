@@ -6,6 +6,7 @@ import { catalogue } from './catalog.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { refuseComputer } from '@ahpd/sdk';
 import type { Agent, Bag, Start } from '@ahpd/sdk';
 
 /**
@@ -375,7 +376,16 @@ export function claude(options: ClaudeOptions): Agent {
       required: false,
     }],
 
-    create: (start: Start) => createSession({
+    create: (start: Start) => {
+      /*
+       * This backend spawns the Claude CLI on this host, and no amount of
+       * settings moves it: a session that names a computer is refused here
+       * rather than run outside the machine it asked for. A backend reaches a
+       * machine through the host's `computers` port or not at all - decision
+       * `a-backend-reaches-a-computer-through-a-port`.
+       */
+      refuseComputer(start, 'Claude Code');
+      return createSession({
       uri: start.uri,
       chatUri: start.chatUri,
       cwd: workingDirectory(start.workingDirectory),
@@ -418,6 +428,7 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.credentials?.[ANTHROPIC]
         ? { env: { ANTHROPIC_API_KEY: start.credentials[ANTHROPIC] } }
         : {}),
-    }),
+      });
+    },
   };
 }

@@ -15,7 +15,7 @@
  * signing-key dependency.
  */
 
-import type { Issuer } from './types/users.js';
+import type { Issuer, IssuerAnswer } from './types/users.js';
 
 /**
  * How this module reaches the network.
@@ -58,6 +58,17 @@ const field = (held: Record<string, unknown> | undefined, name: string): string 
   return typeof value === 'string' && value !== '' ? value : undefined;
 };
 
+/**
+ * The whole answer, when it named a subject in the field this issuer uses.
+ *
+ * The claims travel with it, because a record that reads its roles out of one
+ * would otherwise need a second request for the same sign-in.
+ */
+const answer = (held: Record<string, unknown> | undefined, name: string): IssuerAnswer | undefined => {
+  const subject = field(held, name);
+  return held === undefined || subject === undefined ? undefined : { subject, claims: held };
+};
+
 /** What `githubIssuer` may be told, for a test or a GitHub-compatible host. */
 export interface GitHubIssuerOptions {
   /** How to reach it. Defaults to the global `fetch`. */
@@ -82,7 +93,7 @@ export const githubIssuer = (options: GitHubIssuerOptions = {}): Issuer => {
   return {
     id: options.id ?? 'https://github.com/login/oauth',
     scopes: options.scopes ?? ['read:user'],
-    subject: async (token) => field(await get(fetcher, endpoint, token), 'login'),
+    who: async (token) => answer(await get(fetcher, endpoint, token), 'login'),
   };
 };
 
@@ -137,9 +148,9 @@ export const oidcIssuer = (options: OidcIssuerOptions): Issuer => {
   return {
     id: options.issuer,
     scopes: options.scopes ?? ['openid'],
-    subject: async (token) => {
+    who: async (token) => {
       const endpoint = await userinfo();
-      return endpoint === undefined ? undefined : field(await get(fetcher, endpoint, token), 'sub');
+      return endpoint === undefined ? undefined : answer(await get(fetcher, endpoint, token), 'sub');
     },
   };
 };

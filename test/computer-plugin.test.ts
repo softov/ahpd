@@ -97,6 +97,125 @@ it('serves computer: through the host and offers the three tools', async () => {
   expect(after.entries).toEqual([]);
 });
 
+it('withholds the three tools from a session until the host permits advanced tools', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-gate-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+  });
+
+  const names = async (advancedTools: boolean) => {
+    const host = createHost({ ...options, advancedTools });
+    const client = host.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gate', provider: 'base' } });
+    const seen = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/gate' } }) as {
+      snapshot: { state: { serverTools?: { name: string }[] } };
+    }).snapshot.state.serverTools?.map((one) => one.name) ?? [];
+    return seen;
+  };
+
+  // The plugin contributed them either way; it is the host that decides.
+  expect((options.tools ?? []).map((one) => one.definition.name)).toContain('request_disposable_computer');
+  expect(await names(false)).not.toContain('request_disposable_computer');
+  expect(await names(true)).toContain('request_disposable_computer');
+});
+
+it('contributes the computer session setting, and the default the operator chose', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-key-'));
+  const state = join(loose, 'docker.json');
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionDefault: 'computer://box',
+  });
+
+  expect(problems).toEqual([]);
+  expect(Object.keys(options.sessionConfig ?? {})).toEqual(['computer']);
+
+  const host = createHost(options);
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/key', provider: 'base' } });
+  const config = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/key' } }) as {
+    snapshot: { state: { config?: { schema?: { properties?: Record<string, unknown> }; values?: Record<string, unknown> } } };
+  }).snapshot.state.config;
+  expect(Object.keys(config?.schema?.properties ?? {})).toContain('computer');
+  expect(config?.values?.computer).toBe('computer://box');
+});
+
+it('refuses a session default that is not a computer URI, and can leave the key out', async () => {
+  const bad = await load({ sessionDefault: 'box' });
+  expect(bad.loaded).toEqual([]);
+  expect(bad.problems[0]).toContain('computer://<id>');
+
+  const none = await load({ sessionSetting: false });
+  expect(none.options.sessionConfig ?? {}).toEqual({});
+});
+
+it('advertises the scheme on the handshake, before any machine exists', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-meta-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+
+  const host = createHost(options);
+  const client = host.accept(peer());
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { _meta?: Record<string, { [scheme: string]: { title: string; root: string; operations: string[]; manifest: { properties: Record<string, { default?: string }> } } }> };
+
+  const entry = ready._meta?.['ahpd.resourceProviders']?.computer;
+  expect(entry?.title).toBe('Computer');
+  expect(entry?.root).toBe('computer://');
+  // The host derives these from the provider's methods, not from a claim.
+  expect(entry?.operations).toEqual(['read', 'list', 'resolve', 'write', 'delete']);
+  expect(entry?.manifest.properties.image?.default).toBe('debian:bookworm-slim');
+});
+
+it('answers how to reach a machine, and nothing for one that is not there', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-port-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+
+  expect(options.computers).toBeDefined();
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({}), encoding: 'utf-8' });
+
+  const how = await options.computers?.how('box', {
+    command: 'node', args: ['server.mjs'], cwd: '/work', env: { A: '1' },
+  });
+  expect(how).toEqual({
+    command: process.execPath,
+    args: [FIXTURE, 'exec', '-i', '-w', '/work', '-e', 'A=1', 'box', 'node', 'server.mjs'],
+    // The docker program's own environment, which is the plugin's and not the machine's.
+    env: { DOCKER_FAKE_STATE: state },
+  });
+
+  // With no directory named, the machine's own is the only one that means
+  // anything in there: a host path would be a `-w` of a directory it lacks.
+  const inside = await options.computers?.how('box', { command: 'node' });
+  expect(inside?.args).toEqual([FIXTURE, 'exec', '-i', 'box', 'node']);
+
+  // A machine that is not there is not a spawn descriptor.
+  expect(await options.computers?.how('nope', { command: 'node' })).toBeUndefined();
+});
+
 it('reports a runtime it does not have at load, rather than failing later', async () => {
   const { loaded, problems } = await load({ runtime: 'kvm' });
   expect(loaded).toEqual([]);

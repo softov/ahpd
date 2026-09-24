@@ -38,6 +38,7 @@ against its contract before it is recorded.
 | --- | --- | --- |
 | `registerAgent(agent)` | append | A backend a client names in `createSession` |
 | `registerTool(tool)` | append | A server tool offered to every session's model |
+| `registerSessionConfig(key, schema)` | register, open key | One setting a client draws on every session, merged into the backend's own schema |
 | `registerResources(store)` | set | `list`, `read`, `resolve`, `complete`, and the optional write half |
 | `registerResourceProvider(scheme, provider)` | register, open key | One host-owned URI scheme, routed beside the `file:` store |
 | `registerTerminals(store)` | set | `create` |
@@ -48,8 +49,9 @@ against its contract before it is recorded.
 | `registerAutomations(store)` | set | the automation store |
 | `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles |
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
+| `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 
-The nine ports are **singletons**. A plugin that supplies one the daemon already
+The ports are **singletons**. A plugin that supplies one the daemon already
 has must say so:
 
 ```ts
@@ -57,7 +59,7 @@ host.registerResources(myStore, 'replace');
 ```
 
 Without `'replace'` the value does not move and the conflict is reported. The
-nine names are the closed set: `agents` and `tools` are appended and cannot be
+port names are the closed set: `agents` and `tools` are appended and cannot be
 reached as ports, so no key has two spellings.
 
 A plugin that registers the same port twice, or two agents with one `provider`,
@@ -67,6 +69,30 @@ fails its own `apply` rather than the daemon.
 name the plugin invents, so two plugins can serve two schemes and neither has to
 take `resources` over. `file` and anything on `ahp-` are the host's own and are
 refused, and so is a scheme another plugin already registered.
+
+A provider may also say what its scheme is for, with an optional `describe()`.
+That is what a client draws a screen from before it has a URI to ask, and the
+host publishes it in `_meta['ahpd.resourceProviders']` on `initialize` and on
+the root state:
+
+```ts
+host.registerResourceProvider('notes', {
+  read: async (uri) => ({ data: await noteAt(uri), encoding: 'utf-8' }),
+  list: async () => await notes(),
+  write: async (uri, content) => { await saveNote(uri, content); },
+  describe: () => ({
+    title: 'Notes',
+    description: 'What this session wrote down.',
+    manifest: { type: 'object', properties: { title: { type: 'string', title: 'Title' } } },
+  }),
+});
+```
+
+The host adds `root` and `operations` itself, from what the provider implements,
+so a provider never claims an operation it does not serve and the map is absent
+when no provider is registered. The protocol says a client must ignore a key it
+does not know, and this one is `ahpd.`-prefixed, so no client is worse off for
+not reading it - decision `a-resource-scheme-is-advertised-in-meta`.
 
 ```ts
 host.registerResourceProvider('computer', {
@@ -78,6 +104,12 @@ host.registerResourceProvider('computer', {
 
 A `HostTool` may carry `effects`: `reads`, `writes`, `network` and
 `destructive`, each optional and nothing set when the tool does not say.
+It may also carry `advancedPermission: true`, which is a different claim: the
+tool does more than a session's ordinary work, so the host withholds it from
+every session until `advancedTools` says otherwise. Nothing the reference host
+ships declares it, so a plugin that marks a tool is asking the operator for
+something rather than taking it - decision
+`a-tool-says-when-it-needs-advanced-permission`.
 
 ```ts
 host.registerTool({

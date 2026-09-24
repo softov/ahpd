@@ -46,6 +46,7 @@ anything has been let go of.
 | `--resource <url>` | The https identifier this host advertises for its own sign-in. Default: derived from `--host` and `--port` |
 | `--issuer <github\|url>` | An authorization server whose tokens are also accepted. See [USERS.md](USERS.md) |
 | `--trust-token` | A person's connection token authorizes them as well as admits them. Off by default |
+| `--advanced-tools` | Offer the tools that declare they need advanced permission, such as the computer's three. Off by default |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits and a session's settings go |
@@ -189,11 +190,17 @@ the host then also accepts tokens that issuer mints, advertising it in
 still come from the user file, matched by the `subject` the issuer answers with.
 A record may name its own issuer instead, and the record then advertises every
 provider the file uses, so one host can take GitHub for one person and a company
-identity provider for another. `node scripts/dev-issuer.mjs 9310` is a throwaway
-issuer for trying it.
+identity provider for another. A record may also name the claim its roles come
+from, with the grants still written in the file. `node scripts/dev-issuer.mjs 9310`
+is a throwaway issuer for trying it.
 `trustToken` (or `--trust-token`) trusts every person's connection token as
 their authorization; off by default, so the door admits and `authenticate`
 authorizes, and a record's own `trustToken` overrides it.
+`advancedTools` (or `--advanced-tools`) offers the tools that declare
+`advancedPermission` to every session's model. Off by default, because making a
+container on this host is the operator's decision and not a plugin's: the
+computer plugin contributes its lifecycle either way, and the reference host's
+own tools declare nothing so this key does not touch them.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a

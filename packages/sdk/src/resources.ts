@@ -50,14 +50,33 @@ export const uriOf = (path: string): string => pathToFileURL(path).href;
  * as what it is, because `virtual://ahpc-6ec6cf49/hello.txt is not an
  * absolute path` sends whoever reads it looking at their path.
  */
-const why = (uri: string): string => {
+const why = (uri: string): string => notServedWords(uri) ?? `${uri} is not an absolute path`;
+
+/**
+ * The sentence a URI another scheme was meant to serve gets, or nothing for a
+ * file URI.
+ *
+ * Exported because the routing step above this store answers the same case and
+ * the two must say the same thing - decision
+ * `a-scheme-nobody-serves-is-not-a-permission-error`.
+ */
+export const notServedWords = (uri: string): string | undefined => {
   const scheme = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];
-  if (scheme !== undefined && scheme !== 'file') {
-    return `${uri} is not this host's to read: nothing here serves ${scheme}:,`
-      + ' and no connected client publishes it';
-  }
-  return `${uri} is not an absolute path`;
+  return scheme !== undefined && scheme !== 'file'
+    ? `${uri} is not this host's to read: nothing here serves ${scheme}:,`
+      + ' and no connected client publishes it'
+    : undefined;
 };
+
+/**
+ * The refusal for a URI no provider and no connected client serves.
+ *
+ * `-32601` rather than a permission code, because the host having nothing that
+ * serves a scheme is not a client being refused - the same answer a provider
+ * gets when it does not implement a method.
+ */
+export const notServed = (uri: string): RpcError =>
+  new RpcError(-32601, notServedWords(uri) ?? `${uri} is not served here`);
 
 /**
  * The path a URI names, as the filesystem knows it.

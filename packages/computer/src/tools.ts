@@ -56,6 +56,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       // It writes to the machine and reaches the network to make it, and it is
       // not destructive: nothing that existed stopped existing.
       effects: { writes: true, network: true },
+      advancedPermission: true,
       instruction: 'Ask for one when a task needs a machine of its own - something to install into, break, or run work in that should not touch this host. Release it when the work is done.',
       run: async (input) => {
         const asked = object(input);
@@ -90,6 +91,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         },
       },
       effects: { destructive: true },
+      advancedPermission: true,
       run: async (input) => {
         const id = said(object(input).id);
         if (id === undefined) return 'Which computer? Give the name from its computer:// URI.';
@@ -114,6 +116,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         },
       },
       effects: { writes: true, network: true, destructive: true },
+      advancedPermission: true,
       run: async (input) => {
         const asked = object(input);
         const id = said(asked.id);

@@ -4534,6 +4534,32 @@ describe('tools the host contributes', () => {
     expect(empty.serverTools).toBeUndefined();
   });
 
+  it('withholds a tool that declares it needs advanced permission', async () => {
+    const tool = (name: string, advancedPermission?: boolean) => ({
+      definition: { name, description: name, inputSchema: { type: 'object' as const, properties: {} } },
+      ...(advancedPermission === undefined ? {} : { advancedPermission }),
+      run: () => `${name} ran`,
+    });
+    const names = async (advancedTools: boolean) => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+        tools: [tool('launch_rocket', true), tool('peek')],
+        advancedTools,
+      });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.8.0']));
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/marked', provider: 'claude' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/marked' } }) as {
+        snapshot: { state: { serverTools?: { name: string }[] } };
+      }).snapshot.state;
+      return state.serverTools?.map((one) => one.name);
+    };
+
+    // Absent, not refused: a model is never offered a tool the host did not permit.
+    expect(await names(false)).toEqual(['peek']);
+    expect(await names(true)).toEqual(['launch_rocket', 'peek']);
+  });
+
   it('hands them to the backend as a server it can call', async () => {
     const { uri } = await withTools();
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {

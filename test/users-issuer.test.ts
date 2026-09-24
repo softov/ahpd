@@ -46,7 +46,24 @@ const GITHUB = 'https://api.github.com/user';
 const pretending = (id: string, answers: Record<string, string>, seen: string[] = []): Issuer => ({
   id,
   scopes: ['openid'],
-  subject: async (token) => { seen.push(id); return answers[token]; },
+  who: async (token) => {
+    seen.push(id);
+    const subject = answers[token];
+    return subject === undefined ? undefined : { subject, claims: {} };
+  },
+});
+
+/** An issuer that answers with claims as well, which is what `rolesFrom` reads. */
+const claiming = (
+  id: string,
+  answers: Record<string, { subject: string; claims?: Record<string, unknown> }>,
+): Issuer => ({
+  id,
+  scopes: ['openid'],
+  who: async (token) => {
+    const held = answers[token];
+    return held === undefined ? undefined : { subject: held.subject, claims: held.claims ?? {} };
+  },
 });
 
 /** A user file written by hand, which is how a record gets an issuer. */
@@ -56,7 +73,7 @@ it('asks GitHub who a token belongs to, and answers with the login', async () =>
   const { fetch, seen } = answering({ [GITHUB]: { login: 'ana' } });
   const issuer = githubIssuer({ fetch });
 
-  expect(await issuer.subject('gho_secret')).toBe('ana');
+  expect((await issuer.who('gho_secret'))?.subject).toBe('ana');
   expect(issuer.id).toBe('https://github.com/login/oauth');
   expect(issuer.scopes).toEqual(['read:user']);
   expect(seen).toEqual([GITHUB]);
@@ -65,12 +82,12 @@ it('asks GitHub who a token belongs to, and answers with the login', async () =>
 it('answers nobody for a token the issuer refuses', async () => {
   // A 401 from GitHub is a token that is not anybody's, not an error here.
   const { fetch } = answering({});
-  expect(await githubIssuer({ fetch }).subject('nope')).toBeUndefined();
+  expect(await githubIssuer({ fetch }).who('nope')).toBeUndefined();
 });
 
 it('answers nobody when the issuer cannot be reached, and does not throw', async () => {
   const fetch: Fetcher = async () => { throw new Error('offline'); };
-  expect(await githubIssuer({ fetch }).subject('gho_secret')).toBeUndefined();
+  expect(await githubIssuer({ fetch }).who('gho_secret')).toBeUndefined();
 });
 
 it('matches an issuer subject against a record and keeps its roles', async () => {
@@ -207,8 +224,8 @@ it('discovers an OpenID Connect endpoint once, and takes the subject from it', a
   });
   const issuer = oidcIssuer({ issuer: 'https://idp.test', fetch });
 
-  expect(await issuer.subject('at-1')).toBe('sam');
-  expect(await issuer.subject('at-2')).toBe('sam');
+  expect((await issuer.who('at-1'))?.subject).toBe('sam');
+  expect((await issuer.who('at-2'))?.subject).toBe('sam');
   expect(issuer.id).toBe('https://idp.test');
   expect(issuer.scopes).toEqual(['openid']);
   // The metadata answered once and was kept; the userinfo endpoint was asked
@@ -220,7 +237,7 @@ it('refuses a userinfo endpoint that is neither https nor loopback', async () =>
   // The document is remote, and a person's token must not go out in clear.
   const discovery = 'https://idp.test/.well-known/openid-configuration';
   const { fetch, seen } = answering({ [discovery]: { userinfo_endpoint: 'http://idp.test/userinfo' } });
-  expect(await oidcIssuer({ issuer: 'https://idp.test', fetch }).subject('at-1')).toBeUndefined();
+  expect(await oidcIssuer({ issuer: 'https://idp.test', fetch }).who('at-1')).toBeUndefined();
   expect(seen).toEqual([discovery]);
 });
 
@@ -230,7 +247,7 @@ it('accepts a plain-http endpoint on loopback, where nothing leaves the machine'
   const { fetch, seen } = answering({ [discovery]: { userinfo_endpoint: userinfo }, [userinfo]: { sub: 'ana' } });
   const issuer = oidcIssuer({ issuer: 'http://127.0.0.1:9310', fetch });
 
-  expect(await issuer.subject('ana')).toBe('ana');
+  expect((await issuer.who('ana'))?.subject).toBe('ana');
   expect(seen).toEqual([discovery, userinfo]);
 });
 
@@ -278,4 +295,92 @@ it('builds what a name means, the one way a configuration and a record both use'
   expect(issuerFrom('github')?.id).toBe('https://github.com/login/oauth');
   expect(issuerFrom('https://idp.test')?.id).toBe('https://idp.test');
   expect(issuerFrom('nope')).toBeUndefined();
+});
+
+it('answers the whole claim set, so a record can read roles out of it', async () => {
+  const { fetch } = answering({ [GITHUB]: { login: 'ana', company: 'acme' } });
+  const held = await githubIssuer({ fetch }).who('gho_secret');
+  expect(held?.subject).toBe('ana');
+  expect(held?.claims).toEqual({ login: 'ana', company: 'acme' });
+});
+
+it('sets a record\'s issuer from add, and refuses one nothing can resolve', async () => {
+  const users = fileUsers({
+    path,
+    issuer: 'https://host.test',
+    issuerFor: (name) => pretending(name, {}),
+  });
+  await users.add('ana', ['member'], { issuer: 'https://other.test' });
+  expect((await users.list())[0]).toMatchObject({ id: 'ana', issuer: 'https://other.test' });
+
+  // Adding a role without naming an issuer leaves the provider alone.
+  await users.add('ana', ['admin']);
+  expect((await users.list())[0]).toMatchObject({ id: 'ana', roles: ['admin'], issuer: 'https://other.test' });
+
+  const bad = fileUsers({ path });
+  await expect(bad.add('sam', ['guest'], { issuer: 'nope' }))
+    .rejects.toThrow('no issuer called nope; this host takes github or an issuer URL it may reach');
+});
+
+it('adds the roles an issuer\'s claim names to the ones on the record', async () => {
+  wrote({ roles: { operators: ['*:*'] }, users: [{ id: 'ana', roles: ['guest'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' }] });
+  const users = fileUsers({
+    path,
+    issuerFor: () => claiming('https://idp.test', {
+      'at-1': { subject: 'ana', claims: { groups: ['operators'] } },
+    }),
+  });
+
+  const held = await users.verify('at-1');
+  expect(held?.id).toBe('ana');
+  expect(held?.roles).toEqual(['guest', 'operators']);
+  // Both halves: the record's own `guest` and the claim's `operators`.
+  expect(held?.can('automation:read')).toBe(true);
+  expect(held?.can('file:write')).toBe(true);
+});
+
+it('reads a claim that is one string, reports a value that names no role, and forgives an absent claim', async () => {
+  const said: string[] = [];
+  wrote({ users: [
+    { id: 'ana', roles: ['guest'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' },
+    { id: 'sam', roles: ['guest'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' },
+    { id: 'eve', roles: ['guest'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' },
+  ] });
+  const users = fileUsers({
+    path,
+    issuerFor: () => claiming('https://idp.test', {
+      'one': { subject: 'ana', claims: { groups: 'member' } },
+      'two': { subject: 'sam', claims: { groups: ['nope', 'admin'] } },
+      'three': { subject: 'eve', claims: {} },
+    }),
+    onProblem: (line) => said.push(line),
+  });
+
+  expect((await users.verify('one'))?.roles).toEqual(['guest', 'member']);
+  // The one that names nothing is dropped, and the one that does is kept.
+  expect((await users.verify('two'))?.roles).toEqual(['guest', 'admin']);
+  expect(said).toEqual(['user sam has groups nope, which names no role this host defines']);
+  // An issuer that omits the claim is answering, not refusing.
+  expect((await users.verify('three'))?.roles).toEqual(['guest']);
+});
+
+it('keeps the file\'s roles live and the claim\'s from sign-in', async () => {
+  wrote({ roles: { operators: ['file:read'] }, users: [{ id: 'ana', roles: ['guest'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' }] });
+  const users = fileUsers({
+    path,
+    issuerFor: () => claiming('https://idp.test', { 'at-1': { subject: 'ana', claims: { groups: ['operators'] } } }),
+  });
+
+  const held = await users.verify('at-1');
+  expect(held?.can('file:read')).toBe(true);
+  expect(held?.can('file:write')).toBe(false);
+  // The file moves: the record's own role is resolved again, and the claim's
+  // grants are the ones sign-in stamped.
+  wrote({
+    roles: { operators: ['file:write'], watcher: ['terminal:read'] },
+    users: [{ id: 'ana', roles: ['watcher'], token: '', issuer: 'https://idp.test', rolesFrom: 'groups' }],
+  });
+  expect(held?.can('terminal:read')).toBe(true);
+  expect(held?.can('file:read')).toBe(true);
+  expect(held?.can('file:write')).toBe(false);
 });

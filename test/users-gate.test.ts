@@ -209,6 +209,28 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
   expect(await call(named, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' }))
     .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
   expect(await call(named, 'resourceRead', { channel: ROOT, uri: uriOf(file) })).toMatchObject({ code: -32009 });
+
+  // The write half is scoped the same way: making a machine is `computer:write`
+  // and a person who may only save files cannot make one.
+  const writer: ResourceProvider = {
+    read: async () => ({ data: 'machine', encoding: 'utf-8' }),
+    write: async () => {},
+  };
+  const files = host({ users: directory({ w: ['file:read', 'file:write'] }), resourceProviders: { computer: writer } }).accept(peer());
+  await hello(files);
+  await signIn(files, 'w');
+  const refusedWrite = await call(files, 'resourceWrite', {
+    channel: ROOT, uri: 'computer://box', data: '{}', encoding: 'utf-8',
+  });
+  expect(refusedWrite).toMatchObject({ code: -32009 });
+  expect((refusedWrite as { message: string }).message).toContain('computer:write');
+
+  const allowed = host({ users: directory({ x: ['computer:write'] }), resourceProviders: { computer: writer } }).accept(peer());
+  await hello(allowed);
+  await signIn(allowed, 'x');
+  expect(await call(allowed, 'resourceWrite', {
+    channel: ROOT, uri: 'computer://box', data: '{}', encoding: 'utf-8',
+  })).toMatchObject({ result: {} });
 });
 
 it('lets a socket on the deployment token do everything, and nothing demotes it', async () => {
