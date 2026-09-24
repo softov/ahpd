@@ -1,0 +1,71 @@
+{
+  "name": "@ahpd/agent-pi",
+  "version": "0.6.3",
+  "type": "module",
+  "description": "A pi backend for ahpd: the pi coding agent, embedded in process and served over the Agent Host Protocol",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "plugin",
+    "pi",
+    "pi-coding-agent",
+    "coding-agent"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/agent-pi"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p ."
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.87.1",
+    "@earendil-works/pi-coding-agent": "^0.87.1"
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": "^0.6"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "pi",
+    "options": {
+      "provider": { "required": false },
+      "displayName": { "required": false },
+      "model": { "required": false },
+      "projectTrust": { "required": false }
+    }
+  }
+}

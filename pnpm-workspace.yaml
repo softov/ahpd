@@ -5,8 +5,14 @@ packages:
 # for unless they are named here. `node-pty` is optional - the terminals port
 # falls back to pipes without it - and esbuild is vitest's bundler.
 allowBuilds:
+  # Both arrive with pi and neither is needed for it to load: `@google/genai`'s
+  # preinstall is a literal no-op, and protobufjs's postinstall is codegen its
+  # runtime does without. Naming them false is the decision, not a deferral -
+  # pnpm asks about a script it will not run silently.
+  '@google/genai': false
   esbuild: true
   node-pty: true
+  protobufjs: false
 
 minimumReleaseAgeExclude:
   - '@cofold/agents@0.1.0'
