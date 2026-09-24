@@ -33,7 +33,7 @@ const contributed: Agent = {
   displayName: 'Contributed backend',
 };
 
-const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, ports: {}, providers: {}, events: {} };
+const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {} };
 
 it('serves a backend a plugin contributed, beside the daemon\'s own', async () => {
   const { options, problems } = foldHostOptions(base(), [contribution]);
@@ -55,12 +55,45 @@ it('serves a backend a plugin contributed, beside the daemon\'s own', async () =
   expect(listed).toMatchObject({ items: [] });
 });
 
+/*
+ * A key with an answerer says so, and a key without one does not.
+ *
+ * `enumDynamic` is the protocol's word for "ask me", and the two halves have
+ * to agree: a schema claiming it with nobody registered draws a picker that is
+ * answered with nothing, and an answerer nobody is told about is never asked.
+ * The fold is where the pair is known, so the fold is what sets it.
+ */
+it('marks a contributed key dynamic only where something answers for it', () => {
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: {
+      computer: { type: 'string', title: 'Computer' },
+      mood: { type: 'string', title: 'Mood' },
+    },
+    sessionCompletions: {
+      computer: () => [{ value: 'computer://box', label: 'box' }],
+    },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+
+  expect(options.sessionConfig?.computer).toMatchObject({ enumDynamic: true });
+  // Untouched: a key nobody answers for is a fact somebody types, which is
+  // what a property with no `enum` already means.
+  expect(options.sessionConfig?.mood).toEqual({ type: 'string', title: 'Mood' });
+  expect(Object.keys(options.sessionConfigCompletions ?? {})).toEqual(['computer']);
+});
+
 it('publishes a session setting a plugin contributed, with its value on the session', async () => {
   const { options, problems } = foldHostOptions(base(), [{
     by: 'fixture',
     agents: [],
     tools: [],
     sessionConfig: { computer: { type: 'string', title: 'Computer', default: 'computer://box' } },
+    sessionCompletions: {},
     ports: {},
     providers: {},
     events: {},
@@ -93,6 +126,77 @@ it('publishes a session setting a plugin contributed, with its value on the sess
   expect(named?.values?.voice).toBe('shouty');
 });
 
+/*
+ * And the command a client actually sends reaches the answerer.
+ *
+ * The schema saying `enumDynamic` is half of it: a client that is told to ask
+ * and is then answered by the worktree branch path, or by an empty list, is a
+ * client that draws an empty picker. This is the other half, driven the way a
+ * client drives it.
+ */
+it('routes a completions request to whoever registered the key', async () => {
+  let asked: Record<string, unknown> | undefined;
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: { computer: { type: 'string', title: 'Computer' } },
+    sessionCompletions: {
+      computer: (ask) => {
+        asked = { ...ask };
+        return [{ value: 'computer://box', label: 'box', description: 'debian · Up' }];
+      },
+    },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+  const host = createHost(options);
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+
+  const said = await client.handle({
+    method: 'sessionConfigCompletions',
+    params: { channel: 'ahp-root://', property: 'computer', query: 'bo', workingDirectory: 'file:///w' },
+  }) as { items: { value: string }[] };
+  expect(said.items).toEqual([{ value: 'computer://box', label: 'box', description: 'debian · Up' }]);
+  // What was asked reaches the answerer, so a picker that depends on the
+  // folder or on another answer can be written.
+  expect(asked).toMatchObject({ property: 'computer', query: 'bo', workingDirectory: 'file:///w' });
+
+  // A key nobody registered is the empty list it always was, rather than an
+  // error: a client may ask about anything in the schema.
+  expect(await client.handle({
+    method: 'sessionConfigCompletions',
+    params: { channel: 'ahp-root://', property: 'nothing-here', query: '' },
+  })).toEqual({ items: [] });
+});
+
+/*
+ * An answerer that throws is an empty picker, not a failed form.
+ *
+ * The person is filling in a session's settings, and a machine listing that
+ * cannot be read is not a reason to refuse them the rest of it.
+ */
+it('answers with nothing when the answerer fails', async () => {
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: { computer: { type: 'string' } },
+    sessionCompletions: { computer: () => { throw new Error('docker is not running'); } },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+  const client = createHost(options).accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  expect(await client.handle({
+    method: 'sessionConfigCompletions',
+    params: { channel: 'ahp-root://', property: 'computer', query: '' },
+  })).toEqual({ items: [] });
+});
+
 it('advertises every scheme it serves on the handshake and on the root state', async () => {
   const notes = {
     read: async () => ({ data: 'x', encoding: 'utf-8' as const }),
@@ -106,6 +210,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
     agents: [],
     tools: [],
     sessionConfig: {},
+    sessionCompletions: {},
     ports: {},
     providers: { notes },
     events: {},
@@ -156,7 +261,7 @@ it('advertises nothing when it serves no scheme beside file:', async () => {
 
 it('marks a provider clash so a caller can refuse over one without reading prose', () => {
   const twice = foldHostOptions(base(), [
-    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], sessionConfig: {}, ports: {}, providers: {}, events: {} },
+    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {} },
   ]);
   expect(twice.problems).toHaveLength(1);
   expect(twice.problems[0]?.startsWith(AGENT_CLASH)).toBe(true);

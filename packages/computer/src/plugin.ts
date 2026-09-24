@@ -282,11 +282,37 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (sessionDefault !== '' && !/^computer:\/\/[^/\s]+$/.test(sessionDefault)) {
       throw new Error(`plugin ${name}: sessionDefault is a computer://<id> URI, and ${sessionDefault} is not one`);
     }
+    /*
+     * And the machines themselves, as the answers to that key.
+     *
+     * Without this the key reached every client as a text box: a property with
+     * no `enum` is a fact somebody types, so a person had to know a machine's
+     * name and spell it. The plugin that named the key is the only thing that
+     * knows what is running, and answering here means every client gets the
+     * picker rather than the one that wrote code for `computer` by name.
+     *
+     * Empty is offered first and always, because it is the default and it is
+     * the way back: a session with no machine runs on this host.
+     */
     host.registerSessionConfig('computer', {
       type: 'string',
       title: 'Computer',
       description: 'The computer://<id> this session runs in. Empty runs it on this host.',
       ...(sessionDefault === '' ? {} : { default: sessionDefault }),
+    }, async (ask) => {
+      const running = await made.list();
+      const found = running
+        .map((one) => ({
+          value: `computer://${one.id}`,
+          label: one.id,
+          description: [one.image, one.status].filter((word) => word !== '').join(' · '),
+        }))
+        .filter((one) => one.value.toLowerCase().includes(ask.query.toLowerCase())
+          || one.label.toLowerCase().includes(ask.query.toLowerCase()));
+      return [
+        ...(ask.query === '' ? [{ value: '', label: 'This host', description: 'Run the session here, in no machine.' }] : []),
+        ...found,
+      ];
     });
   }
 };

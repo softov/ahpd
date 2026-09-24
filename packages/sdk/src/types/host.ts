@@ -16,6 +16,7 @@ import type { ContainerPort } from './containers.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
+import type { SessionConfigAnswerer } from './completions.js';
 
 /**
  * What a host can say about a directory beyond its path.
@@ -215,6 +216,19 @@ export interface HostOptions {
    * `a-plugin-may-contribute-a-session-key`.
    */
   sessionConfig?: Record<string, Record<string, unknown>>;
+  /**
+   * Who answers `sessionConfigCompletions` for a contributed key.
+   *
+   * A key with no answerer is a fact a client fills in by hand, which is how
+   * a property with no `enum` reads. A key with one is a question: the host
+   * marks its property `enumDynamic` on the way out and routes the command to
+   * whoever registered it, so a picker appears in every client rather than in
+   * the one that wrote code for that key by name.
+   *
+   * The fold fills this from `registerSessionConfig`'s third argument, and a
+   * host may set it directly for a control of its own.
+   */
+  sessionConfigCompletions?: Record<string, SessionConfigAnswerer>;
   /**
    * Whether the tools that declare they need advanced permission are offered.
    *

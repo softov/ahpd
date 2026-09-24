@@ -38,7 +38,7 @@ against its contract before it is recorded.
 | --- | --- | --- |
 | `registerAgent(agent)` | append | A backend a client names in `createSession` |
 | `registerTool(tool)` | append | A server tool offered to every session's model |
-| `registerSessionConfig(key, schema)` | register, open key | One setting a client draws on every session, merged into the backend's own schema |
+| `registerSessionConfig(key, schema, completions?)` | register, open key | One setting a client draws on every session, merged into the backend's own schema. With a third argument, the key becomes a picker every client can draw |
 | `registerResources(store)` | set | `list`, `read`, `resolve`, `complete`, and the optional write half |
 | `registerResourceProvider(scheme, provider)` | register, open key | One host-owned URI scheme, routed beside the `file:` store |
 | `registerTerminals(store)` | set | `create` |
@@ -51,6 +51,31 @@ against its contract before it is recorded.
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
+
+### A contributed setting can be a question
+
+A key registered with a schema alone is a fact somebody types. A property with no `enum` is exactly that to a client, so `computer` - the key the machine plugin contributes - reached VS Code and a terminal client as a text box, and a person had to know a machine's name and spell it. Only a client holding code for that key by name could do better, which is one client rather than every client.
+
+A third argument makes it a question:
+
+```ts
+host.registerSessionConfig('computer', {
+  type: 'string',
+  title: 'Computer',
+  description: 'The computer://<id> this session runs in. Empty runs it on this host.',
+}, async (ask) => {
+  const running = await runtime.list();
+  return running
+    .filter((one) => one.id.includes(ask.query))
+    .map((one) => ({ value: `computer://${one.id}`, label: one.id, description: one.image }));
+});
+```
+
+The answerer is handed what the client asked: the `query` typed so far, and the `provider`, `workingDirectory` and the other `config` answers where the client sent them, so a picker that depends on the folder or on another setting can be written. It answers `{ value, label, description? }` rows.
+
+The host marks the property `enumDynamic` on the way out, which is the protocol's word for "ask me", and routes `sessionConfigCompletions` for that key to the answerer. Registering the pair is what sets the flag, rather than the plugin writing it into the schema: a schema claiming it with nobody registered draws a picker that is answered with nothing, and an answerer the host was never told about is never asked. The two cannot be separated because only the registration knows both.
+
+An answerer that throws is an empty picker rather than a failed command. The person is filling in a session's settings, and a machine listing that cannot be read is not a reason to refuse them the rest of the form.
 
 The ports are **singletons**. A plugin that supplies one the daemon already
 has must say so:

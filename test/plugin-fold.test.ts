@@ -43,12 +43,14 @@ const contribution = (
     ports?: Partial<Record<PortKey, PortContribution>>;
     providers?: Record<string, unknown>;
     sessionConfig?: Record<string, Record<string, unknown>>;
+    sessionCompletions?: Contribution['sessionCompletions'];
   } = {},
 ): Contribution => ({
   by,
   agents: parts.agents ?? [],
   tools: parts.tools ?? [],
   sessionConfig: parts.sessionConfig ?? {},
+  sessionCompletions: parts.sessionCompletions ?? {},
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   events: {},

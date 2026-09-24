@@ -12,6 +12,7 @@
  */
 
 import type { Agent } from './types/agent.js';
+import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
@@ -195,6 +196,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
    * `a-plugin-may-contribute-a-session-key`.
    */
   const sessionConfig: Record<string, Record<string, unknown>> = { ...base.sessionConfig };
+  const sessionCompletions: Record<string, SessionConfigAnswerer> = { ...base.sessionConfigCompletions };
   const holders = new Map<string, string>();
   for (const key of Object.keys(sessionConfig)) holders.set(key, 'the host');
   const backendKeys = new Set<string>();
@@ -217,10 +219,23 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
         continue;
       }
       holders.set(key, contribution.by);
-      sessionConfig[key] = schema;
+      /*
+       * A key with an answerer says so in its own schema.
+       *
+       * `enumDynamic` is the protocol's word for "ask me", and it is set here
+       * rather than left to the plugin because the two have to agree: a schema
+       * claiming it with nobody registered draws a picker that is answered
+       * with nothing, and an answerer nobody is told about is never asked.
+       * Setting it where the pair is known makes the two impossible to
+       * separate.
+       */
+      const answerer = contribution.sessionCompletions[key];
+      sessionConfig[key] = answerer === undefined ? schema : { ...schema, enumDynamic: true };
+      if (answerer !== undefined) sessionCompletions[key] = answerer;
     }
   }
   if (Object.keys(sessionConfig).length > 0) options.sessionConfig = sessionConfig;
+  if (Object.keys(sessionCompletions).length > 0) options.sessionConfigCompletions = sessionCompletions;
 
   if (Object.keys(resourceProviders).length > 0) options.resourceProviders = resourceProviders;
 
@@ -258,6 +273,7 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
     agents: [],
     tools: [],
     sessionConfig: {},
+    sessionCompletions: {},
     ports: {},
     providers: {},
     events: events as unknown as HostHandlers,
@@ -293,17 +309,21 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
       tools.add(name);
       contribution.tools.push(tool);
     },
-    registerSessionConfig(key, schema) {
+    registerSessionConfig(key, schema, completions) {
       const named = typeof key === 'string' ? key.trim() : '';
       if (named === '') throw new Error(miss(by, 'registerSessionConfig', String(key), 'a non-empty key'));
       if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
         throw new Error(miss(by, 'registerSessionConfig', named, 'a JSON Schema property object'));
+      }
+      if (completions !== undefined && typeof completions !== 'function') {
+        throw new Error(miss(by, 'registerSessionConfig', named, 'a function to answer its picker, or nothing'));
       }
       if (sessionKeys.has(named)) {
         throw new Error(miss(by, 'registerSessionConfig', named, 'a key no other setting in this plugin uses'));
       }
       sessionKeys.add(named);
       contribution.sessionConfig[named] = schema as Record<string, unknown>;
+      if (completions !== undefined) contribution.sessionCompletions[named] = completions;
     },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
     registerResourceProvider(scheme, provider) {

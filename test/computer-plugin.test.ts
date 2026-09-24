@@ -421,6 +421,48 @@ it('makes a machine from a named profile, and refuses one it does not define', a
  * nothing - an allowlist entry that quietly allows nothing is worse than one
  * that fails to load.
  */
+/*
+ * The key a plugin contributed answers its own picker.
+ *
+ * A contributed key reaches every client through the session schema, and a
+ * property with no `enum` reads as a fact somebody types rather than a
+ * question with answers - so `computer` arrived at VS Code and at a terminal
+ * client as a text box, and only a client holding code for that key by name
+ * could draw a machine picker. The plugin knows what is running; nothing else
+ * does.
+ */
+it('answers the computer picker with the machines it has', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-picker-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  };
+  await provider.write('computer://box', { data: '{}', encoding: 'utf-8' });
+  await provider.write('computer://other', { data: '{}', encoding: 'utf-8' });
+
+  // The fold marks the property, because the pair has to agree: a schema that
+  // claimed `enumDynamic` with nobody registered would draw an empty picker.
+  expect(options.sessionConfig?.computer).toMatchObject({ type: 'string', enumDynamic: true });
+
+  const answerer = options.sessionConfigCompletions?.computer;
+  expect(answerer).toBeDefined();
+  const all = await (answerer as NonNullable<typeof answerer>)({ property: 'computer', query: '' });
+  // Empty first, because it is the default and the way back: a session with no
+  // machine runs on this host.
+  expect(all[0]).toMatchObject({ value: '', label: 'This host' });
+  expect(all.map((one) => one.value)).toEqual(['', 'computer://box', 'computer://other']);
+  expect(all[1]?.description).toContain('debian:bookworm-slim');
+
+  // What was typed narrows it, and drops the one that is not a machine.
+  const some = await (answerer as NonNullable<typeof answerer>)({ property: 'computer', query: 'oth' });
+  expect(some.map((one) => one.value)).toEqual(['computer://other']);
+});
+
 it('will not load with an image pattern it cannot read', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-pattern-'));
   const state = join(loose, 'docker.json');

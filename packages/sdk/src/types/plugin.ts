@@ -13,6 +13,7 @@
  */
 
 import type { Agent } from './agent.js';
+import type { SessionConfigAnswerer } from './completions.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
 import type { ResourceProvider } from './resources.js';
@@ -130,7 +131,11 @@ export interface PluginHost extends PluginContext {
    * The schema is one property of a JSON Schema object: `type`, `title`,
    * `description`, `default` and whatever a client draws from.
    */
-  registerSessionConfig(key: string, schema: Record<string, unknown>): void;
+  registerSessionConfig(
+    key: string,
+    schema: Record<string, unknown>,
+    completions?: SessionConfigAnswerer,
+  ): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
   /**
@@ -237,6 +242,8 @@ export interface Contribution {
    * name is the plugin's invention and the collision rule is the fold's.
    */
   sessionConfig: Record<string, Record<string, unknown>>;
+  /** Who answers the picker for a contributed key, by key. */
+  sessionCompletions: Record<string, SessionConfigAnswerer>;
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
   /**

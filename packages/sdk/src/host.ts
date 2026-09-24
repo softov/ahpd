@@ -6590,6 +6590,44 @@ export function createHost(options: HostOptions): Host {
         sessionConfigCompletions: async (params) => {
           const property = String(params.property ?? '');
           const asked = typeof params.workingDirectory === 'string' ? params.workingDirectory : undefined;
+          /*
+           * A contributed key answers for itself, before the host's own.
+           *
+           * Without this a key a plugin named reached every client as a text
+           * box: a property with no `enum` reads as a fact somebody types, so
+           * only a client holding code for that key by name could draw a
+           * picker for it. The answerer is registered beside the key, and the
+           * fold is what marks the property `enumDynamic`, so a client asking
+           * is a client that was told to ask.
+           */
+          const answerer = options.sessionConfigCompletions?.[property];
+          if (answerer !== undefined) {
+            try {
+              /*
+               * A picker that fails is an empty picker.
+               *
+               * The person is filling in a session's settings, and a machine
+               * listing that cannot be read is not a reason to refuse them the
+               * rest of the form. The `try` covers the call as well as the
+               * promise, because an answerer that throws before it returns one
+               * would otherwise escape a `.catch` on the result.
+               */
+              return {
+                items: await answerer({
+                  property,
+                  query: typeof params.query === 'string' ? params.query : '',
+                  ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
+                  ...(asked === undefined ? {} : { workingDirectory: asked }),
+                  ...(typeof params.config === 'object' && params.config !== null
+                    ? { config: params.config as Record<string, unknown> }
+                    : {}),
+                }),
+              };
+            }
+            catch {
+              return { items: [] };
+            }
+          }
           const port = options.worktrees;
           if (property !== 'branch' || !port) return { items: [] };
           const where = (asked ?? `file://${dir}`).replace(/^file:\/\//, '');

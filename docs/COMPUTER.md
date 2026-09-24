@@ -297,6 +297,12 @@ zeroes, because a dial reading zero says idle, which is not the same as
 stopped. Each read is one `docker stats --no-stream`: a client that wants a
 moving dial asks again, and there is no feed to leave open.
 
+## Picking one when a session is made
+
+The plugin contributes a `computer` session setting, and it answers the picker for it: a client filling in a new session's settings asks `sessionConfigCompletions` for the key and is given the machines this host is running, each with its image and status, with "This host" offered first because that is the default and the way back.
+
+That is why any client can offer the picker rather than only one that knows the key by name. The property is marked `enumDynamic`, which is the protocol's word for "ask me", and the plugin that named the key is the only thing that knows what is running. The seam is `registerSessionConfig`'s third argument - see [PLUGINS.md](PLUGINS.md).
+
 ## Turning one off and on
 
 `computer://<id>/state` is the one leaf that is written as well as read. Reading it answers `running` or `stopped`; writing `running`, `stopped` or `restarted` puts it there.
