@@ -1,7 +1,7 @@
 # Running the daemon
 
-`@ahpd/server` is `@ahpd/sdk` with the Claude backend and every port wired in,
-plus argv, a configuration file and a pid file. [packages/server/src/main.ts](../packages/server/src/main.ts)
+`@ahpd/server` is `@ahpd/sdk` with every port wired in, plus argv, a
+configuration file and a pid file. [packages/server/src/main.ts](../packages/server/src/main.ts)
 is the whole of it and is short enough to read.
 
 It installs the `ahpd` command:
@@ -12,6 +12,45 @@ npm i -g @ahpd/server
 
 From a checkout instead, `ahpd` below means `node packages/server/dist/main.js`
 after `pnpm install && pnpm build`.
+
+## It has no backend of its own
+
+The daemon bundles no agent. Every backend it serves is a plugin's,
+`@ahpd/agent-claude` included, so a daemon started with no plugin configured
+has nothing to run and says so:
+
+```
+No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in the configuration - "@ahpd/agent-claude" is Claude Code.
+```
+
+Installing one is `npm i` in the configuration directory, because that is where
+a bare name is resolved from:
+
+```bash
+npm i -g @ahpd/server
+cd ~/.config/ahpd && npm i @ahpd/agent-claude
+```
+
+`ahpd config` prints the directory if it is somewhere else, which it is when
+`XDG_CONFIG_HOME` says so. A path in `plugins` is resolved instead against the
+working directory and then that same place, so a checkout can be named without
+installing anything.
+
+Then name it, either for this run or for every run:
+
+```bash
+ahpd --plugin @ahpd/agent-claude
+```
+
+```json
+{
+  "plugins": ["@ahpd/agent-claude"]
+}
+```
+
+`@ahpd/agent-claude` takes no options in the ordinary install: it catalogues
+whatever directories the daemon was started on. What it does take is in
+[PLUGINS.md](PLUGINS.md), beside the other backends.
 
 ## Commands
 

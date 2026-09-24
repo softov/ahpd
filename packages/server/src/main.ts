@@ -7,7 +7,6 @@ import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
-import { claude } from '@ahpd/agent-claude';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
 import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, overStdio, raise, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
 
@@ -725,9 +724,15 @@ const users = options.users === undefined
  */
 const base: HostOptions = {
   path: options.paths[0] as string,
-  // The daemon serves Claude Code. The host serves whatever it is given -
-  // see `examples/` for what a second one looks like.
-  agents: [claude({ paths: options.paths })],
+  /*
+   * No backend of its own.
+   *
+   * Every agent this daemon serves is a plugin's, `@ahpd/agent-claude`
+   * included - decision `the-daemon-bundles-no-agent`. A configuration that
+   * names none is refused below rather than built into a host that could not
+   * answer a turn.
+   */
+  agents: [],
   /*
    * What this daemon can do that the protocol cannot.
    *
@@ -866,6 +871,18 @@ const { options: folded, problems, loaded } = await loadPlugins(options.plugins,
 });
 for (const problem of problems) stamp(problem);
 if (problems.some((problem) => problem.startsWith(AGENT_CLASH))) process.exit(1);
+
+/*
+ * A daemon with no backend, said in the words of the thing that fixes it.
+ *
+ * `createHost` refuses this too, but its sentence is written for an embedder
+ * holding a `HostOptions`, and the person reading this log wrote a
+ * configuration file instead.
+ */
+if (folded.agents.length === 0) {
+  stamp('No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in the configuration - "@ahpd/agent-claude" is Claude Code.');
+  process.exit(1);
+}
 
 const host = createHost(folded);
 

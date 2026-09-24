@@ -23,7 +23,12 @@ import type { Peer } from '../packages/sdk/src/types/rpc.js';
  */
 
 const REPO = join(import.meta.dirname, '..');
-const CONFIG = '{"paths":[],"withoutConnectionToken":true,"sessions":"memory","automations":"memory"}';
+// The nested daemon has no backend of its own - decision
+// `the-daemon-bundles-no-agent` - so the configuration names one, and it is
+// the example's, arriving the way any plugin's backend does. A daemon
+// configured with none refuses to start, which is what this relay would then
+// be relaying to.
+const CONFIG = '{"paths":[],"withoutConnectionToken":true,"sessions":"memory","automations":"memory","plugins":["./test/fixtures/plugin-echo"]}';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-relay-')); });

@@ -6,15 +6,37 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
+The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and the backend [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) loads as a plugin. The daemon bundles no agent, so this package is how `ahpd` runs Claude Code.
 
-## Install
+## In the daemon
+
+Install it where the daemon resolves a plugin name from, and name it:
+
+```bash
+cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd --plugin @ahpd/agent-claude
+```
+
+```json
+{
+  "plugins": ["@ahpd/agent-claude"]
+}
+```
+
+It takes no options in the ordinary install: it catalogues whatever directories the daemon was started on. A configuration may narrow or rename that:
+
+| option | |
+| --- | --- |
+| `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
+| `provider` | the id clients name. `claude` unless something else already is |
+| `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
+| `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
+
+## In your own host
 
 ```bash
 pnpm add @ahpd/agent-claude @ahpd/sdk @microsoft/agent-host-protocol
 ```
-
-## Use
 
 ```ts
 import { createHost, listen } from '@ahpd/sdk';
@@ -25,7 +47,7 @@ const host = createHost({ path, agents: [claude({ paths: [path] })] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-`createHost` takes a list of agents, so this can run alongside other backends.
+`createHost` takes a list of agents, so this can run alongside other backends. The plugin entry is a wrapper over the same `claude()`, so neither path is the special one.
 
 ## What it does
 
@@ -38,6 +60,7 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 | `catalogue(dir)` | Claude's sessions in a directory, as rows a host can list |
 | `turnsOf(sessionId, dir)` | a past session read from its transcript, as turns |
 | `probe(options)` | runs a CLI at startup to read the available models and commands |
+| `apply(host, options)` | the plugin entry, with `name` and `title` beside it |
 
 ## Supported
 

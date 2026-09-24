@@ -43,7 +43,6 @@
     "prepack": "tsc -p ."
   },
   "dependencies": {
-    "@ahpd/agent-claude": "workspace:^",
     "@ahpd/sdk": "workspace:^",
     "@microsoft/agent-host-protocol": "^0.9.0"
   },

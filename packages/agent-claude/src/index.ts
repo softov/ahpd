@@ -9,6 +9,11 @@
  * A host that wants a different harness registers a different `Agent` and
  * never loads this. A host that wants both registers both - `createHost` takes
  * a list, and cannot tell one from another.
+ *
+ * The same package is what the daemon loads as a plugin, because the daemon
+ * bundles no backend of its own - decision `the-daemon-bundles-no-agent`. The
+ * entry in `plugin.ts` is a wrapper over `claude()` and nothing more, so the
+ * two ways in reach one object.
  */
 
 export { catalogue } from './catalog.js';
@@ -16,6 +21,7 @@ export { claude } from './claude.js';
 export type { ClaudeOptions } from './claude.js';
 export { createSession, EFFORTS, EFFORT_LABELS } from './session.js';
 export type { Published } from './session.js';
+export { apply, name, title } from './plugin.js';
 export { probe } from './probe.js';
 export { turnsOf } from './transcript.js';
 export { protectedResource, urlOf } from './mcp.js';

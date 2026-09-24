@@ -191,9 +191,10 @@ Two things have to be true of the image, and neither is something this host can
 arrange for you.
 
 **The CLI has to be in it.** The in-machine command is `claude` on the image's
-PATH; `computerExecutable` on `claude()` names it somewhere else. This is never
-this host's own path - the executable that runs here is the SDK's to find, and
-the one in the machine has to exist in the image.
+PATH; `computerExecutable` names it somewhere else, as an option on `claude()`
+or under the `@ahpd/agent-claude` plugin entry. This is never this host's own
+path - the executable that runs here is the SDK's to find, and the one in the
+machine has to exist in the image.
 
 **Its configuration has to reach it.** The CLI reads `CLAUDE_CONFIG_DIR`, which
 this backend sets to `/ahpd/claude` unless `computerConfigDir` says otherwise or

@@ -8,7 +8,7 @@ The root manifest pins `pnpm@11.21.0`, so `corepack enable` is the shortest way 
 | --- | --- |
 | [`@ahpd/sdk`](packages/sdk) | The Agent Host Protocol, and the parts to build a host: `createHost`, `listen`, the backend seam, the ports. |
 | [`@ahpd/agent-claude`](packages/agent-claude) | One backend: Claude Code through the Claude Agent SDK. |
-| [`@ahpd/server`](packages/server) | The `ahpd` daemon: argv, the configuration file, and the record it keeps of itself. |
+| [`@ahpd/server`](packages/server) | The `ahpd` daemon: argv, the configuration file, and the record it keeps of itself. It bundles no backend; one arrives as a plugin. |
 | [`examples/echo`](examples/echo), [`examples/notes`](examples/notes) | A host, and a host with a store, to run and to read. |
 
 The root manifest is private and is never published; it exists to hold the workspace scripts and the dev dependencies.
@@ -51,11 +51,11 @@ Every check below runs in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.
 | `pnpm test` | `node tools/schema.mjs`, then the vitest suite. |
 | `pnpm schema` | Regenerate `tools/ahp.strict.schema.json` from the protocol package's own types, every object closed. |
 | `pnpm wire -- <capture>` | Check a `--wire` recording against that schema. |
-| `pnpm build` | The three packages compile, into what `files` would publish. |
+| `pnpm build` | Every package compiles, into what `files` would publish. |
 
 ### The boundary between the packages
 
-`@ahpd/sdk` declares no runtime `dependencies` at all. Its one peer is `@microsoft/agent-host-protocol`, and its only other packages are optional - `ws`, which it imports only on Node, and `node-pty`, which a Node host may hand in - so a host on Bun or Deno never installs them. There is no backend, no agent SDK and no `zod` in it, which is what stops the library that implements the protocol from quietly becoming a library that runs Claude. `@ahpd/agent-claude` is where those live, and the daemon is the one package that depends on both.
+`@ahpd/sdk` declares no runtime `dependencies` at all. Its one peer is `@microsoft/agent-host-protocol`, and its only other packages are optional - `ws`, which it imports only on Node, and `node-pty`, which a Node host may hand in - so a host on Bun or Deno never installs them. There is no backend, no agent SDK and no `zod` in it, which is what stops the library that implements the protocol from quietly becoming a library that runs Claude. `@ahpd/agent-claude` is where those live, and nothing depends on it: the daemon loads it as a plugin, so the package that implements the protocol and the package that runs Claude are installed separately and released separately.
 
 That boundary is enforced twice. npm hoists every dependency in a workspace into one `node_modules` at the root, so any package can import anything installed anywhere and it resolves, including something it never declared. pnpm links each package only what its own `package.json` declares, so `packages/sdk/node_modules` holds its peer and its two optionals and nothing else, and an undeclared import fails where it is written rather than in somebody else's install. `pnpm boundary` is the second check and the one CI runs first: it reads every import in each package's `src/`, compares it with what that package declares, and reports the package, the import it did not declare, and the files that import it.
 

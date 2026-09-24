@@ -10,26 +10,27 @@
 
 It runs agent sessions and serves them over a WebSocket, so several clients can watch and drive the same session at once.
 
-It is built on [@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk) and currently ships with a Claude agent backend, which is the only one so far.
+It is built on [@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk) and bundles no agent. Every backend it serves is a plugin's, so which agent you run is an install rather than a version of this package:
 
-- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is the Claude backend.
+- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is Claude Code, through the Claude Agent SDK.
+- [`@ahpd/agent-acp`](https://www.npmjs.com/package/@ahpd/agent-acp) is any [Agent Client Protocol](https://agentclientprotocol.com/) server, one provider per configured command.
+- [`@ahpd/agent-cofold`](https://www.npmjs.com/package/@ahpd/agent-cofold) is any OpenAI-compatible endpoint, through the cofold runtime.
 
-Backends are registered at startup, so adding another does not change the server.
+A daemon that was configured with none refuses to start and says so, rather than serving clients it could never answer.
 
-To serve a different agent, you can write your own server with [@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk). Create an implementation of the `Agent` interface and pass it to `createHost`.
+To serve an agent none of those reach, write an `Agent` and load it the same way. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) and [docs/PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md).
 
 ## Install
 
+The daemon, and a backend for it to serve:
+
 ```bash
 npm i -g @ahpd/server
-ahpd --path /work/project
+cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd --plugin @ahpd/agent-claude --path /work/project
 ```
 
-Or run it without installing:
-
-```bash
-npx @ahpd/server --path /work/project
-```
+A bare plugin name is resolved from the configuration directory, which is why the install happens there. Put `"plugins": ["@ahpd/agent-claude"]` in `config.json` to stop passing the flag.
 
 It listens on `ws://127.0.0.1:9187`. Run it with no arguments to serve the directory you are in.
 
@@ -111,12 +112,12 @@ ahpc --host ws://127.0.0.1:9187
 
 ## Packages
 
-`@ahpd/server` is a thin wrapper over two libraries:
+`@ahpd/server` is a thin wrapper over one library and a loader:
 
-- [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk) is the protocol and the ports. It has no backend in it.
-- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is the Claude backend.
+- [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk) is the protocol and the ports. It has no backend in it, and neither does this package.
+- Whatever `plugins` names contributes the rest, a backend first among them.
 
-The daemon is those two and a socket:
+Embedded, the daemon is the library, a backend and a socket:
 
 ```ts
 import { createHost, listen } from '@ahpd/sdk';
@@ -125,6 +126,8 @@ import { claude } from '@ahpd/agent-claude';
 const host = createHost({ path, agents: [claude({ paths: [path] })] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
+
+That is the library path and it is unchanged: `claude()` is an `Agent` you pass in. The daemon reaches the same object through the package's plugin entry instead, so nothing is compiled into `ahpd`.
 
 If you want a host of a different shape, build it from `@ahpd/sdk` and skip this package. To serve a different agent, write an `Agent` and add it to `agents`. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md).
 

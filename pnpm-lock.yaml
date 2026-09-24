@@ -63,9 +63,6 @@ importers:
 
   packages/agent-claude:
     dependencies:
-      '@ahpd/sdk':
-        specifier: workspace:^
-        version: link:../sdk
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.278
         version: 0.3.278(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(zod@4.5.4)
@@ -73,6 +70,9 @@ importers:
         specifier: ^4.4.3
         version: 4.5.4
     devDependencies:
+      '@ahpd/sdk':
+        specifier: workspace:*
+        version: link:../sdk
       '@microsoft/agent-host-protocol':
         specifier: ^0.9.0
         version: 0.9.0
@@ -114,15 +114,18 @@ importers:
 
   packages/server:
     dependencies:
-      '@ahpd/agent-claude':
-        specifier: workspace:^
-        version: link:../agent-claude
       '@ahpd/sdk':
         specifier: workspace:^
         version: link:../sdk
       '@microsoft/agent-host-protocol':
         specifier: ^0.9.0
         version: 0.9.0
+
+  packages/tunnel-devtunnel:
+    devDependencies:
+      '@ahpd/sdk':
+        specifier: workspace:*
+        version: link:../sdk
 
 packages:
 
