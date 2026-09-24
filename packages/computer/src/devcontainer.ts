@@ -175,12 +175,32 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
        * installed is this build's own, so the two hosts are one build.
        */
       if (install !== false) {
-        const present = await inside(one.workspaceFolder, 'command -v ahpd', sink);
+        /*
+         * The program that is actually going to run, not the default's name.
+         *
+         * This asked for `ahpd` however `host` was set, so a deployment that
+         * names a checkout mounted into the container - `node /work/main.js` -
+         * was told its image had no host and watched a package it will never
+         * run being installed. The question is about `host[0]`, because that
+         * is the program the line below starts.
+         */
+        const program = host[0] ?? 'ahpd';
+        const present = await inside(one.workspaceFolder, `command -v ${quote(program)}`, sink);
         if (present.code !== 0) {
-          const line = install ?? `npm i -g @ahpd/server@${sdkVersion()}`;
+          /*
+           * The published server, pinned to this build where that is knowable.
+           *
+           * `sdkVersion` reads the version of whatever package encloses it,
+           * which is this repository's and moves with the server's. Where it
+           * cannot be read it says `unknown`, and `@ahpd/server@unknown` is a
+           * registry error about a version rather than about the install, so
+           * an unknown version takes the published latest instead.
+           */
+          const version = sdkVersion();
+          const line = install ?? `npm i -g @ahpd/server${version === 'unknown' ? '' : `@${version}`}`;
           const installed = await inside(one.workspaceFolder, line, sink);
           if (installed.code !== 0) {
-            throw new Error(`The container has no ahpd and could not install one: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Give the image Node and npm, build it with @ahpd/server in it, or name the host it already has`);
+            throw new Error(`The container has no ${program} and could not install one: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Give the image Node and npm, build it with @ahpd/server in it, or name the host it already has`);
           }
         }
       }

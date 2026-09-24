@@ -27,7 +27,18 @@ const keep = () => writeFileSync(state, JSON.stringify(held));
 const verb = args[0];
 
 if (verb === 'ps') {
+  /*
+   * The label filter, honoured rather than ignored.
+   *
+   * This listed everything it held, so a test could not tell a provider that
+   * filters from one that does not - and the provider's scoping is exactly
+   * what the label is for. A machine marked `bare` is something else's,
+   * running on the same daemon with none of our labels on it.
+   */
+  const wanted = args.includes('--filter') ? args[args.indexOf('--filter') + 1] : undefined;
+  const asked = wanted?.startsWith('label=') === true ? wanted.slice('label='.length) : undefined;
   for (const machine of held.machines) {
+    if (asked !== undefined && machine.bare === true) continue;
     process.stdout.write(`${JSON.stringify({
       Names: machine.name,
       Image: machine.image,
@@ -51,8 +62,19 @@ if (verb === 'inspect') {
     Name: `/${found.name}`,
     Image: found.image,
     Created: '2026-09-22T00:00:00Z',
-    State: { Status: found.state ?? 'running' },
-    Config: { WorkingDir: found.workdir ?? '' },
+    // `Running` as well as the word, because the provider answers the state
+    // leaf from the boolean and a reader of the record still wants the word.
+    State: {
+      Status: found.state ?? 'running',
+      Running: (found.state ?? 'running') === 'running',
+    },
+    // The label the provider puts on its own, because the provider now reads
+    // it back: a container without it is not a computer, and a fixture that
+    // left it out would be testing a case that cannot happen.
+    Config: {
+      WorkingDir: found.workdir ?? '',
+      Labels: found.bare === true ? { ...(found.labels ?? {}) } : { 'ahpd.computer': '1', ...(found.labels ?? {}) },
+    },
     // The limits as docker records them: nanoseconds of CPU per second, and
     // bytes. A gauge is drawn against these, so the units have to be real.
     HostConfig: {

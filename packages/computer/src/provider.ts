@@ -134,11 +134,20 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
    */
   const STATES = ['running', 'stopped', 'restarted'] as const;
 
+  /*
+   * Answered in the words the write takes, not the runtime's own.
+   *
+   * It used to answer `docker`'s status, which is a longer vocabulary than the
+   * three below: a client that read `exited` and wrote it back was refused its
+   * own reading. The runtime's word is not lost - `status` is its whole record
+   * and `State.Status` is in it - but this leaf is the one a client round-trips,
+   * so it says only what it will accept.
+   */
   const stateOf = (found: Record<string, unknown>): string => {
     const state = (typeof found.State === 'object' && found.State !== null
       ? found.State
       : {}) as Record<string, unknown>;
-    return typeof state.Status === 'string' && state.Status !== '' ? state.Status : 'unknown';
+    return state.Running === true ? 'running' : 'stopped';
   };
 
   const statsOf = async (id: string, found: Record<string, unknown>): Promise<string> => {

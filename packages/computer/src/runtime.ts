@@ -228,6 +228,27 @@ const rows = (text: string): Record<string, unknown>[] => text
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 /**
+ * Whether one machine carries the label this provider puts on its own.
+ *
+ * The listing has always filtered on it, and nothing else did: a name that
+ * reached `inspect` was inspected, so `computer://<anything docker runs>` read
+ * another container's whole record, and the verbs that go through `inspect`
+ * first - stop, start, restart, destroy - reached it too. A container this
+ * provider did not make is not a computer, and the answer is the same as for
+ * one that does not exist.
+ */
+const ours = (found: Record<string, unknown>, label: string): boolean => {
+  const at = label.indexOf('=');
+  const key = at === -1 ? label : label.slice(0, at);
+  const value = at === -1 ? undefined : label.slice(at + 1);
+  const config = (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
+  const labels = (typeof config.Labels === 'object' && config.Labels !== null ? config.Labels : {}) as Record<string, unknown>;
+  const held = labels[key];
+  if (typeof held !== 'string') return false;
+  return value === undefined || held === value;
+};
+
+/**
  * Machines, on Docker.
  *
  * Every call is one run of the `docker` program. A failure that is not
@@ -263,6 +284,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // answer rather than a failure: the provider turns it into `-32008`.
       if (held.code !== 0) return undefined;
       const parsed = rows(held.stdout)[0];
+      // Docker runs plenty this provider did not make, and none of them is a
+      // computer. Not there and not ours read the same on purpose: a refusal
+      // that named the difference would answer whether a container exists.
+      if (parsed !== undefined && !ours(parsed, options.label)) return undefined;
       return parsed;
     },
 

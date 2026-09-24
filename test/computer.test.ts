@@ -30,12 +30,21 @@ const fake = () => {
       return { id: spec.name, image: spec.image, status: 'running', created: '' };
     },
     stop: async (id) => { calls.push(`stop ${id}`); },
+    start: async (id) => { calls.push(`start ${id}`); },
+    restart: async (id) => { calls.push(`restart ${id}`); },
+    // Nothing is running in here, and a machine that is not running has no
+    // usage: the provider draws that as an empty body rather than as zeroes.
+    stats: async () => undefined,
     remove: async (id) => { calls.push(`remove ${id}`); held.delete(id); },
     exec: async (id, command) => {
       calls.push(`exec ${id} ${command.join(' ')}`);
       return { output: 'hello', code: 0 };
     },
-    capabilities: () => ({ runtime: 'docker', actions: ['create', 'destroy', 'exec'], resources: ['status', 'capabilities'] }),
+    capabilities: () => ({
+      runtime: 'docker',
+      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
+      resources: ['status', 'capabilities', 'stats', 'state'],
+    }),
   };
   return { runtime, held, calls };
 };
@@ -202,7 +211,7 @@ it('says in capabilities what a create body may contain', async () => {
     actions: string[];
     manifest: { type: string; properties: Record<string, { default?: string }> };
   };
-  expect(caps.actions).toEqual(['create', 'destroy', 'exec']);
+  expect(caps.actions).toEqual(['create', 'destroy', 'exec', 'start', 'stop', 'restart']);
   expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir']);
   // The same schema `describe` advertises, with this provider's own default.
   expect(caps.manifest).toEqual(provider.describe().manifest);

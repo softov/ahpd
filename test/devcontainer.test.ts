@@ -141,7 +141,10 @@ it('installs a host when the image has none, and configures it either way', asyn
   const where = sink();
   await launcher().connect({ ...connect, workspaceFolder: workspace() }, where);
   const commands = read().commands;
-  expect(commands[0]).toBe('command -v ahpd');
+  // The program `host` actually names, not the default's: a deployment that
+  // runs a checkout mounted into the container was told its image had no host
+  // and watched a package it will never run being installed.
+  expect(commands[0]).toBe(`command -v '${process.execPath}'`);
   expect(commands[1]).toMatch(/^npm i -g @ahpd\/server@\d/);
   // The configuration is written through a shell, owner-only, from base64.
   expect(commands[2]).toContain('chmod 600');

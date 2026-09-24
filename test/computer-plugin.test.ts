@@ -401,6 +401,48 @@ it('makes a machine from a named profile, and refuses one it does not define', a
   })).rejects.toThrow(/no profile called nope; it has claude, plain/);
 });
 
+/*
+ * A container this provider did not make is not a computer.
+ *
+ * The listing always filtered on the label and nothing else did, so a name
+ * that reached `inspect` was inspected: `computer://<anything docker runs>`
+ * read another container's whole record - its environment, its mounts - and
+ * the verbs that go through `inspect` first reached it too, which made
+ * `computer:write` a way to stop and destroy containers nobody here made.
+ */
+it('will not read, stop or destroy a container it did not make', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-scope-'));
+  const state = join(loose, 'docker.json');
+  // Something else's, running on the same daemon, with no label of ours.
+  writeFileSync(state, JSON.stringify({
+    machines: [{ name: 'someone-elses', image: 'redis:7', labels: {}, bare: true }],
+    calls: [],
+  }));
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    read(uri: string): Promise<{ data: string }>;
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    remove(uri: string): Promise<void>;
+    list(uri: string): Promise<{ name: string }[]>;
+  };
+
+  // Not listed, which it never was, and now not reachable by name either.
+  expect((await provider.list('computer://')).map((one) => one.name)).toEqual([]);
+  await expect(provider.read('computer://someone-elses/status')).rejects.toThrow(/No computer resource/);
+  await expect(provider.write('computer://someone-elses/state', { data: 'stopped', encoding: 'utf-8' }))
+    .rejects.toThrow(/No computer resource/);
+  await expect(provider.remove('computer://someone-elses')).rejects.toThrow(/No computer resource/);
+
+  // And nothing was run at it: the refusal is this host's, not docker's.
+  const held = JSON.parse(readFileSync(state, 'utf-8')) as { calls: string[][] };
+  expect(held.calls.some((one) => one.includes('stop') || one.includes('rm'))).toBe(false);
+});
+
 it('starts, stops and restarts a machine by writing what it should be', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-state-'));
   const state = join(loose, 'docker.json');
@@ -428,7 +470,9 @@ it('starts, stops and restarts a machine by writing what it should be', async ()
    * makes and destroys one, rather than needing a method of its own.
    */
   await put('computer://box/state', 'stopped');
-  expect((await provider.read('computer://box/state')).data.trim()).toBe('exited');
+  // The word it answers is one the write takes, so a client that reads this
+  // leaf and writes it back is not refused its own reading.
+  expect((await provider.read('computer://box/state')).data.trim()).toBe('stopped');
   await put('computer://box/state', 'running');
   expect((await provider.read('computer://box/state')).data.trim()).toBe('running');
   await put('computer://box/state', 'restarted');

@@ -300,6 +300,24 @@ zeroes, because a dial reading zero says idle, which is not the same as
 stopped. Each read is one `docker stats --no-stream`: a client that wants a
 moving dial asks again, and there is no feed to leave open.
 
+## Turning one off and on
+
+`computer://<id>/state` is the one leaf that is written as well as read. Reading it answers `running` or `stopped`; writing `running`, `stopped` or `restarted` puts it there.
+
+```
+resourceWrite computer://box/state  "restarted"
+```
+
+A write rather than a verb of its own, because a resource scheme has four verbs and none of them is `restart`: doing it this way keeps starting a machine inside the same `computer:write` grant that makes and destroys one, with no new method for the gate to be taught about. `restarted` is `docker restart`, which starts a machine that was stopped and cycles one that was not, so a client does not have to ask which it was and race whoever else is acting on it.
+
+The leaf answers in the words it accepts rather than the runtime's own, which are a longer list - `exited`, `paused`, `created`. `status` is the runtime's whole record and has `State.Status` in it for a reader who wants the difference.
+
+## Only the machines this host made
+
+Every machine this plugin makes carries a label, and every read and every act checks it. A container running on the same Docker that this plugin did not make is not a computer: `computer://<its name>` answers the same `-32008` as a name that does not exist, and stop, restart and destroy refuse with it. The two read the same on purpose, because a refusal that named the difference would answer whether a container exists.
+
+That is what bounds the grant. `computer:write` is a permission over the machines this host made, not over the Docker daemon it made them with.
+
 ## The three tools
 
 `request_disposable_computer`, `release_computer` and `computer_exec` are the
