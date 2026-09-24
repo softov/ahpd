@@ -33,6 +33,8 @@ export interface ProviderOptions {
   profiles?: Record<string, Profile>;
   /** Whether a create body may name mounts of its own. Off unless an operator says so. */
   bodyMounts?: boolean;
+  /** The images a machine may be made from, as patterns. Absent allows any. */
+  images?: string[];
 }
 
 /**
@@ -106,6 +108,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       image: options.image,
       ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
       ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
+      ...(options.images === undefined ? {} : { images: options.images }),
     }),
   }, null, 2);
 
@@ -183,6 +186,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         image: options.image,
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
+        ...(options.images === undefined ? {} : { images: options.images }),
       }),
     }),
 
@@ -278,6 +282,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
+        ...(options.images === undefined ? {} : { images: options.images }),
       });
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);

@@ -1,6 +1,7 @@
 import type { Plugin, PluginSpec } from '@ahpd/sdk';
 import { devContainer } from './devcontainer.js';
 import { computerProvider } from './provider.js';
+import { patternOf } from './reference.js';
 import type { Profile } from './manifest.js';
 import { dockerRuntime } from './runtime.js';
 import { computerTools } from './tools.js';
@@ -158,6 +159,21 @@ export const apply: Plugin['apply'] = (host, options) => {
    * for a host with one person on it.
    */
   const bodyMounts = options.bodyMounts === true;
+  /*
+   * The images a machine may be made from.
+   *
+   * Absent, any image is allowed, which is what every host did before this
+   * existed: naming a set is the operator opting in. A pattern the matcher
+   * will not read is fatal here rather than a rule that silently matches
+   * nothing - an operator who wrote one meant something by it.
+   */
+  const images = words(options.images);
+  for (const one of images ?? []) {
+    try { patternOf(one); }
+    catch (error) {
+      throw new Error(`plugin ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   const made = dockerRuntime({
     command,
@@ -174,6 +190,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(memory === undefined ? {} : { memory }),
     ...(mounts === undefined ? {} : { mounts }),
     ...(profiles === undefined ? {} : { profiles }),
+    ...(images === undefined ? {} : { images }),
     bodyMounts,
   }));
 
@@ -223,6 +240,9 @@ export const apply: Plugin['apply'] = (host, options) => {
     max,
     label,
     prefix,
+    // The same set the manifest is held to: this path makes a machine without
+    // a manifest anywhere near it, which is how the flag check was missed.
+    ...(images === undefined ? {} : { images }),
     ...(cpus === undefined ? {} : { cpus }),
     ...(memory === undefined ? {} : { memory }),
   })) {

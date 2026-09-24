@@ -413,6 +413,29 @@ it('makes a machine from a named profile, and refuses one it does not define', a
  * the verbs that go through `inspect` first reached it too, which made
  * `computer:write` a way to stop and destroy containers nobody here made.
  */
+/*
+ * A pattern the matcher will not read is an operator's mistake, said out loud.
+ *
+ * A `*` inside a name is partial matching within a component, which is where
+ * the subtle holes live. Read as a literal it would be a rule that matches
+ * nothing - an allowlist entry that quietly allows nothing is worse than one
+ * that fails to load.
+ */
+it('will not load with an image pattern it cannot read', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-pattern-'));
+  const state = join(loose, 'docker.json');
+  const { problems, loaded } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    images: ['node:22-*'],
+  });
+  expect(loaded).toEqual([]);
+  expect(problems.map((one) => String(one))).toContainEqual(
+    expect.stringMatching(/has a \* inside 22-\*/),
+  );
+});
+
 it('will not read, stop or destroy a container it did not make', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-scope-'));
   const state = join(loose, 'docker.json');

@@ -1,4 +1,6 @@
 import { RpcError } from '@ahpd/sdk';
+import { allowedBy, patternOf } from './reference.js';
+import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
 import type { MachineSpec } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
@@ -70,6 +72,20 @@ export interface ManifestDefaults {
    * person on it, where a machine is a convenience rather than a boundary.
    */
   bodyMounts?: boolean;
+  /**
+   * The images a machine may be made from, as patterns. Absent allows any.
+   *
+   * An image is code that runs on this host's Docker with whatever a profile
+   * mounted into it, so on a deployment that shares an agent configuration
+   * inwards the image is the thing being trusted. Absent, any image is
+   * allowed, which is what every host did before this existed: naming a set is
+   * the operator opting in - decision 1 of `only-the-images-an-operator-named`.
+   *
+   * The set an operator writes is not the whole set: the host's own default
+   * image and every profile's image are allowed too, because a profile names
+   * an image precisely so a machine can be made from it.
+   */
+  images?: string[];
 }
 
 /**
@@ -81,9 +97,27 @@ export interface ManifestDefaults {
  * host runs one.
  */
 export const MANIFEST_SCHEMA = (
-  options: { runtime: string; image: string; profiles?: Record<string, Profile>; bodyMounts?: boolean },
+  options: {
+    runtime: string;
+    image: string;
+    profiles?: Record<string, Profile>;
+    bodyMounts?: boolean;
+    images?: string[];
+  },
 ): Record<string, unknown> => {
   const names = Object.keys(options.profiles ?? {});
+  /*
+   * The images, as choices, but only where every one of them is a name.
+   *
+   * A set with a wildcard in it is not a list of choices: a client drawing a
+   * picker from `node:*` would offer that string, and a machine made from it
+   * would be refused by the runtime rather than by this host. So a wildcard
+   * anywhere leaves the field a text box, and the refusal is what teaches.
+   */
+  const allowed = allowedImages(options);
+  const choices = allowed === undefined || allowed.names.some((one) => one.includes('*'))
+    ? undefined
+    : allowed.names;
   return {
   type: 'object',
   properties: {
@@ -118,6 +152,7 @@ export const MANIFEST_SCHEMA = (
       title: 'Image',
       description: 'What to make it from.',
       default: options.image,
+      ...(choices === undefined ? {} : { enum: choices }),
     },
     cpus: { type: 'string', title: 'CPUs', description: 'A number, such as 2.' },
     memory: { type: 'string', title: 'Memory', description: 'A size, such as 512m or 2g.' },
@@ -142,6 +177,27 @@ export const MANIFEST_SCHEMA = (
     },
   },
   };
+};
+
+/**
+ * Every image this host allows, as patterns, or nothing for "any".
+ *
+ * The operator's list plus the host default plus each profile's, deduped with
+ * the order kept so a refusal reads in the order somebody wrote them. A
+ * deployment that named no list gets `undefined` rather than an empty one:
+ * empty would mean "allow nothing", and absent means "never asked".
+ */
+export const allowedImages = (
+  defaults: { image: string; images?: string[]; profiles?: Record<string, Profile> },
+): { names: string[]; patterns: Reference[] } | undefined => {
+  if (defaults.images === undefined) return undefined;
+  const said = [
+    ...defaults.images,
+    defaults.image,
+    ...Object.values(defaults.profiles ?? {}).flatMap((one) => (one.image === undefined ? [] : [one.image])),
+  ].filter((one) => one.trim() !== '');
+  const names = [...new Set(said)];
+  return { names, patterns: names.map((one) => patternOf(one)) };
 };
 
 /**
@@ -258,6 +314,17 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
    */
   if (isFlag(image)) {
     throw new RpcError(-32602, `image is the name of an image, and ${image} is a flag`);
+  }
+  /*
+   * And one the deployment allows, where it named a set at all.
+   *
+   * The names are listed, because a person who picked an image this host will
+   * not run needs to know what it will. A profile's own image is in the set,
+   * so picking a profile is never refused by this.
+   */
+  const allowed = allowedImages(defaults);
+  if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+    throw new RpcError(-32602, `This host does not run ${image}; it runs ${allowed.names.join(', ')}`);
   }
 
   const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;

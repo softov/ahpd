@@ -68,9 +68,10 @@ export type PluginSpec = string | {
 /**
  * What a plugin may read, and the one thing it may write.
  *
- * Read-only: a plugin is told where it is running and may log there, and every
- * method that contributes a value is named `register*` so a registration is
- * told apart at the call site from what a plugin only reads.
+ * Read-only: a plugin is told where it is running and may write a line to the
+ * log or to what the daemon announces, and every method that contributes a
+ * value is named `register*` so a registration is told apart at the call site
+ * from what a plugin only reads.
  */
 export interface PluginContext {
   /** The directory whose sessions the host serves, and the catalogue's scope. */
@@ -81,6 +82,20 @@ export interface PluginContext {
   readonly version: string;
   /** One line to the daemon's log. */
   log(message: string): void;
+  /**
+   * One line in what the daemon announces about itself.
+   *
+   * The log is stderr and a person reads it; the announcement is stdout and
+   * `ahpd status` parses it, which is where somebody looks for the URL to
+   * paste into a client. A plugin that made the host reachable somewhere new
+   * has to be able to say so there, or the address it created is one only its
+   * own log knows.
+   *
+   * One line, without a newline, added after the daemon's own and in plugin
+   * order. Said at any point up to the announcement - which is written once
+   * `listening` has been handled - and ignored after it.
+   */
+  say(line: string): void;
 }
 
 /**

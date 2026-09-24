@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { HostTool } from '@ahpd/sdk';
-import { isFlag } from './manifest.js';
+import { allowedImages, isFlag } from './manifest.js';
+import { allowedBy } from './reference.js';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
@@ -24,6 +25,14 @@ export interface ToolOptions {
   max: number;
   /** The start of a generated name. */
   prefix: string;
+  /**
+   * The images a machine may be made from, as patterns. Absent allows any.
+   *
+   * Held here as well as in the manifest because this path never sees one: a
+   * tool builds a machine straight from what it was asked for, which is how
+   * the flag check came to be missing from it.
+   */
+  images?: string[];
 }
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -76,6 +85,10 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         // and an image is the one field the runtime reads as more than a value.
         if (isFlag(image)) {
           return `${image} is a flag rather than an image. Name an image, such as ${options.image}.`;
+        }
+        const allowed = allowedImages(options);
+        if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+          return `This host does not run ${image}. It runs ${allowed.names.join(', ')}.`;
         }
         const made = await runtime.run({
           name,

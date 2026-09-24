@@ -34,6 +34,8 @@ export type EventName =
   | 'automation_fire'
   | 'resource_write'
   | 'terminal_open'
+  | 'listening'
+  | 'stopping'
   | 'log';
 
 /** A session this host started, and the backend serving it. */
@@ -154,6 +156,42 @@ export interface TerminalOpenEvent {
   cwd: string;
 }
 
+/**
+ * The socket is open and bound, and this is what it bound.
+ *
+ * Fired by the daemon rather than by `createHost`, because the listener is
+ * the daemon's: a host answers connections and never opens them. It is the
+ * one event that arrives before any client could, which is what makes it the
+ * place to stand something up that forwards to the bound port - a tunnel, an
+ * announcement on the network - rather than guessing the port beforehand.
+ *
+ * A handler is awaited like any other, so a plugin that takes three seconds
+ * to make a tunnel delays the line that says the daemon is ready. That is the
+ * intended order: a URL printed before it works is a URL somebody pastes.
+ */
+export interface ListeningEvent {
+  type: 'listening';
+  /** Which runtime the listener found itself on. */
+  runtime: 'node' | 'bun' | 'deno';
+  /** The address it bound. */
+  host: string;
+  /** The port it accepted, resolved - never the zero that asked for any. */
+  port: number;
+  /** Whether a connection token is required to open one. */
+  guarded: boolean;
+}
+
+/**
+ * The listener is about to close, and the host with it.
+ *
+ * Fired before `listener.close()`, so what a plugin stood up at `listening`
+ * has somewhere to be taken down. Awaited, and on the shutdown path, so a
+ * handler that hangs is a daemon that will not stop.
+ */
+export interface StoppingEvent {
+  type: 'stopping';
+}
+
 /** One line the host already writes to its own log. */
 export interface LogEvent {
   type: 'log';
@@ -175,6 +213,8 @@ export type HostEvent =
   | AutomationFireEvent
   | ResourceWriteEvent
   | TerminalOpenEvent
+  | ListeningEvent
+  | StoppingEvent
   | LogEvent;
 
 /** The member of `HostEvent` whose `type` is `K`, so a handler is typed per name. */

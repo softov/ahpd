@@ -329,7 +329,33 @@ Off, which is the default, what a machine can see is the plugin's own `mounts` a
 
 On is the older behaviour and a fair setting for a host with one person on it, where a machine is a convenience rather than a boundary. It is the setting to keep in mind when reading the rest of this page: with it on, `computer:write` and root on this host are the same permission.
 
-`image` is the other field in a body that the runtime reads as more than a value. It lands in the argument list at the position where `docker run` still parses flags, so an image is refused if it begins with a dash. Nothing else about it is checked: a registry, a port, a tag and a digest are all legal names and this host has no business having an opinion about which registry you use.
+`image` is the other field in a body that the runtime reads as more than a value. It lands in the argument list at the position where `docker run` still parses flags, so an image is refused if it begins with a dash.
+
+A deployment can also say which images a machine may be made from:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "images": ["node:*", "ghcr.io/acme/**"] } }] }
+```
+
+Absent, any image is allowed, which is what every host did before this existed - naming a set is the operator opting in. The set an operator writes is not the whole set: the host's own default image and every profile's image are allowed too, because a profile names an image precisely so a machine can be made from it.
+
+Matching is by component and never by string. A string prefix of `ghcr.io/acme` is also a prefix of `ghcr.io/acme-evil`, and is not a prefix of anything under `acme`, so a pattern is split the way a reference is - a registry, a path, and a tag or a digest - and matched part for part.
+
+| Pattern | Allows | Refuses |
+| --- | --- | --- |
+| `node:22` | exactly that image | any other tag |
+| `node:*` | any tag of `node` | `nodejs/node`, `node-evil/x` |
+| `ghcr.io/acme/*:*` | any repository directly under `acme` | `ghcr.io/acme-evil/x` |
+| `ghcr.io/acme/**` | any depth under `acme` | anything outside it |
+| `*` | anything | nothing; the same as leaving the option out |
+
+A `*` stands for one whole part of a name and `**` for any number of them, because registry paths nest and an operator allowing a namespace should not have to know how deep it goes. A star in the registry's own position - `*/acme/**` - is that namespace wherever it is published. A star *inside* a name, such as `node:22-*`, is refused when the plugin loads: it is partial matching within a component, which is where the subtle holes live, and a rule read as a literal would quietly allow nothing.
+
+Two things a pattern means that Docker itself would read differently. A pattern with no tag allows any tag rather than `latest`, because an operator writing `node` means the image and not one tag of it. And the four spellings of an image are one image: `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` all match each other, so a list does not have to name a thing four times.
+
+Where every entry is a plain name, the set is published in the create schema as an `enum`, so a client draws a picker from it. A set with a wildcard in it is not a list of choices - a picker offering `node:*` would produce a machine the runtime refuses - so the field stays a text box and the refusal is what teaches.
+
+The three tools are held to the same set, and to the same dash refusal. `request_disposable_computer` builds a machine straight from what it was asked for, with no manifest in between, so nothing a manifest checks reaches it by itself.
 
 ## The three tools
 
