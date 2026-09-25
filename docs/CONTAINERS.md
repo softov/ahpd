@@ -70,23 +70,30 @@ is part of it.
 { "name": "@ahpd/computer", "options": { "devcontainer": { "plugins": ["@ahpd/agent-cofold"] } } }
 ```
 
-**Until a release carries `--stdio`, the defaults do not work.** The install
-step fetches `@ahpd/server` from npm, and the published build predates the stdio
-transport, so a container given it refuses the flag and the relay closes with
-exit 2. Two ways out: publish the version that has it, or name a build the
-container can see - which is what a mounted checkout is for:
+**The install step puts a host in the container, not a backend.** It runs
+`npm i -g @ahpd/server` and nothing else, and the host inside resolves a bare
+plugin name against its own configuration directory in there - a global install
+is not on that resolution path. So `"plugins": ["@ahpd/agent-cofold"]` alone is
+a nested host that exits on startup saying the plugin is not installed.
+
+Until the install step installs them too, name plugins the container can
+already see. An absolute path inside the container is one, which is what a
+mounted checkout gives you:
 
 ```json
 { "name": "@ahpd/computer",
   "options": { "devcontainer": {
     "host": ["node", "/workspaces/ahpd/packages/server/dist/main.js"],
-    "install": false
+    "install": false,
+    "plugins": ["/workspaces/ahpd/packages/agent-cofold"]
   } } }
 ```
 
-The path is the container's view of the mount and not this host's, and the
+The paths are the container's view of the mount and not this host's, and the
 Dev Container CLI mounts a repository's root, so this works when the folder a
-person picks is anywhere inside that checkout.
+person picks is anywhere inside that checkout. An image built with the plugins
+installed under its own `~/.config/ahpd` is the other way, and then package
+names work as written.
 
 ## The surface
 
@@ -130,7 +137,8 @@ container is this host's Docker access by proxy - decision
    works, so the result is one line among several.
 3. Inside, `command -v ahpd` decides whether the image already has a host. A
    container without one gets `npm i -g @ahpd/server@<this version>`, so the two
-   hosts are the same build.
+   hosts are the same build. Only the host: the plugins it will be told to load
+   are the image's or the mount's, as above.
 4. The nested host's configuration is written to a temporary file with its mode
    set to 600, through a shell command built from base64 and a name nothing
    chose. No credential goes in it: the relayed client signs in to the host

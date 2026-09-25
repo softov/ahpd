@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-acp",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "type": "module",
   "description": "An AHP backend over the Agent Client Protocol: any ACP server is one provider instead of one package",
   "keywords": [
@@ -54,7 +54,7 @@
     "prepack": "tsc -p ."
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.6"
+    "@ahpd/sdk": "^0.7"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/tunnel-devtunnel",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "type": "module",
   "description": "A Dev Tunnel plugin for ahpd: forwards the bound port through a Microsoft Dev Tunnel so VS Code can find and reach the daemon from anywhere",
   "keywords": [
@@ -50,7 +50,7 @@
     "prepack": "tsc -p ."
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.6"
+    "@ahpd/sdk": "^0.7"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

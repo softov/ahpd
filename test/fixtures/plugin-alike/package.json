@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "exports": { ".": "./index.ts" },
-  "peerDependencies": { "@ahpd/sdk": "^0.6.0" },
+  "peerDependencies": { "@ahpd/sdk": "^0.7.0" },
   "ahpd": { "entry": "./index.ts" }
 }
