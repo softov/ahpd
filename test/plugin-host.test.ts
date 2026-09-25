@@ -173,6 +173,97 @@ it('routes a completions request to whoever registered the key', async () => {
 });
 
 /*
+ * And the picker is seeded before anybody opens it.
+ *
+ * `enumDynamic` tells a client to ask, but a client still has to draw the
+ * value it already holds, and the reference client labels a chip by looking
+ * that value up in `enum`. With no seed a machine draws as `computer://box`
+ * and the empty value - "on this host" - draws as an empty chip. So the
+ * answerer is asked once, with an empty query, where a composer asks.
+ */
+it('seeds a contributed key from its own answerer when a config is resolved', async () => {
+  const asked: string[] = [];
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: { computer: { type: 'string', title: 'Computer' } },
+    sessionCompletions: {
+      computer: (ask) => {
+        asked.push(ask.query);
+        return [
+          { value: '', label: 'This host', description: 'Run the session here.' },
+          { value: 'computer://box', label: 'box', description: 'debian · Up' },
+        ];
+      },
+    },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+  const client = createHost(options).accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+
+  const resolved = await client.handle({
+    method: 'resolveSessionConfig',
+    params: { channel: 'ahp-root://', provider: 'echo' },
+  }) as { schema: { properties: Record<string, Record<string, unknown>> } };
+
+  expect(resolved.schema.properties.computer).toMatchObject({
+    enum: ['', 'computer://box'],
+    enumLabels: ['This host', 'box'],
+    enumDescriptions: ['Run the session here.', 'debian · Up'],
+    // Still dynamic: the seed is the first page, not the list.
+    enumDynamic: true,
+  });
+  // The empty query is the one a picker sends when it opens, and it is asked
+  // once rather than per property.
+  expect(asked).toEqual(['']);
+});
+
+/*
+ * A seed that cannot be read costs its own key and nothing else.
+ *
+ * Resolving a config is somebody drawing a form. A machine listing that fails
+ * is a picker they have to open, not a form they cannot fill in.
+ */
+it('answers the rest of the form when a seed fails', async () => {
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: {
+      computer: { type: 'string', title: 'Computer' },
+      // Seeded by the plugin itself, so the host leaves it alone.
+      region: { type: 'string', enum: ['eu'], enumLabels: ['Europe'] },
+    },
+    sessionCompletions: {
+      computer: () => { throw new Error('docker is not running'); },
+      region: () => [{ value: 'us', label: 'Nowhere near' }],
+    },
+    ports: {},
+    providers: {},
+    events: {},
+  }]);
+  const client = createHost(options).accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+
+  const resolved = await client.handle({
+    method: 'resolveSessionConfig',
+    params: { channel: 'ahp-root://', provider: 'echo' },
+  }) as { schema: { properties: Record<string, Record<string, unknown>> } };
+
+  // No seed, and no `enum` invented for it: the picker still answers live.
+  expect(resolved.schema.properties.computer?.enum).toBeUndefined();
+  expect(resolved.schema.properties.computer?.enumDynamic).toBe(true);
+  // A plugin that seeded its own key keeps what it wrote.
+  expect(resolved.schema.properties.region?.enum).toEqual(['eu']);
+  expect(resolved.schema.properties.region?.enumLabels).toEqual(['Europe']);
+  // And the backend's own properties are all still there.
+  expect(resolved.schema.properties.voice).toBeDefined();
+});
+
+/*
  * An answerer that throws is an empty picker, not a failed form.
  *
  * The person is filling in a session's settings, and a machine listing that

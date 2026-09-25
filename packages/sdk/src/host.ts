@@ -34,6 +34,7 @@ import type { LogFile } from './debuglogs.js';
 import { lookup } from 'node:dns/promises';
 import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
 import type { ContainerConnectResult, ContainerSink } from './types/containers.js';
+import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
 import type { Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
@@ -3124,6 +3125,58 @@ export function createHost(options: HostOptions): Host {
       ? schema.properties
       : {}) as Bag;
     return { ...schema, type: 'object', properties: { ...extra, ...properties } };
+  };
+
+  /**
+   * A contributed key's picker, seeded with what its own answerer says now.
+   *
+   * `enumDynamic` tells a client to ask, and a client that has not asked yet
+   * still has to draw the value it is holding. The reference client labels a
+   * chip by looking that value up in `enum` and falls back to the raw value
+   * when there is none, so a key with no seed draws a machine as
+   * `computer://box` and the empty value - "on this host" - as an empty chip.
+   * The host seeds `branch` for exactly this reason; this does the same for a
+   * key the host knows nothing about.
+   *
+   * Asked with an empty query, which is the question a picker asks when it
+   * opens, and the property stays `enumDynamic`: the seed is the first page
+   * and not the list.
+   *
+   * A key that already carries an `enum` is left alone - that plugin seeded
+   * itself - and an answerer that fails costs its own seed and nothing else,
+   * because a machine listing that cannot be read is not a reason to refuse
+   * somebody the rest of the form.
+   */
+  const seeded = async (properties: Bag, ask: Omit<SessionConfigAsk, 'property' | 'query'>): Promise<Bag> => {
+    const answerers = options.sessionConfigCompletions;
+    if (answerers === undefined) return properties;
+    const keys = Object.keys(properties).filter((key) => {
+      const schema = properties[key] as Bag | undefined;
+      return answerers[key] !== undefined && schema?.enumDynamic === true && schema.enum === undefined;
+    });
+    if (keys.length === 0) return properties;
+
+    const out: Bag = { ...properties };
+    await Promise.all(keys.map(async (key) => {
+      let items;
+      try {
+        // The `try` covers the call as well as the promise: an answerer that
+        // throws before returning one escapes a `.catch` on the result.
+        items = await (answerers[key] as SessionConfigAnswerer)({ ...ask, property: key, query: '' });
+      }
+      catch { return; }
+      if (!Array.isArray(items) || items.length === 0) return;
+      const schema = out[key] as Bag;
+      out[key] = {
+        ...schema,
+        enum: items.map((one) => one.value),
+        enumLabels: items.map((one) => one.label),
+        ...(items.some((one) => one.description !== undefined)
+          ? { enumDescriptions: items.map((one) => one.description ?? '') }
+          : {}),
+      };
+    }));
+    return out;
   };
 
   /** The defaults a contributed key names, under the backend's own. */
@@ -6568,8 +6621,19 @@ export function createHost(options: HostOptions): Host {
             typeof answered.isolation === 'string' ? answered.isolation : undefined,
           );
           const theirs = sessionSchema(agent);
+          /*
+           * A contributed key's own values, asked for here rather than left
+           * to the first client that opens its picker: this is the answer a
+           * composer draws itself from, and a key marked `enumDynamic` with
+           * nothing in its `enum` is a control with no label for the value it
+           * is already holding.
+           */
+          const contributed = await seeded(
+            (typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}) as Bag,
+            { provider, ...(asked === undefined ? {} : { workingDirectory: asked }), config: answered },
+          );
           const properties = {
-            ...(typeof theirs.properties === 'object' && theirs.properties !== null ? theirs.properties : {}),
+            ...contributed,
             ...(typeof mine.schema.properties === 'object' && mine.schema.properties !== null ? mine.schema.properties : {}),
           };
           // Iterative, as a real host's is: what has been answered comes back
