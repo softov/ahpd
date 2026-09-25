@@ -10,3 +10,6 @@ dist
 
 # Generated from the protocol package by `npm run schema`.
 /tools/ahp.strict.schema.json
+
+# Local experiments, kept out of git for now.
+/.scratch
