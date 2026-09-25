@@ -85,7 +85,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [12 - A client can tell what a scheme does before it asks one](plugin/12-a-client-can-tell-what-a-scheme-does/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/12-a-client-can-tell-what-a-scheme-does/implemented.md)) | plugin 08, plugin 10 | the ahpapp Computers screen, which reads the advertisement |
 | [13 - Only the images an operator named](plugin/13-only-the-images-an-operator-named/plan.md) | medium | built 2026-09-24 | plugin 10 | - |
 
-Next free number in `plugin`: `13`.
+Next free number in `plugin`: `14`.
 
 ## container
 

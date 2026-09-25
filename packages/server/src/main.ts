@@ -880,7 +880,7 @@ if (problems.some((problem) => problem.startsWith(AGENT_CLASH))) process.exit(1)
  * configuration file instead.
  */
 if (folded.agents.length === 0) {
-  stamp('No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in the configuration - "@ahpd/agent-claude" is Claude Code.');
+  stamp(`No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in ${options.configFile ?? configPath()} - "@ahpd/agent-claude" is Claude Code, installed with npm i in ${configDir()}.`);
   process.exit(1);
 }
 

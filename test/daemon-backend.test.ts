@@ -28,7 +28,7 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
  * Everything it says is on stderr here, because stdout is the protocol in
  * `--stdio` mode and a line written there would be a frame nobody sent.
  */
-const run = async (config: Record<string, unknown>): Promise<{ code: number | null; said: string }> => {
+const run = async (config: Record<string, unknown>): Promise<{ code: number | null; said: string; path: string }> => {
   const path = join(home, 'config.json');
   writeFileSync(path, JSON.stringify({ paths: [], withoutConnectionToken: true, sessions: 'memory', automations: 'memory', ...config }));
   const child = spawn(
@@ -48,17 +48,21 @@ const run = async (config: Record<string, unknown>): Promise<{ code: number | nu
     // A daemon that does start is one this test has to stop, so a run that
     // somehow sat on the pipe fails on an assertion rather than a timeout.
     const timer = setTimeout(() => { child.kill(); }, 4000);
-    child.on('exit', (code) => { clearTimeout(timer); done({ code, said }); });
+    child.on('exit', (code) => { clearTimeout(timer); done({ code, said, path }); });
   });
 };
 
 it('refuses to start when nothing contributed a backend, and names the fix', async () => {
-  const { code, said } = await run({});
+  const { code, said, path } = await run({});
   expect(code).toBe(1);
   expect(said).toContain('No backend is loaded');
   // The sentence is for somebody holding a configuration file, so it names
-  // the key they have to edit and a package they can put in it.
+  // the key they have to edit, the file it is in, and a package they can put
+  // in it. The file because this is the sentence an upgrade from a daemon
+  // that bundled Claude ends at, and the one that was read is not always the
+  // one under the configuration directory.
   expect(said).toContain('"plugins"');
+  expect(said).toContain(path);
   expect(said).toContain('@ahpd/agent-claude');
 });
 
