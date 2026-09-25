@@ -12,134 +12,92 @@
 [![@ahpd/agent-cofold](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold?label=%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
 [![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
 
-An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, and the library parts to build a host yourself.
+An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, SDK and Plugins.
 
-For now it ships with a Claude backend; cofold (see more below) and ACP are separate packages, each loaded as a plugin ([Load a plugin](#load-a-plugin)).
+Run agents on your workstation, server, VM or container, then connect from [ahpc](https://github.com/softov/ahpc), [VS Code](https://code.visualstudio.com/), or any AHP-compliant client.
 
-`ahpd` can be used in two ways:
+Sessions run on the host, not on the client or terminal that started them.
 
-- **[@ahpd/server](https://www.npmjs.com/package/@ahpd/server)**: a process that serves the [@microsoft/agent-host-protocol](https://github.com/microsoft/agent-host-protocol) over a WebSocket, running agent sessions and plugins behind it. It installs the `ahpd` command.
-- **[@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk)**: the library it is built from, `createHost()` and the ports around it.
-
-## Why
-
-AHP's model is a **sessions server**: several clients watch and drive the same agent sessions, and none of them owns the process running the agent. That is what makes a session watchable from somewhere other than where it runs.
-
-Today the only host that speaks it is `code agent` - the VS Code implementation - so a session is only watchable while somebody's VS Code is open or someone runs it locally. This is the missing piece: the same protocol, the same clients, no editor.
-
-The Claude Agent SDK is the opposite shape - it spawns a CLI that your process alone owns. `ahpd` bridges the two.
 
 ```mermaid
-flowchart LR
-    AHPC["ahpc"]
-    VSC["VS Code"]
-    OTHER["Other AHP client"]
+flowchart TD
+    classDef client fill:#1e293b,stroke:#3b82f6,stroke-width:1.5px,color:#fff
+    classDef host fill:#0f172a,stroke:#10b981,stroke-width:2px,color:#fff
+    classDef agent fill:#1e293b,stroke:#8b5cf6,stroke-width:1.5px,color:#fff
+    classDef port fill:#334155,stroke:#64748b,stroke-width:1px,color:#cbd5e1
 
-    HOST["ahpd<br/>AHP host"]
-    CLAUDE["agents (claude, acp, ...)"]
+    subgraph Host ["AHP Host (ahpd)"]
+        direction TB
+        AHP["AHP WebSocket Server"]
+        SESS["Sessions & Chat Manager"]
+        
+        subgraph Ports ["Host Capabilities & Ports"]
+            RES["Resources"]
+            TERM["Terminals"]
+            CHG["Git Changes"]
+            AUTO["Automations"]
+        end
 
-    AHPC -->|AHP / WebSocket| HOST
-    VSC -->|AHP / WebSocket| HOST
-    OTHER -->|AHP / WebSocket| HOST
+        AHP --> SESS
+        AHP --- Ports
+    end
 
-    HOST --> CLAUDE
+    subgraph Clients ["AHP Clients"]
+        direction TB
+        VS["VS Code"]
+        AHPC["ahpc CLI"]
+        AHPX["ahpx"]
+        OTHER["Other Client"]
+    end
 
-    HOST --- RES["resources"]
-    HOST --- TERM["terminals"]
-    HOST --- CHG["changes"]
-    HOST --- AUTO["automations"]
+    subgraph Agents ["Agent Backends (Plugins)"]
+        direction TB
+        CLAUDE["@ahpd/agent-claude"]
+        COFOLD["@ahpd/agent-cofold"]
+        ACP["@ahpd/agent-acp"]
+        CUSTOM["Custom Agent"]
+    end
+
+    Clients -->|AHP Protocol / WS| AHP
+    SESS --> Agents
+
+    class VS,AHPC,AHPX,OTHER client
+    class AHP,SESS host
+    class CLAUDE,COFOLD,ACP,CUSTOM agent
+    class RES,TERM,CHG,AUTO port
 ```
 
-The clients on the left are interchangeable and none of them owns the session. `Claude Code` on the right is one agent, reached through `Agent` - `examples/` has two more. The four below are the **ports**: everything that touches the machine, handed to the host rather than reached for by it.
+Close the client and the host keeps running. Reconnect from another client and the session is still there.
 
-## What you can do with it
+# Quick start
 
-- `Run agent sessions` on one machine and drive them from another, from more than one client at a time, with the turn surviving the client that started it.
-- Point **VS Code** at it (`chat.remoteAgentHosts`) or any other AHP client; [`ahpc`](https://github.com/softov/ahpc) is the terminal one developed alongside it.
-- `Read and write files`, open a `shell`, and see what a session changed in the working tree - each through a port the host is given rather than one it reaches for.
-- `Automations`: Run an agent on a clock, with nobody connected: `scheduledAutomations({ file })` is a cron in a named time zone that starts sessions by itself.
-- `Plugins`: Serve another Agents implementation or feature, on the same host, with none of the protocol re-implemented: a backend is a plugin, loaded with `--plugin` or named in the configuration.
-- `Computers`: Make a container with a resource write, name it in a session so the agent runs inside it, and destroy it with a resource delete. See [docs/COMPUTER.md](docs/COMPUTER.md).
-- `Dev containers`: Run a whole host inside the container a workspace's own `devcontainer.json` asks for, and carry its frames, so the reference client's dev container flow works. See [docs/CONTAINERS.md](docs/CONTAINERS.md).
+`ahpd` bundles no agent. A backend is a plugin, so the install is the daemon plus one:
 
-## Install and run the daemon
-
+Global Installation:
 ```bash
 npm i -g @ahpd/server
-ahpd --path /work/project
+cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd --plugin @ahpd/agent-claude --path /work/project
 ```
 
+A bare plugin name is resolved from the configuration directory, which is why the install happens there. Put `"plugins": ["@ahpd/agent-claude"]` in `~/.config/ahpd/config.json` to stop passing the flag.
+
+Using npx on the fly
 ```bash
-# Or using npx on the fly
-npx @ahpd/server --path /work/project
+npx @ahpd/server --plugin @ahpd/agent-claude --path /work/project
 ```
 
+The plugin still comes from the configuration directory, so the `npm i` above is needed either way.
+
+Running from Source:
+
 ```bash
-# To run it from source instead
 git clone https://github.com/softov/ahpd && cd ahpd
 pnpm install && pnpm build
-node packages/server/dist/main.js --path /work/project
+node packages/server/dist/main.js --plugin ./packages/agent-claude --path /work/project
 ```
 
-The rest of this README writes `ahpd` for that command, the flags and options are the same whether installed globally, run with npx, or from source.
-
-See [DEVELOPER.md](DEVELOPER.md) and [REFERENCE.md](REFERENCE.md) for implementation details.
-
-### Run in the background
-```bash
-ahpd start --path /work
-ahpd status
-ahpd stop
-ahpd config                  # where the configuration is, and what it says
-```
-
-`start` detaches, so the daemon outlives the shell that began it - which is the point of a sessions server: close the terminal and the turn keeps running, attach again from somewhere else.
-
-When a newer `@ahpd/server` is on npm, `start` and `status` say so on one more line, read from a file the daemon refreshes in the background six hours apart; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` or `"updateCheck": false` in the configuration switch it off. See [docs/DAEMON.md](docs/DAEMON.md).
-
-### Load a plugin
-
-A plugin is an installed package that contributes a backend, a port, a server tool or a configuration default, named on the command line or in the configuration file:
-
-```bash
-ahpd --plugin @ahpd/agent-cofold --plugin ./my-plugin
-```
-
-`--plugin` can be repeated and `--no-plugins` loads none, whatever the file says. The same list goes in the configuration:
-
-```json
-{ "plugins": ["@ahpd/agent-cofold", { "name": "./my-plugin", "enabled": false }] }
-```
-
-Naming a plugin **runs its code in the daemon's process with the daemon's permissions**, so installing one is the trust decision. `ahpd plugin list` says what the configuration names and what a run would load, without importing any of it. See [docs/PLUGINS.md](docs/PLUGINS.md) for writing one and [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs) for running one.
-
-### Catalogue more than one directory
-
-`--path` names a directory on the **host machine** and can be repeated:
-
-```bash
-ahpd \
-  --path /work/api \
-  --path /work/web
-```
-
-Past sessions in any of them are listed, and the first is the default when a client does not choose one.
-
-It is not a fence: a client may start a session, open a terminal or read a file anywhere on the machine, as it may on the reference host. The connection token is what decides who may ask.
-
-### To expose it elsewhere:
-
-The daemon binds loopback and takes no token, which needs no secret: anything reaching `127.0.0.1` is already on this machine. Binding anything else without one of `--connection-token`, `--connection-token-file` or `--without-connection-token` refuses to start.
-
-```bash
-ahpd \
-  --host 0.0.0.0 \
-  --connection-token-file ~/.ahpd/token
-```
-
-See [docs/DAEMON.md](docs/DAEMON.md) for the complete CLI, the configuration file, tokens, and running on Bun or Deno.
-
-## Connect a client
+Then connect an AHP client.
 
 With [`ahpc`](https://github.com/softov/ahpc):
 
@@ -147,20 +105,349 @@ With [`ahpc`](https://github.com/softov/ahpc):
 ahpc --host ws://127.0.0.1:9187
 ```
 
-Or VS Code, in `settings.json`:
+Via VS Code (`settings.json`):
 
 ```json
 "chat.remoteAgentHostsEnabled": true,
 "chat.remoteAgentHosts": [
-  { "name": "ahpd", "address": "ws://127.0.0.1:9187" }
+  {
+    "name": "ahpd",
+    "address": "ws://127.0.0.1:9187"
+  }
 ]
 ```
 
-A path named by a client always refers to the **host's filesystem**, never the client's.
+That's enough to run an agent session through AHP.
 
-## Use it as a library
 
-`createHost()` implements the AHP side:
+## What ahpd provides
+
+### Persistent sessions
+
+Agent state and turn executions live on the host server. Clients can disconnect mid-turn and reconnect later, or multiple clients can observe and drive the same session simultaneously.
+
+
+### Plugins
+
+Everything past the protocol is a plugin, named in the configuration and loaded at startup:
+
+* **Agent backends** - Claude, OpenAI-compatible models, any ACP server, or one you write;
+* **Computers** - Docker isolation, so a session runs inside a container instead of on the host;
+* **Tunnels** - a public address for the port this host bound;
+* **Ports, tools and URI schemes** - anything a host can be handed, a plugin can contribute.
+
+A new capability is a package and a `--plugin` line rather than a change to the daemon.
+
+### Host capabilities
+
+Capabilities are modular; hosts omit unused ports without breaking client compatibility:
+
+* **Resources** - read, write, create and delete filesystem paths;
+* **Terminals** - run shell sessions;
+* **Changes** - inspect and manipulate working-tree Git changes;
+* **Directories** - expose repository/branch information;
+* **Worktrees** - give each session its own git worktree, so two agents in one repository do not share a working tree;
+* **GitHub** - expose pull-request information;
+* **Automations** - schedule automated agent executions;
+* **Sessions** - where the read and archived bits and a session's settings are kept;
+* **Diagnostics** - what a window asks about the host itself: version, logs, network, shutdown;
+* **Computers** - create disposable and isolated execution environments;
+* **Containers** - run a whole host inside a dev container and carry its frames;
+* **Tools** - register host-provided tools into sessions.
+
+Capabilities are independent. A host without terminal support, for example, is still a valid AHP host.
+
+## CLI & Daemon Configuration
+
+### Background Service
+
+Detach the daemon from your terminal to run persistently:
+
+```bash
+ahpd start --path /work
+
+ahpd status
+ahpd config
+ahpd stop
+```
+
+`start` detaches the process from the shell.
+
+That means the host - and any agent work it owns - can continue after the terminal that launched it has closed.
+
+### Serving multiple projects
+
+Host multiple repository paths simultaneously using repeated `--path` flags. Existing sessions in these paths will be catalogued automatically:
+
+```bash
+ahpd \
+  --path /work/api \
+  --path /work/web
+```
+
+> Note: `--path` is a catalogue entry, **not a filesystem sandbox**. Clients with access to the host may request resources or terminals elsewhere on the machine if the configured ports allow it.
+
+### Remote access
+
+By default, `ahpd` listens only on loopback.
+
+To listen on another interface, configure a connection token:
+
+```bash
+ahpd \
+  --host 0.0.0.0 \
+  --connection-token-file ~/.ahpd/token
+```
+
+`ahpd` refuses to bind outside loopback without an explicit connection-token configuration unless that protection is deliberately disabled.
+
+The token controls access to the host. Agent providers may additionally use their own authentication.
+
+See [`docs/DAEMON.md`](docs/DAEMON.md) for networking, configuration and token handling.
+
+# Extension Plugins
+
+A plugin contributes to the host the daemon builds: a backend, one of its ports, a server tool, a URI scheme or a configuration default. Load several, and each contributes its own part of one host:
+
+```bash
+# A backend, plus the computer plugin that gives it containers to run in
+ahpd --plugin @ahpd/agent-claude --plugin @ahpd/computer
+
+# One of your own, from a directory or a single file
+ahpd --plugin @ahpd/agent-claude --plugin ./my-plugin
+ahpd --plugin @ahpd/agent-claude --plugin ./scratch-plugin.mjs
+
+# Load none, whatever the configuration file says
+ahpd --no-plugins
+```
+
+The same list goes in `~/.config/ahpd/config.json`, where an entry can carry options or be turned off without being removed:
+
+```json
+{
+  "plugins": [
+    "@ahpd/agent-claude",
+    {
+      "name": "@ahpd/computer",
+      "options": { "image": "node:22", "max": 4 }
+    },
+    { "name": "./my-plugin", "enabled": false }
+  ]
+}
+```
+
+`--plugin` is repeatable and plugins apply in the order named. A command-line `--plugin` **replaces** the file's list rather than adding to it, the way `--path` replaces `paths`.
+
+A plugin executes **inside the daemon process with the daemon's permissions**. Installing and enabling one is therefore a trust decision, and the configuration file is the trust boundary here the way the connection token is the port's.
+
+One that does not resolve, whose manifest is wrong, or that throws on import or out of `apply` is reported and skipped: the daemon starts without it and the next one is still tried.
+
+You can inspect configured plugins without loading any of them:
+
+```bash
+ahpd plugin list
+```
+
+See [docs/PLUGINS.md](docs/PLUGINS.md) for writing one and [docs/DAEMON.md](docs/DAEMON.md#--plugin-and-what-naming-one-runs) for running one.
+
+---
+
+# Packages
+
+This repository is a pnpm workspace containing the AHP host, SDK, agent integrations and some plugins.
+
+| Package                                           | Purpose                                |
+| ------------------------------------------------- | -------------------------------------- |
+| [`@ahpd/server`](packages/server/)                | Standalone `ahpd` daemon               |
+| [`@ahpd/sdk`](packages/sdk/)                      | AHP host library                       |
+| [`@ahpd/computer`](packages/computer/)            | Disposable computer support            |
+| [`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/) | A Dev Tunnel to the port this host bound |
+
+---
+
+## Agents (Harnesses)
+
+A new harness is a package and a `--plugin` line.
+
+| Package                                      | Backend                                                                 |
+| -------------------------------------------- | ----------------------------------------------------------------------- |
+| [@ahpd/agent-claude](packages/agent-claude) | Claude Code through the Claude Agent SDK                                |
+| [@ahpd/agent-cofold](packages/agent-cofold) | OpenAI-compatible models through cofold                                 |
+| [@ahpd/agent-acp](packages/agent-acp)       | Agent Client Protocol servers such as Copilot, Codex ACP and Gemini ACP |
+
+Name one by package, by directory, or by file:
+
+```bash
+# An installed package. `npm i` in ~/.config/ahpd is the install
+ahpd --plugin @ahpd/agent-claude
+
+# A directory with a manifest, tried against the working directory first
+ahpd --plugin ./packages/agent-cofold
+
+# A single file
+ahpd --plugin ./scratch-agent.mjs
+
+# Several, applied in the order named
+ahpd --plugin @ahpd/agent-claude --plugin ./my-agent
+```
+
+The same list goes in the configuration, where an entry can carry options:
+
+```json
+{
+  "plugins": [
+    "@ahpd/agent-claude",
+    {
+      "name": "@ahpd/agent-acp",
+      "options": { "provider": "copilot", "command": "copilot", "args": ["--acp"] }
+    }
+  ]
+}
+```
+
+What each one is and the options it takes live with the package. `@ahpd/agent-acp` is one provider per configured command, so `copilot --acp`, `codex-acp` and `gemini --experimental-acp` are three entries rather than three packages.
+
+A custom agent implements the same `Agent` interface and is named the same way. Nothing about it is different from the three above.
+
+Nothing above the seam is reached any other way: a client speaks AHP and depends on no agent SDK at all.
+
+The important dependency direction is:
+
+```mermaid
+flowchart LR
+    classDef core fill:#0f172a,stroke:#10b981,stroke-width:1.5px,color:#fff
+    classDef plugin fill:#1e293b,stroke:#8b5cf6,stroke-width:1.5px,color:#fff
+    classDef claude fill:#1e293b,stroke:#F88c00,stroke-width:1.5px,color:#fff
+    classDef cofold fill:#1e293b,stroke:#3b82f6,stroke-width:1.5px,color:#fff
+
+    SERVER["@ahpd/server"]
+    SDK["@ahpd/sdk"]
+
+    subgraph Plugins ["Agent Plugins"]
+      CLAUDE["@ahpd/agent-claude"]
+      COFOLD["@ahpd/agent-cofold"]
+      ACP["@ahpd/agent-acp"]
+    end
+
+    SERVER --> SDK
+    SERVER -. "dynamically loads" .-> Plugins
+
+    CLAUDE -->|"implements"| AGENT["Agent Interface"]
+    COFOLD -->|"implements"| AGENT
+    ACP -->|"implements"| AGENT
+
+    SDK -->|"hosts & manages"| AGENT
+
+    class SERVER,SDK core
+    class CLAUDE claude
+    class COFOLD cofold
+    class ACP,CUSTOM plugin
+```
+
+---
+
+# Clients (AHP)
+
+| Example                                          | Description                            |
+| ------------------------------------------------ | ------------------ |
+| [softov/ahpc](https://github.com/softov/ahpc)    | An Agent Host Protocol chat and CLI client, depending on no agent SDK at all |
+
+---
+
+# AHP compatibility
+
+`ahpd` targets `@microsoft/agent-host-protocol` **0.9.0**.
+
+Summarised by area rather than by method, one row per area:
+
+| AHP area | | ahpd | Notes |
+| --- | :---: | --- | --- |
+| Handshake and channels | ✅ | `initialize`, `subscribe`, `reconnect` | A dropped client replays from its last `serverSeq` |
+| Sessions | ✅ | create, resume, dispose, catalogue | Past sessions come from the backend's own transcripts, resumed on the first turn |
+| Chats and turns | ✅ | turns, streaming, cancellation, tools | Several chats per session, each its own agent process |
+| Human in the loop | ✅ | tool confirmation, agent questions | `session/inputNeeded` is a list, so two asks are answered apart |
+| Session configuration | ✅ | model, permission mode, effort, output style, sandbox, shell init | A backend advertises its own keys, including the window's two platform ones |
+| Completions | ✅ | `/` commands, `@` files, config pickers | `branch`, plus any key a plugin registered an answerer for |
+| Resources | 🧩 | `resources` port | Anywhere the store reaches, and a write needs no grant first |
+| Client resources | ✅ | the same ten `resource*`, outbound | A client publishes a scheme and this host routes to it by URI authority |
+| Resource watches | 🧩 | `resources` port | Watch lifetime follows the subscription; the protocol has no dispose |
+| Terminals | 🧩 | `terminals` port | A real PTY with OSC 133 command detection where `node-pty` loads, pipes otherwise |
+| Changesets | 🧩 | `changes` port | The git implementation serves all four scopes and the working-tree operations |
+| Automations | 🧩 | `automations` port | Plus scheduled execution: cron in a named time zone, with nobody connected |
+| Annotations | ✅ | `annotations/*` | Client-origin: this host reduces and echoes, and refuses an id it does not hold |
+| Authentication | ✅ | connection token, `authenticate`, user directory | A token is per connection; `ahpd://users` is the one this host verifies itself |
+| Telemetry | ✅ | `otlp/export{Logs,Traces,Metrics}` | The daemon's own lines, a turn as a server span, cumulative counters |
+
+**✅ as specified · 🧩 through a host port · 🚧 partial · ➖ declared and not written · 🚫 deliberately not**
+
+The implementation currently covers **31 of 32 declared commands** and **95 of 96 state actions**.
+
+Unsupported operations return `-32601` rather than an empty success. This is intentional: reporting a missing capability is preferable to leaving a client waiting for state that will never arrive.
+
+For the command-by-command compatibility matrix, see [`docs/AHP.md`](docs/AHP.md).
+
+# Documentation
+
+| Document                                   | Purpose                                                   |
+| ------------------------------------------ | --------------------------------------------------------- |
+| [docs/DAEMON.md](docs/DAEMON.md)           | CLI, configuration, tokens, runtimes (Node/Bun/Deno)      |
+| [docs/LIBRARY.md](docs/LIBRARY.md)         | Building an AHP server with `createHost` and the ports    |
+| [docs/AGENT.md](docs/AGENT.md)             | Building an `Agent` and `Session` contracts               |
+| [docs/AHP.md](docs/AHP.md)                 | Detailed AHP compatibility                                |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md)       | Plugin system and authoring                               |
+| [docs/COMPUTER.md](docs/COMPUTER.md)       | Disposable computers (Docker and KVM)                     |
+| [docs/CONTAINERS.md](docs/CONTAINERS.md)   | Dev containers                                            |
+| [docs/USERS.md](docs/USERS.md)             | Users and authorization                                   |
+| [REFERENCE.md](REFERENCE.md)               | Protocol/reference-host decisions                         |
+| [DEVELOPER.md](DEVELOPER.md)               | How to run and develop the project from source            |
+
+# Development
+
+```bash
+git clone https://github.com/softov/ahpd
+cd ahpd
+
+pnpm install
+pnpm build
+
+pnpm test
+pnpm typecheck
+```
+
+Protocol captures can be checked against the strict schema:
+
+```bash
+pnpm wire -- test/fixtures/wire.jsonl
+```
+
+
+---
+
+## Build your own host
+
+The daemon is built on `@ahpd/sdk`.
+
+You can use the same library to embed an AHP host into another application.
+
+### Minimal host
+
+```ts
+import { createHost, listen } from '@ahpd/sdk';
+import { claude } from '@ahpd/agent-claude';
+
+const path = process.cwd();
+
+const host = createHost({
+  path,
+  agents: [claude({ paths: [path] })]
+});
+
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
+
+This is already a working AHP conversation host.
+
+`createHost()` handles the protocol machinery:
 
 * negotiation;
 * channels and subscriptions;
@@ -171,175 +458,124 @@ A path named by a client always refers to the **host's filesystem**, never the c
 * actions;
 * transcript paging.
 
-You provide the agents and, optionally, the things that touch the machine.
+You provide the agents and whichever host capabilities you want to expose.
 
-### Minimal host
-
-The smallest host that works is three things: a backend, a host to serve it, and a socket to serve it on.
+### Add host capabilities
 
 ```ts
-import { createHost, listen } from '@ahpd/sdk';
+import {
+  createHost,
+  listen,
+  fileResources,
+  shellTerminals,
+  gitBranches,
+  gitChanges,
+  githubPullRequests,
+  scheduledAutomations,
+  hostTools
+} from '@ahpd/sdk';
+
 import { claude } from '@ahpd/agent-claude';
 
-const host = createHost({
-  path: process.cwd(),
-  agents: [claude({ paths: [process.cwd()] })],
-});
-
-await listen({ port: 9187 }, (peer) => host.accept(peer));
-```
-
-That is already a working AHP conversation host.
-
-What it does *not* serve is anything that touches the machine, because `createHost` imports no filesystem, no subprocess and no `git`.
-
-Those arrive as **ports**, and each is optional and independent:
-
-```ts
-import { createHost, listen, fileResources, shellTerminals, gitBranches, gitChanges, githubPullRequests, scheduledAutomations, hostTools } from '@ahpd/sdk';
-import { claude } from '@ahpd/agent-claude';
+const path = process.cwd();
 
 const host = createHost({
-  path: process.cwd(),
-  agents: [claude({ paths: [process.cwd()] })],
+  path,
+  agents: [claude({ paths: [path] })],
 
-  resources: fileResources(),                 // files a client may read and write, and `@` completion
-  terminals: shellTerminals(),                // a shell, as a terminal channel
-  changes: gitChanges(),                      // what the working tree has that HEAD does not
-  directories: gitBranches(),                 // which branch each served directory is on
-  github: githubPullRequests(),               // and the pull request GitHub has for it
-  automations: scheduledAutomations({ file: 'automations.json' }),        // agents on a clock, with nobody connected
-  tools: hostTools(),                         // tools the host contributes to every session
-
-  onEvent: (line) => process.stdout.write(`${line}\n`),
+  resources: fileResources(),
+  terminals: shellTerminals(),
+  changes: gitChanges(),
+  directories: gitBranches(),
+  github: githubPullRequests(),
+  automations: scheduledAutomations({ file: 'automations.json' }),
+  tools: hostTools(),
+  onEvent: (line) => {
+    process.stdout.write(`${line}\n`);
+  }
 });
 ```
 
 Only `path` and `agents` are required.
 
-Leave a port out and the commands behind it answer `-32601` - the same answer this host gives for anything else it does not serve - rather than failing part-way through one.
+Ports deliberately remain optional. If a capability is absent, the corresponding protocol operation reports that it is unsupported instead of pretending to succeed.
 
-Reading a file is `node:fs` on one runtime and something else on another; a terminal is a subprocess; a branch is a *binary* that may not be installed at all. A host without one of them is not a broken host, it is a smaller one.
+See [`docs/LIBRARY.md`](docs/LIBRARY.md) for full SDK reference.
 
-[docs/LIBRARY.md](docs/LIBRARY.md) has `createHost` option by option and what each port has to implement.
+---
 
 ## Write an agent
 
-An agent is the thing that answers. It says what it is called, what a session of its kind can be configured with, which sessions it already has, and how to start one - and everything the protocol requires stays the host's.
+An agent is the backend: the thing that answers when somebody says something. The host already owns AHP, and imports no backend at all.
+
+An `Agent` is five required members:
 
 ```ts
-import { createHost, listen } from '@ahpd/sdk';
-import { notes } from './agent.js';
+import type { Agent, Session, Start } from '@ahpd/sdk';
 
-const host = createHost({ path, agents: [notes({ path })] });
-await listen({ port: 9201 }, (peer) => host.accept(peer));
+export function shout(): Agent {
+  return {
+    provider: 'shout',                   // what a client names in `createSession`
+    displayName: 'Shout',                // what a person reads instead of the id
+    schema: () => ({ properties: {} }),  // what a session can be told to do differently
+    defaults: () => ({}),                // where each key sits when nothing is chosen
+    create: (start) => converse(start),  // start one
+  };
+}
 ```
 
-Five members are required - `provider`, `displayName`, `schema`, `defaults`, `create` - and what you leave out is a real answer rather than a gap: no `list` means no sessions to browse, no `probe` means no models until a session of yours reports some. `createHost` cannot tell one agent from another, so a backend of your own and `claude()` are registered the same way and can be served side by side.
+`create` returns a `Session`. A whole turn is three emits:
 
-[docs/AGENT.md](docs/AGENT.md) is the `Agent` and `Session` contracts, config keys, and the rules that produce a wrong screen rather than an error. The [examples](#examples) below are both complete and both run.
+```ts
+function converse(start: Start): Session {
+  return {
+    uri: start.uri,
+    chatUri: start.chatUri,
+    begin: (turnId, text) => {
+      const startedAt = new Date().toISOString();
+      start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: { text } });
+      start.emit('chat', { 
+        type: 'chat/responsePart', 
+        turnId,
+        part: { id: `${turnId}:0`, kind: 'markdown', content: text.toUpperCase() } 
+      });
+      start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 0 });
+    },
 
-## How compatible is it with AHP
+    // …and the rest of `Session`
+  } as Session;
+}
+```
 
-Against **`@microsoft/agent-host-protocol` 0.9.0**, by area rather than by
-method. ✅ as specified · 🔀 adapted · 🧩 through a host port · 🚧 partial ·
-➖ nothing decided · 🚫 deliberately not.
+Register it like any other, and the host cannot tell it from `claude()`:
 
-| AHP area | ahpd | Status | Notes |
-| --- | --- | :---: | --- |
-| Handshake and channels | `initialize`, `subscribe`, `reconnect` | ✅ | Version negotiated in the client's order of preference; a dropped client replays from its last `serverSeq` |
-| Sessions | create, resume, dispose, catalogue | ✅ | Past sessions are reconstructed from Claude transcripts, and resumed only once somebody starts a turn on one |
-| Chats and turns | turns, streaming, cancellation, tools | ✅ | Several chats can share one session, each on its own agent process |
-| Human in the loop | tool confirmation, agent questions | ✅ | `session/inputNeeded` is a list, so two tools asking at once are answered apart |
-| Session configuration | model, permission mode, effort, output style, sandbox, shell init scripts | ✅ | A backend advertises its own properties and a client draws what it is given - the same five approval modes VS Code's own Claude host offers, and its platform's `sandboxEnabled` and `shellInitScripts`. Keys a client sends anyway (`autoApprove`, `mode`) are mapped onto that. Capabilities are discovered at startup, so a composer draws itself before any turn. `sessionConfigCompletions` is 🚫: every key here is an enum |
-| Resources | `resources` port | 🧩 | Optional; reads and writes anywhere the store reaches, and a write needs no grant to negotiate first |
-| Resource watches | `resources` port | 🧩 | Watch lifetime follows channel subscriptions - the protocol has no dispose command |
-| Terminals | `terminals` port | 🧩 | The built-in implementation uses pipes, not a PTY, and says so rather than leaving it to be discovered |
-| Changesets | `changes` port | 🧩 | The git implementation serves all four scopes and the working-tree operations |
-| Automations | `automations` port | 🧩 | `ahpd` adds scheduled execution: cron in a named time zone, running with nobody connected |
-| Authentication | connection token, plus agent credentials | 🔀 | A pushed token is held per connection; Claude otherwise inherits the daemon's own credentials |
-| Telemetry | `otlp/exportLogs`, `otlp/exportTraces`, `otlp/exportMetrics` | ✅ | The lines the daemon writes to stdout; a turn as a server span with every tool call a child of it; and cumulative counters against the process start |
-| Annotations | - | ➖ | No producer currently |
+```ts
+const host = createHost({ path, agents: [shout()] });
+```
 
-Method by method that is **31 of the 32 declared commands** and **95 of the 96
-state actions**. The rest is `-32601`, said rather than quietly answered: a host
-that returns an empty success to a method it lacks leaves the client waiting for
-state that is never coming, which reads as a hang rather than as a missing
-feature.
+Everything else an `Agent` can declare is optional. See [`docs/AGENT.md`](docs/AGENT.md) for the full contracts, and [`examples/echo`](examples/echo) for the smallest one that runs.
 
-[docs/AHP.md](docs/AHP.md) has it command by command and channel by channel,
-with what each does differently and why - and the rules a host has to keep that
-fail silently rather than loudly.
-
-## Documentation
-
-| | |
-| --- | --- |
-| [docs/DAEMON.md](docs/DAEMON.md) | The CLI, the configuration file, connection tokens, Node/Bun/Deno |
-| [docs/LIBRARY.md](docs/LIBRARY.md) | `createHost` and the ports, for building a host |
-| [docs/AGENT.md](docs/AGENT.md) | The `Agent` and `Session` contracts, for writing a backend |
-| [docs/AHP.md](docs/AHP.md) | Compatibility area by area, emitted actions, and the rules that fail silently |
-| [docs/COMPUTER.md](docs/COMPUTER.md) | A disposable computer on Docker, and the Docker/KVM group commands |
-| [docs/CONTAINERS.md](docs/CONTAINERS.md) | A session in a workspace's dev container, the surface the reference client drives, and `--stdio` |
-| [docs/USERS.md](docs/USERS.md) | A person signs in, a role decides what they may do, and what a client is told when it may not |
-| [REFERENCE.md](REFERENCE.md) | The specification and the reference host, and what each has settled |
-| [DEVELOPER.md](DEVELOPER.md) | How to run and develop the project from source |
-
-## Layout
-
-Six packages in one repository, on pnpm: the protocol library, [`@ahpd/server`](packages/server/) which serves it, three harnesses, and `@ahpd/computer`. The root manifest is private and holds the workspace together.
-
-### `@ahpd/sdk` - the protocol, and the parts to build a host
-
-The library. It implements the protocol and everything a host needs except the agent, which is passed in. [Its README](packages/sdk/README.md) has the files and the options; it is [`@ahpd/sdk` on npm](https://www.npmjs.com/package/@ahpd/sdk).
-
-### Agents and harnesses
-
-One package per harness, each an implementation of the same `Agent` seam and
-each loaded as a plugin rather than built into the daemon. A new harness is a
-package and a `--plugin` line, not a change to this file.
-
-| | |
-| --- | --- |
-| [`@ahpd/agent-claude`](packages/agent-claude/) | Claude Code, through the Claude Agent SDK. |
-| [`@ahpd/agent-cofold`](packages/agent-cofold/) | An OpenAI-compatible endpoint - a `baseUrl` and a key - through the cofold runtime: every model it serves is a model inside one provider. |
-| [`@ahpd/agent-acp`](packages/agent-acp/) | Any [Agent Client Protocol](https://agentclientprotocol.com/) server - `copilot --acp`, `codex-acp`, `gemini --experimental-acp` - as one provider per configured command. |
-
-What each one is and the options it takes live with the package; the `--plugin`
-line that loads one, and how to write another, are in
-[`docs/PLUGINS.md`](docs/PLUGINS.md).
-
-Nothing above the seam is reached any other way. It used to be: `ahpc` had a
-`--claude` mode that reached the Agent SDK in-process, with a second translation
-of it, and two translations meant two answers to every question. The client
-depends on no agent SDK at all now.
+---
 
 ## Examples
 
-Two agents and a client, each complete and each running. The two agents have a README that is the part of the contract they demonstrate.
-
-| | |
-| --- | --- |
-| [examples/echo](examples/echo) | The whole of `Agent` and `Session` with nothing behind it - no model, no subprocess, about two hundred lines. Its README is the contract in the order the host asks for it |
-| [examples/notes](examples/notes) | The same with tools: one that runs without asking, one that waits to be allowed, and a question that is not about a tool. Its README is the rules for asking |
-| [softov/ahpc](https://github.com/softov/ahpc) | An Agent Host Protocol chat and CLI client, depending on no agent SDK at all |
+| Example                                    | Demonstrates                                               |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| [`examples/echo`](examples/echo)           | Minimal `Agent` and `Session`, with no model or subprocess |
+| [`examples/notes`](examples/notes)         | The same with tools, permissions and agent questions       |
 
 ```bash
 pnpm echo  -- --port 9200
 pnpm notes -- --port 9201
+
 ahpc --host ws://127.0.0.1:9201
 ```
 
-## Development
+See [DEVELOPER.md](DEVELOPER.md) for development guidelines, instructions and release workflow.
 
-```bash
-pnpm test        # 975 tests, no network
-pnpm typecheck
-pnpm wire -- test/fixtures/wire.jsonl   # a capture, against the strict schema
-```
-
-The workspace, the checks, recording the wire and how a release is published are in [DEVELOPER.md](DEVELOPER.md).
-
-## License
+# License
 
 MIT.
+
+
+

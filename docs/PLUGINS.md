@@ -82,7 +82,13 @@ The answerer is handed what the client asked: the `query` typed so far, and the 
 
 The host marks the property `enumDynamic` on the way out, which is the protocol's word for "ask me", and routes `sessionConfigCompletions` for that key to the answerer. Registering the pair is what sets the flag, rather than the plugin writing it into the schema: a schema claiming it with nobody registered draws a picker that is answered with nothing, and an answerer the host was never told about is never asked. The two cannot be separated because only the registration knows both.
 
-An answerer that throws is an empty picker rather than a failed command. The person is filling in a session's settings, and a machine listing that cannot be read is not a reason to refuse them the rest of the form.
+**The answerer is also asked once before anybody opens the picker.** `resolveSessionConfig` calls it with an empty query and fills the property's `enum`, `enumLabels` and `enumDescriptions` from what comes back, leaving `enumDynamic` set. That is a seed and not the list: the picker still asks live as somebody types.
+
+The seed is what lets a client label the value it is already holding. VS Code's chat-input chip reads the current value out of `enum` and falls back to printing the raw value when there is none, so an unseeded `computer` drew a machine as `computer://box` and drew the empty value - "on this host" - as a chip with no text at all. A client that draws a picker only where it sees values, as the terminal and mobile clients do, saw no control whatsoever.
+
+A key that arrives with its own `enum` is left alone, because that plugin has seeded itself.
+
+An answerer that throws is an empty picker rather than a failed command, and a seed that throws costs that one key rather than the resolve. The person is filling in a session's settings, and a machine listing that cannot be read is not a reason to refuse them the rest of the form.
 
 The ports are **singletons**. A plugin that supplies one the daemon already
 has must say so:
