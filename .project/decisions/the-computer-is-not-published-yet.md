@@ -1,6 +1,7 @@
 ---
 title: The computer is versioned with the release and not published by it
-status: accepted
+status: superseded
+superseded-by: decisions/the-whole-workspace-is-published.md
 date: 2026-09-23
 refs:
   - code://.github/workflows/release.yml - `PUBLISHED`, and the tag check that still names six

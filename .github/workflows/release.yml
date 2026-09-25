@@ -1,10 +1,8 @@
 name: Release
 
-# A pushed tag is the whole gesture: `git tag v0.6.2 && git push --tags`.
-# The packages that are published move together, so one tag releases them all.
-# `@ahpd/computer` is built and versioned with the rest and is not published
-# until it has been tried against a real machine - decision
-# `the-computer-is-not-published-yet`.
+# A pushed tag is the whole gesture: `git tag v0.7.0 && git push --tags`.
+# Every package in the workspace moves together, so one tag releases them all -
+# decision `the-whole-workspace-is-published`.
 on:
   push:
     tags: ['v*']
@@ -19,7 +17,7 @@ on:
 # What the staging, rehearsal and approval steps name. The pack step packs
 # every workspace package; this list is what is published.
 env:
-  PUBLISHED: sdk agent-claude agent-cofold agent-acp server
+  PUBLISHED: sdk agent-claude agent-cofold agent-acp agent-pi computer tunnel-devtunnel server
 
 jobs:
   release:
@@ -53,7 +51,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The tag is a claim about what is in the manifests, and these six
+      # The tag is a claim about what is in the manifests, and these eight
       # versions move together. A tag that disagrees with any of them publishes
       # a version nobody asked for, so it is checked before anything is built.
       - name: The tag says what every package says
@@ -61,7 +59,7 @@ jobs:
         run: |
           set -eu
           tagged=${GITHUB_REF_NAME#v}
-          for package in sdk agent-claude agent-cofold agent-acp server computer; do
+          for package in $PUBLISHED; do
             found=$(node -p "require('./packages/$package/package.json').version")
             if [ "$tagged" != "$found" ]; then
               echo "The tag says $tagged and packages/$package says $found."
@@ -170,11 +168,9 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         run: |
           echo "Staged. Approve these in order, sdk first:"
-          echo "  https://www.npmjs.com/package/@ahpd/sdk"
-          echo "  https://www.npmjs.com/package/@ahpd/agent-claude"
-          echo "  https://www.npmjs.com/package/@ahpd/agent-cofold"
-          echo "  https://www.npmjs.com/package/@ahpd/agent-acp"
-          echo "  https://www.npmjs.com/package/@ahpd/server"
+          for package in $PUBLISHED; do
+            echo "  https://www.npmjs.com/package/$(node -p "require('./packages/$package/package.json').name")"
+          done
           echo "The approve button stays disabled until npm has finished scanning."
 
       # A rehearsal on a tree whose versions are already on npm is refused, which

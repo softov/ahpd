@@ -96,15 +96,16 @@ git push origin vX.Y.Z
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) takes it from there, on any `v*` tag:
 
-- It refuses the release unless the tag equals the version in `sdk`, `agent-claude`, `agent-cofold`, `agent-acp`, `server` and `computer`, and does that before building anything.
+- It refuses the release unless the tag equals the version in every package it publishes, and does that before building anything.
 - It runs the same checks CI runs, then `pnpm build`.
 - It packs each package with `pnpm pack` and refuses a tarball whose manifest still contains `workspace:`.
   pnpm rather than npm is deliberate: the siblings depend on each other with `workspace:^`, and only pnpm rewrites that to a real range on the way out.
   An `npm pack` tarball carries the literal `workspace:^`, which installs here and is broken for everybody else.
-- It runs `npm stage publish --provenance --access public` for `@ahpd/sdk`, `@ahpd/agent-claude`, `@ahpd/agent-cofold`, `@ahpd/agent-acp` and `@ahpd/server`, in that order.
+- It runs `npm stage publish --provenance --access public` for every package named in `PUBLISHED`, in that order: `sdk` first, then the agents, `computer` and `tunnel-devtunnel`, then `server`.
 
-`@ahpd/computer` is versioned, built and packed with the rest and is not published - decision [the computer is not published yet](.project/decisions/the-computer-is-not-published-yet.md).
-`@ahpd/agent-pi` and `@ahpd/tunnel-devtunnel` are in neither list: they move with the version and nothing stages them, so a plugin named by package name is unavailable to anybody who did not clone this repository.
+The publish list and the tag check are one list - decision [one tag publishes every package in the workspace](.project/decisions/the-whole-workspace-is-published.md).
+A package npm has never seen is the one thing the workflow cannot do by itself: npm configures a trusted publisher on a package, so a new name needs one token publish first.
+Bootstrap it with a stub - a `package.json` and nothing else - at a version *below* the tag's, because a stub at the tag's own version makes the release skip that package as already published.
 
 Staging is deliberate: nothing is installable until somebody approves each version on its npm package page, and they have to be approved in dependency order, `sdk` first.
 A dependant must never be installable while the version it names is still waiting.
