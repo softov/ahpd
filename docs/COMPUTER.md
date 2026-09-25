@@ -175,6 +175,12 @@ backend, rather than run on the host while the session says `computer://box`.
 The setting is honest in both directions: a session that opens has had its
 machine honoured.
 
+That refusal is not the end of it. A backend with nothing to move runs in a
+container by being *part of a host that is already in one*, which is the dev
+container relay: name `@ahpd/agent-cofold` under the computer plugin's
+`devcontainer.plugins` and its loop, its tools and its files are all inside,
+because the host is. See [CONTAINERS.md](CONTAINERS.md).
+
 A machine's `-v` is this host's filesystem made visible and nothing more: the
 container is the isolation, not a boundary the daemon enforces. `-w` is where a
 command starts inside the machine, and a caller's working directory is read

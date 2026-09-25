@@ -50,11 +50,21 @@ export interface DevContainerOptions {
    */
   install?: string | false;
   /**
-   * What the host inside loads.
+   * What the host inside loads, and the one option with no useful default.
    *
-   * Empty means no backends: the container's host serves its own files and
-   * shells and nothing else. A deployment that wants the agent backends there
-   * as well names them, which is the same list this daemon was given.
+   * The host inside is an `ahpd` like this one, and it bundles no backend
+   * either - decision `the-daemon-bundles-no-agent` - so a list with nothing
+   * in it is a host that exits rather than one that serves files and shells.
+   * `connect` refuses on an empty list instead of building a container for it.
+   *
+   * Not defaulted to this daemon's own list, tempting as that is: these
+   * specs are resolved inside the container, where this host's configuration
+   * directory does not exist and a relative path means a different tree.
+   * What runs in there is a deployment fact, and the deployment says it.
+   *
+   * This is also the whole of cofold's answer: its loop runs in this process
+   * and cannot be moved into a machine, so naming it here - where the *host*
+   * is the thing inside the container - is the only way it runs in one.
    */
   plugins?: PluginSpec[];
   /** Lines worth keeping. Nothing is logged without one. */
@@ -173,10 +183,34 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
   return {
     docker: async () => there(docker, ['--version']),
 
-    available: async () =>
-      (await there(docker, ['--version'])) && (await there(command, [...base, '--version'])),
+    /*
+     * Whether this host can run a host inside a container at all.
+     *
+     * The backend list is asked first, and not only because it costs no
+     * process: a deployment that named none could never start the host
+     * inside, and a capability advertised over that is a flow a client offers
+     * and every `connect` refuses. Said on the log rather than silently,
+     * because an empty list is a configuration somebody can fix and Docker
+     * being absent is not.
+     */
+    available: async () => {
+      if (plugins.length === 0) {
+        log('no devcontainer.plugins, so the host inside would have no backend: the capability is not advertised');
+        return false;
+      }
+      return (await there(docker, ['--version'])) && (await there(command, [...base, '--version']));
+    },
 
     connect: async (one: ContainerConnect, sink: ContainerSink): Promise<ContainerConnectResult> => {
+      /*
+       * Asked before anything is built, because `devcontainer up` is a minute
+       * and this failure is knowable at the start: a host with no backend
+       * exits on startup, and the relay would report that as a container that
+       * closed rather than as a list nobody filled in.
+       */
+      if (plugins.length === 0) {
+        throw new Error('The host inside the container would have no backend and would not start. Name at least one under the computer plugin\'s devcontainer.plugins - "@ahpd/agent-cofold" runs this way and no other');
+      }
       if (!hasDefinition(one.workspaceFolder)) {
         throw new Error(`${one.workspaceFolder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
       }
@@ -242,7 +276,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
         paths: [remote],
         sessions: 'memory',
         automations: 'memory',
-        ...(plugins.length === 0 ? {} : { plugins }),
+        plugins,
       };
       const encoded = Buffer.from(JSON.stringify(config), 'utf8').toString('base64');
       const at = `/tmp/ahpd-nested-${randomUUID()}.json`;

@@ -47,8 +47,28 @@ the command the install step provides.
 `install` is how that step runs: a shell command, or `false` to skip it along
 with the probe, for an operator whose image already has a host or whose `host`
 names something else.
-`plugins` is what the host inside loads, which is empty unless this daemon was
-told otherwise.
+`plugins` is what the host inside loads, and it is the one option with no
+useful default. The host in there is an `ahpd` of the same build, and this one
+bundles no backend either, so a list with nothing in it is a process that exits
+on startup. `available()` answers false on an empty list, so a client is
+never offered a flow that could only fail, and the reason is on the log because
+a list nobody filled in is a configuration somebody can fix. `connect` refuses
+it too, before `devcontainer up` runs, for an embedder that never asked.
+
+It is not defaulted to this daemon's own list. These specs are resolved *inside*
+the container, where this host's configuration directory does not exist and a
+relative path means a different tree, so what runs in there is a deployment
+fact and the deployment says it.
+
+This is also the whole of cofold's answer. `@ahpd/agent-cofold` runs its loop,
+its tools and its files in the host's own process and cannot be moved into a
+machine, so it refuses a session that names one. Naming it here is different:
+the *host* is what is inside the container, and cofold runs in there because it
+is part of it.
+
+```json
+{ "name": "@ahpd/computer", "options": { "devcontainer": { "plugins": ["@ahpd/agent-cofold"] } } }
+```
 
 **Until a release carries `--stdio`, the defaults do not work.** The install
 step fetches `@ahpd/server` from npm, and the published build predates the stdio
@@ -152,7 +172,10 @@ with a configuration naming the computer plugin and an open door:
   "sessions": "memory",
   "automations": "memory",
   "plugins": [
-    { "name": "./packages/computer/src/index.ts", "options": { "devcontainer": { "command": "npx", "args": ["-y", "@devcontainers/cli"] } } }
+    { "name": "./packages/computer/src/index.ts", "options": { "devcontainer": {
+      "command": "npx", "args": ["-y", "@devcontainers/cli"],
+      "plugins": ["@ahpd/agent-cofold"]
+    } } }
   ]
 }
 ```

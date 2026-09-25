@@ -56,6 +56,10 @@ const launcher = (extra: Record<string, unknown> = {}, options: { docker?: strin
   docker: options.docker ?? process.execPath,
   env: { DEVCONTAINER_FAKE_STATE: state },
   host: [process.execPath, HOST],
+  // A backend, because `connect` refuses a host inside that would have none.
+  // The fake host below never reads the configuration, so this only has to be
+  // a spec; the refusal itself is checked with an empty list further down.
+  plugins: ['@ahpd/agent-cofold'],
   ...extra,
 });
 
@@ -180,6 +184,9 @@ it('installs a host when the image has none, and configures it either way', asyn
     paths: ['/workspaces/Box'],
     sessions: 'memory',
     automations: 'memory',
+    // Always written, and never empty: the host inside needs a backend the
+    // way this one does, and `connect` refused before this if it had none.
+    plugins: ['@ahpd/agent-cofold'],
   });
   // The host itself is the next exec, which is a stream rather than a
   // collection: it is recorded by the fake as it starts.
@@ -230,6 +237,34 @@ it('carries frames both ways, and the container\'s own noise as output', async (
   const frame = where.said.find((one) => one.includes('"method":"ready"'));
   expect(JSON.parse(frame as string)).toMatchObject({ jsonrpc: '2.0', method: 'ready' });
   port.disconnect('a');
+});
+
+/*
+ * A host inside with nothing to run is refused before a container is built.
+ *
+ * The daemon bundles no backend and the host inside is one of the same
+ * build - decision `the-daemon-bundles-no-agent` - so an empty list is a
+ * process that exits on startup. Reported as the list nobody filled in,
+ * rather than a minute of `devcontainer up` followed by a container whose
+ * host closed for reasons the relay cannot see.
+ */
+it('does not advertise the capability when no backend would be inside', async () => {
+  wrote({ hostPresent: true });
+  const said: string[] = [];
+  expect(await launcher({ plugins: [], log: (line: string) => said.push(line) }).available()).toBe(false);
+  // Said rather than silent: an empty list is a configuration somebody can
+  // fix, unlike a machine with no Docker on it.
+  expect(said.join('')).toContain('devcontainer.plugins');
+  // And nothing was spawned to find it out.
+  expect(read().calls).toEqual([]);
+});
+
+it('refuses a connection whose host inside would have no backend', async () => {
+  wrote({ hostPresent: true });
+  await expect(launcher({ plugins: [] }).connect({ ...connect, workspaceFolder: workspace() }, sink()))
+    .rejects.toThrow(/no backend and would not start/);
+  // Nothing was built: the CLI was never asked to bring a container up.
+  expect(read().calls).toEqual([]);
 });
 
 it('writes a frame to the host, and stops it on disconnect', async () => {
