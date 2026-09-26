@@ -47,8 +47,9 @@ Reference: [00-host.md](host/00-host.md)
 | [16 - A connection that is already authorized is not asked to sign in](host/16-an-authorized-connection-is-not-asked-to-sign-in/plan.md) | high | built 2026-09-26 ([implemented.md](host/16-an-authorized-connection-is-not-asked-to-sign-in/implemented.md)) | host 13 | - |
 | [17 - Host configuration has its own grant](host/17-host-configuration-has-its-own-grant/plan.md) | medium | built 2026-09-25 ([implemented.md](host/17-host-configuration-has-its-own-grant/implemented.md)) | host 11 | - |
 | [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | built 2026-09-26 ([implemented.md](host/18-a-provisional-session-takes-any-key/implemented.md)) | host 02 | - |
+| [19 - A fork copies the conversation through the chosen turn](host/19-a-fork-copies-through-the-turn/plan.md) | medium | planned 2026-09-26, tasks 01-03 todo | - | pi 05, and the ACP fork in plugin 18, which must cut at the turn's end |
 
-Next free number in `host`: `19`.
+Next free number in `host`: `20`.
 
 ## claude
 
@@ -110,6 +111,26 @@ Reference: [00-container.md](container/00-container.md)
 | [04 - A cofold session in a computer runs in an ahpd started inside it](container/04-a-cofold-session-in-a-computer/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 07-17 todo | plugin 14, plugin 15 | - |
 
 Next free number in `container`: `05`.
+
+## pi
+
+Reference: [00-pi.md](pi/00-pi.md)
+
+Worked in this order: 01, 02, 09, then problem [a pi transcript opens empty](../problems/a-pi-transcript-opens-empty-for-a-session-this-process-did-not-watch.md), then 03, 04, host 19, 05, 06, 07.
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - A pi turn can be truncated, one that failed at the provider says so, and the configured model is used](pi/01-a-turn-ends-as-it-ended/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | pi 04, pi 05 |
+| [02 - Host and client tools reach pi](pi/02-host-and-client-tools-reach-pi/plan.md) | high | planned 2026-09-26, tasks 01-04 todo | - | pi 03, pi 09 |
+| [03 - The host's instructions reach pi's system prompt](pi/03-the-host-instructions-reach-pi/plan.md) | medium | planned 2026-09-26, task 01 todo | pi 02 | - |
+| [04 - A pi turn reports what it used](pi/04-a-turn-reports-its-usage/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | pi 01 | - |
+| [05 - A pi chat forks from a turn](pi/05-a-chat-forks-from-a-turn/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | pi 01, host 19 | - |
+| [06 - pi's edits reach the host's changesets](pi/06-pi-edits-reach-the-changesets/plan.md) | medium | planned 2026-09-26, task 01 todo | - | - |
+| [07 - Input from a client is tagged as not the terminal's](pi/07-remote-input-is-tagged/plan.md) | low | planned 2026-09-26, task 01 todo | - | - |
+| [08 - A pi session store can move between hosts](pi/08-a-session-store-can-move/plan.md) | low | dropped 2026-09-26 | - | - |
+| [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | pi 02 | - |
+
+Next free number in `pi`: `10`.
 
 ## Domains without a plan
 

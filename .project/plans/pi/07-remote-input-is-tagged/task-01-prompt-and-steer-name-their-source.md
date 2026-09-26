@@ -1,0 +1,29 @@
+---
+title: prompt and steer name their source
+status: todo
+depends: []
+layer: "agent-pi"
+refs:
+  - "[code://packages/agent-pi/src/backend.ts#L120-L121](../../../../packages/agent-pi/src/backend.ts#L120-L121) - the two calls"
+---
+
+## Objective
+
+Every message this backend hands pi carries `source: 'rpc'`.
+
+## Files
+
+- `UPDATE: packages/agent-pi/src/backend.ts:120-121` - `session.prompt(text, { source })` and `session.steer(text, undefined, { source })`.
+- `UPDATE: test/agent-pi.test.ts` - only if the fake records options; the wrap itself is exercised by typecheck.
+
+## Steps
+
+1. Put the value in one named constant in `backend.ts`, commented with what pi does with it.
+2. Pass it in both calls.
+
+## Validation
+
+- `pnpm typecheck` green, with no cast.
+- By hand, once: a pi extension logging `event.source` on `input` sees the value for a message sent from a client.
+
+## Resume
