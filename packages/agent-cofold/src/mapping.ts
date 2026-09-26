@@ -16,7 +16,7 @@
 
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { contributorOf, toolCallPart, toolCompleteAction, toolReadyAction, toolStartAction } from './tools.js';
+import { contributorOf, intentionOf, toolCallPart, toolCompleteAction, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -349,6 +349,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'tool.proposed': {
           const displayName = options.displayNameOf(event.name);
           const owner = options.ownerOf(event.name);
+          /*
+           * The kind a client routes by and the line it draws, both off the
+           * tool's name: a shell call is a terminal running a command rather
+           * than a generic tool with an input. They go out with the part and
+           * the action together, so a subscription after the fact and a
+           * client watching the stream see the same row.
+           */
+          const meta = toolMetaOf(event.name);
+          const intention = intentionOf(event.name, event.input);
           const held: OpenCall = {
             name: event.name,
             input: event.input,
@@ -356,11 +365,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             readied: false,
             awaited: false,
             invocation: undefined,
-            part: toolCallPart(event.callId, event.name, displayName, owner),
+            part: toolCallPart(event.callId, event.name, displayName, owner, meta, intention),
           };
           open.set(event.callId, held);
           parts.push(held.part);
-          return only([toolStartAction(turnId, event.callId, event.name, displayName, owner)]);
+          return only([toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention)]);
         }
 
         /*
@@ -376,8 +385,17 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const prompt = event.prompt ?? `Run ${displayName}?`;
           const held = open.get(event.callId);
           const owner = held?.owner ?? options.ownerOf(event.name);
+          const meta = toolMetaOf(event.name);
+          const intention = intentionOf(event.name, event.input);
           const call: Bag = held === undefined
-            ? { toolCallId: event.callId, toolName: event.name, displayName, ...contributorOf(owner) }
+            ? {
+                toolCallId: event.callId,
+                toolName: event.name,
+                displayName,
+                ...(intention !== undefined ? { intention } : {}),
+                ...(meta !== undefined ? { _meta: meta } : {}),
+                ...contributorOf(owner),
+              }
             : held.part.toolCall as Bag;
           call.status = 'pending-confirmation';
           call.confirmationTitle = prompt;
@@ -393,7 +411,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            */
           if (held === undefined) {
             parts.push({ id: event.callId, kind: 'toolCall', toolCall: call });
-            actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner));
+            actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention));
           } else {
             held.awaited = true;
             held.invocation = prompt;

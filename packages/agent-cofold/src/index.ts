@@ -23,6 +23,8 @@ export {
   storeOf,
 } from './agent.js';
 export type { CofoldOptions } from './agent.js';
+export { DEFAULT_TOOLS, capabilitiesOf, toolsOf } from './capabilities.js';
+export type { SearchConfig, ToolsConfig } from './capabilities.js';
 export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 export type { HarnessConfig, HarnessProvider } from './config.js';
 export { cofoldSession, sessionIdOf } from './session.js';

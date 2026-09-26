@@ -21,6 +21,7 @@ import { refuseComputer } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { harnessConfig, splitModel } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
+import type { ToolsConfig } from './capabilities.js';
 import { cofoldSession } from './session.js';
 import { turnsOf } from './transcript.js';
 
@@ -53,6 +54,16 @@ export interface CofoldOptions {
   store?: string;
   /** Hold everything in memory instead of on disk; for a test. */
   memory?: boolean;
+  /**
+   * Which of `@cofold/tools`' four capabilities a session runs.
+   *
+   * All four - files, shell, web and memory - are on when this is absent, and
+   * `false` turns one off. `web` may also be an object, which is where
+   * `web_search` gets its providers; without one the session has `web_fetch`
+   * alone. The capabilities run in cofold's own process, so they act on the
+   * machine the daemon runs on.
+   */
+  tools?: ToolsConfig;
   /** A model adapter to use instead of `openaiCompat`; for a test or an embedder. */
   adapter?: ModelAdapter;
   /**

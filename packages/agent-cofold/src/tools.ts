@@ -163,6 +163,32 @@ export const contributorOf = (owner: string | undefined): Bag =>
   owner === undefined ? {} : { contributor: { kind: 'client', clientId: owner } };
 
 /**
+ * What kind of thing a tool call is, said where the reference client reads it.
+ *
+ * `_meta.toolKind` is not protocol. It is the one well-known key VS Code's
+ * agent window routes a tool call by, and `terminal` is the command-and-output
+ * renderer. `shell_exec` is the one cofold tool that needs it: a shell run
+ * through the harness is a command with output, not a generic tool, and a
+ * command a person typed (`!...`) is stamped on its own path in `session.ts`.
+ * A tool the table does not name is left unstamped, so the generic renderer
+ * draws it rather than a guess.
+ */
+export const toolMetaOf = (name: string): Bag | undefined =>
+  (name === 'shell_exec' ? { toolKind: 'terminal' } : undefined);
+
+/**
+ * What a call intends, in the one line a client draws above the input.
+ *
+ * The command a shell is about to run, so a terminal row reads as the command
+ * rather than as the tool's name. Nothing for a tool whose input speaks for
+ * itself: an absent intention leaves the client to draw the name.
+ */
+export const intentionOf = (name: string, input: unknown): string | undefined => {
+  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
+  return name === 'shell_exec' && typeof held.command === 'string' ? held.command : undefined;
+};
+
+/**
  * The response part a tool call holds in a snapshot.
  *
  * The client's reducer builds the same part from `chat/toolCallStart`, so
@@ -172,7 +198,14 @@ export const contributorOf = (owner: string | undefined): Bag =>
  * client that subscribes rather than watches the stream reads this part and
  * not the action that built it.
  */
-export const toolCallPart = (callId: string, name: string, displayName: string, owner?: string): Bag => ({
+export const toolCallPart = (
+  callId: string,
+  name: string,
+  displayName: string,
+  owner?: string,
+  meta?: Bag,
+  intention?: string,
+): Bag => ({
   id: callId,
   kind: 'toolCall',
   toolCall: {
@@ -180,17 +213,29 @@ export const toolCallPart = (callId: string, name: string, displayName: string, 
     toolName: name,
     displayName,
     status: 'streaming',
+    ...(intention !== undefined ? { intention } : {}),
+    ...(meta !== undefined ? { _meta: meta } : {}),
     ...contributorOf(owner),
   },
 });
 
 /** The action that opens a tool-call row. It creates the part on the client. */
-export const toolStartAction = (turnId: string, callId: string, name: string, displayName: string, owner?: string): Bag => ({
+export const toolStartAction = (
+  turnId: string,
+  callId: string,
+  name: string,
+  displayName: string,
+  owner?: string,
+  meta?: Bag,
+  intention?: string,
+): Bag => ({
   type: 'chat/toolCallStart',
   turnId,
   toolCallId: callId,
   toolName: name,
   displayName,
+  ...(intention !== undefined ? { intention } : {}),
+  ...(meta !== undefined ? { _meta: meta } : {}),
   ...contributorOf(owner),
 });
 

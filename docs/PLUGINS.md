@@ -398,10 +398,53 @@ every session it serves:
 | `instructions` | The system prompt the agent is created with |
 | `store` | Where the cofold file store lives: `$XDG_DATA_HOME/ahpd/cofold`, or `~/.local/share/ahpd/cofold` when that is unset. This is session data and not configuration; the harness config is read from `~/.config/cofold/config.json` |
 | `memory` | `true` to hold the store in memory, for a test |
+| `tools` | Which of the four cofold capabilities a session runs, and where `web_search` gets its providers. All four are on when it is absent |
 | `apiKey` | The daemon's own key, or a function asked once per request so an expired one is not cached |
 | `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
 | `adapter` | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
 | `policy` | The run-level policy a pause comes from, cofold's own default when absent |
+
+### The tools a session runs
+
+A cofold session gets `@cofold/tools`' four capabilities by default, so it can
+do what a Claude session can: read, search, edit and write files; run one
+command; fetch a page and, when a provider is configured, search the web; and
+keep memory. cofold runs them in its own process, on the machine the daemon
+runs on. The daemon draws each call, asks through the approvals mode, and
+reports a file an edit changed to the changeset. A shell call is drawn as a
+terminal with its command, and a call that is declined or cut short never
+leaves a file held as changing.
+
+`tools` turns one off by naming it `false`, and gives `web_search` its
+providers:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@ahpd/agent-cofold",
+      "options": {
+        "tools": {
+          "shell": false,
+          "web": { "search": { "brave": { "apiKey": "…" }, "duckduckgo": true } }
+        }
+      }
+    }
+  ]
+}
+```
+
+`web_search` is offered only when `tools.web.search` names at least one of
+`brave` and `tavily`, each with an `apiKey`, or `duckduckgo`, which is `true`
+and needs no key; the configured ones are tried in the order they are written,
+and a failing one is skipped. Name none of them and the session has `web_fetch`
+alone, with no `web_search` to offer.
+
+Memory is files under `<store>/memory/<workspace slug>/`, where `<store>` is
+the plugin's own `store` when it named one and `$XDG_DATA_HOME/ahpd/cofold`
+otherwise, so a session's memory sits beside its sessions and can be read and
+edited by hand. A session whose store is held in memory (`memory: true`) has no
+directory for memory files, so it gets the other three.
 
 A session still chooses for itself. The backend publishes the choices as
 config keys, and a `session/configChanged` on any of them changes what the next

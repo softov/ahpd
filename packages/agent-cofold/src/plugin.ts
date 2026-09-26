@@ -18,6 +18,7 @@ import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { PluginHost } from '@ahpd/sdk';
 import { cofoldAgent } from './agent.js';
 import type { CofoldOptions } from './agent.js';
+import { toolsOf } from './capabilities.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = '@ahpd/agent-cofold';
@@ -65,6 +66,12 @@ const optionsOf = (values: Record<string, unknown>): CofoldOptions => {
   if (resource !== undefined) options.resource = resource;
 
   if (typeof values.memory === 'boolean') options.memory = values.memory;
+
+  // Which of the four capabilities run, and where `web_search` gets its
+  // providers. Only what the configuration actually named is taken, so an
+  // absent key keeps the default (on) rather than being turned off.
+  const tools = toolsOf(values.tools);
+  if (tools !== undefined) options.tools = tools;
 
   // A key is either a literal or a function asked once per request, so an
   // expired one is not cached; both are things JSON cannot carry.

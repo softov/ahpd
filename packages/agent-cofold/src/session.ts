@@ -20,10 +20,11 @@
 
 import { resolve, sep } from 'node:path';
 import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
-import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store } from '@cofold/agents';
+import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store, Tool } from '@cofold/agents';
 import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
-import { PERMISSION_MODES, modelOf, storeOf } from './agent.js';
+import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
+import { PERMISSION_MODES, defaultStoreRoot, modelOf, storeOf } from './agent.js';
 import type { CofoldOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
@@ -43,6 +44,25 @@ import type { ClientToolRelay } from './tools.js';
 const insideDirectory = (workspace: string, path: string): boolean => {
   const target = resolve(workspace, path);
   return target === workspace || target.startsWith(workspace.endsWith(sep) ? workspace : `${workspace}${sep}`);
+};
+
+/**
+ * The tools whose calls change a file, by the names `@cofold/tools` gives them.
+ *
+ * The two file-writing tools of the files capability. Nothing else reports an
+ * edit: a shell writes without naming a file and a memory file lives outside
+ * the workspace, so a changeset is only told about the files it can read.
+ */
+const EDITS = new Set(['write_file', 'edit_file']);
+
+/**
+ * The file a call is about to change, resolved the way the files capability
+ * resolves it, or nothing for a tool that does not write a named file.
+ */
+const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): string | undefined => {
+  if (tool.effects.writes !== true || !EDITS.has(tool.name)) return undefined;
+  const path = (input as { path?: unknown } | undefined)?.path;
+  return typeof path === 'string' && path !== '' ? resolve(workspace, path) : undefined;
 };
 
 /** The mode a session's settings name, or this backend's own default when they name none. */
@@ -224,6 +244,35 @@ export function cofoldSession(
   /** The active turn's mapping, so an answer can settle the entries it opened. */
   let activeMapping: TurnMapping | undefined;
   /**
+   * The file each open writing call named, by the model's own call id.
+   *
+   * A call is announced with `before` and finished with `after`, and the id is
+   * the only thing that survives between the two; an entry that is still here
+   * when the turn ends is one whose tool never reported a result, which is a
+   * call that was denied or a run that was stopped.
+   */
+  const editing = new Map<string, string>();
+
+  /** A writing call is about to run: report the file as it is now. */
+  const announceEdit = (callId: string, path: string): void => {
+    editing.set(callId, path);
+    start.onFileEdit?.(String(active?.id ?? ''), path, 'before');
+  };
+
+  /**
+   * The `after` a call owes, once.
+   *
+   * Sent from the tool's own result and, for a call that will never have one,
+   * from the refusal or the end of the run - so a client never holds a file as
+   * changing for a turn that is over.
+   */
+  const settleEdit = (callId: string): void => {
+    const path = editing.get(callId);
+    if (path === undefined) return;
+    editing.delete(callId);
+    start.onFileEdit?.(String(active?.id ?? ''), path, 'after');
+  };
+  /**
    * What a client is being asked about, by the run's own request id.
    *
    * One row per request rather than one for the turn, because a run can pause
@@ -355,6 +404,38 @@ export function cofoldSession(
     instructions: instructionsOf(values),
     model: modelOf(options, values, start.credentials ?? {}, harness),
     tools: cofoldTools(offered, relay),
+    /*
+     * The four capabilities cofold runs itself, in cofold's own process.
+     *
+     * Memory goes under the store root, beside the sessions; a session whose
+     * store is deliberately in memory has no directory to keep memory files
+     * in, so it gets the other three rather than files under somebody's home.
+     * A tool the host already offers keeps its name, because cofold refuses a
+     * run two contributors give one name to.
+     */
+    capabilities: capabilitiesOf(options.tools ?? DEFAULT_TOOLS, {
+      storeRoot: options.memory === true ? undefined : options.store ?? defaultStoreRoot(),
+      workspace: where,
+    }, offered.map((one) => one.definition.name)),
+    /*
+     * The edits a cofold tool makes, on their way to the changeset.
+     *
+     * The hooks are where a call is known before and after it runs, which is
+     * what the `before`/`after` pair needs: the path is resolved against the
+     * run's workspace the way the files capability resolves it, so the two
+     * halves name one file even when the model wrote a relative path.
+     */
+    hooks: {
+      beforeTool: ({ call, tool }) => {
+        const path = editPathOf(where, tool, call.input);
+        if (path !== undefined) announceEdit(call.callId, path);
+        return { decision: 'allow' };
+      },
+      afterTool: ({ call, output }) => {
+        settleEdit(call.callId);
+        return { output };
+      },
+    },
     store,
     policy: options.policy ?? {
       decide: policyOf(modeOf(values), {
@@ -430,6 +511,28 @@ export function cofoldSession(
    */
   const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent, replaying: boolean): Promise<boolean> => {
     if (event.type === 'run.finished') doing(undefined);
+    /*
+     * A call that will never have a result still owes its `after`.
+     *
+     * A denial ends the call without the tool running and a stopped run can
+     * cut one off mid-flight; either way the file was announced as changing,
+     * so the `after` goes out here when the tool's own result will not carry
+     * it. The sweep is idempotent: `settleEdit` forgets the call it answers.
+     */
+    if (event.type === 'tool.denied') settleEdit(event.callId);
+    /*
+     * A person declining an approval is the other way a call ends without a
+     * result: cofold says so with `approval.resolved` and writes no
+     * `tool.denied`, so the call the entry was about is settled from the
+     * request it named before the mapping takes the entry down.
+     */
+    if (event.type === 'approval.resolved' && event.decision === 'deny') {
+      const callId = pending.get(event.requestId)?.callId;
+      if (callId !== undefined) settleEdit(callId);
+    }
+    if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
+      for (const callId of [...editing.keys()]) settleEdit(callId);
+    }
     /*
      * A finished turn's span is recorded before the client is told it ended,
      * so a fork or a rewind asked for the moment the turn appears has a point
