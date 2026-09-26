@@ -298,6 +298,11 @@ export const apply: Plugin['apply'] = (host, options) => {
       type: 'string',
       title: 'Computer',
       description: 'The computer://<id> this session runs in. Empty runs it on this host.',
+      // Fixed once the session runs: the machine is opened when the backend
+      // starts, and a value taken after that would say something the session
+      // is not doing. Before the first turn it is still the session being
+      // created differently, and the host starts the backend again for it.
+      sessionMutable: false,
       ...(sessionDefault === '' ? {} : { default: sessionDefault }),
     }, async (ask) => {
       const running = await made.list();
