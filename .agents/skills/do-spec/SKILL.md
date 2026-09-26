@@ -36,7 +36,7 @@ Start every file from its template in `assets/`; the template says what goes in 
 ## Statuses
 
 - plan: `draft` `planned` `active` `built` `dropped`
-- task: `todo` `doing` `done` `blocked` `dropped`
+- task: `todo` `doing` `implemented` `done` `blocked` `dropped`
 - decision: `proposed` `accepted` `deprecated` `superseded`
 - rule: `active` `retired` · spec: `current` `retired`
 

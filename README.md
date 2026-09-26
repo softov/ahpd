@@ -11,6 +11,7 @@
 [![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
 [![@ahpd/agent-cofold](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold?label=%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
 [![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
+[![@ahpd/agent-pi](https://img.shields.io/npm/v/%40ahpd%2Fagent-pi?label=%40ahpd%2Fagent-pi)](https://www.npmjs.com/package/@ahpd/agent-pi)
 
 An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, SDK and Plugins.
 
@@ -55,6 +56,7 @@ flowchart TD
         CLAUDE["@ahpd/agent-claude"]
         COFOLD["@ahpd/agent-cofold"]
         ACP["@ahpd/agent-acp"]
+        PI["@ahpd/agent-pi"]
         CUSTOM["Custom Agent"]
     end
 
@@ -63,7 +65,7 @@ flowchart TD
 
     class VS,AHPC,AHPX,OTHER client
     class AHP,SESS host
-    class CLAUDE,COFOLD,ACP,CUSTOM agent
+    class CLAUDE,COFOLD,ACP,PI,CUSTOM agent
     class RES,TERM,CHG,AUTO port
 ```
 
@@ -76,18 +78,20 @@ Close the client and the host keeps running. Reconnect from another client and t
 Global Installation:
 ```bash
 npm i -g @ahpd/server
-cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd plugin install @ahpd/agent-claude
 ahpd --plugin @ahpd/agent-claude --path /work/project
 ```
 
-A bare plugin name is resolved from the configuration directory, which is why the install happens there. Put `"plugins": ["@ahpd/agent-claude"]` in `~/.config/ahpd/config.json` to stop passing the flag.
+`ahpd plugin install` installs the package into `~/.config/ahpd` and adds it to `plugins` there, so the next run loads it. A plugin installed with `npm i -g` is not seen: a bare name is resolved from the configuration directory only.
+
+npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's own global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
 Using npx on the fly
 ```bash
 npx @ahpd/server --plugin @ahpd/agent-claude --path /work/project
 ```
 
-The plugin still comes from the configuration directory, so the `npm i` above is needed either way.
+The plugin still comes from the configuration directory, so the `ahpd plugin install` above is needed either way.
 
 Running from Source:
 
@@ -274,11 +278,12 @@ A new harness is a package and a `--plugin` line.
 | [@ahpd/agent-claude](packages/agent-claude) | Claude Code through the Claude Agent SDK                                |
 | [@ahpd/agent-cofold](packages/agent-cofold) | OpenAI-compatible models through cofold                                 |
 | [@ahpd/agent-acp](packages/agent-acp)       | Agent Client Protocol servers such as Copilot, Codex ACP and Gemini ACP |
+| [@ahpd/agent-pi](packages/agent-pi)         | The pi coding agent, embedded in the daemon                             |
 
 Name one by package, by directory, or by file:
 
 ```bash
-# An installed package. `npm i` in ~/.config/ahpd is the install
+# An installed package. `ahpd plugin install` puts it in ~/.config/ahpd
 ahpd --plugin @ahpd/agent-claude
 
 # A directory with a manifest, tried against the working directory first
@@ -327,6 +332,7 @@ flowchart LR
       CLAUDE["@ahpd/agent-claude"]
       COFOLD["@ahpd/agent-cofold"]
       ACP["@ahpd/agent-acp"]
+      PI["@ahpd/agent-pi"]
     end
 
     SERVER --> SDK
@@ -335,13 +341,14 @@ flowchart LR
     CLAUDE -->|"implements"| AGENT["Agent Interface"]
     COFOLD -->|"implements"| AGENT
     ACP -->|"implements"| AGENT
+    PI -->|"implements"| AGENT
 
     SDK -->|"hosts & manages"| AGENT
 
     class SERVER,SDK core
     class CLAUDE claude
     class COFOLD cofold
-    class ACP,CUSTOM plugin
+    class ACP,PI,CUSTOM plugin
 ```
 
 ---

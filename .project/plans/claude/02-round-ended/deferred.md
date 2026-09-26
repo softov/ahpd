@@ -7,4 +7,4 @@ The Claude Agent SDK exposes no event for a round that ended with neither text n
 
 | What | Why it waits | Where it goes |
 | --- | --- | --- |
-| A client settles an open reasoning section when a model round ends with no text and no tool calls | `@anthropic-ai/claude-agent-sdk@0.3.278` has no such event, so a client keeps the section open until the next part arrives and draws two rounds of thinking as one, or until the turn's `result` arrives | unplanned; it needs an SDK event for the round, and it is what ahpc screen/02 would read |
+| A client settles an open reasoning section when a model round ends with no text and no tool calls | `@anthropic-ai/claude-agent-sdk@0.3.278` has no such event, so a client keeps the section open until the next part arrives and draws two rounds of thinking as one, or until the turn's `result` arrives | [claude/03](../03-an-empty-round-is-announced/plan.md), which reads the round from the stream's own `message_start` to `message_stop` instead of waiting for an SDK event; it is what ahpc screen/02 would read |

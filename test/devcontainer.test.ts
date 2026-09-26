@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { devContainer, hasDefinition, parseUp } from '../packages/computer/src/devcontainer.js';
+import { devContainer, hasDefinition, parseUp, pluginInstallLine } from '../packages/computer/src/devcontainer.js';
 import type { ContainerSink } from '../packages/sdk/src/types/containers.js';
 
 /*
@@ -175,10 +176,14 @@ it('installs a host when the image has none, and configures it either way', asyn
   // runs a checkout mounted into the container was told its image had no host
   // and watched a package it will never run being installed.
   expect(commands[0]).toBe(`command -v '${process.execPath}'`);
-  expect(commands[1]).toMatch(/^npm i -g @ahpd\/server@\d/);
+  expect(commands[1]).toMatch(/^npm i -g @ahpd\/server@\d\S* --allow-scripts=node-pty$/);
+  // The backend, installed into the configuration directory inside the
+  // container: a bare name is resolved from there and from nowhere else, so a
+  // global install would leave the nested host exiting on startup.
+  expect(commands[2]).toBe(pluginInstallLine([process.execPath, HOST], ['@ahpd/agent-cofold']));
   // The configuration is written through a shell, owner-only, from base64.
-  expect(commands[2]).toContain('chmod 600');
-  const encoded = /printf %s ([A-Za-z0-9+/=]+) \| base64 -d/.exec(commands[2] ?? '')?.[1];
+  expect(commands[3]).toContain('chmod 600');
+  const encoded = /printf %s ([A-Za-z0-9+/=]+) \| base64 -d/.exec(commands[3] ?? '')?.[1];
   expect(encoded).toBeDefined();
   expect(JSON.parse(Buffer.from(encoded as string, 'base64').toString('utf8'))).toEqual({
     paths: ['/workspaces/Box'],
@@ -190,12 +195,12 @@ it('installs a host when the image has none, and configures it either way', asyn
   });
   // The host itself is the next exec, which is a stream rather than a
   // collection: it is recorded by the fake as it starts.
-  await until(() => read().commands.length >= 4);
+  await until(() => read().commands.length >= 5);
   // And it is started in stdio mode on that file, with no port.
-  expect(read().commands[3]).toContain('--stdio');
-  expect(read().commands[3]).toContain('--path');
-  expect(read().commands[3]).toContain('--config-file');
-  expect(read().commands[3]).not.toContain('--port');
+  expect(read().commands[4]).toContain('--stdio');
+  expect(read().commands[4]).toContain('--path');
+  expect(read().commands[4]).toContain('--config-file');
+  expect(read().commands[4]).not.toContain('--port');
   await until(() => where.said.length > 0 || where.closed.length > 0);
 });
 
@@ -210,6 +215,9 @@ it('skips the install entirely when the operator says the host is there', async 
   // launch, which is what a checkout mounted into the container needs.
   expect(commands.filter((one) => one.startsWith('command -v'))).toEqual([]);
   expect(commands.filter((one) => one.startsWith('npm i -g'))).toEqual([]);
+  // And no backend install either: the image is declared complete, plugins
+  // included, so nothing here reaches npm.
+  expect(commands.filter((one) => one.includes('plugin install'))).toEqual([]);
   expect(commands.some((one) => one.includes('--stdio'))).toBe(true);
 });
 
@@ -223,6 +231,45 @@ it('does not install over a host the image already has', async () => {
   wrote({ hostPresent: true, passthrough: [process.execPath] });
   await launcher().connect({ ...connect, workspaceFolder: workspace() }, sink());
   expect(read().commands.filter((one) => one.startsWith('npm i -g'))).toEqual([]);
+  // The backend is still installed, because an image built with the server
+  // may still have none - which is the gap this line closes.
+  expect(read().commands.filter((one) => one.includes('plugin install'))).toHaveLength(1);
+});
+
+it('installs only the package names, leaving a path for the container', async () => {
+  wrote({ hostPresent: true, passthrough: [process.execPath] });
+  await launcher({ plugins: ['@ahpd/agent-cofold', './mounted-plugin', 'npm:@ahpd/agent-acp'] })
+    .connect({ ...connect, workspaceFolder: workspace() }, sink());
+  // A path is resolved against the container's own working directory and a
+  // scheme is the runtime's to resolve, so neither is this launcher's to
+  // install.
+  expect(read().commands.filter((one) => one.includes('plugin install')))
+    .toEqual([pluginInstallLine([process.execPath, HOST], ['@ahpd/agent-cofold'])]);
+});
+
+it('installs only what the configuration directory has not got, with the host\'s own command', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-plugin-line-'));
+  try {
+    mkdirSync(join(home, 'ahpd', 'node_modules', '@ahpd', 'agent-cofold'), { recursive: true });
+    writeFileSync(join(home, 'ahpd', 'node_modules', '@ahpd', 'agent-cofold', 'package.json'), '{}');
+    const sh = (specs: string[]) => spawnSync('/bin/sh', ['-c', pluginInstallLine(['echo', 'node', '/w/main.js'], specs)], {
+      encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: home },
+    });
+    // Present, so nothing runs: an offline image with its backends starts.
+    expect(sh(['@ahpd/agent-cofold']).stdout).toBe('');
+    // Missing, so the host's program is asked, with the spec as written.
+    expect(sh(['@ahpd/agent-cofold', '@ahpd/agent-acp@0.7.0']).stdout)
+      .toBe('node /w/main.js plugin install --no-enable @ahpd/agent-acp@0.7.0\n');
+  }
+  finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it('refuses with the plugin\'s name when the container cannot install it', async () => {
+  wrote({ hostPresent: true, passthrough: [process.execPath], failCommands: ['plugin install'], failErr: 'npm ERR! 404 not found' });
+  await expect(launcher().connect({ ...connect, workspaceFolder: workspace() }, sink()))
+    .rejects.toThrow(/@ahpd\/agent-cofold.*404 not found/s);
 });
 
 it('carries frames both ways, and the container\'s own noise as output', async () => {

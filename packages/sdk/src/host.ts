@@ -250,26 +250,33 @@ const UNGATED = new Set([
 ]);
 
 /**
- * What dispatching into a channel needs, by the channel rather than the action.
+ * What dispatching into a channel needs.
  *
  * A dispatch is a notification, so what it gets on refusal is `rejectionReason`
- * on the channel rather than an error code - and what it is checked against is
- * the channel, because that is what says which part of the host is being
- * driven. A dispatch is always a *write*: typing into a terminal, saying
- * something in a chat, changing a root setting.
+ * on the channel rather than an error code. It is checked against the channel,
+ * because that is what says which part of the host is being driven, and a
+ * dispatch is always a *write*: typing into a terminal, saying something in a
+ * chat, changing a root setting.
  *
- * `ahp-root://` is `file:write` because the only thing a client may dispatch
- * there is `root/configChanged`, a setting that is the host's own.
+ * `ahp-root://` is the one channel read with the action as well.
+ * `root/configChanged` that only sets `PER_CONNECTION` keys changes nothing
+ * anybody else reads, so it needs a sign-in and no grant (`undefined`). Any
+ * other key, and a `replace`, changes the host for everybody and needs
+ * `config:write`.
  *
  * Anything else - a resource watch this client created, or a channel a later
  * plan adds - is `file:read`, the conservative answer and the one
  * `createResourceWatch` already required to hand the channel over.
  */
-const dispatchNeeds = (channel: string): Grant => {
+const dispatchNeeds = (channel: string, action?: Record<string, unknown>): Grant | undefined => {
   if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session:write';
   if (channel.startsWith('ahp-terminal:')) return 'terminal:write';
   if (channel.startsWith('ahp-automation')) return 'automation:write';
-  if (channel === ROOT || channel.startsWith('ahp-root')) return 'file:write';
+  if (channel === ROOT || channel.startsWith('ahp-root')) {
+    if (action?.type !== 'root/configChanged' || action.replace === true) return 'config:write';
+    const config = typeof action.config === 'object' && action.config !== null ? action.config : {};
+    return Object.keys(config).every((key) => PER_CONNECTION.has(key)) ? undefined : 'config:write';
+  }
   return 'file:read';
 };
 
@@ -1349,13 +1356,14 @@ export function createHost(options: HostOptions): Host {
    * it used, because its subscription is keyed by that name and it would drop
    * anything else.
    */
-  const broadcast = (channel: string, method: string, params: unknown): void => {
+  const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
-      if (connection.watching.has(channel)) connection.peer.notify(method, params);
+      const said = per === undefined ? params : per(connection);
+      if (connection.watching.has(channel)) connection.peer.notify(method, said);
       // And under the older spelling, for a client still watching by that one.
       const alias = connection.aliases.get(channel);
       if (alias !== undefined && connection.watching.has(alias)) {
-        connection.peer.notify(method, { ...(params as Record<string, unknown>), channel: alias });
+        connection.peer.notify(method, { ...(said as Record<string, unknown>), channel: alias });
       }
     }
   };
@@ -1364,6 +1372,42 @@ export function createHost(options: HostOptions): Host {
     clientId: string;
     clientSeq: number;
   }
+  /**
+   * An action envelope as one connection receives it.
+   *
+   * Two actions are not the same for every connection. `root/configChanged`
+   * carries `PER_CONNECTION` keys that belong to the client that sent them:
+   * the sender gets its echo whole, and every other connection gets the same
+   * envelope and `serverSeq` without those keys, with its own values in their
+   * place when the action replaces the config. `root/agentsChanged` carries
+   * the root agent list, whose sign-in resource says `required: true` for a
+   * connection that must sign in and `false` for one the host already treats
+   * as somebody. Every other envelope is delivered as it is.
+   *
+   * This is the one place an envelope is rewritten for a connection, which is
+   * why the live broadcast and both replay paths call it: a rewrite anywhere
+   * else would be a second opinion about the same delivery.
+   */
+  const seenBy = <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined }>(
+    connection: Connection,
+    envelope: E,
+  ): E => {
+    const { action } = envelope;
+    if (envelope.channel !== ROOT) return envelope;
+    if (action.type === 'root/agentsChanged') {
+      return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
+    }
+    if (action.type !== 'root/configChanged') return envelope;
+    if (envelope.origin !== undefined && envelope.origin.clientId === connection.clientId) return envelope;
+    const config = (typeof action.config === 'object' && action.config !== null ? action.config : {}) as Record<string, unknown>;
+    const theirs = Object.keys(config).filter((key) => PER_CONNECTION.has(key));
+    const own = action.replace === true
+      ? Object.fromEntries(Object.entries(connection.config ?? {}).filter(([key]) => PER_CONNECTION.has(key)))
+      : {};
+    if (theirs.length === 0 && Object.keys(own).length === 0) return envelope;
+    const kept = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key)));
+    return { ...envelope, action: { ...action, config: { ...kept, ...own } } };
+  };
   /**
    * Whose dispatch is being applied right now.
    *
@@ -1575,7 +1619,7 @@ export function createHost(options: HostOptions): Host {
     asking(channel, action);
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
-    broadcast(channel, 'action', envelope);
+    broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
   };
   /**
    * A client's action, refused in that client's hearing.
@@ -2197,6 +2241,45 @@ export function createHost(options: HostOptions): Host {
     // is: it is the host's, whichever backend the session runs on.
     ...(options.users ? [options.users.resource as Bag] : []),
   ];
+  /**
+   * The agent list as one connection is told it.
+   *
+   * The host's sign-in resource is advertised on every backend with
+   * `required: true`, because every command but the handshake and
+   * `authenticate` is refused until somebody signs in - and a client reads
+   * that field to decide whether to prompt before it ever sends a command. For
+   * a connection this host already treats as somebody, root or carrying a
+   * principal, the prompt would be for a token nothing needs, and a client
+   * that insists on it never creates a session at all. So that one resource is
+   * rewritten for that one connection, and nothing else is: a backend's own
+   * resources and GitHub's are listed as they are - decision
+   * `an-authorized-connection-is-told-sign-in-is-not-required`.
+   *
+   * A copy rather than an edit, because `options.users.resource` is the
+   * directory's own record and `descriptors()` is rebuilt from it for every
+   * delivery. Never called on the canonical list: the replay buffer and
+   * `descriptors()` keep `required: true`, and the rewrite happens where an
+   * envelope or a snapshot is handed to one connection.
+   */
+  const agentsFor = (connection: Connection, list: unknown): unknown => {
+    if (options.users === undefined) return list;
+    if (connection.root !== true && connection.principal === undefined) return list;
+    if (!Array.isArray(list)) return list;
+    const id = loginId();
+    return list.map((agent) => {
+      if (typeof agent !== 'object' || agent === null) return agent;
+      const held = agent as Bag;
+      if (!Array.isArray(held.protectedResources)) return agent;
+      const mine = held.protectedResources.some((one) => typeof one === 'object' && one !== null && (one as Bag).resource === id);
+      if (!mine) return agent;
+      return {
+        ...held,
+        protectedResources: held.protectedResources.map((one) => (typeof one === 'object' && one !== null && (one as Bag).resource === id
+          ? { ...(one as Bag), required: false }
+          : one)),
+      };
+    });
+  };
   /** A token any connected client lent for a resource, and has not run out. */
   const lent = (resource: string): string | undefined => {
     // A person's sign-in is not a credential the host spends on its own work:
@@ -4063,8 +4146,10 @@ export function createHost(options: HostOptions): Host {
     }));
   };
 
-  const rootState = async (mine: Record<string, unknown> = {}) => ({
-    agents: descriptors(),
+  const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection) => ({
+    // The host's list, rewritten for the one connection asking when it is
+    // already somebody: the sign-in resource is the one field that differs.
+    agents: connection === undefined ? descriptors() : agentsFor(connection, descriptors()),
     // What this host is running, not what is on disk beside it.
     activeSessions: sessions.size,
     ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
@@ -4190,9 +4275,9 @@ export function createHost(options: HostOptions): Host {
   const value = (snapshot: Record<string, unknown>): Record<string, unknown> =>
     structuredClone(snapshot);
 
-  const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}, connection?: Connection): Promise<Record<string, unknown>> => {
     if (channel === ROOT) {
-      return value({ resource: ROOT, state: await rootState(mine), fromSeq: serverSeq });
+      return value({ resource: ROOT, state: await rootState(mine, connection), fromSeq: serverSeq });
     }
     const terminal = terminals.get(channel);
     if (terminal)
@@ -4933,7 +5018,7 @@ export function createHost(options: HostOptions): Host {
             // A handshake that fails because one requested channel is gone is
             // a client that cannot connect at all. Take what can be taken.
             try {
-              snapshots.push(await snapshotOf(channel, connection.config ?? {}));
+              snapshots.push(await snapshotOf(channel, connection.config ?? {}, connection));
               connection.watching.add(channel);
             }
             catch { /* not subscribed, and the client will be told if it asks */ }
@@ -5074,7 +5159,7 @@ export function createHost(options: HostOptions): Host {
               // has gone - and is replayed, which is keyed by the name this
               // host dispatches under rather than the one the client used.
               const meant = meantBy(channel);
-              await snapshotOf(meant, connection.config ?? {});
+              await snapshotOf(meant, connection.config ?? {}, connection);
               if (meant !== channel) connection.aliases.set(meant, channel);
               connection.watching.add(channel);
               resumed.push(meant);
@@ -5104,13 +5189,13 @@ export function createHost(options: HostOptions): Host {
             return {
               type: 'replay',
               actions: replayable.filter((held) => held.serverSeq > since
-                && resumed.includes(held.channel)),
+                && resumed.includes(held.channel)).map((held) => seenBy(connection, held)),
               missing,
             };
           }
           log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
           const snapshots = [];
-          for (const channel of resumed) snapshots.push(await snapshotOf(channel, connection.config ?? {}));
+          for (const channel of resumed) snapshots.push(await snapshotOf(channel, connection.config ?? {}, connection));
           return { type: 'snapshot', snapshots };
         },
         /**
@@ -5150,7 +5235,7 @@ export function createHost(options: HostOptions): Host {
           // taken of the channel and returned under the name the client used -
           // a client that asked about one URI and was answered about another
           // has been answered about something it is not watching.
-          const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {});
+          const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
           /*
            * Resolved again, after the snapshot rather than before it.
            *
@@ -5177,8 +5262,9 @@ export function createHost(options: HostOptions): Host {
           // the whole of what was missed, and what it leaves is already in
           // the snapshot or still to come by the ordinary route.
           const at = typeof snapshot.fromSeq === 'number' ? snapshot.fromSeq : 0;
-          for (const envelope of replayable) {
-            if (envelope.channel === meant && envelope.serverSeq > at) {
+          for (const held of replayable) {
+            if (held.channel === meant && held.serverSeq > at) {
+              const envelope = seenBy(connection, held);
               connection.peer.notify('action', meant === channel
                 ? envelope
                 : { ...envelope, channel });
@@ -6757,19 +6843,20 @@ export function createHost(options: HostOptions): Host {
          * other boundary.
          */
         if (options.users !== undefined && connection.root !== true) {
-          const needed = dispatchNeeds(channel);
+          const needed = dispatchNeeds(channel, action);
+          const asked = needed === undefined ? '' : ` needs ${needed}`;
           const who = connection.principal;
           if (who === undefined) {
-            no(`Sign in to use this host: ${channel} needs ${needed}`);
+            no(`Sign in to use this host: ${channel}${asked}`);
             return;
           }
           // Removed since they signed in: a sign-in again, not a role that
           // does not cover this.
           if (who.standing !== undefined && !who.standing()) {
-            no(`Sign in to use this host: ${channel} needs ${needed}`);
+            no(`Sign in to use this host: ${channel}${asked}`);
             return;
           }
-          if (!who.can(needed)) {
+          if (needed !== undefined && !who.can(needed)) {
             no(`${who.id} may not ${needed} here`);
             return;
           }
@@ -6912,13 +6999,10 @@ export function createHost(options: HostOptions): Host {
            * nothing in a client applies its own dispatch, and a second client
            * watching the root learns of it only from here.
            *
-           * Not split per connection, although what is acted on is. `serverSeq`
-           * and the replay buffer are one per host, so a per-connection action
-           * would be replayed to whoever reconnects next - and two echoes for
-           * one dispatch is not what a client's write-ahead loop expects. The
-           * cost is that a *live* echo carries the other person's preference
-           * into what they display; a snapshot corrects it, because that is
-           * taken per connection with their own over the top.
+           * One envelope and one `serverSeq` for everybody, because the
+           * sequence and the replay buffer are one per host. What each
+           * connection reads in it is `seenBy`'s: the sender's
+           * `PER_CONNECTION` keys reach only the sender.
            */
           dispatch(ROOT, action);
           return;

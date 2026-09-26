@@ -7,7 +7,7 @@ pi is embedded, not spawned. `AgentSession` is constructible from pi's own SDK, 
 ## Use
 
 ```bash
-npm i -g @ahpd/agent-pi
+ahpd plugin install @ahpd/agent-pi
 ahpd --plugin @ahpd/agent-pi --path /work/project
 ```
 

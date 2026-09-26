@@ -1,89 +1,35 @@
 # A computer
 
-An object a person makes, lists, reads and destroys, and a place a session can
-run: `computer://<id>` names a machine whatever runtime made it, a resource
-write makes one, a resource delete destroys it, and a session that names one
-runs its agent inside it - decision `the-computer-is-an-object-a-person-manages`.
-The three tools a *model* may ask for still exist, and are off until the daemon
-permits advanced tools.
+`@ahpd/computer` lets a client make a `computer`, run a session inside it, and destroy it.
 
-Docker is available on this machine; `/dev/kvm` is readable once the account is
-in the `kvm` group and has started a new session, so the first section is the
-once-per-machine part.
+Docker is the only runtime today.
 
-## Let a person use Docker and KVM
+A machine is named `computer://<id>`. Writing a manifest to that name makes one, deleting it destroys it, and a session whose `computer` setting names it runs its agent in there.
 
-`docker` talks to a root daemon over a socket that belongs to the `docker`
-group, and `/dev/kvm` belongs to `kvm`.
-Neither is reachable from an ordinary account until it is a member of both:
+## Setup
+
+The account that runs the daemon needs Docker. For a hypervisor running as that account later, it also needs `/dev/kvm`:
 
 ```sh
-sudo usermod -aG docker softov
-sudo usermod -aG kvm softov
+sudo usermod -aG docker "$USER"
+sudo usermod -aG kvm "$USER"
 ```
 
-A group is read when a session starts, so that lands in the next login.
-For the shell you are in now:
+Groups are read at login, so log out and back in (or `newgrp docker` for the current shell). Then check:
 
 ```sh
-newgrp docker      # or log out and back in
-```
-
-Then check both:
-
-```sh
-id -nG                    # expect docker and kvm in the list
+id -nG                                    # docker and kvm listed
 docker info --format '{{.ServerVersion}}'
-test -r /dev/kvm && echo 'kvm readable' || echo 'kvm not readable'
+test -r /dev/kvm && echo 'kvm readable'
 ```
 
-A membership `usermod` adds shows in the group file at once and in `id -nG`
-only in a session that started after it, so the two can disagree:
+If `getent group kvm` lists you and `id -nG` does not, the shell is older than the change. `sudo setfacl -m u:$USER:rw /dev/kvm` opens the device until the next boot without a new login.
 
-```sh
-getent group kvm          # kvm:x:993:softov   - the file already says so
-id -nG                    # ...and this shell still does not, until it is new
-```
-
-That is the usual reason `/dev/kvm` is still not readable after the command:
-the shell, not the group.
-
-Inside the sandbox this repository is developed in, `/dev` is a minimal one and
-`/dev/kvm` is not visible at all, so the last check is for a normal shell.
-
-If logging out is not an option, the device can be opened for one boot with an
-ACL rather than a group:
-
-```sh
-sudo setfacl -m u:softov:rw /dev/kvm
-```
-
-That is per boot unless a udev rule keeps it, so the group is the durable
-answer.
-
-### What each one buys
-
-| | |
-| --- | --- |
-| `docker` | Start, stop and exec a container. A container computer needs nothing else |
-| `kvm` | Open `/dev/kvm` yourself, which a hypervisor running as you needs |
-
-A container whose root opens the device does not need the group at all, because
-the daemon passes the device through and root inside the container is not bound
-by the file's mode:
-
-```sh
-docker run --device /dev/kvm ...
-```
-
-That is how a VM inside a container runs without adding anybody to `kvm`, and it
-needs a hypervisor in the image; `qemu`, `cloud-hypervisor` and `firecracker` are
-none of them installed on this machine.
+A container machine needs only `docker`. A VM inside a container does not need the `kvm` group either: `docker run --device /dev/kvm` passes the device through, and the image has to bring the hypervisor.
 
 ## Making one
 
-A computer is made by writing a JSON manifest to its name, which every client
-can do with the resource commands it already has:
+Write a JSON manifest to the machine's name:
 
 ```json
 {
@@ -100,30 +46,23 @@ can do with the resource commands it already has:
 { "method": "resourceWrite", "params": { "channel": "ahp-root://", "uri": "computer://box", "data": "<the manifest>", "encoding": "utf-8", "createOnly": true } }
 ```
 
-Only `image` is expected; `runtime` must be the one this host runs, the limits are optional, and `workdir` is where a command starts inside it. An image may not begin with a dash, because the image's place in the runtime's argument list is one a flag would be read in. What a machine can see is not in here unless the deployment says it may be - see [What a body may not say](#what-a-body-may-not-say).
-`createOnly` is what makes a create onto a name that is taken a refusal
-(`-32010`) rather than a silent no-op, and an invalid manifest is a sentence
-naming the field. `computer://<id>/capabilities` says the same thing in the
-host's own words, so a client can draw the form from it.
+Only `image` is expected. `runtime` must match the host's, the limits are optional, and `workdir` is where commands start. `createOnly` makes a taken name fail with `-32010`. An invalid manifest fails with a message naming the field.
 
 | Command | What it does |
 | --- | --- |
-| `resourceList` on `computer://` | Every machine this provider made, by name |
-| `resourceRead` on `computer://<id>/status` | The runtime's own record of one |
+| `resourceList` on `computer://` | The machines this host made |
+| `resourceRead` on `computer://<id>/status` | The runtime's record of one |
 | `resourceRead` on `computer://<id>/capabilities` | The runtime, the manifest fields and the limits |
-| `resourceWrite` to `computer://<id>` | Make one, from the manifest above |
-| `resourceDelete` on `computer://<id>` | Destroy it, and everything in it |
+| `resourceRead` on `computer://<id>/stats` | CPU, memory, processes, network and disk right now |
+| `resourceRead` / `resourceWrite` on `computer://<id>/state` | `running` or `stopped`; write `running`, `stopped` or `restarted` |
+| `resourceWrite` to `computer://<id>` | Make one |
+| `resourceDelete` on `computer://<id>` | Destroy it and everything in it |
 
-The grant is the scheme's: reading one is `computer:read` and making or
-destroying one is `computer:write`, which no built-in role has. A `file:write`
-holder cannot make a machine, which is deliberate - a role that may save a file
-may not, by that alone, start a container.
+Reading needs `computer:read`, and making, starting, stopping or destroying needs `computer:write`. No built-in role has `computer:write`, and `file:write` does not include it.
 
-## How a client knows there are computers
+## How a client finds out
 
-Before any machine exists, the host says so on the handshake. `initialize._meta`
-(and the root state's `_meta`, from the same answer) carries
-`ahpd.resourceProviders`, one entry per scheme the host serves:
+The handshake's `initialize._meta` (and the root state's `_meta`) carries `ahpd.resourceProviders`, one entry per scheme the host serves:
 
 ```json
 {
@@ -137,76 +76,33 @@ Before any machine exists, the host says so on the handshake. `initialize._meta`
 }
 ```
 
-`operations` is what the provider implements and `root` is where its objects
-live, both derived by the host; `manifest` is the schema the create body is
-drawn from, and it is the same list `computer://<id>/capabilities` reports for
-one machine. The key is absent from a host that serves no such scheme, and a
-client that does not know the key ignores it.
-
-A scheme nobody serves answers `-32601` with `nothing here serves computer:`,
-which is the host saying it has nothing for that scheme rather than refusing a
-person - so a client's probe and its permission handling are two different
-branches.
+`manifest` is the schema a create form is drawn from. The key is absent when the plugin is not loaded, and a request for a scheme nobody serves answers `-32601` with `nothing here serves computer:`. That is different from a permission refusal.
 
 ## A session in one
 
-A session that names a computer runs its agent inside it. The setting is the
-`computer` key the plugin contributes, so it appears in the session schema a
-client draws only while the computer plugin is loaded:
+The plugin adds a `computer` key to the session settings:
 
 ```json
 { "method": "createSession", "params": { "channel": "ahp-session:/work", "provider": "acp", "config": { "computer": "computer://box" } } }
 ```
 
-The machine must already exist: making one is the person's resource write above,
-and a session naming one that is not there refuses with a sentence rather than
-running on this host. With the ACP backend loaded, this is one command wrapped
-in `docker exec` inside that machine; a backend handed no way to reach a machine
-refuses rather than falling back.
+The machine must already exist. A session naming one that does not, or a backend that cannot reach one, is refused. It never falls back to running on the host.
 
-Only a backend that starts its process through the host's `computers` port can
-run in one, which today is `@ahpd/agent-acp` and `@ahpd/agent-claude`. Claude
-Code spawns a CLI, so it is moved by starting that CLI in the machine: the
-Claude SDK's own `spawnClaudeCodeProcess` is handed a spawn that goes through
-the port, and nothing else about the backend changes. cofold has no child
-process to move - its loop, its tools and its shell all run in this process -
-so it still refuses a session that names a machine, with a sentence naming the
-backend, rather than run on the host while the session says `computer://box`.
-The setting is honest in both directions: a session that opens has had its
-machine honoured.
+| Backend | In a machine |
+| --- | --- |
+| `@ahpd/agent-acp` | Its command runs under `docker exec` |
+| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec` |
+| `@ahpd/agent-cofold` | Refused, since it runs inside the host process. Use a [dev container](CONTAINERS.md) with cofold in `devcontainer.plugins` instead |
 
-That refusal is not the end of it. A backend with nothing to move runs in a
-container by being *part of a host that is already in one*, which is the dev
-container relay: name `@ahpd/agent-cofold` under the computer plugin's
-`devcontainer.plugins` and its loop, its tools and its files are all inside,
-because the host is. See [CONTAINERS.md](CONTAINERS.md).
+Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image and status.
 
-A machine's `-v` is this host's filesystem made visible and nothing more: the
-container is the isolation, not a boundary the daemon enforces. `-w` is where a
-command starts inside the machine, and a caller's working directory is read
-through the machine's mounts to find it: a path a mount covers is the same place
-under another name, so `/srv/app/x` with `/srv/app:/workspaces/app` starts at
-`/workspaces/app/x`. The longest mount wins, so one nested inside another is not
-shadowed by it, and a path no mount covers is not a directory in there at all -
-the machine's own working directory stands instead of a host path that only
-looks right.
+The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own `workdir`.
 
-### Running Claude Code in one
+### Claude Code in a machine
 
-Two things have to be true of the image, and neither is something this host can
-arrange for you.
+The image needs the CLI. It runs `claude` from the image's `PATH`; `computerExecutable` in the `@ahpd/agent-claude` options names another path inside the machine.
 
-**The CLI has to be in it.** The in-machine command is `claude` on the image's
-PATH; `computerExecutable` names it somewhere else, as an option on `claude()`
-or under the `@ahpd/agent-claude` plugin entry. This is never this host's own
-path - the executable that runs here is the SDK's to find, and the one in the
-machine has to exist in the image.
-
-**Its configuration has to reach it.** The CLI reads `CLAUDE_CONFIG_DIR`, which
-this backend sets to `/ahpd/claude` unless `computerConfigDir` says otherwise or
-`false` leaves the image's own. Nothing here mounts anything: the mount is
-yours, and the plugin's `mounts` option is one line that gives it to every
-machine it makes.
+The CLI's configuration has to be mounted. The backend sets `CLAUDE_CONFIG_DIR=/ahpd/claude` (change it with `computerConfigDir`, or `false` to leave the image's). Mount both the directory and the file beside it, or the CLI signs in but reports its configuration missing:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "mounts": [
@@ -215,28 +111,13 @@ machine it makes.
 ] } }] }
 ```
 
-Both, because they are one directory to the CLI and two paths on this host:
-the credential lives *inside* `~/.claude` and `.claude.json` is its *sibling*,
-so a machine given only the first runs signed in but says its configuration file
-is missing. A subscription needs no `ANTHROPIC_API_KEY` and none is put on the
-docker command line; what reaches the machine is the mounted file.
+Only `CLAUDE_*` and `ANTHROPIC_*` variables are passed into the machine. The host's `HOME`, `PATH` and `PWD` are not.
 
-Only `CLAUDE_*` and `ANTHROPIC_*` cross into the machine. This host's `HOME`,
-`PATH` and `PWD` are this host's: forwarded, they send the CLI looking for a
-home the machine does not have and a PATH that may not find it, which is a
-container that fails with `executable file not found` for a reason that has
-nothing to do with the image.
-
-Sharing one `~/.claude` across machines shares one credential, and its refresh:
-anything running in such a machine can use that subscription. A machine made
-from an image you did not write is a machine you are handing it to. That is
-what profiles are for.
+Anything running in a machine with your `~/.claude` mounted can use your subscription. Use a profile to decide which machines get it.
 
 ## Profiles
 
-A profile is a named set of machine settings the operator wrote down once, so
-what a machine is *given* is a deployment decision rather than three mount
-strings a person retypes correctly every time.
+A profile is a named set of machine settings in the plugin options:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "profiles": {
@@ -254,31 +135,13 @@ strings a person retypes correctly every time.
 } } }] }
 ```
 
-A create body picks one by name, and what it says itself still wins:
+A manifest picks one with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed); a later one wins for the same target. Other fields come from the manifest, then the profile, then the host default.
 
-```json
-{ "profile": "claude", "workdir": "/work" }
-```
+An unknown profile is refused with the list of known ones. The names are published in the create schema as an `enum` with titles and descriptions in `x-choices`, so a client can draw a picker. No profiles means no such property.
 
-Three sources for the mounts, widest first, so the narrower statement stands where two name one target: the plugin's own `mounts`, then the profile's, then the body's where a body is allowed any. Every other field is the body's, then the profile's, then the host default.
+## Stats
 
-A profile the host does not define is refused rather than ignored, and the
-refusal lists the ones it has. Silently making a machine without the mounts the
-person asked for fails later and further away, when the agent cannot sign in.
-
-The names are published in the create schema as an `enum` with a
-`x-choices` list carrying each one's title and description, so a client draws
-the picker from what the host advertised and needs no code of its own. A
-deployment that defines no profiles publishes no such property, because a
-picker with no choices is a control that only takes up a screen.
-
-So `plain` and `claude` are two machines on one host, and only one of them can
-use your subscription.
-
-## What a machine is using
-
-`computer://<id>/stats` answers what it is doing right now, beside
-`status`, which is what it *is*.
+`computer://<id>/stats`:
 
 ```json
 { "running": true,
@@ -289,111 +152,63 @@ use your subscription.
   "block": { "read": 4100, "write": 0 } }
 ```
 
-Numbers rather than the runtime's own display text: `docker stats` writes
-`444KiB / 512MiB` and `1.01kB / 126B` in one payload, mixing binary and decimal
-units, and a client drawing a dial from those would be parsing a human
-sentence. The parsing happens once, in the runtime, so a second runtime answers
-in the same units.
+Sizes are bytes. `cpu.percent` is percent of one core, so it can exceed 100; `cores` is present when the machine has a CPU limit. A stopped machine answers `{ "running": false }`. Each read is one `docker stats --no-stream`, so poll for a live view.
 
-`cpu.percent` is percent of one core's time, which is why `cores` travels with
-it: 150% is busy on two cores and impossible on one. `cores` is absent when the
-machine was given no CPU limit.
+## State
 
-A machine that is not running answers `{ "running": false }` rather than
-zeroes, because a dial reading zero says idle, which is not the same as
-stopped. Each read is one `docker stats --no-stream`: a client that wants a
-moving dial asks again, and there is no feed to leave open.
+`computer://<id>/state` reads `running` or `stopped`. Writing `restarted` is `docker restart`, which also starts a stopped machine. The runtime's finer states (`exited`, `paused`, `created`) are in `status` under `State.Status`.
 
-## Picking one when a session is made
+## Security
 
-The plugin contributes a `computer` session setting, and it answers the picker for it: a client filling in a new session's settings asks `sessionConfigCompletions` for the key and is given the machines this host is running, each with its image and status, with "This host" offered first because that is the default and the way back.
+Read this before exposing the plugin to anyone but yourself.
 
-That is why any client can offer the picker rather than only one that knows the key by name. The property is marked `enumDynamic`, which is the protocol's word for "ask me", and the plugin that named the key is the only thing that knows what is running. The seam is `registerSessionConfig`'s third argument - see [PLUGINS.md](PLUGINS.md).
+**Only machines this host made.** Each machine carries a label, and every read and action checks it. Any other container on the same Docker answers `-32008`, the same as a name that does not exist. `computer:write` covers this host's machines, not the Docker daemon.
 
-## Turning one off and on
-
-`computer://<id>/state` is the one leaf that is written as well as read. Reading it answers `running` or `stopped`; writing `running`, `stopped` or `restarted` puts it there.
-
-```
-resourceWrite computer://box/state  "restarted"
-```
-
-A write rather than a verb of its own, because a resource scheme has four verbs and none of them is `restart`: doing it this way keeps starting a machine inside the same `computer:write` grant that makes and destroys one, with no new method for the gate to be taught about. `restarted` is `docker restart`, which starts a machine that was stopped and cycles one that was not, so a client does not have to ask which it was and race whoever else is acting on it.
-
-The leaf answers in the words it accepts rather than the runtime's own, which are a longer list - `exited`, `paused`, `created`. `status` is the runtime's whole record and has `State.Status` in it for a reader who wants the difference.
-
-## Only the machines this host made
-
-Every machine this plugin makes carries a label, and every read and every act checks it. A container running on the same Docker that this plugin did not make is not a computer: `computer://<its name>` answers the same `-32008` as a name that does not exist, and stop, restart and destroy refuse with it. The two read the same on purpose, because a refusal that named the difference would answer whether a container exists.
-
-That is what bounds the grant. `computer:write` is a permission over the machines this host made, not over the Docker daemon it made them with.
-
-## What a body may not say
-
-A mount is the one field in a create body that reaches outside the machine. A body free to name `/:/host` can read and write this host as root from inside a machine it just made, which would make `computer:write` a permission over the host rather than over the machines the host makes.
-
-So a body may not name mounts unless the deployment says it may:
+**Mounts in a manifest are off by default.** A manifest that could name `/:/host` would give root on the host to anyone with `computer:write`. By default a machine sees only the plugin's `mounts` and its profile's, a manifest with `mounts` is refused, and the field is left out of the create schema. To allow them:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "bodyMounts": true } }] }
 ```
 
-Off, which is the default, what a machine can see is the plugin's own `mounts` and the profile the body picked - the operator deciding what is shareable and a person picking from it. A body that names mounts anyway is refused, and the refusal lists the profiles this host has, rather than making a machine without what was asked for. The `mounts` property is left out of the create schema too, so a client drawing a form from it draws no field for something that would be refused; the refusal is still what does the work, because a body written by hand or by a client holding an older schema has to be answered.
+That is reasonable on a single-person host. With it on, `computer:write` is root on the host.
 
-On is the older behaviour and a fair setting for a host with one person on it, where a machine is a convenience rather than a boundary. It is the setting to keep in mind when reading the rest of this page: with it on, `computer:write` and root on this host are the same permission.
-
-`image` is the other field in a body that the runtime reads as more than a value. It lands in the argument list at the position where `docker run` still parses flags, so an image is refused if it begins with a dash.
-
-A deployment can also say which images a machine may be made from:
+**Allowed images.** By default any image may be used. To limit them:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "images": ["node:*", "ghcr.io/acme/**"] } }] }
 ```
 
-Absent, any image is allowed, which is what every host did before this existed - naming a set is the operator opting in. The set an operator writes is not the whole set: the host's own default image and every profile's image are allowed too, because a profile names an image precisely so a machine can be made from it.
-
-Matching is by component and never by string. A string prefix of `ghcr.io/acme` is also a prefix of `ghcr.io/acme-evil`, and is not a prefix of anything under `acme`, so a pattern is split the way a reference is - a registry, a path, and a tag or a digest - and matched part for part.
+The host's default image and every profile's image are always allowed. Patterns match whole name components, never string prefixes:
 
 | Pattern | Allows | Refuses |
 | --- | --- | --- |
-| `node:22` | exactly that image | any other tag |
+| `node:22` | that image | any other tag |
 | `node:*` | any tag of `node` | `nodejs/node`, `node-evil/x` |
 | `ghcr.io/acme/*:*` | any repository directly under `acme` | `ghcr.io/acme-evil/x` |
-| `ghcr.io/acme/**` | any depth under `acme` | anything outside it |
-| `*` | anything | nothing; the same as leaving the option out |
+| `ghcr.io/acme/**` | anything under `acme` | anything outside it |
+| `*` | anything | nothing |
 
-A `*` stands for one whole part of a name and `**` for any number of them, because registry paths nest and an operator allowing a namespace should not have to know how deep it goes. A star in the registry's own position - `*/acme/**` - is that namespace wherever it is published. A star *inside* a name, such as `node:22-*`, is refused when the plugin loads: it is partial matching within a component, which is where the subtle holes live, and a rule read as a literal would quietly allow nothing.
+`*` is one component and `**` any number of them. `*/acme/**` matches `acme` on any registry. A star inside a component, like `node:22-*`, is rejected when the plugin loads. A pattern with no tag allows every tag, and `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` are the same image. When every entry is a plain name, the list is published as an `enum` for a picker.
 
-Two things a pattern means that Docker itself would read differently. A pattern with no tag allows any tag rather than `latest`, because an operator writing `node` means the image and not one tag of it. And the four spellings of an image are one image: `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` all match each other, so a list does not have to name a thing four times.
+An image starting with `-` is always refused, because Docker would read it as a flag.
 
-Where every entry is a plain name, the set is published in the create schema as an `enum`, so a client draws a picker from it. A set with a wildcard in it is not a list of choices - a picker offering `node:*` would produce a machine the runtime refuses - so the field stays a text box and the refusal is what teaches.
-
-The three tools are held to the same set, and to the same dash refusal. `request_disposable_computer` builds a machine straight from what it was asked for, with no manifest in between, so nothing a manifest checks reaches it by itself.
+**What a machine is not.** The container separates processes and the filesystem, not the network, and a bind mount is the host's files. Nothing in a machine survives `resourceDelete`.
 
 ## The three tools
 
-`request_disposable_computer`, `release_computer` and `computer_exec` are the
-*model's* way to ask for a scratch machine from inside a session. They are a
-different thing from the machine a session runs in, which exists before that
-session's first turn.
+`request_disposable_computer`, `release_computer` and `computer_exec` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
 
-Each declares `advancedPermission`, so none of them is offered to a session
-until the daemon says so:
+They are off until the daemon enables advanced tools:
 
 ```json
 { "advancedTools": true }
 ```
 
-or `--advanced-tools`. Unset, the plugin contributes the whole lifecycle and no
-tool a model can call; the reference host's own tools declare nothing and are
-unaffected. The plugin's own `tools: false` still drops these three while
-leaving the lifecycle in place.
+or `--advanced-tools`. The plugin option `tools: false` removes them even then.
 
 ## The script
 
-`scripts/computer.mjs` is the operator's direct path to Docker for a machine no
-client asked for. It owns one container by name and labels it
-`ahpd.computer=1`, so a `computer://` listing shows what either made.
+`scripts/computer.mjs` manages one container directly with Docker, without a client. It labels it `ahpd.computer=1`, so it shows up in `computer://` listings.
 
 ```sh
 node scripts/computer.mjs start --cpus 2 --memory 2g
@@ -404,34 +219,24 @@ node scripts/computer.mjs rm
 
 | | |
 | --- | --- |
-| `start` | Run one, or start the stopped one. Idempotent |
-| `status` | Whether it is running, on what image, since when |
+| `start` | Run it, or start it if stopped |
+| `status` | Running or not, image, since when |
 | `exec -- <cmd>` | Run a command inside it |
-| `stop` | Stop it, keeping it |
-| `rm` | Remove it for good |
-| `list` | Every computer this script made |
+| `stop` | Stop it and keep it |
+| `rm` | Remove it |
+| `list` | Every computer the script made |
 
-Options: `--name` (default `ahpd-computer`), `--image` (default
-`debian:bookworm-slim`), `--cpus`, `--memory`, `--mount`, `--kvm`, `--label`.
-
-`--kvm` refuses before starting anything when the device is not readable, and
-prints the two commands above rather than failing inside the container later.
-
-`--mount` is handed to docker as it is written, so a repository can be given to
-the computer:
+Options: `--name` (default `ahpd-computer`), `--image` (default `debian:bookworm-slim`), `--cpus`, `--memory`, `--mount`, `--kvm`, `--label`. `--kvm` fails up front if `/dev/kvm` is not readable. `--mount` is passed to Docker as written:
 
 ```sh
 node scripts/computer.mjs start --mount type=bind,src=/github/ahpd,dst=/work
 ```
 
-## Trying it by hand
+## Trying it from a checkout
 
-What was run on 2026-09-23, and what the shape needs: Docker answering, an image
-with the harness in it, and a checkout with no build.
+A daemon with the computer plugin and the ACP bridge, using the test fixture as the agent:
 
 ```sh
-# A daemon with the computer plugin and the ACP bridge. `node:22` has node, so
-# the ACP fixture can be mounted in and run inside the machine.
 cat > /tmp/ahpd-computer.json <<'JSON'
 {
   "port": 9216,
@@ -447,21 +252,4 @@ JSON
 node --conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --config-file /tmp/ahpd-computer.json
 ```
 
-Then, from a client: write a manifest to `computer://box` with `mounts: ["/github/ahpd/test/fixtures/acp-server.mjs:/srv/acp.mjs:ro"]` (which is why the configuration above sets `bodyMounts`) and `workdir: "/srv"`, create a session with `config: { "computer": "computer://box" }`,
-and send it a turn. It answered `chat/turnComplete`, and `resourceDelete` on
-`computer://box` left `docker ps -a --filter label=ahpd.computer=1` empty.
-
-## What this is not
-
-- **It is not the model's machine.** A model may ask for a scratch computer with
-  a tool, but the machine a session runs in is chosen by the person who made the
-  session, and an agent never creates the machine it is already inside.
-- **It is not a master.** `@ahpd/computer` starts a machine itself, by Docker.
-  The research that opened this work wanted a master to authorize the request
-  and hand one back; when that exists it replaces the runtime behind the same
-  `computer://` names, and nothing a client says changes.
-- **It is not a sandbox boundary.** The container is separate from the host's
-  process and filesystem, not from the network, and a bind mount is the host's
-  files by definition.
-- **It is not durable.** `resourceDelete` is the point, and nothing in a machine
-  survives it.
+From a client, write a manifest to `computer://box` with `mounts: ["/github/ahpd/test/fixtures/acp-server.mjs:/srv/acp.mjs:ro"]` and `workdir: "/srv"`, create a session with `config: { "computer": "computer://box" }`, and send a turn. It should answer `chat/turnComplete`. After `resourceDelete` on `computer://box`, `docker ps -a --filter label=ahpd.computer=1` should be empty.

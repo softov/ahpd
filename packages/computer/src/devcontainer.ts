@@ -88,6 +88,39 @@ const lines = (handle: (line: string) => void): (chunk: string) => void => {
 /** One shell word, quoted so a path with a space or a quote survives. */
 const quote = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`;
 
+/** What a spec is called, whether it was written as a string or an object. */
+const nameOf = (spec: PluginSpec): string => (typeof spec === 'string' ? spec : spec.name);
+
+/**
+ * Whether a spec is a package name the container's npm can install.
+ *
+ * The same test `ahpd plugin install` refuses on: a path and a spec with a
+ * scheme of its own are used as written inside the container, where the
+ * meaning of both is the deployment's and not this launcher's.
+ */
+const isPackageName = (spec: PluginSpec): boolean => {
+  const name = nameOf(spec);
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(name) && !name.startsWith('.') && !name.startsWith('/');
+};
+
+/**
+ * The shell line that installs the backends a container has not got.
+ *
+ * One `[ -e ]` per package against the configuration directory the host
+ * inside resolves from, so an image built with its backends runs no npm at
+ * all and starts offline. What is missing goes to one `plugin install`, run
+ * with the same program and arguments as the host itself.
+ */
+export const pluginInstallLine = (host: readonly string[], specs: readonly string[]): string => {
+  const dir = '"${XDG_CONFIG_HOME:-$HOME/.config}/ahpd/node_modules"';
+  const checks = specs.map((spec) => {
+    const at = spec.indexOf('@', 1);
+    const name = at === -1 ? spec : spec.slice(0, at);
+    return `[ -e ${dir}/${quote(name)}/package.json ] || set -- "$@" ${quote(spec)}`;
+  });
+  return ['set --', ...checks, `[ $# -eq 0 ] || ${host.map(quote).join(' ')} plugin install --no-enable "$@"`].join('; ');
+};
+
 /** The CLI's own result, from its last line that is one. */
 export const parseUp = (stdout: string): { containerId: string; remoteWorkspaceFolder: string } | undefined => {
   const found = stdout.trim().split('\n').reverse();
@@ -255,10 +288,31 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
            * an unknown version takes the published latest instead.
            */
           const version = sdkVersion();
-          const line = install ?? `npm i -g @ahpd/server${version === 'unknown' ? '' : `@${version}`}`;
+          const line = install ?? `npm i -g @ahpd/server${version === 'unknown' ? '' : `@${version}`} --allow-scripts=node-pty`;
           const installed = await inside(one.workspaceFolder, line, sink);
           if (installed.code !== 0) {
             throw new Error(`The container has no ${program} and could not install one: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Give the image Node and npm, build it with @ahpd/server in it, or name the host it already has`);
+          }
+        }
+
+        /*
+         * And the backends, put there beside the server.
+         *
+         * The host inside is handed its plugins on the command line, but a
+         * bare name still resolves from the configuration directory *in there*
+         * - so the packages have to be installed into it or the nested host
+         * exits saying they are missing. This runs whether or not the image
+         * already had the server, because an image built with `@ahpd/server`
+         * may still have no backend, and `--no-enable` because the list is
+         * given on the command line rather than read from a file. A package
+         * already in the configuration directory is not asked for, so an image
+         * that has them all never reaches the registry.
+         */
+        const named = plugins.filter(isPackageName).map(nameOf);
+        if (named.length > 0) {
+          const installed = await inside(one.workspaceFolder, pluginInstallLine(host, named), sink);
+          if (installed.code !== 0) {
+            throw new Error(`The container has no ${named.join(', ')} and could not install it: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Build the image with it, or name a path inside the container`);
           }
         }
       }

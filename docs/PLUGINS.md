@@ -681,7 +681,7 @@ when no agent asked for one.
 start at all:
 
 ```bash
-cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd plugin install @ahpd/agent-claude
 ahpd --plugin @ahpd/agent-claude
 ```
 

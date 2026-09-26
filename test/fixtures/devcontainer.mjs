@@ -14,7 +14,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 const state = process.env.DEVCONTAINER_FAKE_STATE;
 if (state === undefined) {
@@ -27,7 +27,12 @@ const held = existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8'))
   : { calls: [], commands: [] };
 held.calls.push(args);
-const keep = () => writeFileSync(state, JSON.stringify(held));
+// Written beside and renamed over, so the test polling this file never reads
+// it half written.
+const keep = () => {
+  writeFileSync(`${state}.${process.pid}`, JSON.stringify(held));
+  renameSync(`${state}.${process.pid}`, state);
+};
 
 if (args.includes('--version')) {
   process.stdout.write('0.80.0\n');
@@ -65,6 +70,17 @@ if (verb === 'exec') {
   }
   // The line is quoted for `/bin/sh -c`, so a prefix is looked for inside
   // it rather than at its start.
+  const failing = (held.failCommands ?? []).find((prefix) => said.includes(prefix));
+  if (failing !== undefined) {
+    process.stderr.write(`${held.failErr ?? `${failing} failed`}\n`);
+    process.exit(held.failCode ?? 1);
+  }
+  // Recorded and answered, never run: the line starts the host program, and
+  // the host here is a fake that would serve stdio instead of installing.
+  if (said.includes(' plugin install ')) {
+    process.stdout.write(held.execOut ?? '');
+    process.exit(held.execCode ?? 0);
+  }
   const runnable = (held.passthrough ?? []).find((prefix) => said.includes(prefix));
   if (runnable === undefined) {
     process.stdout.write(held.execOut ?? '');

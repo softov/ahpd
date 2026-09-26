@@ -1,14 +1,14 @@
 # @ahpd/computer
 
-A `computer:` resource provider for [ahpd](https://github.com/softov/ahpd): the machines a runtime has, reported read-only, and the three host tools that make one, use it and throw it away.
+A `computer:` resource provider for [ahpd](https://github.com/softov/ahpd).
+
+`@ahpd/computer` lets a client make a `computer`, run a session inside it, and destroy it.
 
 ```bash
 ahpd --plugin @ahpd/computer
 ```
 
-Docker is the runtime that ships with it. A machine is a container the package
-started, labelled `ahpd.computer=1`, kept alive with `sleep infinity`, and named
-so that a `computer://<id>` URI reaches it.
+Docker is the runtime that ships with it. A machine is a container the package started, labelled `ahpd.computer=1`, kept alive with `sleep infinity`, and named so that a `computer://<id>` URI reaches it.
 
 ## What it serves
 
@@ -19,8 +19,7 @@ so that a `computer://<id>` URI reaches it.
 | `computer://<id>/status` | The runtime's own record of it, as JSON |
 | `computer://<id>/capabilities` | What this host can be asked for: the runtime, the actions, the default image, the limits and the maximum |
 
-Nothing under `computer:` is written. A resource write carries a URI and a mode,
-and neither an image nor a limit goes in one; machines are made by a tool.
+Nothing under `computer:` is written. A resource write carries a URI and a mode, and neither an image nor a limit goes in one; machines are made by a tool.
 
 ## The tools
 
@@ -61,13 +60,10 @@ destructive, and running in one is both.
 
 ## Before it can work
 
-The account the daemon runs as has to reach Docker. One command, once, and a new
-session:
+The account the daemon runs as has to reach Docker. One command, once, and a new session:
 
 ```bash
 sudo usermod -aG docker "$USER"
 ```
 
-[docs/COMPUTER.md](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md)
-has that, the same for `kvm`, and `scripts/computer.mjs`, which is the operator's
-half: one machine, made by hand, for when no agent asked for one.
+[docs/COMPUTER.md](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md) has that, the same for `kvm`, and `scripts/computer.mjs`, which is the operator's half: one machine, made by hand, for when no agent asked for one.

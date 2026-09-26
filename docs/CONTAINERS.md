@@ -70,15 +70,16 @@ is part of it.
 { "name": "@ahpd/computer", "options": { "devcontainer": { "plugins": ["@ahpd/agent-cofold"] } } }
 ```
 
-**The install step puts a host in the container, not a backend.** It runs
-`npm i -g @ahpd/server` and nothing else, and the host inside resolves a bare
-plugin name against its own configuration directory in there - a global install
-is not on that resolution path. So `"plugins": ["@ahpd/agent-cofold"]` alone is
-a nested host that exits on startup saying the plugin is not installed.
+**The install step puts a host and its backends in the container.** It runs
+`npm i -g @ahpd/server`, then `plugin install --no-enable` with the `host`
+command for every entry of `plugins` that is a package name and is not already
+in the container's `~/.config/ahpd/node_modules`. The nested host resolves a
+bare name from there and nowhere else, so `"plugins": ["@ahpd/agent-cofold"]`
+starts, and an image built with its backends in place starts without the
+registry.
 
-Until the install step installs them too, name plugins the container can
-already see. An absolute path inside the container is one, which is what a
-mounted checkout gives you:
+An entry that is a path or carries a scheme of its own is not installed: it is
+used as written inside the container. A mounted checkout is the usual case:
 
 ```json
 { "name": "@ahpd/computer",
@@ -89,11 +90,10 @@ mounted checkout gives you:
   } } }
 ```
 
-The paths are the container's view of the mount and not this host's, and the
-Dev Container CLI mounts a repository's root, so this works when the folder a
-person picks is anywhere inside that checkout. An image built with the plugins
-installed under its own `~/.config/ahpd` is the other way, and then package
-names work as written.
+The paths are the container's view of the mount, and the Dev Container CLI
+mounts a repository's root, so this works when the folder a person picks is
+anywhere inside that checkout. `install: false` skips the server and the
+plugins together, for an image that is already complete.
 
 ## The surface
 
@@ -135,10 +135,12 @@ container is this host's Docker access by proxy - decision
 2. `devcontainer up --log-level debug --workspace-folder <dir>` makes it, and
    the CLI's own JSON is read off whichever line carries it - the CLI logs as it
    works, so the result is one line among several.
-3. Inside, `command -v ahpd` decides whether the image already has a host. A
+3. Inside, `command -v <host[0]>` decides whether the image already has a host. A
    container without one gets `npm i -g @ahpd/server@<this version>`, so the two
-   hosts are the same build. Only the host: the plugins it will be told to load
-   are the image's or the mount's, as above.
+   hosts are the same build. Whether or not that line ran, every `plugins` entry
+   that is a package name and is not already in the container's configuration
+   directory is put there with `<host> plugin install --no-enable`, because a
+   bare name resolves from that directory and nowhere else.
 4. The nested host's configuration is written to a temporary file with its mode
    set to 600, through a shell command built from base64 and a name nothing
    chose. No credential goes in it: the relayed client signs in to the host

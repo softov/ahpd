@@ -26,11 +26,13 @@ The daemon, and a backend for it to serve:
 
 ```bash
 npm i -g @ahpd/server
-cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd plugin install @ahpd/agent-claude
 ahpd --plugin @ahpd/agent-claude --path /work/project
 ```
 
-A bare plugin name is resolved from the configuration directory, which is why the install happens there. Put `"plugins": ["@ahpd/agent-claude"]` in `config.json` to stop passing the flag.
+`ahpd plugin install` runs `npm install` in the configuration directory, where a bare plugin name is resolved from, and adds the name to `plugins` in `config.json` so the next run loads it. A plugin installed with `npm i -g` is not seen.
+
+npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's own global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
 It listens on `ws://127.0.0.1:9187`. Run it with no arguments to serve the directory you are in.
 

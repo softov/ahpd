@@ -6,6 +6,7 @@ import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry, stale
 import { manifest, version } from './version.js';
 import { running, start, statusLine, stop as stopDaemon } from './daemon.js';
 import { pty } from './pty.js';
+import { installPlugins, removePlugins, run } from './install.js';
 import { describePlugin, loadPlugins, pluginLine } from './plugins.js';
 import type { HostOptions, PluginSpec, Tap } from '@ahpd/sdk';
 import { AGENT_CLASH, createHost, fileResources, gitBranches, gitChanges, gitWorktrees, githubPullRequests, hostTools, issuerFrom, listen, overStdio, raise, fileSessions, fileUsers, memoryAutomations, memorySessions, scheduledAutomations, shellTerminals, signInRecord } from '@ahpd/sdk';
@@ -145,6 +146,12 @@ const USAGE = `ahpd - an Agent Host Protocol server, with a Claude backend
   ahpd config                 say where the configuration is, and what it says
   ahpd plugin list            what the configuration names, and what a run
                               would load, without loading any of it
+  ahpd plugin install <name>  install a backend or another plugin into the
+                              configuration directory, and name it in the file.
+                              --no-enable installs without naming it, --config-file
+                              edits another file
+  ahpd plugin remove <name>   take it out of the configuration, and uninstall it
+                              unless --keep
   ahpd user add <id>          add a person, with --role <name> once per role
                               and --issuer <name> for a provider of their own
   ahpd user token <id>        mint their credential, shown once. --url prints
@@ -599,6 +606,60 @@ if (verb !== undefined) {
     stop('user takes add, rm, list or token.');
   }
   if (verb === 'plugin') {
+    const sub = rest[0];
+    /*
+     * Installing and removing, which are about the machine rather than a run.
+     *
+     * The flags are this command's own and are read here rather than by
+     * `parse`, which knows only what a daemon takes: `--config-file` is the
+     * one it shares, and `--no-enable` and `--keep` would be unknown options
+     * to it. The names are package names, so the first thing that starts with
+     * a dash is either a flag above or a mistake.
+     */
+    if (sub === 'install' || sub === 'remove') {
+      let configFile: string | undefined;
+      let noEnable = false;
+      let keep = false;
+      const named: string[] = [];
+      for (let i = 1; i < rest.length; i++) {
+        const one = rest[i];
+        if (one === '--config-file') {
+          const said = rest[++i];
+          if (said === undefined || said.startsWith('-')) stop('--config-file needs a path.');
+          configFile = said;
+          continue;
+        }
+        if (one === '--no-enable') { noEnable = true; continue; }
+        if (one === '--keep') { keep = true; continue; }
+        if (one !== undefined && one.startsWith('-')) stop(`plugin ${sub} does not take ${one}. Try --help.`);
+        if (one !== undefined) named.push(one);
+      }
+      if (named.length === 0) stop(`plugin ${sub} takes at least one package name: ahpd plugin ${sub} <name>...`);
+      const say = (line: string): void => { process.stdout.write(`${line}\n`); };
+      try {
+        if (sub === 'install') {
+          installPlugins(named, {
+            configDir: configDir(), configFile: configFile ?? configPath(),
+            version: version(), enable: !noEnable, run, say,
+          });
+        }
+        else {
+          removePlugins(named, {
+            configDir: configDir(), configFile: configFile ?? configPath(),
+            uninstall: !keep, run, say,
+          });
+        }
+      }
+      catch (error) {
+        stop(error instanceof Error ? error.message : String(error));
+      }
+      /*
+       * A running daemon holds the list it started with and nothing here can
+       * change that, so the last line says what does.
+       */
+      if (running() !== undefined) say('Restart the daemon to load the change: ahpd stop && ahpd start');
+      process.exit(0);
+    }
     /*
      * A listing, and the reason the `ahpd` key exists: what a run would load,
      * what cannot be found, what needs configuring and what is switched off,
@@ -606,8 +667,8 @@ if (verb !== undefined) {
      * `parse` the run uses, so `--plugin` and `--no-plugins` mean here what
      * they mean there, and nothing below imports a plugin or builds a host.
      */
-    if (rest[0] !== 'list') {
-      process.stderr.write('plugin takes list, and nothing else.\n');
+    if (sub !== 'list') {
+      process.stderr.write('plugin takes list, install or remove.\n');
       process.exit(2);
     }
     const parsed = parse(rest.slice(1));

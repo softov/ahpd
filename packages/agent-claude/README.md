@@ -13,7 +13,7 @@ The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), a
 Install it where the daemon resolves a plugin name from, and name it:
 
 ```bash
-cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd plugin install @ahpd/agent-claude
 ahpd --plugin @ahpd/agent-claude
 ```
 

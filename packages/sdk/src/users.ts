@@ -32,7 +32,7 @@ const BUILT_IN: Record<string, Grant[]> = {
 };
 
 /** The subjects the host itself answers to, beside any plugin's scheme. */
-export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container'] as const;
+export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config'] as const;
 
 /** `<subject>:<verb>`, with `*` in either position. */
 const GRANT = /^[^:\s]+:(?:read|write|\*)$/;

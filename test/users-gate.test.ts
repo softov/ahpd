@@ -81,9 +81,9 @@ const host = (extra: Partial<HostOptions> = {}) => createHost({
   ...extra,
 });
 
-const hello = (client: ReturnType<ReturnType<typeof createHost>['accept']>) => client.handle({
+const hello = (client: ReturnType<ReturnType<typeof createHost>['accept']>, clientId = 'probe') => client.handle({
   method: 'initialize',
-  params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+  params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
 });
 
 const signIn = (client: ReturnType<ReturnType<typeof createHost>['accept']>, token: string) => client.handle({
@@ -381,7 +381,12 @@ it('classifies a dispatch by its channel', () => {
   expect(GATE.dispatchNeeds('ahp-chat:/x')).toBe('session:write');
   expect(GATE.dispatchNeeds('ahp-session:/x/marks')).toBe('session:write');
   expect(GATE.dispatchNeeds('ahp-automations://')).toBe('automation:write');
-  expect(GATE.dispatchNeeds(ROOT)).toBe('file:write');
+  expect(GATE.dispatchNeeds(ROOT)).toBe('config:write');
+  // The root is read with its action: a person's own keys need only a sign-in.
+  expect(GATE.dispatchNeeds(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBeUndefined();
+  expect(GATE.dispatchNeeds(ROOT, { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } })).toBe('config:write');
+  expect(GATE.dispatchNeeds(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh', somethingNew: 1 } })).toBe('config:write');
+  expect(GATE.dispatchNeeds(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:write');
   // A channel a later plan adds: the conservative answer, not nothing.
   expect(GATE.dispatchNeeds('ahp-resource-watch:/x')).toBe('file:read');
 });
@@ -427,12 +432,13 @@ const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['acc
 };
 
 it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {
-  const made = host({ users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'], b: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
-  const first = made.accept(peer());
+  const made = host({ users: directory({ a: ['config:write', 'file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'], b: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
+  const mine = watching();
+  const first = made.accept(mine);
   const other = watching();
   const second = made.accept(other);
-  await hello(first); await signIn(first, 'a');
-  await hello(second); await signIn(second, 'b');
+  await hello(first, 'first'); await signIn(first, 'a');
+  await hello(second, 'second'); await signIn(second, 'b');
 
   await configChanged(first, { defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
 
@@ -442,15 +448,83 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   const theirs = await values(second);
   expect(theirs).toMatchObject({ artifactToolsCompactPrompts: true });
   expect(theirs).not.toHaveProperty('defaultShell');
-  /*
-   * The live echo does carry it, and deliberately: `serverSeq` and the replay
-   * buffer are one per host, so the action is said back whole the way every
-   * other one is. The snapshot is what corrects it, which is why the assertion
-   * above is the one that matters - and why nothing reads a shell out of the
-   * shared record any more.
-   */
-  const told = other.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'root/configChanged');
-  expect(told.length).toBe(1);
+
+  // One echo each, on one serverSeq: whole to the sender, without the shell to
+  // everybody else.
+  const echoes = (seen: ReturnType<typeof watching>) =>
+    seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'root/configChanged');
+  const [sent] = echoes(mine);
+  const [told] = echoes(other);
+  expect(echoes(mine)).toHaveLength(1);
+  expect(echoes(other)).toHaveLength(1);
+  expect(sent?.params.serverSeq).toBe(told?.params.serverSeq);
+  expect(sent?.params.action?.config).toEqual({ defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
+  expect(told?.params.action?.config).toEqual({ artifactToolsCompactPrompts: true });
+
+  // A client that comes back and is replayed the action reads it the same way.
+  const back = made.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'second', subscriptions: [ROOT], lastSeenServerSeq: Number(told?.params.serverSeq) - 1 },
+  }) as Bag;
+  const again = (answer.result ?? answer) as { type: string; actions: { serverSeq: number; action: Bag }[] };
+  expect(again.type).toBe('replay');
+  const replayed = again.actions.find((one) => one.serverSeq === told?.params.serverSeq);
+  expect(replayed?.action.config).toEqual({ artifactToolsCompactPrompts: true });
+});
+
+it('keeps the other connection\'s own shell in a config that replaces the rest', async () => {
+  const made = host({ terminals: shellTerminals() });
+  const first = made.accept(peer());
+  const other = watching();
+  const second = made.accept(other);
+  await hello(first, 'first'); await hello(second, 'second');
+  await configChanged(second, { defaultShell: '/bin/bash' });
+
+  await first.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } } } });
+
+  const told = other.seen.filter((one) => one.method === 'action' && one.params.action?.replace === true);
+  expect(told).toHaveLength(1);
+  expect(told[0]?.params.action?.config).toEqual({ defaultShell: '/bin/bash' });
+  expect(await values(second)).toMatchObject({ defaultShell: '/bin/bash' });
+});
+
+it('lets anybody signed in set their own shell, and only config:write change the host', async () => {
+  const MEMBER: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'];
+  const made = host({ users: directory({ m: MEMBER, g: ['session:read'], a: ['config:write'] }) });
+  const refusals = (seen: ReturnType<typeof watching>) =>
+    seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+      .map((one) => String(one.params.rejectionReason));
+
+  const memberSeen = watching();
+  const member = made.accept(memberSeen);
+  await hello(member, 'member'); await signIn(member, 'm');
+  await configChanged(member, { defaultShell: '/bin/sh' });
+  expect(refusals(memberSeen)).toEqual([]);
+  await configChanged(member, { artifactToolsCompactPrompts: true });
+  expect(refusals(memberSeen)).toEqual(['m may not config:write here']);
+  expect(await values(member)).not.toHaveProperty('artifactToolsCompactPrompts');
+
+  // A guest may not open a shell, but the preference is still theirs to hold.
+  const guestSeen = watching();
+  const guest = made.accept(guestSeen);
+  await hello(guest, 'guest'); await signIn(guest, 'g');
+  await configChanged(guest, { defaultShell: '/bin/sh' });
+  expect(refusals(guestSeen)).toEqual([]);
+
+  const adminSeen = watching();
+  const admin = made.accept(adminSeen);
+  await hello(admin, 'admin'); await signIn(admin, 'a');
+  await configChanged(admin, { artifactToolsCompactPrompts: true });
+  expect(refusals(adminSeen)).toEqual([]);
+  expect(await values(member)).toMatchObject({ artifactToolsCompactPrompts: true });
+
+  // Nobody signed in sets nothing, their own shell included.
+  const strangerSeen = watching();
+  const stranger = made.accept(strangerSeen);
+  await hello(stranger, 'stranger');
+  await configChanged(stranger, { defaultShell: '/bin/sh' });
+  expect(refusals(strangerSeen)).toEqual(['Sign in to use this host: ahp-root://']);
 });
 
 it('opens a client terminal with that connection\'s own shell', async () => {

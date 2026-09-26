@@ -10,6 +10,8 @@ It installs the `ahpd` command:
 npm i -g @ahpd/server
 ```
 
+npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the install, or run `npm config set allow-scripts=node-pty --location=user` once.
+
 From a checkout instead, `ahpd` below means `node packages/server/dist/main.js`
 after `pnpm install && pnpm build`.
 
@@ -23,13 +25,20 @@ has nothing to run and says so:
 No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in the configuration - "@ahpd/agent-claude" is Claude Code.
 ```
 
-Installing one is `npm i` in the configuration directory, because that is where
-a bare name is resolved from:
+Installing one is one command, because a bare name is resolved from the
+configuration directory and nowhere else:
 
 ```bash
 npm i -g @ahpd/server
-cd ~/.config/ahpd && npm i @ahpd/agent-claude
+ahpd plugin install @ahpd/agent-claude
 ```
+
+`ahpd plugin install` runs `npm install` in the configuration directory and
+adds the name to `plugins` in `config.json`, so the next run loads it. A plugin
+installed with `npm i -g` is invisible to that resolution. `--no-enable`
+installs without naming it, `--keep` on `remove` drops the name without
+uninstalling the package, and `--config-file` edits another file than the
+default one.
 
 `ahpd config` prints the directory if it is somewhere else, which it is when
 `XDG_CONFIG_HOME` says so. A path in `plugins` is resolved instead against the
@@ -48,6 +57,9 @@ ahpd --plugin @ahpd/agent-claude
 }
 ```
 
+`ahpd plugin install` already wrote that second form; the flag is for a run
+that should not wait for a restart.
+
 `@ahpd/agent-claude` takes no options in the ordinary install: it catalogues
 whatever directories the daemon was started on. What it does take is in
 [PLUGINS.md](PLUGINS.md), beside the other backends.
@@ -62,6 +74,11 @@ ahpd status                 say whether one is, and where
 ahpd config                 say where the configuration is, and what it says
 ahpd plugin list            what the configuration names, and what a run would
                             load, without loading any of it
+ahpd plugin install <name>  install a plugin into the configuration directory
+                            and name it there. --no-enable installs without
+                            naming it, --config-file edits another file
+ahpd plugin remove <name>   drop it from the configuration and uninstall it,
+                            unless --keep
 ```
 
 `start` re-runs this same program with the rest of the line and detaches, so
@@ -183,9 +200,14 @@ one with the options `apply` receives and whether it is on:
 ```
 
 A bare name is resolved from the configuration directory's own `node_modules`,
-so `npm i` there is the install. A relative path is tried against the working
-directory and then the configuration directory, and the absolute path that ran
-is on the log.
+so `ahpd plugin install` is the install. A relative path is tried against the
+working directory and then the configuration directory, and the absolute path
+that ran is on the log.
+
+`ahpd plugin install` and `ahpd plugin remove` do the two halves together: npm
+installs into the configuration directory, and `config.json` gains or loses the
+name. The file is rewritten with every other key and entry as it was found, and
+nothing a running daemon already loaded changes until it is restarted.
 
 Naming a plugin **runs its code in this process with this process's
 permissions**, so the configuration file is the trust boundary here the way the

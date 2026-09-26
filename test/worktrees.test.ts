@@ -8,6 +8,7 @@ import { echo } from '../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../packages/sdk/src/worktrees.js';
 import { fileResources } from '../packages/sdk/src/resources.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import type { Worktrees } from '../packages/sdk/src/types/worktrees.js';
 
 /*
  * A working tree of a session's own.
@@ -59,14 +60,38 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
   };
 }
 
-const serving = (root: string) => createHost({
+const serving = (root: string, worktrees: Worktrees = gitWorktrees()) => createHost({
   path: root,
   agents: [echo({ path: join(root, 'project'), pace: 0 })],
-  worktrees: gitWorktrees(),
+  worktrees,
 });
 
-const joined = async (root: string) => {
-  const held = serving(root);
+/**
+ * The git port, with its dirty check and its removals on record.
+ *
+ * Disposal checks a tree and removes it without being awaited, so a test that
+ * expects a tree to be kept waits for the check's answer and then asserts no
+ * removal followed, instead of sleeping and hoping the host had decided.
+ */
+const observed = () => {
+  const base = gitWorktrees();
+  const checks: Promise<boolean>[] = [];
+  const removed: string[] = [];
+  const port: Worktrees = {
+    ...base,
+    dirty: (path) => { const answer = base.dirty(path); checks.push(answer); return answer; },
+    remove: (repository, path, branch) => { removed.push(path); return base.remove(repository, path, branch); },
+  };
+  // Every check answered, and whatever the host did next with the answer run.
+  const settled = async (): Promise<void> => {
+    await Promise.allSettled(checks);
+    await new Promise((r) => { setImmediate(r); });
+  };
+  return { port, removed, settled };
+};
+
+const joined = async (root: string, worktrees?: Worktrees) => {
+  const held = serving(root, worktrees);
   const p = peer();
   const client = held.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
@@ -531,7 +556,8 @@ describe('a session with a working tree of its own', () => {
 
   it('keeps one with work in it, rather than deciding what the work was worth', async () => {
     const root = repository();
-    const { client } = await joined(root);
+    const watched = observed();
+    const { client } = await joined(root, watched.port);
     const uri = 'ahp-session:/busy';
     await client.handle({
       method: 'createSession',
@@ -550,7 +576,8 @@ describe('a session with a working tree of its own', () => {
     writeFileSync(join(where, 'unsaved.txt'), 'the whole point\n');
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
-    await new Promise((r) => { setTimeout(r, 300); });
+    await watched.settled();
+    expect(watched.removed).toEqual([]);
     expect(existsSync(join(where, 'unsaved.txt'))).toBe(true);
     // Still a worktree of the repository, so `git worktree list` finds it.
     const listed = execFileSync('git', ['-C', project(root), 'worktree', 'list']).toString();
@@ -597,8 +624,8 @@ describe('a worktree the window holds a handle on', () => {
    * takes it down and puts it back with the archived bit, deletes it, and
    * reconciles the handles it still holds.
    */
-  const isolated = async (root: string, uri: string) => {
-    const { client } = await joined(root);
+  const isolated = async (root: string, uri: string, worktrees?: Worktrees) => {
+    const { client } = await joined(root, worktrees);
     await client.handle({
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [`file://${project(root)}`], config: { isolation: 'worktree', branch: 'main' } },
@@ -668,12 +695,14 @@ describe('a worktree the window holds a handle on', () => {
 
   it('deletes on request once the session is gone, and lets go of what the window no longer names', async () => {
     const root = repository();
-    const { client, where } = await isolated(root, 'ahp-session:/gone');
+    const watched = observed();
+    const { client, where } = await isolated(root, 'ahp-session:/gone', watched.port);
     const { handle } = await client.handle({ method: 'vscode/createAgentHostDetachedWorktree', params: { session: 'ahp-session:/gone', prompt: 'x' } }) as { handle: string };
     await expect(client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } })).rejects.toMatchObject({ code: -32004 });
     writeFileSync(join(where, 'work.txt'), 'kept\n');
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/gone' } });
-    await new Promise((r) => { setTimeout(r, 100); });
+    await watched.settled();
+    expect(watched.removed).toEqual([]);
     // Dirty, so the disposal kept it; the window's delete still takes it, saying so if git refuses.
     expect(existsSync(where)).toBe(true);
     const outcome = await client.handle({ method: 'vscode/deleteAgentHostDetachedWorktree', params: { handle } }).then(() => 'removed', (error: { message: string }) => error.message);

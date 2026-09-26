@@ -141,6 +141,17 @@ answers `-32007` until a person is known. The daemon prints the identifier at
 startup on a `sign-in` line, so an operator can see what a client will be told
 without reading root state.
 
+A connection the host already treats as somebody is told `required: false`
+instead, and that is the deployment's own connection token - root - or a
+personal token that has signed in. A client reads the field to decide whether
+to prompt, and prompting a connection that would be served anyway is a client
+that never sends `createSession`, which is what a root connection on VS Code
+met with an issuer that was not running. The field is rewritten per connection
+as the root state is delivered: in the snapshot, in the live
+`root/agentsChanged` and in a reconnect replay. Every other connection still
+reads `true`, and a backend's own resources and GitHub's are listed as they
+are.
+
 ## An issuer, when a client needs one
 
 A host that is its own issuer mints every secret and prints it for a person to
@@ -356,6 +367,7 @@ The subjects are the host's own five and any plugin's URI scheme:
 | `automation` | `read`, `write` | Read lists the triggers and the runs; write runs one |
 | `terminal` | `read`, `write` | Read watches a shell's output; write opens one, types into it and closes it |
 | `diagnostics` | `read` | `diagnosticsFetch` |
+| `config` | `write` | Changing a host-wide root setting, or replacing the root config |
 | a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -427,9 +439,11 @@ what comes back is the ordinary `action` notification with `rejectionReason` on
 it, the same way every other refused action is answered. What it is checked
 against is the **channel**, not the action, and a dispatch is always a write: a
 session or a chat needs `session:write`, a terminal needs `terminal:write`, an
-automation needs `automation:write`, `ahp-root://` needs `file:write` because the
-one thing a client may dispatch there changes a setting for everybody, and
-anything else needs `file:read`.
+automation needs `automation:write`, and anything else needs `file:read`.
+`ahp-root://` is read with the action: `root/configChanged` that only sets your
+own keys (`defaultShell`) needs a sign-in and no grant, and one that sets any
+other key, or replaces the config, needs `config:write`. Only `admin` has it
+among the built-in roles.
 
 That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
@@ -449,11 +463,10 @@ deliberate. It costs an agent's terminal the shell you chose in your client, and
 it closes the path where writing a file and naming it here would have made the
 next tool call in anybody's session run it.
 
-One wrinkle worth knowing: the action is still echoed to every client watching
-the root, because sequence numbers and the replay buffer are one per host. So a
-client can *see* another's shell go past in a live update. What it reads back in
-its own root state is its own or nothing, because the snapshot is taken per
-connection, and nothing on the host opens a shell with the shared copy.
+Every client watching the root still gets the action, on the same sequence
+number, but only the client that sent it sees `defaultShell` in it. The others
+get it without that key, or with their own shell when the action replaces the
+whole config. A replay after reconnecting reads the same way.
 
 The absent `request` is the point: a grant would resolve the first, and nothing
 resolves the second, so a client that reads the field correctly stops instead of
@@ -467,11 +480,14 @@ The agent list, a session count, the root config, and every open terminal's URI,
 title and claim - including, when a session opened it, that session's and chat's
 URIs. Knowing a channel is not being able to drive it: a dispatch into any of
 them is refused unless the person signed in and their role covers it.
-The root state is per host, not per connection, so it cannot be filtered without
+The root state is one per host, so it cannot be filtered wholesale without
 giving every connection its own sequence numbers - decision
 [`a-role-refuses-at-the-dispatch-boundary`](../.project/decisions/a-role-refuses-at-the-dispatch-boundary.md)
 says why, and `protectedResources` is the reason it must be readable at all: it
-is what tells a client where to sign in.
+is what tells a client where to sign in. Two parts are overlaid for the one
+connection reading them, with no second sequence number: the `config` values
+that connection pushed, and the `required` field on the host's own sign-in
+resource when the connection is root or signed in.
 
 ## Clients
 

@@ -12,29 +12,43 @@ VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commit
 
 ### The tools an agent is given
 
-- [ ] **`add_artifact_or_reference` promotes a reference to an artifact in place, keeping its id.** `packages/sdk/src/artifacttools.ts:180-182`.
-- [ ] **Artifact tool answers are `<status>: <id>`.** `packages/sdk/src/artifacttools.ts:184,189,215`.
-- [ ] **The pull request `create-pr` opens or reuses is recorded as a session artifact.** `packages/sdk/src/changes.ts:565,573`. This re-opens a box Pass 3 ticked: a pull request made by `prepare-pull-request` is one of these artifacts, and nothing here writes one.
-- [ ] **A round that ends with no text and no tool calls is announced as `responseRoundEnded`.** `packages/agent-claude/src/session.ts`; what the Claude stream offers as the signal for it is Left open in the review.
+- [x] **`add_artifact_or_reference` promotes a reference to an artifact in place, keeping its id.** `packages/sdk/src/artifacttools.ts:180-182`. Built in `host/01`.
+- [x] **Artifact tool answers are `<status>: <id>`.** `packages/sdk/src/artifacttools.ts:184,189,215`. Built in `host/01`.
+- [x] **The pull request `create-pr` opens or reuses is recorded as a session artifact.** `packages/sdk/src/changes.ts:565,573`. This re-opens a box Pass 3 ticked: a pull request made by `prepare-pull-request` is one of these artifacts, and nothing here writes one. Built in `host/01`, for the reused pull request as well (`recordPullRequest` in `host.ts`).
+- [ ] **A round that ends with no text and no tool calls is announced as `responseRoundEnded`.** `packages/agent-claude/src/session.ts`. The SDK still has no round event (0.3.283), but the stream's own `message_start` to `message_stop` is one; planned as `claude/03`.
 
 ### What the agent's own tools cost it
 
-- [ ] **The tools named in the first-turn instruction are always loaded.** `packages/agent-claude/src/session.ts`.
-- [ ] **Declare `artifactToolsCompactPrompts` in the root config.** `packages/sdk/src/host.ts:3358`.
+- [x] **The tools named in the first-turn instruction are always loaded.** `packages/agent-claude/src/session.ts`. Built in `claude/01`.
+- [x] **Declare `artifactToolsCompactPrompts` in the root config.** `packages/sdk/src/host.ts:3358`. Built in `host/02`.
 
 ### What a client is told about a session
 
-- [ ] **A chat keeps the title it was given, across a restart.** `packages/sdk/src/host.ts:3302`.
-- [ ] **`deferredTitleGeneration`, and a `rename_chat` shaped by the session's title strategy.** `packages/sdk/src/sessiontools.ts:497`.
+- [x] **A chat keeps the title it was given, across a restart.** `packages/sdk/src/host.ts:3302`. Built in `host/02`.
+- [x] **`deferredTitleGeneration`, and a `rename_chat` shaped by the session's title strategy.** `packages/sdk/src/sessiontools.ts:497`. Built in `host/02`.
 
 ### What the Claude backend reports as a customization
 
-- [ ] **Plugins as top-level containers, their contributions out of the per-scope lists, and builtins in a container with real URIs.** `packages/agent-claude/src/session.ts`.
+- [x] **Plugins as top-level containers, their contributions out of the per-scope lists, and builtins in a container with real URIs.** `packages/agent-claude/src/session.ts`. Plugins built in `claude/01`; builtins were not needed, since neither the SDK nor this repository has an attributable builtin source.
 
-### Read and not taken
+### Read and not taken, triaged 2026-09-26
 
-- Dev Containers as an extension surface, `setAgentMergeEnabled`, the central session catalog, the turn tracker and its telemetry, `vscode.modelCall`, the Copilot and Codex surfaces, the terminal auto-approval rule engine, the transport's client side, and the window's own UI. Each with the reference it was read against, in the review.
-- The Left open list, which is where the Dev Container decision, the `?tkn=` in the announced URL, the artifact answer shape, and the session-owned pull request baseline are written down.
+- [x] **Dev Containers as an extension surface.** Built in `container/01`, except its ahpapp half.
+- [ ] **The terminal auto-approval rule engine.** An idea: [`terminal-commands-approved-by-rule`](.project/ideas/terminal-commands-approved-by-rule.md), with the two questions a plan has to settle first.
+- [ ] **The turn tracker and its telemetry, and `vscode.modelCall`.** An idea: [`turn-and-model-call-diagnostics`](.project/ideas/turn-and-model-call-diagnostics.md).
+- **Not possible from this host, as a fact:** `setAgentMergeEnabled` and the `vscode.pullRequest` Agent Merge turn (Agent Merge is a Copilot service; `packages/sdk/src/changes.ts` says so when asked), and the Copilot and Codex SDK surfaces (a different SDK with no AHP surface).
+- **Not a host feature:** the central session catalog (VS Code's own cache, no wire surface), the transport's client side (VS Code dials out; this daemon is dialed to), and the window's own UI.
+
+### Left open, answered 2026-09-26
+
+- Dev Container sessions: yes, `container/01`.
+- The token in the announced URL: it lives in the `0600` daemon record and never on stdout, `daemon/02`.
+- The artifact answer shape: `<status>: <id>`, as the reference, `host/01`.
+- The reused pull request records an artifact: yes, `host/01`.
+- The session-owned pull request baseline: sent, `host/03`.
+- The empty round: `claude/03`.
+- Whether the window forwards root keys the schema does not declare: it does not; `agentHostRootConfigForwarder.ts` pushes only keys the host's schema lists, one per action. Both keys are declared, `host/02`.
+- The pre-existing drift: fixed in `documentation/01`.
 
 ## Pass 3 - 2026-09-13, the "not taken" list re-evaluated
 

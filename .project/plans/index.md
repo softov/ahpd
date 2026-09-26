@@ -17,8 +17,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | --- | --- | --- | --- | --- |
 | [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
+| [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 
-Next free number in `daemon`: `03`.
+Next free number in `daemon`: `04`.
 
 ## host
 
@@ -41,8 +42,11 @@ Reference: [00-host.md](host/00-host.md)
 | [13 - The door is a door, and trusting the token is the opt-out](host/13-the-door-is-a-door/plan.md) | high | built 2026-09-23 ([implemented.md](host/13-the-door-is-a-door/implemented.md)) | host 09 | - |
 | [14 - A record may name its own issuer](host/14-a-record-may-name-its-own-issuer/plan.md) | medium | built 2026-09-23 ([implemented.md](host/14-a-record-may-name-its-own-issuer/implemented.md)) | host 08, host 12 | - |
 | [15 - What the issuer left, a provider from the CLI and roles from a claim](host/15-what-the-issuer-left/plan.md) | medium | built 2026-09-23 ([implemented.md](host/15-what-the-issuer-left/implemented.md)) | host 14 | - |
+| [16 - A connection that is already authorized is not asked to sign in](host/16-an-authorized-connection-is-not-asked-to-sign-in/plan.md) | high | built 2026-09-26 ([implemented.md](host/16-an-authorized-connection-is-not-asked-to-sign-in/implemented.md)) | host 13 | - |
+| [17 - Host configuration has its own grant](host/17-host-configuration-has-its-own-grant/plan.md) | medium | built 2026-09-25 ([implemented.md](host/17-host-configuration-has-its-own-grant/implemented.md)) | host 11 | - |
+| [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | planned 2026-09-26 | host 02 | - |
 
-Next free number in `host`: `16`.
+Next free number in `host`: `19`.
 
 ## claude
 
@@ -52,8 +56,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | --- | --- | --- | --- | --- |
 | [01 - Host tools load when the instruction says so, and a customization keeps its source](claude/01-host-tools-and-customizations/plan.md) | high | built 2026-09-20 ([implemented.md](claude/01-host-tools-and-customizations/implemented.md)) | research/claude-customization-attribution.md | - |
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | built 2026-09-20 ([implemented.md](claude/02-round-ended/implemented.md)) | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification; the gap is in [deferred.md](claude/02-round-ended/deferred.md) |
+| [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | planned 2026-09-26 | claude 02 | - |
 
-Next free number in `claude`: `03`.
+Next free number in `claude`: `04`.
 
 ## documentation
 
@@ -83,7 +88,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [10 - A computer is an object a person manages](plugin/10-a-computer-a-person-manages/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/10-a-computer-a-person-manages/implemented.md)) | plugin 08, plugin 09 | plugin 11, which runs a session in one |
 | [11 - A session runs inside a computer](plugin/11-a-session-inside-a-computer/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/11-a-session-inside-a-computer/implemented.md)) | plugin 10, plugin 07 | - |
 | [12 - A client can tell what a scheme does before it asks one](plugin/12-a-client-can-tell-what-a-scheme-does/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/12-a-client-can-tell-what-a-scheme-does/implemented.md)) | plugin 08, plugin 10 | the ahpapp Computers screen, which reads the advertisement |
-| [13 - Only the images an operator named](plugin/13-only-the-images-an-operator-named/plan.md) | medium | built 2026-09-24 | plugin 10 | - |
+| [13 - Only the images an operator named](plugin/13-only-the-images-an-operator-named/plan.md) | medium | built 2026-09-24 ([implemented.md](plugin/13-only-the-images-an-operator-named/implemented.md)) | plugin 10 | - |
 
 Next free number in `plugin`: `14`.
 
@@ -100,4 +105,4 @@ Next free number in `container`: `02`.
 ## Domains without a plan
 
 None. `host`, `claude`, `documentation`, `plugin` and `container` were the domains listed here, and each has a plan above now.
-Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md).
+Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md).
