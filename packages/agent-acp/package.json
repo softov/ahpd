@@ -34,7 +34,9 @@
     "url": "https://github.com/softov/ahpd/issues"
   },
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typings": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -51,7 +53,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "prepack": "tsc -p ."
+    "prepack": "tsc -p .",
+    "test": "cd ../.. && vitest run packages/agent-acp/test"
   },
   "peerDependencies": {
     "@ahpd/sdk": "^0.7"

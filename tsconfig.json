@@ -16,5 +16,5 @@
       "@ahpd/agent-pi": ["packages/agent-pi/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "examples/**/*.ts"]
 }

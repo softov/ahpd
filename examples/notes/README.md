@@ -158,7 +158,7 @@ in a mode it is not in.
 
 ## What keeps it honest
 
-[`test/notes.test.ts`](../../test/notes.test.ts) drives this through
+[`packages/sdk/test/notes.test.ts`](../../packages/sdk/test/notes.test.ts) drives this through
 `createHost` the way a client does, and then reduces every action it emitted
 with the protocol's own `chatReducer` and `sessionReducer`.
 

@@ -65,10 +65,10 @@ This is not hypothetical. `catalogue`, the listing of a backend's sessions on di
 
 ### The conformance and wire checks
 
-[`test/conformance.test.ts`](test/conformance.test.ts) drives the host and replays every action it emitted through the protocol package's own reducers - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote.
+[`packages/sdk/test/conformance.test.ts`](packages/sdk/test/conformance.test.ts) drives the host and replays every action it emitted through the protocol package's own reducers - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`, `changesetReducer` - rather than reading state back out of a snapshot this host also wrote.
 A snapshot is this host agreeing with itself; the reducer is what VS Code and `ahpc` actually run.
 
-[`test/wire.test.ts`](test/wire.test.ts) checks the other half: not whether a client can read what the host sends, but whether the protocol *declares* it.
+[`packages/sdk/test/wire.test.ts`](packages/sdk/test/wire.test.ts) checks the other half: not whether a client can read what the host sends, but whether the protocol *declares* it.
 `tools/schema.mjs` generates a strict schema out of the package's own types - every object closed, which the shipped `state.schema.json` is not - and every frame goes through it, so an undeclared key or a missing required one fails the build.
 A reducer cannot see either, and neither can TypeScript: a conditional spread is not excess-property-checked, which is how three undeclared fields reached the wire from code typed against the package.
 
@@ -78,7 +78,7 @@ A drive against VS Code found two bugs that were invisible from the source; both
 
 The host can be tested without opening a socket: `accept()` takes a peer and returns its handler.
 
-The two repositories share one file: `test/fixtures/resource-write.json` is identical in [`ahpc`](https://github.com/softov/ahpc), and each repository's CI compares its copy against the other's `main`.
+The two repositories share one file: `packages/sdk/test/fixtures/resource-write.json` is identical in [`ahpc`](https://github.com/softov/ahpc), and each repository's CI compares its copy against the other's `main`.
 Change it in both.
 
 ## Publishing

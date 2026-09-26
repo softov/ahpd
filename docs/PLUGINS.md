@@ -678,7 +678,7 @@ A `move` or a `copy` whose two ends are different schemes is refused `-32602`:
 neither provider could carry out the other's half, which is the same answer two
 different clients get for a cross-client move.
 
-`test/fixtures/plugin-uri-resources` is a read-only `computer:` serving
+`packages/server/test/fixtures/plugin-uri-resources` is a read-only `computer:` serving
 `computer://local/status` and `computer://local/capabilities`, and is what the
 tests load. A real `computer:` provider on this machine would talk to Docker, or
 to a hypervisor handed the KVM device; the fixture starts nothing and answers for
@@ -734,7 +734,7 @@ ahpd --plugin @ahpd/agent-claude
 
 The rest are not published yet. From a checkout, `@ahpd/agent-claude`,
 `@ahpd/agent-cofold`, `@ahpd/agent-acp` and the fixtures under
-[`test/fixtures/`](../test/fixtures/) are real plugins and are what the tests
+[`packages/*/test/fixtures/`](../packages/server/test/fixtures/) are real plugins and are what the tests
 load:
 
 ```bash
@@ -742,8 +742,8 @@ pnpm build
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-claude
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
 node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp
-node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-echo
-node packages/server/dist/main.js --port 0 --plugin ./test/fixtures/plugin-uri-resources
+node packages/server/dist/main.js --port 0 --plugin ./packages/server/test/fixtures/plugin-echo
+node packages/server/dist/main.js --port 0 --plugin ./packages/server/test/fixtures/plugin-uri-resources
 ```
 
 Load a package by its directory, not by its `src/index.ts`: the manifest names

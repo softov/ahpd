@@ -1,0 +1,5 @@
+#!/bin/sh
+# A stand-in for npm: says one line on stdout, and leaves the code the caller named.
+
+echo "npm noise"
+exit "${FAKE_NPM_EXIT:-0}"

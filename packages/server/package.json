@@ -40,7 +40,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "prepack": "tsc -p ."
+    "prepack": "tsc -p .",
+    "test": "cd ../.. && vitest run packages/server/test"
   },
   "dependencies": {
     "@ahpd/sdk": "workspace:^",

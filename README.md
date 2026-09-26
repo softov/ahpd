@@ -424,7 +424,7 @@ pnpm typecheck
 Protocol captures can be checked against the strict schema:
 
 ```bash
-pnpm wire -- test/fixtures/wire.jsonl
+pnpm wire -- packages/sdk/test/fixtures/wire.jsonl
 ```
 
 

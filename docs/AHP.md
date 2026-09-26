@@ -769,7 +769,7 @@ relayed twice reads `RPC error -32602: RPC error -32602: …`.
 
 ## How this is checked
 
-[`test/conformance.test.ts`](../test/conformance.test.ts) drives the host and
+[`packages/sdk/test/conformance.test.ts`](../packages/sdk/test/conformance.test.ts) drives the host and
 then replays every action it emitted through the protocol package's **own
 reducers** - `rootReducer`, `sessionReducer`, `chatReducer`, `terminalReducer`,
 `changesetReducer` - rather than reading state back out of a snapshot this host
@@ -789,7 +789,7 @@ is not excess-property-checked, which is how `SessionState.model`,
 `argumentHint` and a config property's `scope` each reached the wire from a
 codebase typed against the package.
 
-So [`test/wire.test.ts`](../test/wire.test.ts) closes the objects.
+So [`packages/sdk/test/wire.test.ts`](../packages/sdk/test/wire.test.ts) closes the objects.
 [`tools/schema.mjs`](../tools/schema.mjs) generates a strict JSON Schema from
 the package's own declarations - `additionalProperties: false` everywhere,
 which the shipped `state.schema.json` has nowhere - and every frame the test
@@ -798,12 +798,12 @@ one both fail the build, which is the only reason either is findable before a
 client trips over it.
 
 The frames are written out as
-[`test/fixtures/wire.jsonl`](../test/fixtures/wire.jsonl): a capture of the
+[`packages/sdk/test/fixtures/wire.jsonl`](../packages/sdk/test/fixtures/wire.jsonl): a capture of the
 commands and actions above, with timestamps and generated ids replaced by
 stable ones so it can be diffed when something moves. The same check runs over
 a recording taken off a real daemon:
 
 ```bash
 pnpm schema                            # after a protocol bump
-pnpm wire -- test/fixtures/wire.jsonl  # or a capture: ahpd --wire <file>, or scripts/tee.mjs
+pnpm wire -- packages/sdk/test/fixtures/wire.jsonl  # or a capture: ahpd --wire <file>, or scripts/tee.mjs
 ```

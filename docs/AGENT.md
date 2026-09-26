@@ -207,7 +207,7 @@ ahpc --host ws://127.0.0.1:9201
 
 Drive it through `createHost` the way a client does, then replay what it emitted
 through the protocol package's own `chatReducer` and `sessionReducer` -
-[test/notes.test.ts](../test/notes.test.ts) is the worked version.
+[packages/sdk/test/notes.test.ts](../packages/sdk/test/notes.test.ts) is the worked version.
 
 Reading your own state back is you agreeing with yourself: a field under the
 wrong name, or beside its action rather than inside it, round-trips perfectly

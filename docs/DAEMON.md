@@ -493,5 +493,5 @@ rewrite - about twenty lines, no dependency.
 
 Node also strips types rather than transforming them, so it cannot run the
 TypeScript that *emits* code: enums, namespaces, and constructor parameter
-properties. There are none here, and `test/strippable.test.ts` is what keeps it
+properties. There are none here, and `packages/sdk/test/strippable.test.ts` is what keeps it
 that way.
