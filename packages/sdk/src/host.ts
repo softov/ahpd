@@ -1278,6 +1278,16 @@ export function createHost(options: HostOptions): Host {
    */
   const decided = new Map<string, Record<string, string>>();
   /**
+   * A session's restart in flight, by session URI.
+   *
+   * A fixed key can only be moved by starting the backend again, and the
+   * first send pushes the whole config and then the first turn back to back -
+   * so the turn can arrive while the restart is still running. An action that
+   * reaches such a session waits here rather than being applied to the
+   * backend that is on its way out.
+   */
+  const restarting = new Map<string, Promise<void>>();
+  /**
    * The isolation schema each session was offered when it was created.
    *
    * Kept because a session reports its own config schema and a client draws
@@ -2612,7 +2622,7 @@ export function createHost(options: HostOptions): Host {
       ...(resuming?.rewindAt !== undefined ? { rewindAt: resuming.rewindAt } : {}),
       ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
       settings: { ...agent.defaults(), ...contributedDefaults(), ...config },
-      schema: () => sessionSchema(agent),
+      schema: () => runningSchema(agent),
       // What the boot probe already learned: the commands behind a slash, the
       // skills, the subagents and the MCP servers. A session that answered
       // `[]` until its own agent replied was empty for the first several
@@ -3153,14 +3163,21 @@ export function createHost(options: HostOptions): Host {
    * deliberately generic and says nothing about whether a key belongs to a
    * session or to one chat inside it. A backend that says neither gets the
    * safe answers: mutable, and the session's.
+   *
+   * A key a plugin contributed is found here too, which is what makes a
+   * key like `computer` obey the schema it was declared with. The backend's
+   * own property wins where both declare one, the same way `sessionSchema`
+   * folds them. Read from the raw schemas rather than from `sessionSchema`,
+   * because `published` drops `scope` on the way out and this is the one
+   * reader that needs it.
    */
   const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
     if (!agent) return undefined;
-    const schema = agent.schema();
-    const properties = (typeof schema.properties === 'object' && schema.properties !== null
-      ? schema.properties
+    const own = agent.schema();
+    const ownProperties = (typeof own.properties === 'object' && own.properties !== null
+      ? own.properties
       : {}) as Bag;
-    const held = properties[key];
+    const held = ownProperties[key] ?? options.sessionConfig?.[key];
     return typeof held === 'object' && held !== null
       ? held as { sessionMutable?: boolean; scope?: string }
       : undefined;
@@ -3208,6 +3225,42 @@ export function createHost(options: HostOptions): Host {
       ? schema.properties
       : {}) as Bag;
     return { ...schema, type: 'object', properties: { ...extra, ...properties } };
+  };
+
+  /**
+   * The schema a *running* session publishes.
+   *
+   * Every key that may not move once the session runs is marked
+   * `sessionMutable: true, readOnly: true`, so a client draws the value the
+   * session was created with as a chip that cannot be opened. Without this a
+   * fixed key disappears from the window the moment the first turn runs: VS
+   * Code draws a chip only for `sessionMutable` keys, with `isolation` and
+   * `branch` as the two names it carves out, and nothing said where a
+   * session's computer or Claude's thinking had gone.
+   *
+   * `sessionMutable: true` is not literally true - this host still refuses a
+   * change after the first turn, because `propertyOf` reads the schema before
+   * this rewrite, where the key is still `sessionMutable: false`. It is the
+   * flag that makes the chip appear.
+   *
+   * Only the backend's and a plugin's keys pass through here. This host's
+   * own - `isolation`, `branch` and their companions - are added afterwards
+   * by `hostSchema`, and a client draws those by name already.
+   */
+  const runningSchema = (agent: Agent): Bag => {
+    const schema = sessionSchema(agent);
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Bag;
+    return {
+      ...schema,
+      properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
+        if (typeof value !== 'object' || value === null) return [key, value];
+        const one = value as Bag;
+        if (one.sessionMutable !== false) return [key, value];
+        return [key, { ...one, sessionMutable: true, readOnly: true }];
+      })),
+    };
   };
 
   /**
@@ -7294,6 +7347,27 @@ export function createHost(options: HostOptions): Host {
         }
         const session = held;
         /*
+         * A session being started again waits for the start to finish.
+         *
+         * Moving a fixed key restarts the backend, and the first send pushes
+         * the whole config and then the first turn without waiting for the
+         * host between them. The turn is applied when the session it was
+         * meant for is the one that exists - a backend started again is a new
+         * object under the same URI - and a restart that failed answers every
+         * action that waited on it with its own failure, which is the same
+         * thing a refused action reads.
+         */
+        const running = restarting.get(holding !== undefined ? channel : byChat.get(channel)?.uri ?? '');
+        if (running !== undefined) {
+          void running.then(
+            () => { applyDispatch(params, origin); },
+            (error: unknown) => {
+              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+            },
+          );
+          return;
+        }
+        /*
          * A draft in a session this host is not running.
          *
          * The one client action worth taking without starting anything: it
@@ -7481,12 +7555,44 @@ export function createHost(options: HostOptions): Host {
             // Config belongs to the session, so it is remembered there: a
             // chat opened after this one is answered starts on it too.
             const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
+            /*
+             * What each key held before this action, read before anything
+             * writes over it.
+             *
+             * A fixed key is judged by whether it actually moved - a client
+             * sends its whole config bag back on the first send - and once
+             * the loop below has written the new value the old one is gone.
+             * The value in effect, defaults included: a session created with
+             * `{}` still runs on each default, and a client re-sending one is
+             * not asking for anything.
+             */
+            const before = new Map<string, unknown>();
+            const stored = new Map<string, unknown>();
             if (owning) {
+              const effective = { ...owning.agent.defaults(), ...contributedDefaults(), ...owning.config };
+              for (const key of Object.keys(config)) {
+                before.set(key, effective[key]);
+                stored.set(key, owning.config[key]);
+              }
               // Kept as it arrived. A config value is `unknown` on the wire,
               // and `permissions` is an object - stringifying it made a
               // session remember the word `[object Object]`.
               for (const [key, value] of Object.entries(config)) owning.config[key] = value;
             }
+            /*
+             * A refused key put back as it was.
+             *
+             * The session's config is what a later chat and a restart are
+             * spawned with, so a value refused here and left in it would be
+             * applied anyway by the next chat opened in the session.
+             */
+            const undo = (key: string): void => {
+              // Not over a value something else has written since.
+              if (owning === undefined || owning.config[key] !== config[key]) return;
+              const was = stored.get(key);
+              if (was === undefined) delete owning.config[key];
+              else owning.config[key] = was;
+            };
             /*
              * This host's own keys, which no backend has heard of.
              *
@@ -7508,22 +7614,68 @@ export function createHost(options: HostOptions): Host {
               // where it already is would be a session that disposed and
               // reopened itself for nothing.
               .filter(([key, value]) => value !== settled[key]);
-            if (ours.length > 0 && owning !== undefined) {
+            /*
+             * The fixed keys a backend or a plugin declared.
+             *
+             * `sessionMutable: false` is the schema saying this value is read
+             * when the backend starts - the computer a session runs in, and
+             * Claude's thinking - so a new value before the first turn is the
+             * session being created differently, exactly as `isolation` is.
+             * Only a key that moved, for the same reason `ours` is filtered.
+             */
+            const fixed = owning === undefined ? [] : Object.entries(config)
+              .filter(([key]) => !HOSTS_OWN.includes(key))
+              .filter(([key]) => propertyOf(owning.agent, key)?.sessionMutable === false)
+              .filter(([key, value]) => value !== before.get(key));
+            /*
+             * One restart for both kinds of fixed key, because two keys in
+             * one action are one decision - and a restart is a backend start.
+             */
+            const moved = [...ours, ...fixed];
+            if (moved.length > 0 && owning !== undefined) {
               const bad = ours.find(([, value]) => typeof value !== 'string');
               const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
-              if (bad !== undefined) no(`${bad[0]} takes a string`);
-              else if (started) no(`${ours[0]?.[0]} is fixed once the session has started`);
+              if (bad !== undefined) {
+                for (const [key] of moved) undo(key);
+                no(`${bad[0]} takes a string`);
+              }
+              else if (started) {
+                for (const [key] of moved) undo(key);
+                no(`${moved[0]?.[0]} is fixed once the session has started`);
+              }
               else {
                 const mine = { ...settled };
                 for (const [key, value] of ours) mine[key] = value as string;
                 decided.set(session.uri, mine);
                 const uri = session.uri;
-                void restart(uri, tokensFor(owning.agent.provider))
-                  .then(() => {
-                    for (const [key, value] of ours)
+                /*
+                 * The restart, held while it runs.
+                 *
+                 * A turn can arrive in the window between the whole config
+                 * being pushed and the backend being ready - VS Code sends
+                 * both back to back - so `applyDispatch` waits on this
+                 * promise before it touches the session. It is cleared before
+                 * the promise settles to its consumers, so an action that
+                 * waited re-runs against the backend that is actually there.
+                 */
+                const work = (async () => {
+                  await restart(uri, tokensFor(owning.agent.provider));
+                })();
+                restarting.set(uri, work);
+                const clear = (): void => {
+                  if (restarting.get(uri) === work) restarting.delete(uri);
+                };
+                void work.then(
+                  () => {
+                    clear();
+                    for (const [key, value] of moved)
                       dispatch(uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
-                  })
-                  .catch((error: unknown) => { no(error instanceof Error ? error.message : String(error)); });
+                  },
+                  (error: unknown) => {
+                    clear();
+                    no(error instanceof Error ? error.message : String(error));
+                  },
+                );
               }
             }
             for (const [key, value] of Object.entries(config)) {
@@ -7551,14 +7703,26 @@ export function createHost(options: HostOptions): Host {
                * without declaring either - so the schema decides how a key
                * behaves and the backend decides whether it is taken at all.
                */
-              // Immutable, and said so rather than accepted and dropped: a
-              // control that reports success and changes nothing is worse
-              // than one that refuses.
+              /*
+               * Immutable, and said so rather than accepted and dropped: a
+               * control that reports success and changes nothing is worse
+               * than one that refuses.
+               *
+               * Taken above when it moved before the first turn - the session
+               * was started again with it - and a value that did not move is
+               * not a change at all: a client re-sending the value it was
+               * given is agreeing with this host rather than asking for
+               * anything.
+               */
               if (property?.sessionMutable === false) {
-                no(`${key} is fixed when the session is created`);
+                if (fixed.some(([held]) => held === key)) continue;
+                if (value === before.get(key)) continue;
+                undo(key);
+                no(`${key} is fixed once the session has started`);
                 continue;
               }
               if (session.setConfig === undefined) {
+                undo(key);
                 no(`${key} is not a config key this backend takes`);
                 continue;
               }
@@ -7578,7 +7742,10 @@ export function createHost(options: HostOptions): Host {
                 // The backend's own words when it refused, because only it
                 // knows whether the key or the value was the problem.
                 if (answer === true) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
-                else no(answer);
+                else {
+                  undo(key);
+                  no(answer);
+                }
               });
             }
             break;

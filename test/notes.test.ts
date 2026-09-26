@@ -299,7 +299,19 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
  * Claude key at all, which is what makes it the honest place to check.
  */
 it('refuses a key its schema marks immutable, without the backend being asked', async () => {
-  const { client, peer: p, uri } = await talking();
+  const { dir, client, peer: p, uri, chatUri } = await talking();
+  /*
+   * After the first turn, which is when the key is fixed.
+   *
+   * Before it, an immutable key is still the session being created
+   * differently: the host starts the backend again with the new value rather
+   * than refusing, which is what makes the value a person picked in the New
+   * view the one the session runs with. Once something has been said the key
+   * is refused here, and never reaches `setConfig`.
+   */
+  await writeFile(join(dir, 'hello.md'), 'the whole of it\n', 'utf8');
+  say(client, chatUri, 'read hello');
+  await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
   /*
    * Echoes, not refusals.
    *
@@ -321,7 +333,7 @@ it('refuses a key its schema marks immutable, without the backend being asked', 
   expect(echoed()).toBe(before);
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
   // Naming the key, which containment could not tell had been named.
-  expect(why.rejectionReason).toBe('tone is fixed when the session is created');
+  expect(why.rejectionReason).toBe('tone is fixed once the session has started');
 });
 
 it('takes one its schema marks mutable, and says so in the backend\'s words when the value is wrong', async () => {
