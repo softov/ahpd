@@ -1,6 +1,6 @@
 ---
 title: The part is emitted
-status: implemented
+status: done
 depends: [task-01-seen-on-a-real-stream.md]
 layer: "agent-claude"
 refs:

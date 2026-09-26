@@ -1,6 +1,6 @@
 ---
 title: An empty round seen on a real stream
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

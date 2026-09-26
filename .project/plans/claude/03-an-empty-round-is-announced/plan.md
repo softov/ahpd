@@ -1,7 +1,7 @@
 ---
 title: A model round that ends empty is announced
 domain: claude
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -57,8 +57,8 @@ CLI stream_event message_start -> content_block_start(thinking) ... -> message_d
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An empty round seen on a real stream](task-01-seen-on-a-real-stream.md) | implemented | - |
-| [02 - The part is emitted](task-02-the-part-is-emitted.md) | implemented | 01 |
+| [01 - An empty round seen on a real stream](task-01-seen-on-a-real-stream.md) | done | - |
+| [02 - The part is emitted](task-02-the-part-is-emitted.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -67,14 +67,14 @@ CLI stream_event message_start -> content_block_start(thinking) ... -> message_d
 
 ## Resume state
 
-- **Done so far:** task 01 and task 02 on 2026-09-26; the two fixtures captured from a real CLI stream and `packages/agent-claude/src/session.ts` changed; `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.
-- **Next action:** verify the implementation, tick the checklist, then move both tasks to `done` and write `implemented.md`.
+- **Done so far:** both tasks, 2026-09-26; built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the captured empty round carries no thinking text because the CLI hid it, so the fixture proves the `message_start` to `message_stop` boundary and not the thinking content. The plan was not dropped: a real empty round exists, it is just empty of thinking text too.
 
 ## Final verification checklist
 
-- [ ] A captured stream with an empty round, checked into `test/fixtures`.
-- [ ] A test replaying it sees one `responseRoundEnded` part, and a normal turn sees none.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `UPSTREAM.md` Pass 4 box ticked, `claude/02`'s `deferred.md` pointed here, `plans/index.md` updated.
+- [x] A captured stream with an empty round, checked into `test/fixtures`.
+- [x] A test replaying it sees one `responseRoundEnded` part, and a normal turn sees none.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `UPSTREAM.md` Pass 4 box ticked, `claude/02`'s `deferred.md` pointed here, `plans/index.md` updated.

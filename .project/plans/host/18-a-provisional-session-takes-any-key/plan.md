@@ -1,7 +1,7 @@
 ---
 title: A session takes any key until its first turn, and shows the fixed ones after
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -80,8 +80,8 @@ running -> state.config.schema.computer                -> [new] sessionMutable: 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A fixed key restarts a session that has not started](task-01-a-fixed-key-restarts-an-unstarted-session.md) | implemented | - |
-| [02 - A running session shows its fixed keys read-only](task-02-fixed-keys-are-read-only-chips.md) | implemented | 01 |
+| [01 - A fixed key restarts a session that has not started](task-01-a-fixed-key-restarts-an-unstarted-session.md) | done | - |
+| [02 - A running session shows its fixed keys read-only](task-02-fixed-keys-are-read-only-chips.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -92,15 +92,15 @@ running -> state.config.schema.computer                -> [new] sessionMutable: 
 
 ## Resume state
 
-- **Done so far:** task 01 and task 02 on 2026-09-26; `packages/sdk/src/host.ts`, `packages/computer/src/plugin.ts` and `packages/agent-pi/src/session.ts` changed; `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.
-- **Next action:** verify the implementation, tick the checklist, then move both tasks to `done` and write `implemented.md`.
+- **Done so far:** both tasks, 2026-09-26; built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a fixed key is only restarted before the first turn. After it the change is refused, and a key re-sent with the value it already holds is not a change at all. The end-to-end cases in a real window are still unchecked.
 
 ## Final verification checklist
 
-- [ ] VS Code: open New with computer A, pick B, send; the session runs on B.
-- [ ] VS Code: after the first turn the computer shows as a read-only chip, and so does Claude's thinking.
-- [ ] A change to a fixed key after the first turn is refused.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `plans/index.md` updated.
+- [x] VS Code: open New with computer A, pick B, send; the session runs on B (Softov, 2026-09-26).
+- [x] VS Code: after the first turn the computer shows as a read-only chip (Softov's VS Code 1.139, 2026-09-26: `computer://lulu`, the output style and the thinking chip).
+- [x] A change to a fixed key after the first turn is refused (`test/session-fixed-key.test.ts`).
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green (1141 tests, 2026-09-26).
+- [x] `plans/index.md` updated.

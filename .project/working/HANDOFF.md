@@ -29,7 +29,7 @@ Rewritten 2026-09-25, the day `v0.7.0` went out, replacing everything this file 
 
 1. **A real dev container run for `daemon/03`**: a session with `"plugins": ["@ahpd/agent-cofold"]` and no mounted checkout. The plan is built and the launcher is tested against the fake CLI only.
 2. **`host/18` is planned, for dsh**: a fixed key picked in VS Code's New view (the computer) restarts the session before its first turn instead of being dropped, and a running session shows its fixed keys as read-only chips.
-3. **`container/01`'s ahpapp half**: drawing the Dev Container CLI's own output while a container starts.
+3. **`container/01`'s ahpapp half is built, awaiting Softov's check**: ahpapp draws the Dev Container CLI's build log (`9e95cf2`), ties a container to the connection that opened it with Reopen bringing it back (`e12fad3`), and ends the row when the relay closes (`86c4d23`). Once checked, close `container/01` with its `implemented.md`.
 4. **ahpc has unreleased commits**, and `a5987f2` plus `136fd3f` (the token-file work) are committed and not pushed. The push was blocked by the permission check and waits on Softov.
 5. **Verify a JWT locally.** The last deferred item of `host/08`: check a token against the issuer's key set instead of asking `userinfo`. Does not help GitHub, which issues opaque tokens.
 6. **`@ahpd/computer`'s other two thirds**: a `kvm` runtime, the per-session gate on the machine tools proposed in [`research/a-computer-three-things.md`](../research/a-computer-three-things.md), and an ephemeral machine destroyed when its session ends.

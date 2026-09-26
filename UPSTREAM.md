@@ -15,7 +15,7 @@ VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commit
 - [x] **`add_artifact_or_reference` promotes a reference to an artifact in place, keeping its id.** `packages/sdk/src/artifacttools.ts:180-182`. Built in `host/01`.
 - [x] **Artifact tool answers are `<status>: <id>`.** `packages/sdk/src/artifacttools.ts:184,189,215`. Built in `host/01`.
 - [x] **The pull request `create-pr` opens or reuses is recorded as a session artifact.** `packages/sdk/src/changes.ts:565,573`. This re-opens a box Pass 3 ticked: a pull request made by `prepare-pull-request` is one of these artifacts, and nothing here writes one. Built in `host/01`, for the reused pull request as well (`recordPullRequest` in `host.ts`).
-- [ ] **A round that ends with no text and no tool calls is announced as `responseRoundEnded`.** `packages/agent-claude/src/session.ts`. The SDK still has no round event (0.3.283), but the stream's own `message_start` to `message_stop` is one; planned as `claude/03`.
+- [x] **A round that ends with no text and no tool calls is announced as `responseRoundEnded`.** `packages/agent-claude/src/session.ts`. The SDK still has no round event (0.3.283), but the stream's own `message_start` to `message_stop` is one; built as `claude/03`.
 
 ### What the agent's own tools cost it
 

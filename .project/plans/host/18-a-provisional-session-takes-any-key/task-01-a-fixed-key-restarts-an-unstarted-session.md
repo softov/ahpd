@@ -1,6 +1,6 @@
 ---
 title: A fixed key restarts a session that has not started
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

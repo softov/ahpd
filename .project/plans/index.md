@@ -44,7 +44,7 @@ Reference: [00-host.md](host/00-host.md)
 | [15 - What the issuer left, a provider from the CLI and roles from a claim](host/15-what-the-issuer-left/plan.md) | medium | built 2026-09-23 ([implemented.md](host/15-what-the-issuer-left/implemented.md)) | host 14 | - |
 | [16 - A connection that is already authorized is not asked to sign in](host/16-an-authorized-connection-is-not-asked-to-sign-in/plan.md) | high | built 2026-09-26 ([implemented.md](host/16-an-authorized-connection-is-not-asked-to-sign-in/implemented.md)) | host 13 | - |
 | [17 - Host configuration has its own grant](host/17-host-configuration-has-its-own-grant/plan.md) | medium | built 2026-09-25 ([implemented.md](host/17-host-configuration-has-its-own-grant/implemented.md)) | host 11 | - |
-| [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | active 2026-09-26 | host 02 | - |
+| [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | built 2026-09-26 ([implemented.md](host/18-a-provisional-session-takes-any-key/implemented.md)) | host 02 | - |
 
 Next free number in `host`: `19`.
 
@@ -56,7 +56,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | --- | --- | --- | --- | --- |
 | [01 - Host tools load when the instruction says so, and a customization keeps its source](claude/01-host-tools-and-customizations/plan.md) | high | built 2026-09-20 ([implemented.md](claude/01-host-tools-and-customizations/implemented.md)) | research/claude-customization-attribution.md | - |
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | built 2026-09-20 ([implemented.md](claude/02-round-ended/implemented.md)) | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification; the gap is in [deferred.md](claude/02-round-ended/deferred.md) |
-| [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | active 2026-09-26 | claude 02 | - |
+| [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | built 2026-09-26 ([implemented.md](claude/03-an-empty-round-is-announced/implemented.md)) | claude 02 | - |
 | [04 - A subagent has its own chat, linked from the call that started it](claude/04-a-subagent-has-its-own-chat/plan.md) | medium | planned 2026-09-26 | claude 03 | - |
 
 Next free number in `claude`: `05`.
@@ -100,10 +100,12 @@ Reference: [00-container.md](container/00-container.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - A session in a dev container, with its whole host inside it](container/01-a-session-in-a-dev-container/plan.md) | high | built 2026-09-24, except its `ahpapp` half ([implemented.md](container/01-a-session-in-a-dev-container/implemented.md)) | plugin 11, plugin 12 | an ahpapp plan, which drives the same four methods |
+| [02 - VS Code offers a dev container on a folder served by ahpd](container/02-vscode-offers-our-dev-container/plan.md) | high | planned 2026-09-26, task 01 blocked: the tunnel is not listed in VS Code | container 01 | - |
+| [03 - A dev container is a computer, listed and reachable without the connection that made it](container/03-a-dev-container-is-a-computer/plan.md) | medium | draft 2026-09-26 | container 01 | - |
 
-Next free number in `container`: `02`.
+Next free number in `container`: `04`.
 
 ## Domains without a plan
 
 None. `host`, `claude`, `documentation`, `plugin` and `container` were the domains listed here, and each has a plan above now.
-Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md).
+Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md).

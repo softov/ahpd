@@ -1,6 +1,6 @@
 ---
 title: A running session shows its fixed keys read-only
-status: implemented
+status: done
 depends: [task-01-a-fixed-key-restarts-an-unstarted-session.md]
 layer: "sdk"
 refs:
