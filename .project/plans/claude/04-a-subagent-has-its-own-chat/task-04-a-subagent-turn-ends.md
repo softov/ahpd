@@ -1,6 +1,6 @@
 ---
 title: A subagent's turn ends, foreground or background
-status: todo
+status: implemented
 depends: [task-03-subagent-frames-go-to-their-chat.md]
 layer: "agent-claude"
 refs:
@@ -30,4 +30,11 @@ A subagent's chat turn completes when its work does: on the call's `tool_result`
 - A cancelled main turn leaves no subagent turn running.
 
 ## Resume
+
+Built. `endWorker(callId, state, why)` calls the host's `end` once per worker, declines anything the worker was still asking, and forgets its scope.
+
+- A call is background when `system:task_started` says `is_backgrounded: true`, which is the flag the real capture forced: this SDK sends `task_started` for a foreground worker too. A harness that omits the flag is caught by the spawning result itself, which says "Async agent launched" for a background one.
+- A foreground worker ends on the `tool_result` of its spawning call, complete or failed; a background one ends only on a terminal `task_notification` (`completed`, `failed`, `stopped`). A foreground worker's `task_notification` is ignored, and whichever signal arrives second is a no-op.
+- `cancel` ends every running worker's turn as `cancelled`.
+- `test/agent-claude-subagent.test.ts` covers both fixtures: the foreground one ends once on the result, and the background one survives its immediate "launched" result, keeps routing frames after the lead turn, and ends on the notification.
 

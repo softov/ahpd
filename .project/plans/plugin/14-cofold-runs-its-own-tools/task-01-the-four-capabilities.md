@@ -1,6 +1,6 @@
 ---
 title: A cofold session's agent has the four capabilities
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -32,3 +32,12 @@ refs:
 - A scripted turn calling `read_file` on a fixture returns its lines.
 
 ## Resume
+
+Done.
+`packages/agent-cofold/src/capabilities.ts` builds the four `@cofold/tools` capabilities from `CofoldOptions.tools`.
+`plugin.ts` reads the option out of a configuration with `toolsOf`, and `agent.ts` carries it as `tools?: ToolsConfig`, all four on when it is absent.
+`agentOf` passes the capabilities, in papo's order, with memory under `<store root>/memory/<workspace slug>/` and `web_search` only when `tools.web.search` names a provider.
+What the plan did not know: with no provider the default is nine tools, because `web_search` needs one and `web_fetch` is the ninth.
+The host's offered tool names go into `capabilitiesOf`, so a host tool that shares a capability tool's name keeps it, since cofold fails a run whose capabilities contribute a duplicate name.
+A session whose store is in memory gets no memory capability, because there is no directory to keep memory files in.
+`capabilitiesOf` and the `ToolsConfig`/`SearchConfig` types are exported from `index.ts`.

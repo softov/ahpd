@@ -1,6 +1,6 @@
 ---
 title: "@cofold/remote serves a registry (cofold repository)"
-status: todo
+status: implemented
 depends: []
 layer: "cofold remote"
 refs:
@@ -30,3 +30,6 @@ refs:
 - `npm run check` in `/github/cofold` green; the clerver round trip still works.
 
 ## Resume
+
+Built in `/github/cofold` and published as `@cofold/remote@0.3.0`: `serve.ts` (the request handler, promoted from the `clerver` example, with `prefix`, the `authorize` context, `manifestPath` and `maxBodyBytes`) and `serve.test.ts` (11 cases); `index.ts` exports `serve` and its types; the `clerver` example's `server.ts` uses it; `ROADMAP.md`'s `serve` item is answered.
+Not in ahpd's tree: task 02 consumes the published package.

@@ -1,11 +1,11 @@
 ---
 title: Every flag and verb has a test that pins what it does
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
-  - "[code://packages/server/src/main.ts#L255-L310](../../../../packages/server/src/main.ts#L255-L310) - the flags"
-  - "[code://packages/server/src/main.ts#L430-L660](../../../../packages/server/src/main.ts#L430-L660) - the verbs"
+  - "git://7a7e9d1 - packages/server/src/main.ts before the migration: the flag parser and the verbs this task pinned"
+  - "[code://test/server-cli.test.ts](../../../../test/server-cli.test.ts) - the pinning cases"
 ---
 
 ## Objective
@@ -26,3 +26,7 @@ A test per flag and per verb records what it does today (the options it yields, 
 - `pnpm test test/server-cli.test.ts` green against today's `main.ts`.
 
 ## Resume
+
+Done: `test/server-cli.test.ts` holds 28 cases driving `main.ts` as a process with a temporary `XDG_CONFIG_HOME`, one run carrying every daemon flag and pinning its announcement, and one group per verb.
+Green against the hand-written parser (`28 passed`, 39s) and green again unchanged after task 03 (`28 passed`, 46s).
+Found in review: every case runs with `CI=1`, so the update-check case cannot fail (task 06), and `--port`, `--host` and `start` are never exercised (task 10).

@@ -1,6 +1,6 @@
 ---
 title: main.ts runs through the terminal program
-status: todo
+status: implemented
 depends: [task-02-the-commands-are-declared.md]
 layer: "server"
 refs:
@@ -27,3 +27,10 @@ refs:
 - `ahpd --help`, `ahpd completion bash`, `ahpd status --json` by hand.
 
 ## Resume
+
+Done: `main.ts` builds one `Program` over `cliRegistry()` and runs through `runEntry`; the hand-written parser and verb branches are gone.
+The one compatibility seam is the word the foreground run is given when a line has no command (counted with `@cofold/commands`' own `tokenize`), and `-v` is mapped to `--version`.
+`liveHelp` appends the foreground run's help to program help, so `ahpd --help` still shows every daemon flag.
+`--help`, `plugin --help`, `completion bash` and `status --json` were run by hand; `--stdio` writes an empty stdout with stdin closed.
+The task 01 cases pass unchanged.
+Found in review, and fixed in later tasks: a global before `start` orphans the daemon (task 05), `-v` and `--help` are read in value position and the bare run's flags do not complete (task 09), and the help lost sentences and shows `ahpd run` (task 07).

@@ -1,6 +1,6 @@
 ---
 title: Docs and the package
-status: todo
+status: implemented
 depends: [task-02-calls-drawn-and-edits-reported.md, task-03-permission-modes-cover-them.md]
 layer: "docs"
 refs:
@@ -26,3 +26,8 @@ A person reading the cofold section of `docs/PLUGINS.md` knows which tools a ses
 - `pnpm install --frozen-lockfile` clean; `pnpm boundary` green.
 
 ## Resume
+
+Done.
+`docs/PLUGINS.md` has a row for the `tools` option on the cofold options table and a "The tools a session runs" section: the four capabilities and that cofold runs them in its own process, a `web.search` example that turns `shell` off, the provider rules and that `web_search` is absent without one, and where memory lives.
+`packages/agent-cofold/package.json` declares `@cofold/tools@^0.0.1` and `pnpm-lock.yaml` carries it, added with `pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store` because the global store is read-only here.
+`pnpm install --frozen-lockfile` is clean afterwards and `pnpm boundary` is green.

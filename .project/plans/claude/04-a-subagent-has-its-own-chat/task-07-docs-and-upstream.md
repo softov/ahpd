@@ -1,6 +1,6 @@
 ---
 title: Docs and upstream
-status: todo
+status: implemented
 depends: [task-04-a-subagent-turn-ends.md, task-05-asks-inside-a-subagent.md, task-06-restored-after-a-restart.md]
 layer: "docs"
 refs:
@@ -25,4 +25,8 @@ The docs say a subagent is its own chat, and `UPSTREAM.md` records the parity.
 - The docs read as written by a person, short, one paragraph per line.
 
 ## Resume
+
+Built. `packages/agent-claude/README.md` has one paragraph on the subagent chat and a `subagentsOf` row in the exports table; `docs/PLUGINS.md` has "A backend's worker chats", the `Start.subagent` seam and what it hands back; `UPSTREAM.md` has the ticked subagent line under "What a client is told about a session".
+
+`.project/plans/index.md` is kept by the main session, which lists this plan there.
 

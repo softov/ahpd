@@ -1,6 +1,6 @@
 ---
 title: A disposable profile is offered in the picker
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -25,3 +25,6 @@ The `computer` answerer adds a `disposable:<profile>` row, labelled with the pro
 - The answerer test shows the row, and not for a profile without the flag.
 
 ## Resume
+
+Done 2026-09-26. `Profile` carries `disposable`, `disposableDelay` and `disposableAlone` in `packages/computer/src/manifest.ts`, and `profilesOf` in `packages/computer/src/plugin.ts` validates the three, writing `disposableDelay` down as 300000 when the profile names none. The answerer appends a `disposable:<key>` row per disposable profile, labelled with its title and narrowed by the query. `test/computer-disposable.test.ts` covers the row, a profile without the flag and the typed query.
+

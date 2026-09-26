@@ -1,6 +1,6 @@
 ---
 title: Claude's subagent frames go to that chat
-status: todo
+status: implemented
 depends: [task-01-a-subagent-on-a-real-stream.md, task-02-the-host-opens-a-subagent-chat.md]
 layer: "agent-claude"
 refs:
@@ -34,4 +34,11 @@ Every frame Claude sends from inside a subagent is drawn on that subagent's chat
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Built. `session.ts` has one `Scope` per conversation - the session's own and one per spawning call - each holding its own `parts`, `calling`, `streaming` and turn; `streamed`, `assistant` and `results` take the frame's `parent_tool_use_id`, and `emitOn` writes to the worker's chat when there is one. `forwardSubagentText: true` is set beside `includePartialMessages`.
+
+- `Task` and `Agent` `tool_use` blocks are recorded with `subagent_type`, `description`, `prompt` and the scope the call is in, and the first frame for a call opens its chat through `Start.subagent`; a call with no record opens as `Subagent`.
+- The main turn keeps the `Task` call, and its completion carries the `subagent` content the host put on it, so the link survives the result.
+- An empty round inside a worker is announced on the worker's chat through the same `responseRoundEnded` part, which closes what `claude/03` left out; without the host's seam the old behaviour is kept and nothing is announced for a worker.
+- `test/agent-claude-subagent.test.ts` replays `claude-subagent.jsonl`: the worker's text and `Bash` call are on its chat and not in the lead turn, and the lead keeps the call with the link. A host without `subagent` keeps today's inline behaviour, checked by the last test in that file.
 

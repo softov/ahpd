@@ -1,6 +1,6 @@
 ---
 title: A session reaches it through devcontainer exec
-status: todo
+status: implemented
 depends: [task-01-made-from-a-folder.md]
 layer: "computer"
 refs:
@@ -25,3 +25,9 @@ refs:
 - The fake CLI records the exec line; a scripted Claude spawn goes through it.
 
 ## Resume
+
+Implemented 2026-09-26.
+`how()` in `packages/computer/src/plugin.ts` answers `devcontainer exec --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder> <command>` for a machine whose `ahpd.devcontainer.folder` label is set, with a caller's `env` as `--remote-env` and the CLI's own environment on the descriptor.
+The folder comes from the container's label, never from the session.
+`dockerRuntime.exec` in `runtime.ts` takes the same route, so the `computer_exec` tool runs through the CLI too.
+Validated by the exec test in `test/computer-devcontainer.test.ts`, which asserts the exact arguments and spawns the descriptor through the fake CLI.

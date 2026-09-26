@@ -1,6 +1,6 @@
 ---
 title: Claude declares its needs
-status: todo
+status: implemented
 depends: [task-01-the-need-type.md]
 layer: "agent-claude"
 refs:
@@ -24,3 +24,7 @@ agent-claude's `machine()` answers `claudeConfigDirectory` (directory, `~/.claud
 - A unit test: the three needs, and the executable default following a symlink in a temp dir.
 
 ## Resume
+
+Done 2026-09-26. `claude()` in `packages/agent-claude/src/claude.ts` answers `machine()` with `claudeConfigDirectory` (`~/.claude` to `/ahpd/claude`), `claudeConfigJson` (`~/.claude.json` to `/ahpd/claude/.claude.json`) and `claudeExecutable` (read-only to `/usr/local/bin/claude`). `claudeExecutablePath` resolves `~/.local/bin/claude` with `realpathSync` every time it is asked, so a host update is followed; `test/agent-machine-needs.test.ts` proves the three needs and the symlink.
+
+Found: `computerConfigDir: false` still says the image carries its own configuration, so the two config needs are left out and only the executable is declared. The executable is `required`, so a host without the CLI is refused by name rather than making a machine whose session exits 127.

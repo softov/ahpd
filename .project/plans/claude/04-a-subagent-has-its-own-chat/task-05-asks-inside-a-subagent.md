@@ -1,6 +1,6 @@
 ---
 title: A permission ask inside a subagent is asked there
-status: todo
+status: implemented
 depends: [task-03-subagent-frames-go-to-their-chat.md]
 layer: "agent-claude"
 refs:
@@ -27,4 +27,8 @@ When a tool inside a subagent needs permission, the ask is drawn on the subagent
 - A replay with an ask inside a subagent puts the pending confirmation on the subagent chat, and approving it there lets the tool run.
 
 ## Resume
+
+Built. `canUseTool` resolves the conversation a call is in from `options.toolUseID` against the scopes that already hold the call, remembers `options.agentID` against that scope for later asks, and falls back to the lead chat. The confirmation is opened, announced and said back with `emitOn` on that scope, and `entry.chat` names the worker's chat so a client reading `inputNeeded` knows where the question is. `confirm` finds the call's own scope, so an approval given in a worker's chat is echoed there.
+
+Task 01 found the SDK never calls `canUseTool` for a tool inside a subagent, so the `agentID` half is implemented against the documented shape but was not observed live; the toolUseID join is what runs, and `test/agent-claude-subagent.test.ts` drives a `canUseTool` call with both `toolUseID` and `agentID` over the replay and checks the ask and the approval land on the worker's chat.
 

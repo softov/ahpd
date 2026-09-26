@@ -1,7 +1,7 @@
 ---
 title: An agent says what a machine needs, and the machine is made with it
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -12,6 +12,9 @@ creates: []
 decisions:
   - decisions/an-agent-declares-its-machine-needs-with-a-method.md
   - decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md
+  - decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md
+  - decisions/a-need-and-a-mount-at-one-target-are-refused.md
+  - decisions/a-session-on-a-machine-not-prepared-for-its-agent-fails-at-creation.md
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L275-L283](../../../../packages/sdk/src/types/agent.ts#L275-L283) - `schema()` and `defaults()`, where `machine()` goes beside them"
   - "[code://packages/sdk/src/types/computers.ts#L47-L49](../../../../packages/sdk/src/types/computers.ts#L47-L49) - `ComputerPort`"
@@ -54,6 +57,9 @@ session on a machine without X -> [new] refused with a sentence
 | --- | --- |
 | [An agent declares what a machine needs through a machine() method](../../../decisions/an-agent-declares-its-machine-needs-with-a-method.md) | 01, 05, 06 |
 | [The host hands an agent's machine needs to the plugin that makes the machine](../../../decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md) | 02, 03, 04 |
+| [Cofold's configuration reaches a machine at a fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) | 06 |
+| [A need and a mount at one target are refused](../../../decisions/a-need-and-a-mount-at-one-target-are-refused.md) | 09 |
+| [A session on a machine not prepared for its agent fails at creation](../../../decisions/a-session-on-a-machine-not-prepared-for-its-agent-fails-at-creation.md) | 11 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -63,18 +69,25 @@ session on a machine without X -> [new] refused with a sentence
 | Same-path mounts for the session folder, so Claude's history is one list | Softov: "Same-path mounts for now" | 03 |
 | Claude's executable default is what `~/.local/bin/claude` points at | the 127 found on 2026-09-26 | 05 |
 | Disposable machines are their own plan | Softov: "Their own plan, right after" (`plugin/16`) | - |
+| A need value is an absolute path, and every mount source is checked at create | the review of 2026-09-26: a relative value became a named volume | 10 |
+| Labels are read from `docker ps` by name, never by splitting the Labels column | the review of 2026-09-26: `ahpd.agents=claude,cofold` lost cofold | 08 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The SDK has machine() and the need type](task-01-the-need-type.md) | todo | - |
-| [02 - The host resolves an agent's needs for a machine maker](task-02-the-host-resolves-needs.md) | todo | 01 |
-| [03 - Docker makes a machine from resolved needs](task-03-docker-applies-needs.md) | todo | 02 |
-| [04 - The picker and the host keep an agent to its machines](task-04-agents-kept-to-their-machines.md) | todo | 03 |
-| [05 - Claude declares its needs](task-05-claude-declares.md) | todo | 01 |
-| [06 - Cofold declares its needs](task-06-cofold-declares.md) | todo | 01 |
-| [07 - Docs](task-07-docs.md) | todo | 04, 05, 06 |
+| [01 - The SDK has machine() and the need type](task-01-the-need-type.md) | implemented | - |
+| [02 - The host resolves an agent's needs for a machine maker](task-02-the-host-resolves-needs.md) | implemented | 01 |
+| [03 - Docker makes a machine from resolved needs](task-03-docker-applies-needs.md) | implemented | 02 |
+| [04 - The picker and the host keep an agent to its machines](task-04-agents-kept-to-their-machines.md) | implemented | 03 |
+| [05 - Claude declares its needs](task-05-claude-declares.md) | implemented | 01 |
+| [06 - Cofold declares its needs, at a fixed target like Claude's](task-06-cofold-declares.md) | todo | 01 |
+| [07 - Docs](task-07-docs.md) | implemented | 04, 05, 06 |
+| [08 - A label naming two agents is read whole](task-08-a-label-naming-two-agents-is-read-whole.md) | todo | - |
+| [09 - Every mount target is checked at create](task-09-every-mount-target-is-checked-at-create.md) | todo | - |
+| [10 - A path a machine is made with is absolute and there](task-10-a-path-a-machine-is-made-with-is-absolute-and-there.md) | todo | - |
+| [11 - A session on the wrong machine fails at creation](task-11-a-session-on-the-wrong-machine-fails-at-creation.md) | todo | - |
+| [12 - The docs cover every need, and the comments document](task-12-docs-and-comments.md) | todo | 06, 09 |
 
 ## Risks and tradeoffs
 
@@ -83,15 +96,19 @@ session on a machine without X -> [new] refused with a sentence
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-need-type.md](task-01-the-need-type.md), with 05 and 06 after it in parallel.
+- **Done so far:** tasks 01 to 05 and 07 implemented on 2026-09-26 and reviewed the same day; task 06 is reopened for the fixed target.
+- **Next action:** task 08, then 09 to 11 in any order, then 06 and 12.
 - **Open questions:** none.
-- **Watch out for:** an existing profile with hand-written `mounts` and no `agents` keeps working unchanged.
+- **Watch out for:** an existing profile with hand-written `mounts` and no `agents` is unchanged; a create body may name `folder` only with `bodyMounts`; `machineNeeds` is read at create time and is deliberately empty while plugins load; the fake Docker accepted what real Docker refuses, so a fix here changes the fake first.
 
 ## Final verification checklist
 
 - [ ] A profile with `agents: ["claude"]` and no mounts makes a machine a Claude session runs in, on this host's sign-in.
 - [ ] A profile whose need points at a missing path is refused at create, with the path in the sentence.
 - [ ] The picker for cofold does not offer a machine prepared only for Claude, and a session forced onto one is refused.
+- [ ] A profile naming `claude` and `cofold` is offered in both pickers.
+- [ ] A profile mount and a need at one target are refused at create, with both named, and the docs' `scratch` example works for a Claude session.
+- [ ] A cofold session in a machine whose image runs as another user finds its configuration at `/ahpd/cofold`.
+- [ ] `createSession` onto a machine not prepared for its agent fails at creation.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 - [ ] `docs/COMPUTER.md`, `plans/index.md` updated.
