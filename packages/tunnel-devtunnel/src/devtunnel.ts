@@ -142,7 +142,11 @@ export function create(name: string | undefined, runner: Runner = run): Tunnel {
  * which is computed from the tunnel id rather than kept secret.
  */
 export function prepare(tunnel: Tunnel, anonymous: boolean, runner: Runner = run): void {
-  const already = (done: Result): boolean => /already exists|already has/i.test(`${done.stdout}${done.stderr}`);
+  // The service has said this more than one way: older CLIs print "already
+  // exists", current ones "Conflict with existing entity ... conflicts with an
+  // existing port in the tunnel".
+  const already = (done: Result): boolean =>
+    /already exists|already has|conflicts? with (an )?existing/i.test(`${done.stdout}${done.stderr}`);
   const port = runner(['port', 'create', tunnel.tunnelId, '-p', String(TUNNEL_PORT), '--protocol', 'http']);
   if (port.status !== 0 && !already(port)) {
     throw new TunnelError(`devtunnel port create failed:\n${why(port)}`);

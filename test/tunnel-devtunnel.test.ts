@@ -132,6 +132,18 @@ it('treats a port that is already there as prepared, which is what reuse means',
   expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).not.toThrow();
 });
 
+it('treats the service\'s conflict on an existing port as prepared too', () => {
+  const run = runner({
+    port: no('Tunnel service error: Conflict with existing entity. Tunnel port number conflicts with an existing port in the tunnel.'),
+  });
+  expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).not.toThrow();
+});
+
+it('still fails on a port error that is not a conflict', () => {
+  const run = runner({ port: no('Tunnel service error: Unauthorized.') });
+  expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).toThrow(/Unauthorized/);
+});
+
 // The hop -----------------------------------------------------------------
 
 const closing: (() => Promise<void> | void)[] = [];
