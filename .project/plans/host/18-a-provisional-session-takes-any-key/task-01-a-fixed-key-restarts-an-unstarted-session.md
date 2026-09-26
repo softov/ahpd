@@ -1,6 +1,6 @@
 ---
 title: A fixed key restarts a session that has not started
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -42,3 +42,14 @@ Before a session's first turn, a `session/configChanged` that moves a key marked
 
 ## Resume
 
+Implemented 2026-09-26.
+- `propertyOf` finds a contributed key as well as the backend's own, and a fixed key is collected when its value moved.
+- The live `session/configChanged` reads each key's previous value before writing it, and folds the fixed keys into the one restart the `HOSTS_OWN` keys already take.
+- A per-session `restarting` promise holds a client action while the backend is started again, and a failed restart answers the waiting action with its reason.
+- `computer` declares `sessionMutable: false`.
+- Found: the plan said to read `sessionSchema(agent)` in `propertyOf`, but `published` strips `scope` on the way out, so the lookup merges the two raw schemas instead and the backend's own property still wins.
+- Found: a fixed key sent with the value it already holds is not a change, so it is neither restarted nor refused. `test/notes.test.ts` pinned the old refusal of every immutable key and now runs a turn first.
+- Tests: `test/session-fixed-key.test.ts`, seven cases.
+- Left: the end-to-end check in a real VS Code window, which the verifier runs.
+
+- Review fixes, 2026-09-26: a refused key is put back in the session's config, so a chat opened afterwards no longer spawns with the refused value; and "did it move" compares against the value in effect with the agent's and the plugins' defaults, so re-sending a default does not restart. Two cases added to `test/session-fixed-key.test.ts`, each checked to fail without its fix.

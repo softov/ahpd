@@ -1,6 +1,6 @@
 ---
 title: The part is emitted
-status: todo
+status: implemented
 depends: [task-01-seen-on-a-real-stream.md]
 layer: "agent-claude"
 refs:
@@ -31,3 +31,10 @@ A model message that ends with no text and no tool call is followed by a `system
 
 ## Resume
 
+Implemented 2026-09-26.
+- `streamed` resets an `answered` flag on `message_start`, sets it on a `text` or `tool_use` `content_block_start`, records `stop_reason` from `message_delta`, and on `message_stop` emits the part when the flag is unset and the reason is `end_turn`.
+- The part is `{ kind: 'systemNotification', content: '', _meta: { kind: 'responseRoundEnded' } }`, which is the reference's own shape and `_meta` key (`toAgentSystemNotificationMeta` returns the meta flattened), and it is pushed through `addPart`.
+- Tests: `test/agent-claude-round-ended.test.ts` replays both fixtures through a real session with the SDK mocked.
+- The part validates against the protocol schema through `node tools/validate.mjs`.
+
+- Review fix, 2026-09-26: round state is kept per `parent_tool_use_id`, so a subagent's round cannot reset or answer the main one, and only the session's own rounds are announced. Departure from the plan's subagent row: the reference announces a subagent's round on the subagent's scope, and this backend has no such scope, so a subagent's round is not announced at all. Two cases added to `test/agent-claude-round-ended.test.ts`, both failing without the fix.

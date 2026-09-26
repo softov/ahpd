@@ -1,6 +1,6 @@
 ---
 title: An empty round seen on a real stream
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -26,4 +26,11 @@ A captured Claude stream shows a model message that has thinking and no text or 
 - The fixture has a `message_start`, a `thinking` block, a `message_delta` with `stop_reason: end_turn`, and a `message_stop`, with no `text` or `tool_use` block between them.
 
 ## Resume
+
+Implemented 2026-09-26.
+- `test/fixtures/claude-empty-round.jsonl` is trimmed from a real capture of `claude -p --output-format stream-json --include-partial-messages --max-thinking-tokens 10000`: a round with a `thinking` block, `stop_reason: end_turn`, and no `text` or `tool_use`.
+- The same capture produced `test/fixtures/claude-answered-round.jsonl`, an ordinary round with text, for the other half of the test.
+- Found: extended thinking needed `--max-thinking-tokens`; `--thinking adaptive` and `MAX_THINKING_TOKENS` left `thinking_tokens` at zero on this CLI (2.1.267, `claude-opus-5`).
+- Found: the empty round carries no thinking text because the CLI hid it, so the fixture proves the round boundary rather than the thinking content.
+- The untrimmed capture is `.scratch/claude-round-budget/attempt-2.jsonl`, which is not committed.
 

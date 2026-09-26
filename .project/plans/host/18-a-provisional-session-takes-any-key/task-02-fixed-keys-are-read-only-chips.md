@@ -1,6 +1,6 @@
 ---
 title: A running session shows its fixed keys read-only
-status: todo
+status: implemented
 depends: [task-01-a-fixed-key-restarts-an-unstarted-session.md]
 layer: "sdk"
 refs:
@@ -39,4 +39,12 @@ The config schema in a running session's state marks every `sessionMutable: fals
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Implemented 2026-09-26.
+- `runningSchema` marks every `sessionMutable: false` property `sessionMutable: true, readOnly: true`; `spawn` publishes it while `resolveSessionConfig` and a browsed row keep `sessionSchema`.
+- `propertyOf` still reads the unpublished schema, so the gate refuses a fixed key after the first turn.
+- Pi publishes `start.schema()` when the host passed one, so a contributed key reaches a pi session.
+- Claude, cofold and the ACP bridge already publish `start.schema()`, so they carry the rewrite unchanged.
+- Tests: the running-schema and contributed-key cases in `test/session-fixed-key.test.ts`, a pi case in `test/agent-pi.test.ts`, and the new `thinking` row in the generated `test/fixtures/wire.jsonl`.
+- Left: the end-to-end check on each backend in a real window, which the verifier runs.
 
