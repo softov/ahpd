@@ -3682,6 +3682,45 @@ export function createHost(options: HostOptions): Host {
    * channel that answers nothing - so it stays, exited, until the session
    * that ran it goes.
    */
+  /**
+   * A message's turn, whichever way it arrived.
+   *
+   * `!ls` is a command, and everything else is a question. Trimmed, and empty
+   * means it was neither: a lone `!` is somebody typing an exclamation mark,
+   * and it goes to the agent like any other text. A turn reaches a backend by
+   * more than one road - a live session, one resumed from disk for it, a
+   * chat's first message - and each takes this one, so none of them hands
+   * `!ping` to a model.
+   *
+   * Answers why the command cannot run when the backend has no `Session.ran`,
+   * for the caller to refuse with; handing the text to the model instead is
+   * the one thing the prefix promises not to do.
+   */
+  const beginOrRun = (
+    session: Session,
+    provider: string,
+    turnId: string,
+    text: string,
+    model: ReturnType<typeof modelIn>,
+    from: MessageFrom | undefined,
+  ): string | undefined => {
+    const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
+    if (command === '' || !options.terminals) {
+      session.begin(turnId, text, model, from);
+      return undefined;
+    }
+    if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;
+    const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+    session.ran(turnId, command, (toolCallId) => commanded(command, where, {
+      kind: 'session',
+      session: session.uri,
+      chat: session.chatUri,
+      turnId,
+      toolCallId,
+    }));
+    return undefined;
+  };
+
   const commanded = async (command: string, cwd: string, claim: Claim): Promise<Ran> => {
     const shells = options.terminals;
     if (!shells) return { success: false, said: 'There is no shell here to run it in', output: '' };
@@ -6375,7 +6414,11 @@ export function createHost(options: HostOptions): Host {
             ? params.initialMessage
             : undefined) as Record<string, unknown> | undefined;
           if (first_ !== undefined) {
-            chat.begin(crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_));
+            // No action to refuse here: a first message that cannot run as a
+            // command fails the call, which the client shows as the chat not
+            // opening with it.
+            const refused = beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_));
+            if (refused !== undefined) throw new Error(refused);
           }
           return {};
         },
@@ -7401,7 +7444,8 @@ export function createHost(options: HostOptions): Host {
               turn: String(action.turnId ?? ''),
               text: String(message.text ?? ''),
             });
-            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message));
+            const refused = beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message));
+            if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
           })();
           return;
         }
@@ -7475,46 +7519,9 @@ export function createHost(options: HostOptions): Host {
             // Before it is started or queued, so a handler sees it once
             // whether or not the backend is free to run it this moment.
             void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
-            /*
-             * `!ls` is a command, and everything else is a question.
-             *
-             * Trimmed, and empty means it was neither: a lone `!` is somebody
-             * typing an exclamation mark, and it goes to the agent like any
-             * other text. The three conditions are the three halves that have
-             * to be there - a shell to run it in, a session that will hold a
-             * turn it did not answer, and something after the mark.
-             */
-            const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
-            if (command !== '' && options.terminals) {
-              /*
-               * Refused rather than sent, when the backend cannot hold one.
-               *
-               * `Session.ran` is optional, so a backend that leaves it out has
-               * no turn to put a shell command in. Handing `!ls` to the model
-               * instead is the one thing the prefix promises not to do: the
-               * answer would be prose about the command rather than the command.
-               * A refusal is what tells the client to put its optimistic turn
-               * back, rather than leaving it open over a message nobody ran.
-               */
-              if (!session.ran) {
-                const name = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-                refuse(
-                  connection.peer, channel, action, origin,
-                  `${name} cannot run a command in a turn; use a terminal instead`,
-                );
-                break;
-              }
-              const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
-              session.ran(turnId, command, (toolCallId) => commanded(command, where, {
-                kind: 'session',
-                session: session.uri,
-                chat: session.chatUri,
-                turnId,
-                toolCallId,
-              }));
-              break;
-            }
-            session.begin(turnId, text, modelIn(message.model), messageFrom(message));
+            const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
+            const refused = beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message));
+            if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
             break;
           }
           /**

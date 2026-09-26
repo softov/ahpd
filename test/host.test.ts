@@ -3686,6 +3686,26 @@ describe('a command typed into the conversation', () => {
     expect(sdk.said).toEqual(['!  ']);
   });
 
+  it('runs it on a session resumed from disk for it, not asks the agent', async () => {
+    // The road the daemon crashed on: a turn for a session nothing was
+    // running, resumed on the spot, went to `begin` and the model saw `!ping`.
+    sdk.sessions.push({ sessionId: 'on-disk', summary: 'Earlier', lastModified: 1, cwd: '/tmp' });
+    const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chatUri = `ahp-chat://default/${Buffer.from('claude:/on-disk', 'utf8').toString('base64url')}`;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo from-disk' } } },
+    });
+    const said = await ended(p, chatUri);
+    expect(sdk.said).toEqual([]);
+    expect(said.find((one) => one.type === 'chat/toolCallStart')).toMatchObject({ toolName: 'terminal', intention: 'echo from-disk' });
+  });
+
   it('closes the shells a session was holding when the session goes', async () => {
     const { client, peer: p, uri, chatUri } = await shelled();
     client.handle({
