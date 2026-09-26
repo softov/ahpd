@@ -685,13 +685,46 @@ export function cofoldSession(
   const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
     const opened = openTurn(turnId, text, model, from, queuedMessageId);
     if (opened === undefined) return;
-    const agent = agentOf(opened.values);
-    liveAgent = agent;
-    const live = run({ agent, session: sessionId, workspace: where, input: text });
+    /*
+     * A turn that cannot start fails that turn, not the process.
+     *
+     * Building the agent resolves the model, and a session with none chosen,
+     * no default and a harness file that names none has nothing to run on.
+     * Thrown from here it would escape every handler and take the daemon and
+     * every other session with it; answered, it is one failed turn with the
+     * reason on it.
+     */
+    let live: ReturnType<typeof run>;
+    try {
+      const agent = agentOf(opened.values);
+      liveAgent = agent;
+      live = run({ agent, session: sessionId, workspace: where, input: text });
+    }
+    catch (error) {
+      void apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error), false);
+      return;
+    }
     handle = live;
     read(live, opened.mapping, turnId);
     touch();
   };
+
+  /** The `run.finished` a turn that never ran ends with. */
+  const refusal = (turnId: string, code: string, why: unknown) => ({
+    seq: 0,
+    runId: `${turnId}:refused`,
+    sessionId,
+    agentId: AGENT_ID,
+    at: new Date().toISOString(),
+    type: 'run.finished' as const,
+    outcome: {
+      status: 'failed' as const,
+      error: { code, message: why instanceof Error ? why.message : String(why) },
+      usage: { inputTokens: 0, outputTokens: 0 },
+      steps: 0,
+      denials: [],
+    },
+  });
 
   /**
    * A turn that cannot run, answered with the reason.
@@ -714,22 +747,7 @@ export function cofoldSession(
   ): void => {
     const opened = openTurn(turnId, text, model, from, queuedMessageId);
     if (opened === undefined) return;
-    const message = why instanceof Error ? why.message : String(why);
-    void apply(opened.mapping, turnId, {
-      seq: 0,
-      runId: `${turnId}:refused`,
-      sessionId,
-      agentId: AGENT_ID,
-      at: new Date().toISOString(),
-      type: 'run.finished',
-      outcome: {
-        status: 'failed',
-        error: { code: 'cut_refused', message },
-        usage: { inputTokens: 0, outputTokens: 0 },
-        steps: 0,
-        denials: [],
-      },
-    }, false);
+    void apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why), false);
   };
 
   /**

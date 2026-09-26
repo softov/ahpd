@@ -399,3 +399,30 @@ it('runs a !command in a shell rather than asking a model', async () => {
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
 });
+
+it('fails the turn, and not the daemon, when there is no model to run on', async () => {
+  // No adapter, no model option, and a harness file that names none: building
+  // the agent throws. That throw used to escape `startTurn` and end the process.
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-home-'));
+  const was = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = home;
+  try {
+    const host = createHost({ path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-')), agents: [cofoldAgent({ memory: true })] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'cofold' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/none' } });
+    begin(client, 'ahp-chat:/none', 't1', 'hi');
+    const said = () => JSON.stringify(actions(p, 'ahp-chat:/none'));
+    await until(() => said().includes('no model was chosen'));
+    expect(said()).toContain('no model was chosen');
+  }
+  finally {
+    if (was === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = was;
+  }
+});
