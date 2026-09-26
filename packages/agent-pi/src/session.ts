@@ -436,7 +436,18 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
       workingDirectories: [`file://${where}`],
       customizations: [...seeds],
       ...(activity !== undefined ? { activity } : {}),
-      config: { schema: schemaOf(), values: { ...settings } },
+      /*
+       * The host's schema when it gave one, which is the same one every other
+       * backend publishes.
+       *
+       * This used to be `schemaOf()` alone, so a key a plugin contributed -
+       * the computer a session runs in - never reached a pi session and the
+       * window drew no control for it. `start.schema()` is the host's
+       * `sessionSchema`, which already carries `projectTrust` from `agent.ts`
+       * and a contributed key beside it; `schemaOf()` is the fallback for a
+       * session started without one.
+       */
+      config: { schema: start.schema?.() ?? schemaOf(), values: { ...settings } },
     }),
 
     chatState: () => ({

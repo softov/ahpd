@@ -92,6 +92,25 @@ function opened(over: Partial<Start> = {}) {
 
 const settled = async (): Promise<void> => { await new Promise((done) => { setTimeout(done, 5); }); };
 
+it('publishes the schema the host handed it, so a contributed key reaches the session', () => {
+  // The host's `sessionSchema` already carries pi's own `projectTrust` and
+  // whatever a plugin contributed - the computer a session runs in - and a
+  // session that published `schemaOf()` alone would draw no control for it.
+  const computer = {
+    type: 'string',
+    title: 'Computer',
+    description: 'The computer://<id> this session runs in.',
+    sessionMutable: false,
+  };
+  const { session } = opened({
+    schema: () => ({ type: 'object', properties: { projectTrust: { type: 'string' }, computer } }),
+  });
+  const state = session.sessionState() as Bag;
+  const properties = ((state.config as Bag).schema as Bag).properties as Bag;
+  expect(properties.computer).toEqual(computer);
+  expect(properties.projectTrust).toBeDefined();
+});
+
 // Models ------------------------------------------------------------------
 
 it('spells a model id the way pi spells one, so two providers stay apart', () => {
