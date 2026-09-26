@@ -18,8 +18,10 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
+| [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | planned 2026-09-26 | daemon 03 | daemon 05 |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | planned 2026-09-26 | daemon 04 | - |
 
-Next free number in `daemon`: `04`.
+Next free number in `daemon`: `06`.
 
 ## host
 
@@ -90,8 +92,11 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [11 - A session runs inside a computer](plugin/11-a-session-inside-a-computer/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/11-a-session-inside-a-computer/implemented.md)) | plugin 10, plugin 07 | - |
 | [12 - A client can tell what a scheme does before it asks one](plugin/12-a-client-can-tell-what-a-scheme-does/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/12-a-client-can-tell-what-a-scheme-does/implemented.md)) | plugin 08, plugin 10 | the ahpapp Computers screen, which reads the advertisement |
 | [13 - Only the images an operator named](plugin/13-only-the-images-an-operator-named/plan.md) | medium | built 2026-09-24 ([implemented.md](plugin/13-only-the-images-an-operator-named/implemented.md)) | plugin 10 | - |
+| [14 - A cofold session has files, shell, web and memory, run by cofold itself](plugin/14-cofold-runs-its-own-tools/plan.md) | high | planned 2026-09-26 | plugin 03 | container 04 |
+| [15 - An agent says what a machine needs, and the machine is made with it](plugin/15-an-agent-says-what-a-machine-needs/plan.md) | high | planned 2026-09-26 | plugin 11 | plugin 16, container 03, container 04 |
+| [16 - A disposable machine is made for a session and goes after it](plugin/16-a-disposable-machine/plan.md) | medium | planned 2026-09-26 | plugin 15 | - |
 
-Next free number in `plugin`: `14`.
+Next free number in `plugin`: `17`.
 
 ## container
 
@@ -101,9 +106,10 @@ Reference: [00-container.md](container/00-container.md)
 | --- | --- | --- | --- | --- |
 | [01 - A session in a dev container, with its whole host inside it](container/01-a-session-in-a-dev-container/plan.md) | high | built 2026-09-24, except its `ahpapp` half ([implemented.md](container/01-a-session-in-a-dev-container/implemented.md)) | plugin 11, plugin 12 | an ahpapp plan, which drives the same four methods |
 | [02 - VS Code offers a dev container on a folder served by ahpd](container/02-vscode-offers-our-dev-container/plan.md) | high | planned 2026-09-26, task 01 blocked: the tunnel is not listed in VS Code | container 01 | - |
-| [03 - A dev container is a computer, listed and reachable without the connection that made it](container/03-a-dev-container-is-a-computer/plan.md) | medium | draft 2026-09-26 | container 01 | - |
+| [03 - A dev container is a computer, listed and reachable without the connection that made it](container/03-a-dev-container-is-a-computer/plan.md) | medium | planned 2026-09-26 | container 01, plugin 15 | - |
+| [04 - A cofold session in a computer runs in an ahpd started inside it](container/04-a-cofold-session-in-a-computer/plan.md) | medium | planned 2026-09-26 | plugin 14, plugin 15 | - |
 
-Next free number in `container`: `04`.
+Next free number in `container`: `05`.
 
 ## Domains without a plan
 

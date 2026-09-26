@@ -1,6 +1,6 @@
 ---
 title: An agent declares what a machine needs through a machine() method
-status: proposed
+status: accepted
 date: 2026-09-26
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L281-L283](../../packages/sdk/src/types/agent.ts#L281-L283) - `schema()` and `defaults()`, the other methods that describe an agent to the host"
@@ -15,6 +15,8 @@ A machine a session runs in needs things from the host for the agent to run ther
 ## Decision
 
 `Agent` gains an optional `machine()` method, beside `schema()` and `defaults()`, that answers the named needs. Source: Softov, asked "whether the SDK surface is a plugin registration or a method on `Agent`", answered "machine() method on Agent".
+
+Accepted 2026-09-26: Softov, asked "The machine-needs decision ... is still 'proposed'. Accept it?", answered "Accept, and plan it next".
 
 ## Consequences
 
