@@ -28,8 +28,8 @@ Source: Softov, 2026-09-26, asked "Keep cofold's stricter parsing, or restore th
 
 `updateCheck: true` in JSON or over HTTP means what it says.
 `--update-check` and `--no-update-check` are both spellings of the one field.
-`@cofold/commands` 0.2.0 has no `negatable` on a field's `cli`, so a positive field with a `--no-` spelling needs cofold to pass it through, decision [a-cofold-field-says-whether-its-flag-negates](a-cofold-field-says-whether-its-flag-negates.md).
-`--no-plugins` keeps its spelling and loses its positive, decision [no-plugins-has-no-positive](no-plugins-has-no-positive.md).
+`@cofold/commands` 0.2.0 has no `negatable` on a field's `cli`, so a positive field with a `--no-` spelling needs cofold to pass it through, which `@cofold/commands` 0.2.1 does with a field's `negatable` (daemon/04 task 12).
+`--no-plugins` keeps its spelling and loses its positive, declared with `negatable: false` (daemon/04 task 13).
 
 ## Options
 

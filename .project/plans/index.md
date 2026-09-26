@@ -18,8 +18,8 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
-| [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 05-15, 12 done (`@cofold/commands` 0.2.1), the rest todo | daemon 03 | daemon 05 |
-| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 06-14, 06 done (`@cofold/remote` 0.3.1), the rest todo, 09 after daemon 04 task 14 | daemon 04 | - |
+| [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 05-16, 12 done (`@cofold/commands` 0.2.1), the rest todo | daemon 03 | daemon 05 |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 06-16, 06 done (`@cofold/remote` 0.3.1), the rest todo, 09 after daemon 04 task 14, 15 in the cofold repository (`@cofold/remote` 0.4.0) | daemon 04 | - |
 
 Next free number in `daemon`: `06`.
 

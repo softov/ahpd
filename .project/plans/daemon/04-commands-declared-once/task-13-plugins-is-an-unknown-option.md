@@ -18,7 +18,7 @@ refs:
 
 ## Steps
 
-1. Apply decision [no-plugins-has-no-positive](../../../decisions/no-plugins-has-no-positive.md): declare `noPlugins` with `cli: { negatable: false }`, relying on the cofold release from task 12.
+1. Declare `noPlugins` with `cli: { negatable: false }`, relying on the cofold release from task 12.
 2. Leave `--no-plugins` itself and its fold in `optionsFrom` as they are.
 
 ## Validation

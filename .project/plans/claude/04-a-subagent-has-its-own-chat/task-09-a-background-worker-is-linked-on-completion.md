@@ -12,7 +12,7 @@ refs:
 
 ## Objective
 
-A background worker's chat is opened when its spawning call's `tool_result` arrives, so the completion carries the `subagent` content, per [A background worker is linked from its call when the call completes](../../../decisions/a-background-worker-is-linked-when-its-call-completes.md).
+A background worker's chat is opened when its spawning call's `tool_result` arrives, so the completion carries the `subagent` content.
 
 ## Files
 

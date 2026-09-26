@@ -11,7 +11,7 @@ refs:
 ## Objective
 
 `computer://box` written with a devcontainer body lists as `box`: the name is a label on the container, and the runtime resolves the name through it.
-This applies [The name a create gives a dev container is a label on it](../../../decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md).
+This applies [The name a create gives a dev container is kept as a label on the container](../../../decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md).
 
 ## Files
 

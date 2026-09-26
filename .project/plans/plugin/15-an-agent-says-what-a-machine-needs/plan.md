@@ -13,8 +13,8 @@ decisions:
   - decisions/an-agent-declares-its-machine-needs-with-a-method.md
   - decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md
   - decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md
-  - decisions/a-need-and-a-mount-at-one-target-are-refused.md
   - decisions/a-session-on-a-machine-not-prepared-for-its-agent-fails-at-creation.md
+  - decisions/a-need-and-a-mount-at-one-target-are-refused.md
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L275-L283](../../../../packages/sdk/src/types/agent.ts#L275-L283) - `schema()` and `defaults()`, where `machine()` goes beside them"
   - "[code://packages/sdk/src/types/computers.ts#L47-L49](../../../../packages/sdk/src/types/computers.ts#L47-L49) - `ComputerPort`"
@@ -58,8 +58,8 @@ session on a machine without X -> [new] refused with a sentence
 | [An agent declares what a machine needs through a machine() method](../../../decisions/an-agent-declares-its-machine-needs-with-a-method.md) | 01, 05, 06 |
 | [The host hands an agent's machine needs to the plugin that makes the machine](../../../decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md) | 02, 03, 04 |
 | [Cofold's configuration reaches a machine at a fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) | 06 |
-| [A need and a mount at one target are refused](../../../decisions/a-need-and-a-mount-at-one-target-are-refused.md) | 09 |
 | [A session on a machine not prepared for its agent fails at creation](../../../decisions/a-session-on-a-machine-not-prepared-for-its-agent-fails-at-creation.md) | 11 |
+| [A need and a mount at one target are refused at create](../../../decisions/a-need-and-a-mount-at-one-target-are-refused.md) | 09 |
 
 | What | Source | Task |
 | --- | --- | --- |

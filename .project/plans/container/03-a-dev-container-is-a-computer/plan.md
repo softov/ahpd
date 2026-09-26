@@ -17,11 +17,8 @@ decisions:
   - decisions/the-computer-form-offers-a-folder-as-a-flat-source-choice.md
   - decisions/a-dev-container-is-made-only-from-a-folder-the-operator-allows.md
   - decisions/a-devcontainer-source-names-any-allowed-folder.md
-  - decisions/read-only-needs-reach-a-dev-container-through-an-override-config.md
-  - decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md
-  - decisions/a-dev-containers-body-limits-reach-it-through-the-override.md
   - decisions/a-machine-made-for-a-session-counts-against-max-and-needs-computer-write.md
-  - decisions/a-container-from-an-older-connect-is-adopted-by-its-folder.md
+  - decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md
 refs:
   - "[code://packages/sdk/src/host.ts#L4987](../../../../packages/sdk/src/host.ts#L4987) - `containers`, the relays a connection opened, dropped with the socket"
   - "[code://packages/computer/src/runtime.ts#L272](../../../../packages/computer/src/runtime.ts#L272) - `list`, by the `ahpd.computer=1` label"
@@ -67,11 +64,8 @@ vscode/devContainers/connect  -> [new] find the computer for F or make it -> nes
 | [The computer form offers a folder as a flat source choice](../../../decisions/the-computer-form-offers-a-folder-as-a-flat-source-choice.md) | 03 |
 | [A dev container is made only from a folder the operator allows, and devcontainer false turns every route off](../../../decisions/a-dev-container-is-made-only-from-a-folder-the-operator-allows.md) | 08 |
 | [A devcontainer source names any allowed folder](../../../decisions/a-devcontainer-source-names-any-allowed-folder.md) | 08 |
-| [Read-only needs reach a dev container through an override config](../../../decisions/read-only-needs-reach-a-dev-container-through-an-override-config.md) | 09 |
-| [The name a create gives a dev container is a label on it](../../../decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md) | 10 |
-| [A dev container's cpus, memory and working directory reach it through the override config](../../../decisions/a-dev-containers-body-limits-reach-it-through-the-override.md) | 11 |
 | [A machine made for a session counts against max and needs computer:write](../../../decisions/a-machine-made-for-a-session-counts-against-max-and-needs-computer-write.md) | 12 |
-| [A container made by an older connect is adopted by its folder](../../../decisions/a-container-from-an-older-connect-is-adopted-by-its-folder.md) | 15 |
+| [The name a create gives a dev container is kept as a label on the container](../../../decisions/the-name-a-create-gives-a-dev-container-is-a-label-on-it.md) | 10 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -79,6 +73,9 @@ vscode/devContainers/connect  -> [new] find the computer for F or make it -> nes
 | The `devcontainer://F` row is offered only when F has a `devcontainer.json` and no computer exists for it | Softov, 2026-09-26: "devcontainer://<folder> entry" | 04 |
 | The needs of the session's agent go in as `devcontainer up --mount` and `--remote-env`, and a read-only one through the override config | `plugin/15`'s delivery kinds, in the CLI's own flags; the CLI refuses `,readonly` in `--mount` | 04, 09 |
 | The fake CLI refuses what the real one refuses | the review of 2026-09-26: every read-only need passed the fake and fails the real CLI | 07 |
+| When no container carries ahpd's labels for a folder, the plugin looks for one by `devcontainer.local_folder` and adopts it. | Softov, 2026-09-26: "Adopt by folder". | 15 |
+| All three go through the override config: `cpus` and `memory` as `runArgs`, `workdir` as `workspaceFolder`. | Softov, 2026-09-26: "All via override". | 11 |
+| Read-only needs go into an override config's `mounts`, passed as `--override-config` on `up` and on every `exec`. | Softov, 2026-09-26: "through an override config's `mounts`". | 09 |
 
 ## Tasks
 

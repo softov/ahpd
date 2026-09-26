@@ -27,7 +27,7 @@ refs:
 ## Steps
 
 1. Apply decision [a-daemon-flag-is-declared-by-what-it-turns-on](../../../decisions/a-daemon-flag-is-declared-by-what-it-turns-on.md): the field `updateCheck` is a boolean whose `true` means the check runs, with a description that says it is on by default and that `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` and `"updateCheck": false` turn it off.
-2. The spelling, per decision [a-cofold-field-says-whether-its-flag-negates](../../../decisions/a-cofold-field-says-whether-its-flag-negates.md): the field is spelled `--update-check` with `cli: { negatable: true }`, so `--no-update-check` sets it to `false` and `--update-check` to `true`. This needs the cofold release from task 12, which Softov publishes; do not start until ahpd depends on it.
+2. The spelling: the field is spelled `--update-check` with `cli: { negatable: true }`, so `--no-update-check` sets it to `false` and `--update-check` to `true`. This needs the cofold release from task 12, which Softov publishes; do not start until ahpd depends on it.
 3. Keep the field without a schema `default`, as the header of `options.ts` requires, so a flag is told apart from the file; in `optionsFrom` the fold becomes: the input's boolean when one was typed, else `false` when the file says `"updateCheck": false`, else `true`.
 4. Give `cli()` in `test/server-cli.test.ts` a way to run a case with `CI` and `NO_UPDATE_NOTIFIER` both removed from the environment (for example an `unset` list), leaving every other case as it is.
 

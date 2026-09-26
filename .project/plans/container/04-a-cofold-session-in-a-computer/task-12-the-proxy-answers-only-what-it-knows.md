@@ -11,7 +11,7 @@ refs:
 
 ## Objective
 
-Every `Session` member the proxy has reports the inner session's real answer, the rest are absent so the host refuses them, and the module comment lists what the proxy does not carry, per [the decision](../../../decisions/the-nested-proxy-leaves-out-what-it-cannot-forward.md).
+Every `Session` member the proxy has reports the inner session's real answer, the rest are absent so the host refuses them, and the module comment lists what the proxy does not carry.
 
 ## Files
 

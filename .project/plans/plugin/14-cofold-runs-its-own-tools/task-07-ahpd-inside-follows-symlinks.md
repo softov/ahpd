@@ -11,7 +11,7 @@ refs:
 
 ## Objective
 
-`insideDirectory` judges a path by its real location, so `acceptEdits` asks before a write that a symlink inside the workspace sends outside it, per [decision: the boundary follows symlinks](../../../decisions/the-workspace-boundary-follows-symlinks.md).
+`insideDirectory` judges a path by its real location, so `acceptEdits` asks before a write that a symlink inside the workspace sends outside it.
 
 ## Files
 

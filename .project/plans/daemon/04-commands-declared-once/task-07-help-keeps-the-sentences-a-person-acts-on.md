@@ -24,7 +24,7 @@ refs:
 
 ## Steps
 
-1. Apply decision [ahpd-help-keeps-the-sentences-a-person-acts-on](../../../decisions/ahpd-help-keeps-the-sentences-a-person-acts-on.md), taking the wording from `USAGE` at `git://7a7e9d1`.
+1. Restore the four sentences the plan's table names, taking the wording from `USAGE` at `git://7a7e9d1`.
 2. `stdio`: add that this is how a host runs inside a container for another host to carry, one line of JSON per frame, no token.
 3. `plugins`: add that naming one runs its code in this process with this process's permissions, so installing a plugin is the trust decision.
 4. In `liveHelp`, stop calling `helpForCommand(run, ...)`; render a section headed for `ahpd [options]` from `optionsOf(run)` with `@cofold/terminal`'s `renderDefinitions`, so no `Usage: ahpd run` line and no second global options section are written.

@@ -12,7 +12,7 @@ refs:
 ## Objective
 
 A machine whose mounts share a target is refused at create, with a sentence naming both, whichever sources they come from.
-This applies [A need and a mount at one target are refused](../../../decisions/a-need-and-a-mount-at-one-target-are-refused.md).
+This applies [A need and a mount at one target are refused at create](../../../decisions/a-need-and-a-mount-at-one-target-are-refused.md).
 Today the docs' own `scratch` example mounts `/srv/claude-home:/ahpd/claude`, a Claude session adds `claudeConfigDirectory` at `/ahpd/claude`, and real Docker refuses the duplicate mount point.
 
 ## Files

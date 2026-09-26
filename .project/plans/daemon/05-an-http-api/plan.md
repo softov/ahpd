@@ -17,14 +17,13 @@ decisions:
   - decisions/status-and-plugin-list-need-config-read.md
   - decisions/installing-a-plugin-over-http-is-root-only.md
   - decisions/the-config-command-hides-the-connection-token.md
-  - decisions/the-http-api-acts-on-the-daemons-own-options.md
-  - decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md
   - decisions/http-host-binds-the-apis-own-listener.md
   - decisions/remote-needs-a-token.md
   - decisions/the-user-commands-need-users-write.md
-  - decisions/cofold-remote-0-3-1-is-cut-by-softov-from-a-tagged-commit.md
   - decisions/remote-warns-when-its-token-travels-in-cleartext.md
   - decisions/remote-reads-its-token-from-a-file-too.md
+  - decisions/cofold-serve-is-fetch-style-with-a-node-adapter.md
+  - decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md
 refs:
   - "[code://packages/sdk/src/listen.ts](../../../../packages/sdk/src/listen.ts) - the listener; plain requests to `/api` are answered beside the WebSocket upgrade"
   - "[code://packages/sdk/src/host.ts#L141](../../../../packages/sdk/src/host.ts#L141) - `NEEDS`, the grant pairs a command is checked against"
@@ -75,13 +74,12 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [Installing or removing a plugin over HTTP needs the deployment token](../../../decisions/installing-a-plugin-over-http-is-root-only.md) | 09 |
 | [The config command hides the connection token over HTTP](../../../decisions/the-config-command-hides-the-connection-token.md) | 09 |
 | [The user commands need users:write](../../../decisions/the-user-commands-need-users-write.md) | 09 |
-| [The HTTP API acts on the daemon's own options, and takes no path from a request](../../../decisions/the-http-api-acts-on-the-daemons-own-options.md) | 08 |
-| [The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) | 06, 11 |
 | [http.host binds the API's own listener](../../../decisions/http-host-binds-the-apis-own-listener.md) | 12 |
 | [`--remote` needs a token](../../../decisions/remote-needs-a-token.md) | 13 |
 | [`--remote` to plain http on a host that is not loopback sends the token, with a warning](../../../decisions/remote-warns-when-its-token-travels-in-cleartext.md) | 13 |
 | [`--remote` reads its token from a file too, with --token-file](../../../decisions/remote-reads-its-token-from-a-file-too.md) | 13 |
-| [@cofold/remote 0.3.1 is cut by Softov, from a tagged commit, once serve() is fixed](../../../decisions/cofold-remote-0-3-1-is-cut-by-softov-from-a-tagged-commit.md) | 06 |
+| [cofold's serve() takes a Request and answers a Response, and Node gets an adapter](../../../decisions/cofold-serve-is-fetch-style-with-a-node-adapter.md) | 15, 16 |
+| [The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) | 06, 11 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -92,6 +90,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | No request ends the daemon: a malformed `Host`, a malformed percent-escape or a refused command is answered with a status | the daemon serves every other connection | 06, 07, 08 |
 | A 500 carries a sentence, never an error's own message | a message can quote a file the daemon read | 06 |
 | The `--remote` manifest cache is per user, mode 0700 | Softov, 2026-09-26: "move to a per-user directory, 0700: treat as a fix" | 13 |
+| The remote surface drops `configFile`, `users`, `plugins` and `paths`, and a served command acts on the daemon's own options. | Softov, 2026-09-26: "drop them from the remote surface; the API acts on the daemon's own options". | 08 |
 
 ## Tasks
 
@@ -111,6 +110,8 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [12 - http.host binds the API's own listener](task-12-http-host.md) | todo | - |
 | [13 - `--remote` needs a token, reads it from a file too, warns on cleartext, keeps its cache private, and its tests prove the daemon answered](task-13-remote-needs-a-token-and-proves-it-is-remote.md) | todo | 08 |
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | todo | 09, 10, 11, 12, 13 |
+| [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | todo | 06 |
+| [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | todo | 07, 15 |
 
 ## Risks and tradeoffs
 
@@ -120,14 +121,14 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 ## Resume state
 
 - **Done so far:** tasks 01 to 06; task 06 is `@cofold/remote` 0.3.1, released, and ahpd depends on `^0.3.1`. With `http` on, the daemon serves the CLI registry under `/api` on its own listener or on `http.port`, a request signs in with `Authorization: Bearer` and is checked against the same grants, `ahpd --remote <url>` runs the daemon's commands, and `docs/DAEMON.md` documents it.
-- **Next action:** task 07; tasks 10 and 12 do not depend on it.
+- **Next action:** task 07; tasks 10, 12 and 15 do not depend on it.
 - **Open questions:** none.
 - **Watch out for:**
   - The daemon/04 plan's scope row (`status` and `plugin list` need nothing, `user` needs `admin`) is replaced by the decisions task 09 applies.
   - Task 09 waits on [daemon/04 task 14](../04-commands-declared-once/task-14-the-registry-hook-checks-every-surface.md), which moves the scope check into the registry's `authorize` hook; task 09 applies the grants in that hook, and `authorizeOverHttp` only turns a request into a principal.
   - A command added to the API later must take no path from the request, must not reach `stop`, and must declare a grant pair.
   - The dispatch gate and `PER_CONNECTION` have no staleness test, so a command reachable over HTTP must be classified the way a WebSocket method is.
-  - No agent publishes a cofold package.
+  - A cofold release is staged by cofold's `release.yml` from a `release-*` tag and approved by Softov on npm; nobody runs `npm publish`.
 
 ## Final verification checklist
 

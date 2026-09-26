@@ -11,10 +11,10 @@ changes: []
 creates: []
 decisions:
   - decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md
-  - decisions/a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps.md
   - decisions/a-disposable-alone-machine-refuses-another-session.md
   - decisions/a-machine-made-for-a-session-counts-against-max-and-needs-computer-write.md
   - decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md
+  - decisions/a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps.md
 refs:
   - "[code://packages/computer/src/plugin.ts#L297-L321](../../../../packages/computer/src/plugin.ts#L297-L321) - the picker a disposable row joins"
   - "[code://packages/sdk/src/types/computers.ts#L47-L49](../../../../packages/sdk/src/types/computers.ts#L47-L49) - the port a session-time create goes through"
@@ -44,10 +44,10 @@ last session disposed -> [new] timer disposableDelay -> remove; a session that p
 | Decision | Task |
 | --- | --- |
 | [The host hands an agent's machine needs to the plugin that makes the machine](../../../decisions/the-host-hands-an-agents-machine-needs-to-the-machine-maker.md) | 02 |
-| [A daemon adopts only the disposable machines whose session it keeps](../../../decisions/a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps.md) | 07 |
 | [A disposable-alone machine refuses another session](../../../decisions/a-disposable-alone-machine-refuses-another-session.md) | 08 |
 | [A machine made for a session counts against max and needs computer:write](../../../decisions/a-machine-made-for-a-session-counts-against-max-and-needs-computer-write.md) | 09 |
 | [A session folder reaches a machine only where its profile allows](../../../decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md) | 10 |
+| [A daemon adopts only the disposable machines whose session it keeps](../../../decisions/a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps.md) | 07 |
 
 | What | Source | Task |
 | --- | --- | --- |

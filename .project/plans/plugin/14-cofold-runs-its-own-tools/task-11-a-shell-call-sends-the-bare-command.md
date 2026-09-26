@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-A `shell_exec` call's `toolInput` is the command itself, as Claude's Bash sends it, on the ready action, the approval request and the part a subscriber reads, per [decision: a shell call sends the bare command](../../../decisions/a-cofold-shell-call-sends-the-bare-command.md).
+A `shell_exec` call's `toolInput` is the command itself, as Claude's Bash sends it, on the ready action, the approval request and the part a subscriber reads.
 
 ## Files
 

@@ -4,7 +4,7 @@ status: todo
 depends: [task-07-the-listener-survives-a-malformed-request.md, task-12-http-host.md]
 layer: "server"
 refs:
-  - "[decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) - what this task applies, and the daemon's own origins"
+  - "[The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) - what this task applies, and the daemon's own origins"
   - "[code://packages/server/src/http.ts#L53-L62](../../../../packages/server/src/http.ts#L53-L62) - `apiHandler`, where every API request enters"
   - "[code://packages/server/src/commands/run.ts#L86-L93](../../../../packages/server/src/commands/run.ts#L86-L93) - `advertisedResource`, whose host is one of the daemon's origins"
 ---

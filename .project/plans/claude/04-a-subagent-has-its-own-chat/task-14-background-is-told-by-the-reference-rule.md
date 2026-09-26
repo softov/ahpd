@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-Per [Any task_started marks a worker background, but a foreground spawn still ends on its tool_result](../../../decisions/background-is-any-task-started-but-foreground-ends-on-its-result.md), a worker is background once `task_started` names its call, and a worker whose call said `run_in_background: false` still ends on that call's `tool_result`.
+A worker is background once `task_started` names its call, and a worker whose call said `run_in_background: false` still ends on that call's `tool_result`.
 
 ## Files
 

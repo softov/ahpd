@@ -10,7 +10,7 @@ refs:
 ## Objective
 
 A dev container made for a session carries `ahpd.agents` like a Docker machine, and a body's `cpus`, `memory` and `workdir` reach it through the override config.
-This applies [A dev container's cpus, memory and working directory reach it through the override config](../../../decisions/a-dev-containers-body-limits-reach-it-through-the-override.md).
+
 
 ## Files
 

@@ -26,7 +26,7 @@ The session's models are the inner host's for this provider, an inner `auth/requ
 2. Keep the resources an inner `auth/required` names for the inner session, and answer `awaiting()` from them.
 3. Implement `authenticated(resource, token)` as the inner `authenticate` request, answering whether the inner host took it.
 4. Install `setResourceRequestHandlers` on the client, each method refusing with a sentence saying the proxy publishes no resources, and log the request.
-5. If a member cannot be answered this way, leave it out, per [the decision](../../../decisions/the-nested-proxy-leaves-out-what-it-cannot-forward.md).
+5. If a member cannot be answered this way, leave it out.
 
 ## Validation
 

@@ -13,10 +13,7 @@ creates: []
 decisions:
   - decisions/a-cofold-session-in-a-computer-runs-in-a-nested-host.md
   - decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md
-  - decisions/a-nested-sessions-chat-uris-are-the-outer-ones.md
-  - decisions/a-nested-session-whose-host-ended-refuses-with-the-reason.md
   - decisions/a-nested-session-resumes-its-inner-transcript-by-id.md
-  - decisions/the-nested-proxy-leaves-out-what-it-cannot-forward.md
   - decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md
   - decisions/a-nested-host-is-configured-by-the-machine-profile-only.md
   - decisions/a-backend-that-runs-nested-names-its-plugin.md
@@ -62,10 +59,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 | --- | --- |
 | [A cofold session in a computer runs in an ahpd started inside it](../../../decisions/a-cofold-session-in-a-computer-runs-in-a-nested-host.md) | 01, 04 |
 | [A session reaches a nested host through a generic proxy backend in the SDK](../../../decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md) | 02, 03, 04 |
-| [A nested session's chat URIs are rewritten to the outer ones](../../../decisions/a-nested-sessions-chat-uris-are-the-outer-ones.md) | 10 |
-| [A nested session whose host ended refuses what follows with the reason](../../../decisions/a-nested-session-whose-host-ended-refuses-with-the-reason.md) | 09 |
 | [A nested session is resumed by resuming the inner transcript by id](../../../decisions/a-nested-session-resumes-its-inner-transcript-by-id.md) | 11 |
-| [The nested proxy leaves out what it cannot forward](../../../decisions/the-nested-proxy-leaves-out-what-it-cannot-forward.md) | 12, 13 |
 | [A nested host's image installs its plugins with ahpd plugin install](../../../decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md) | 16 |
 | [A nested host is configured by the machine's profile only](../../../decisions/a-nested-host-is-configured-by-the-machine-profile-only.md) | 17 |
 | [A backend that runs nested names the plugin the inner host loads](../../../decisions/a-backend-that-runs-nested-names-its-plugin.md) | 17 |
@@ -79,6 +73,9 @@ process exits                    -> [new] the session ends with the stderr tail 
 | A write to a dead inner host, or its stdin closing, is the session's end and never an uncaught error; the end is read from `close`, with the signal in the sentence | follows from "a failure is a sentence, never a hang" | 07 |
 | The proxy is tested against a real child process as well as the in-memory fakes | the fakes cannot raise `EPIPE` or reorder `exit` and stdout | 07 |
 | The inner session works at the path the session's folder is mounted at inside the machine | follows from the mount mapping `how` already applies | 14 |
+| The proxy rewrites every inner chat URI to an outer one before it emits: the inner default chat becomes the session's `chatUri`, and any other inner chat an outer URI the proxy names and serves. | Softov, 2026-09-26: "the proxy rewrites them to outer ones". | 10 |
+| A nested session whose inner host has ended refuses every later action and turn with the sentence it ended with; it neither hangs nor restarts the inner host. | Softov, 2026-09-26: "refuse later actions and turns with the reason (no hang, no restart)". | 09 |
+| The proxy implements a member only when it can report the inner session's real answer; the rest are left out so the host refuses them, and required members answer from the mirrored inner state. | Softov, 2026-09-26: "leave them out so the host refuses them honestly (no blind `true`)". | 12, 13 |
 
 ## Tasks
 

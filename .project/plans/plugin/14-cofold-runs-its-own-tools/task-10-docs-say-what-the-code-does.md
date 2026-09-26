@@ -22,7 +22,7 @@ refs:
 
 ## Steps
 
-1. Search order: after task 12, providers are tried in the order the configuration lists them; the comment at `capabilities.ts:63` and the sentence at `PLUGINS.md:439` say so, per [decision: configured order](../../../decisions/search-providers-are-tried-in-configured-order.md).
+1. Search order: after task 12, providers are tried in the order the configuration lists them; the comment at `capabilities.ts:63` and the sentence at `PLUGINS.md:439` say so.
 2. Rewrite only the section at `PLUGINS.md:407-447` with one paragraph per line and no hard wrap; the rest of the file stays as it is.
 3. The section says: the permission mode is what confines the tools, not the workspace; `default` asks before a write, a command, a web fetch and a read outside the workspace; the workspace check follows symlinks; `web_fetch` refuses internal addresses; memory is per workspace and shared by its sessions; a session with no working directory works in the daemon's current directory; a shell call shows its bare command; a turn with no model configured fails and says to add `"model"` to the cofold configuration file.
 4. Write `packages/agent-cofold/README.md` after `packages/agent-pi/README.md`: what the backend is, how to load it, the options table (with `tools`), the tools a session runs, and a link to `docs/PLUGINS.md` for the rest; one sentence per line, no em dash, no hard wrap.

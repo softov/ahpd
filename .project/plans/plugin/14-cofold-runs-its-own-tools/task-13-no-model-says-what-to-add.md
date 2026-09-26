@@ -11,7 +11,7 @@ refs:
 
 ## Objective
 
-With no model in the session settings, the plugin options or the cofold configuration file, the turn's error tells the person to add `"model"` to that file and names its path, per [decision: a turn with no model fails and says where](../../../decisions/a-cofold-turn-with-no-model-fails-and-says-where-to-name-one.md).
+With no model in the session settings, the plugin options or the cofold configuration file, the turn's error tells the person to add `"model"` to that file and names its path, per [A cofold turn with no model configured fails and says to add "model" to the cofold configuration file](../../../decisions/a-cofold-turn-with-no-model-fails-and-says-where-to-name-one.md).
 
 ## Files
 

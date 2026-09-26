@@ -11,7 +11,7 @@ refs:
 
 ## Objective
 
-After the inner host has ended, every client action on the nested session, a new turn included, is refused with the sentence the session ended with, per [the decision](../../../decisions/a-nested-session-whose-host-ended-refuses-with-the-reason.md).
+After the inner host has ended, every client action on the nested session, a new turn included, is refused with the sentence the session ended with.
 
 ## Files
 

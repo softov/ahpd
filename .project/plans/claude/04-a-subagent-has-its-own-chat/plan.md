@@ -12,11 +12,8 @@ creates: []
 decisions:
   - decisions/a-backend-opens-a-subagent-chat-through-the-host.md
   - decisions/subagent-chats-are-restored-from-the-cli-meta-file.md
-  - decisions/a-spawning-call-carries-the-reference-subagent-meta.md
-  - decisions/a-background-worker-is-linked-when-its-call-completes.md
-  - decisions/a-cancelled-turn-ends-only-its-own-workers.md
-  - decisions/background-is-any-task-started-but-foreground-ends-on-its-result.md
   - decisions/a-worker-whose-spawning-call-was-compacted-is-listed.md
+  - decisions/a-spawning-call-carries-the-reference-subagent-meta.md
 refs:
   - "[code://packages/agent-claude/src/session.ts#L2187](../../../../packages/agent-claude/src/session.ts#L2187) - where every `stream_event` is handled, with `parent_tool_use_id` read only for round state"
   - "[code://packages/agent-claude/src/session.ts#L818](../../../../packages/agent-claude/src/session.ts#L818) - `rounds`, already kept per `parent_tool_use_id`"
@@ -76,11 +73,8 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 | --- | --- |
 | [A backend opens a subagent chat through the host](../../../decisions/a-backend-opens-a-subagent-chat-through-the-host.md) | 02, 03 |
 | [A subagent chat is restored from the CLI's own meta file](../../../decisions/subagent-chats-are-restored-from-the-cli-meta-file.md) | 06, 12, 13 |
-| [A spawning call carries the reference's subagent _meta, under its names](../../../decisions/a-spawning-call-carries-the-reference-subagent-meta.md) | 10 |
-| [A background worker is linked from its call when the call completes](../../../decisions/a-background-worker-is-linked-when-its-call-completes.md) | 09, 10 |
-| [A cancelled turn ends only the workers it spawned](../../../decisions/a-cancelled-turn-ends-only-its-own-workers.md) | 11 |
-| [Any task_started marks a worker background, but a foreground spawn still ends on its tool_result](../../../decisions/background-is-any-task-started-but-foreground-ends-on-its-result.md) | 14 |
 | [A restored worker whose spawning call was compacted out is listed anyway](../../../decisions/a-worker-whose-spawning-call-was-compacted-is-listed.md) | 06 |
+| [A spawning call carries the reference's subagent _meta, under its names](../../../decisions/a-spawning-call-carries-the-reference-subagent-meta.md) | 10 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -97,6 +91,9 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 | A read of a session's workers that failed is not remembered | `history`'s own rule, `code://packages/sdk/src/host.ts#L4825-L4842` | 13 |
 | An ask inside a subagent is tested against a captured stream, not a synthetic call | Softov, 2026-09-26: recapture before the plan closes | 15 |
 | A restored worker whose spawning call was compacted out is listed, with no link on a call | the decision above, Softov, 2026-09-26: "List it anyway" | 06 |
+| The backend opens a background worker's chat when its spawning call's `tool_result` arrives, so the completion carries the `subagent` content, and the host stamps `_meta.subagentChatUri` on the call; the host writes no `chat/toolCallContentChanged` when the spawning call's chat has no open turn. | Softov chose both halves, 2026-09-26, asked "The background link: (a) put the link on the completion when the `tool_result` arrives, (b) stamp `_meta.subagentChatUri` like VS Code and accept the gap, or (c) both?": "both". | 09, 10 |
+| Cancelling a turn ends only the workers spawned in that turn, foreground or background; a background worker from an earlier turn ends on its own `task_notification`. | Softov, 2026-09-26: "End only the workers spawned in the cancelled turn; background workers from earlier turns keep running." | 11 |
+| Any `task_started` marks its call background, as the reference does; a call whose input says `run_in_background: false` still ends its worker's turn on its `tool_result`, and whichever arrives first ends it once. | Softov, 2026-09-26, asked "Which rule decides background?": "VS Code's rule, but a call with run_in_background: false still ends on its tool_result". | 14 |
 
 ## Tasks
 

@@ -29,7 +29,7 @@ Every surface that runs a command goes through the registry's `authorize` hook, 
 2. The hook reads the caller from `context.surface` and `context.request`: on `cli` the caller is the process owner and holds every grant; on `remote` the caller is the principal the HTTP half resolved, or the deployment token, which is root.
 3. The hook refuses a missing grant with `HttpError(403, refusalReason(id, grant))`, the WebSocket's sentence, reading the command's scopes from the `scopes` it is handed.
 4. `authorizeOverHttp` keeps the Bearer parsing, the token comparison and `users.verify`, refuses with 401 as it does now, and stops reading `scopesFor`.
-5. The principal reaches the hook as `request.actor`, per [serve() hands the principal its authorize resolved to the registry as the actor](../../../decisions/serve-hands-the-principal-to-the-registry-as-actor.md): `serve()` in `/github/cofold/packages/remote/src/serve.ts` passes what its `authorize` returned, in the same change as [daemon/05 task 06](../05-an-http-api/task-06-serve-survives-a-malformed-request.md), and the hook reads it; ahpd takes it with `@cofold/remote` 0.3.1, which Softov publishes.
+5. The principal reaches the hook as `request.actor`: `serve()` in `/github/cofold/packages/remote/src/serve.ts` passes what its `authorize` returned, in the same change as [daemon/05 task 06](../05-an-http-api/task-06-serve-survives-a-malformed-request.md), and the hook reads it; ahpd takes it with `@cofold/remote` 0.3.1, which Softov publishes.
 6. Which grant each command declares is [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md)'s; this task moves where the check runs and changes no scope. Whichever of the two lands second rebases on the other.
 
 ## Validation

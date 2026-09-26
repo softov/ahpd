@@ -10,7 +10,7 @@ refs:
 ## Objective
 
 A container made by container/01's `connect`, labelled only with the CLI's `devcontainer.local_folder`, is found for its folder and adopted instead of a second one being made.
-This applies [A container made by an older connect is adopted by its folder](../../../decisions/a-container-from-an-older-connect-is-adopted-by-its-folder.md).
+
 
 ## Files
 

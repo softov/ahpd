@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-Cancelling a turn ends only the workers spawned in it, per [A cancelled turn ends only the workers it spawned](../../../decisions/a-cancelled-turn-ends-only-its-own-workers.md); a frame that arrives for a worker that has ended is dropped rather than reopening it; and a worker's records go when it ends.
+Cancelling a turn ends only the workers spawned in it; a frame that arrives for a worker that has ended is dropped rather than reopening it; and a worker's records go when it ends.
 
 ## Files
 

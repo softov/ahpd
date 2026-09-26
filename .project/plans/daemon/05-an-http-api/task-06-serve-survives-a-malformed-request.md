@@ -6,8 +6,7 @@ layer: "cofold remote"
 refs:
   - file:///github/cofold/packages/remote/src/serve.ts - the handler, uncommitted in the cofold repository
   - file:///github/cofold/packages/remote/src/serve.test.ts - its tests
-  - "[decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) - JSON bodies only"
-  - "[decisions/cofold-remote-0-3-1-is-cut-by-softov-from-a-tagged-commit.md](../../../decisions/cofold-remote-0-3-1-is-cut-by-softov-from-a-tagged-commit.md) - who releases it"
+  - "[The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) - JSON bodies only"
 ---
 
 ## Objective
@@ -30,7 +29,7 @@ A body is read only as `application/json`, and an error that is not a deliberate
 3. In `readBody`, a request with a body whose `content-type` is not `application/json` is refused with `HttpError(415)`; the form-encoded branch goes (decision `the-http-api-checks-origin-and-host-and-takes-only-json`).
 4. In `messageOf`, an error that is not an expected `CofoldError`, not an `HttpError` and carries no numeric `status` answers `"Failed"`, never its own message.
 5. `npm run check` in `/github/cofold`.
-6. Commit, tag and publish are Softov's (decision `cofold-remote-0-3-1-is-cut-by-softov-from-a-tagged-commit`): leave the change uncommitted in `/github/cofold`, say in Resume that it is ready for 0.3.1, and do not run `npm publish`.
+6. Commit, tag and publish are Softov's : leave the change uncommitted in `/github/cofold`, say in Resume that it is ready for 0.3.1, and do not run `npm publish`.
 7. After Softov has published 0.3.1, move `@cofold/remote` in `packages/server/package.json` to `^0.3.1`; until then task 07's guard in ahpd covers the daemon.
 
 ## Validation
@@ -43,7 +42,7 @@ A body is read only as `application/json`, and an error that is not a deliberate
 
 ## Resume
 
-Done, with decision `serve-hands-the-principal-to-the-registry-as-actor` in the same change. Released 2026-09-26 from `/github/cofold` by its `release.yml` as `@cofold/remote@0.3.1`, after `npm run check` in `/github/cofold` passed (826 tests).
+Done, with `request.actor` in the same change. Released 2026-09-26 from `/github/cofold` by its `release.yml` as `@cofold/remote@0.3.1`, after `npm run check` in `/github/cofold` passed (826 tests).
 
 - Step 1: `urlOf` (`src/serve.ts:152`) returns `null` for a URL or `Host` that does not parse, answered 400 at `src/serve.ts:90`; the handler's promise ends in a `.catch` (`src/serve.ts:144`) that answers 500 "Failed" when nothing was sent and destroys the socket otherwise.
 - Step 2: `match` is called in a `try` (`src/serve.ts:112`); a `URIError` from `decodeURIComponent` answers 400 before `authorize` is asked.

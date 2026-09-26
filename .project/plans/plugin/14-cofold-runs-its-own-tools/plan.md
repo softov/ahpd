@@ -13,14 +13,10 @@ decisions:
   - decisions/cofold-runs-its-own-tools-in-its-process.md
   - decisions/a-cofold-session-in-a-computer-runs-in-a-nested-host.md
   - decisions/a-cofold-read-outside-the-workspace-asks-in-default-mode.md
-  - decisions/the-workspace-boundary-follows-symlinks.md
-  - decisions/web-fetch-refuses-internal-addresses.md
   - decisions/cofold-memory-is-per-workspace.md
   - decisions/a-session-without-a-directory-keeps-its-tools.md
-  - decisions/a-cofold-shell-call-sends-the-bare-command.md
-  - decisions/search-providers-are-tried-in-configured-order.md
-  - decisions/cofold-tools-is-released-as-0-1.md
   - decisions/a-cofold-turn-with-no-model-fails-and-says-where-to-name-one.md
+  - decisions/web-fetch-refuses-internal-addresses.md
 refs:
   - "[code://packages/agent-cofold/src/session.ts#L353-L365](../../../../packages/agent-cofold/src/session.ts#L353-L365) - `agentOf`: `tools` is the host's only, and there is no `capabilities`"
   - "[code://packages/agent-cofold/src/session.ts#L690](../../../../packages/agent-cofold/src/session.ts#L690) - `run(...)` with `workspace: where`, which the capabilities resolve paths against"
@@ -72,14 +68,10 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | [Cofold runs its own tools in its own process, as Claude does](../../../decisions/cofold-runs-its-own-tools-in-its-process.md) | 01, 02, 03 |
 | [A cofold session in a computer runs in an ahpd started inside it](../../../decisions/a-cofold-session-in-a-computer-runs-in-a-nested-host.md) | - (container/04) |
 | [In the default mode a cofold read outside the workspace asks first](../../../decisions/a-cofold-read-outside-the-workspace-asks-in-default-mode.md) | 05, 08 |
-| [The workspace boundary is checked on real paths, with symlinks resolved](../../../decisions/the-workspace-boundary-follows-symlinks.md) | 06, 07 |
-| [web_fetch refuses loopback, private and link-local addresses, on every hop](../../../decisions/web-fetch-refuses-internal-addresses.md) | 06, 08 |
 | [A cofold session's memory is per workspace, shared by the sessions in it](../../../decisions/cofold-memory-is-per-workspace.md) | 01 |
 | [A cofold session with no working directory keeps its tools, and the permission mode confines them](../../../decisions/a-session-without-a-directory-keeps-its-tools.md) | 09 |
-| [A cofold shell call sends its bare command as the tool input, as Claude's Bash does](../../../decisions/a-cofold-shell-call-sends-the-bare-command.md) | 11 |
-| [Search providers are tried in the order the configuration lists them](../../../decisions/search-providers-are-tried-in-configured-order.md) | 12, 10 |
-| [@cofold/tools is released as 0.1.x with a ^0.1 peer range, and ahpd takes ^0.1](../../../decisions/cofold-tools-is-released-as-0-1.md) | 06, 08 |
 | [A cofold turn with no model configured fails and says to add "model" to the cofold configuration file](../../../decisions/a-cofold-turn-with-no-model-fails-and-says-where-to-name-one.md) | 13 |
+| [web_fetch refuses loopback, private and link-local addresses, on every hop](../../../decisions/web-fetch-refuses-internal-addresses.md) | 06, 08 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -89,6 +81,10 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | A host tool that shares a capability tool's name keeps it, and the capability's tool is left out | cofold fails a run two contributors give one name to | 01 |
 | A session whose store is in memory gets no memory capability | there is no directory to keep memory files in | 01 |
 | The new section of `docs/PLUGINS.md` and the package README are not hard-wrapped | Softov's rule for docs | 10 |
+| A `shell_exec` call's `toolInput` is the bare command on every action and part that carries one; it still runs in cofold's own process. | Softov, 2026-09-26: "Bare command, like Claude". | 11 |
+| `searchOf` keeps the configured order and `searchProviders` builds the array in it. | Softov, 2026-09-26: "Configured order". | 12, 10 |
+| Both checks resolve symlinks with `realpath` before comparing, a path that does not exist yet judged by its nearest existing ancestor. | Softov, 2026-09-26: "yes, both". | 06, 07 |
+| ahpd depends on `@cofold/tools` `^0.1`. | Softov, 2026-09-26: "Release tools 0.1.x". | 06, 08 |
 
 ## Tasks
 

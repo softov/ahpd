@@ -11,7 +11,7 @@ refs:
 
 ## Objective
 
-`web_search` asks its providers in the order `tools.web.search` lists them, per [decision: configured order](../../../decisions/search-providers-are-tried-in-configured-order.md).
+`web_search` asks its providers in the order `tools.web.search` lists them.
 
 ## Files
 

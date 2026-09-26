@@ -4,7 +4,6 @@ status: todo
 depends: [task-07-the-listener-survives-a-malformed-request.md]
 layer: "server"
 refs:
-  - "[decisions/the-http-api-acts-on-the-daemons-own-options.md](../../../decisions/the-http-api-acts-on-the-daemons-own-options.md) - what this task applies"
   - "[code://packages/server/src/commands/options.ts#L78-L93](../../../../packages/server/src/commands/options.ts#L78-L93) - `stop` and `refuse`"
   - "[code://packages/server/src/commands/options.ts#L272-L343](../../../../packages/server/src/commands/options.ts#L272-L343) - `optionsFrom`, which calls `stop` at lines 281, 295 and 301"
   - "[code://packages/server/src/commands/run.ts#L122-L159](../../../../packages/server/src/commands/run.ts#L122-L159) - the daemon's `users` directory and the `apiHandler` it is mounted with"
@@ -30,7 +29,7 @@ A served command reads the options the daemon was started with and never the req
 
 ## Steps
 
-1. Build the served registry from the same `declare*` functions with the daemon's facts provided as a capability, and without the four path fields in the served commands' input (decision `the-http-api-acts-on-the-daemons-own-options`).
+1. Build the served registry from the same `declare*` functions with the daemon's facts provided as a capability, and without the four path fields in the served commands' input .
 2. On the remote surface, `status`, `config`, `plugin list` and the `user` verbs read that capability and never call `optionsFrom`, `loadConfig()` or `fileUsers` themselves.
 3. No served path calls `stop`: `optionsFrom` is terminal-only, and any refusal on the remote surface goes through `refuse`, which throws.
 4. The terminal's own commands keep every field and flag they have now.

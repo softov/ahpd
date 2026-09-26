@@ -10,7 +10,7 @@ refs:
 ## Objective
 
 A need with `readOnly: true` reaches a dev container as a read-only mount, written in an override config's `mounts`, so `devcontainer up` accepts it.
-This applies [Read-only needs reach a dev container through an override config](../../../decisions/read-only-needs-reach-a-dev-container-through-an-override-config.md).
+
 
 ## Files
 

@@ -10,12 +10,8 @@ requires:
 changes: []
 creates: []
 decisions:
-  - decisions/serve-hands-the-principal-to-the-registry-as-actor.md
   - decisions/ahpd-commands-are-declared-with-cofold-commands.md
   - decisions/a-daemon-flag-is-declared-by-what-it-turns-on.md
-  - decisions/ahpd-help-keeps-the-sentences-a-person-acts-on.md
-  - decisions/a-cofold-field-says-whether-its-flag-negates.md
-  - decisions/no-plugins-has-no-positive.md
   - decisions/ahpd-refuses-strictly-and-names-the-sub-commands.md
 refs:
   - "git://7a7e9d1 - packages/server/src/main.ts before the migration: the hand-written flag parser and the verbs `start`, `stop`, `status`, `config`, `user list|add|rm|token`, `plugin list|install|remove`"
@@ -47,12 +43,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Decision | Task |
 | --- | --- |
-| [serve() hands the principal its authorize resolved to the registry as the actor](../../../decisions/serve-hands-the-principal-to-the-registry-as-actor.md) | 14 |
 | [ahpd's commands are declared once, with @cofold/commands](../../../decisions/ahpd-commands-are-declared-with-cofold-commands.md) | 02, 03, 14 |
 | [A daemon flag is declared by what it turns on, and --no-X turns it off](../../../decisions/a-daemon-flag-is-declared-by-what-it-turns-on.md) | 06 |
-| [ahpd --help keeps the sentences a person acts on, and shows no word nobody types](../../../decisions/ahpd-help-keeps-the-sentences-a-person-acts-on.md) | 07 |
-| [A cofold field says whether its flag negates, and ahpd declares updateCheck through it](../../../decisions/a-cofold-field-says-whether-its-flag-negates.md) | 12, 06 |
-| [--no-plugins has no positive, so --plugins is an unknown option](../../../decisions/no-plugins-has-no-positive.md) | 12, 13 |
 | [ahpd keeps cofold's strict refusals, and a verb with no sub-command names its sub-commands](../../../decisions/ahpd-refuses-strictly-and-names-the-sub-commands.md) | 15 |
 
 | What | Source | Task |
@@ -62,6 +54,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | `start` forwards the words after `start`, wherever it appears on the line | Softov, 2026-09-26, on the orphaned daemon: a fix, not a fork | 05 |
 | npm's output goes to stderr, so stdout is the command's own output | Softov, 2026-09-26, on `plugin install --json` | 08 |
 | The CLI still acts on files locally in this plan; talking to a running daemon comes with the HTTP API | `daemon/05` | - |
+| Restore those four as longer descriptions or an epilogue; `ahpd --help` never shows `run` and prints the global options once. | Softov, 2026-09-26: "restore some". | 07 |
+| `--no-plugins` is declared with `negatable: false`, which `@cofold/commands` 0.2.1 honours, so `--plugins` is an unknown option again. | Softov, 2026-09-26: "Refuse it". | 12, 13 |
+| `CliField.negatable` in `@cofold/commands`, released as 0.2.1 on 2026-09-26; ahpd depends on `^0.2.1`. | Softov, 2026-09-26: "Add negatable to cofold". | 12, 06 |
+| `serve()` passes what its `authorize` returned to `registry.execute` as `request.actor`, released in `@cofold/remote` 0.3.1 on 2026-09-26. | Softov, 2026-09-26: "serve() passes actor". | 14 |
+| Each handler throws a `CofoldError` that keeps today's exit code (`ArgumentError` for 2, kind `conflict` for 1) and writes only through its context; a failure's sentence moves to stderr as `ahpd: <sentence>`. | Softov, 2026-09-26, asked "How should ahpd's command handlers answer failure, instead of process.exit and process.stderr?": "Throw CofoldError". | 16 |
 
 ## Tasks
 
@@ -82,6 +79,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [13 - --plugins is an unknown option again](task-13-plugins-is-an-unknown-option.md) | todo | 12 |
 | [14 - The registry's authorize hook checks a command's scopes on every surface](task-14-the-registry-hook-checks-every-surface.md) | todo | 04 |
 | [15 - A bare plugin or user names its sub-commands](task-15-a-bare-verb-names-its-sub-commands.md) | todo | 04 |
+| [16 - The command handlers fail by throwing a cofold error, and never touch the process](task-16-handlers-fail-by-throwing.md) | todo | 04 |
 
 ## Risks and tradeoffs
 
@@ -93,7 +91,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Done so far:** tasks 01 to 04 implemented on 2026-09-26: the pinning cases, the declarations with their scopes, `main.ts` through `@cofold/terminal`'s `Program`, and `docs/DAEMON.md` with the lockfile. Task 12 done: `@cofold/commands` 0.2.1 is released and ahpd depends on `^0.2.1`.
 - **Next action:** [task-05-start-forwards-the-words-after-start.md](task-05-start-forwards-the-words-after-start.md).
 - **Open questions:** none.
-- **Watch out for:** tasks 06 and 13 build on `@cofold/commands` 0.2.1's `negatable`; task 14 and [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md) touch the same check, so the second to land rebases on the first; `run` is a hidden command given its word when a line has no command, so the foreground daemon keeps matching `ahpd [options]`; this environment's global pnpm store is read-only, so installs need `--store-dir /tmp/pnpm-store`; the pinning cases set `CI=1`, which silences the update line in every case that does not remove it; [daemon/05](../05-an-http-api/plan.md) changes the scopes `test/server-commands.test.ts:41-51` pins, so a scope failure there is daemon/05's to fix.
+- **Watch out for:** tasks 06 and 13 build on `@cofold/commands` 0.2.1's `negatable`; task 16 and [daemon/05 task 08](../05-an-http-api/task-08-served-commands-act-on-the-daemons-own-options.md) both change `status`, `user` and `stop`, so the second to land rebases on the first; task 14 and [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md) touch the same check, so the second to land rebases on the first; `run` is a hidden command given its word when a line has no command, so the foreground daemon keeps matching `ahpd [options]`; this environment's global pnpm store is read-only, so installs need `--store-dir /tmp/pnpm-store`; the pinning cases set `CI=1`, which silences the update line in every case that does not remove it; [daemon/05](../05-an-http-api/plan.md) changes the scopes `test/server-commands.test.ts:41-51` pins, so a scope failure there is daemon/05's to fix.
 
 ## Final verification checklist
 

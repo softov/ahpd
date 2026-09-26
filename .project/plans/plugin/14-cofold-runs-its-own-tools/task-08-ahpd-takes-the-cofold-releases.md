@@ -22,7 +22,7 @@ refs:
 ## Steps
 
 1. Wait for Softov to publish both releases; do not point the manifest at a local path.
-2. `@cofold/tools` becomes `^0.1`, per [decision: tools is released as 0.1.x](../../../decisions/cofold-tools-is-released-as-0-1.md), and `@cofold/agents` stays `^0.1.0` with the lockfile moved to the release that carries task 05.
+2. `@cofold/tools` becomes `^0.1`, and `@cofold/agents` stays `^0.1.0` with the lockfile moved to the release that carries task 05.
 3. `pnpm install --no-frozen-lockfile` once, then check `pnpm install --frozen-lockfile` is clean.
 4. The `web_fetch` cases in the test use an IP-literal public URL (`https://203.0.113.10/`) so the address check needs no DNS; the `globalThis.fetch` stub stays.
 

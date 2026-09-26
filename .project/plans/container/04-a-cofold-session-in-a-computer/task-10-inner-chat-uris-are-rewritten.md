@@ -10,7 +10,7 @@ refs:
 
 ## Objective
 
-No action or snapshot the proxy emits names an inner chat URI, per [the decision](../../../decisions/a-nested-sessions-chat-uris-are-the-outer-ones.md).
+No action or snapshot the proxy emits names an inner chat URI.
 
 ## Files
 

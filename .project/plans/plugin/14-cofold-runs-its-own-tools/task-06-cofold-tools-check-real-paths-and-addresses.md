@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-In `/github/cofold`, `resolveWithin` judges inside or outside on real paths, per [decision: the boundary follows symlinks](../../../decisions/the-workspace-boundary-follows-symlinks.md), and `web_fetch` refuses a loopback, private or link-local address on the first request and on every redirect, per [decision: web_fetch refuses internal addresses](../../../decisions/web-fetch-refuses-internal-addresses.md).
+In `/github/cofold`, `resolveWithin` judges inside or outside on real paths, and `web_fetch` refuses a loopback, private or link-local address on the first request and on every redirect, per [web_fetch refuses loopback, private and link-local addresses, on every hop](../../../decisions/web-fetch-refuses-internal-addresses.md).
 
 ## Files
 
@@ -30,7 +30,7 @@ In `/github/cofold`, `resolveWithin` judges inside or outside on real paths, per
 3. Follow redirects by hand: on a 3xx with `Location`, resolve it against the current URL, run `parseUrl` and the address check on it, and stop after a fixed number of hops with an error.
 4. Record in *Resume* that a name resolving differently between the check and the connection (DNS rebinding) is not caught, as the decision says.
 5. The tools' description or rules text says internal addresses are refused, so the model does not retry them.
-6. Set `@cofold/tools`' version to `0.1.0` and its peer range on `@cofold/agents` to `^0.1`, per [decision: tools is released as 0.1.x](../../../decisions/cofold-tools-is-released-as-0-1.md).
+6. Set `@cofold/tools`' version to `0.1.0` and its peer range on `@cofold/agents` to `^0.1`.
 7. Follow cofold's release process; publishing is Softov's call, and task 08 takes the release into ahpd.
 
 ## Validation
@@ -54,4 +54,4 @@ Done. Released 2026-09-26 from `/github/cofold` by its `release.yml` as `@cofold
 - `package.json`: version `0.1.0`, peer `"@cofold/agents": "^0.1"`. The peer was `workspace:*`, which pnpm publishes as the exact `0.1.0`. `pnpm-lock.yaml` records no peer specifiers for the importer, so it needs no change; `pnpm install` was not run.
 - Tests, each failing before the fix: `src/files.test.ts:118` (symlink out, dangling symlink, missing `sub`, workspace through a symlink); `src/web.test.ts:78` (127.0.0.1, 169.254.169.254, [::1], mapped, 0.0.0.0, `2130706433`, fd00::1, fe80::1, 172.20.0.1, a name resolving to 10.0.0.5, no fetch recorded; 172.32.0.1 passes); `src/web.test.ts:91` (302 to 169.254.169.254 refused with one fetch recorded, a relative 301 followed, a redirect loop stopped). The fake `fetch` follows a 3xx itself unless `redirect` is `'manual'`, and the existing fetch case passes a `lookup` stub answering a public address.
 - Verified: `node_modules/.bin/vitest run packages/tools` 4 files, 27 tests passed, no type errors; `node_modules/.bin/tsc -p packages/tools/tsconfig.test.json --noEmit` and `-p packages/tools/tsconfig.json --noEmit` clean. The repo-wide `pnpm test` and `pnpm typecheck` were not run: both build every package. papo's tests resolve `@cofold/tools` through `dist`, which was not rebuilt.
-- The search-provider order claim in the decision `search-providers-are-tried-in-configured-order.md` holds: `searchTool` tries `providers` with a `for...of` in array order, returns on the first that answers, and its description lists the ids in that order.
+- The configured search order in the plan's table holds: `searchTool` tries `providers` with a `for...of` in array order, returns on the first that answers, and its description lists the ids in that order.

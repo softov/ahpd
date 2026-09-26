@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-Per [A spawning call carries the reference's subagent _meta](../../../decisions/a-spawning-call-carries-the-reference-subagent-meta.md), a `Task` or `Agent` call carries `_meta.subagentDescription`, `_meta.subagentAgentName` and `_meta.subagentChatUri` on the wire and in every snapshot.
+Per [A spawning call carries the reference's subagent _meta, under its names](../../../decisions/a-spawning-call-carries-the-reference-subagent-meta.md), a `Task` or `Agent` call carries `_meta.subagentDescription`, `_meta.subagentAgentName` and `_meta.subagentChatUri` on the wire and in every snapshot.
 
 ## Files
 

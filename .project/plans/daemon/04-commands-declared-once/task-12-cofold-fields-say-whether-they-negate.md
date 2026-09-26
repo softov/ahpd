@@ -24,7 +24,7 @@ In the cofold repository, a field's `cli.negatable: true` gives its flag a `--no
 
 ## Steps
 
-1. Apply decision [a-cofold-field-says-whether-its-flag-negates](../../../decisions/a-cofold-field-says-whether-its-flag-negates.md) and decision [no-plugins-has-no-positive](../../../decisions/no-plugins-has-no-positive.md) in `/github/cofold/packages/commands`.
+1. Add `negatable` to `CliField` in `/github/cofold/packages/commands`, an explicit `false` also suppressing the automatic opposite of a `--no-X` flag.
 2. `CliField.negatable`: pass it through in `command.ts` beside `hidden`.
 3. `argv.ts` `addToTable`: register the inverse when `option.negatable === true`, or when the flag is spelled `--no-X` and `option.negatable !== false`.
 4. The cofold tree holds other uncommitted work in `packages/remote`; change only `packages/commands`, and commit nothing there without Softov's approval.
