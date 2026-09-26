@@ -61,7 +61,8 @@
   "dependencies": {
     "@cofold/agents": "^0.1.0",
     "@cofold/model-openai-compat": "^0.1.0",
-    "@cofold/store-file": "^0.1.0"
+    "@cofold/store-file": "^0.1.0",
+    "@cofold/tools": "^0.0.1"
   },
   "ahpd": {
     "entry": "./dist/index.js",

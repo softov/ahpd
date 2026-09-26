@@ -44,6 +44,9 @@
   },
   "dependencies": {
     "@ahpd/sdk": "workspace:^",
+    "@cofold/commands": "^0.2.1",
+    "@cofold/remote": "^0.3.1",
+    "@cofold/terminal": "^0.2.0",
     "@microsoft/agent-host-protocol": "^0.9.0"
   },
   "publishConfig": {

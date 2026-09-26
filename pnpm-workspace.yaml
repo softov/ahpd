@@ -19,3 +19,6 @@ minimumReleaseAgeExclude:
   - '@cofold/model-openai-compat@0.1.0'
   - '@cofold/sdk@0.2.0'
   - '@cofold/store-file@0.1.0'
+  - '@cofold/remote@0.3.0'
+  - '@cofold/commands@0.2.1'
+  - '@cofold/remote@0.3.1'
