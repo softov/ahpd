@@ -2489,7 +2489,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // told. Every chat here is one somebody can type into.
       interactivity: 'full',
       ...(steering !== undefined ? { steeringMessage: steering } : {}),
-      queuedMessages: [...queued],
+      queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
     /**
@@ -2734,7 +2734,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * they interrupted, rather than in a panel that closed. Nothing is pushed
      * to the CLI, which is the whole difference from `begin`.
      */
-    ran: (turnId, command, run) => {
+    ran: (turnId, command, run, queuedAs) => {
       /*
        * A turn is already running, so the command waits its turn.
        *
@@ -2743,14 +2743,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * itself, not the text of it: when its turn comes `startNext` runs it
        * rather than handing `!ping` to the CLI.
        */
-      if (active) {
+      if (active || (queuedAs !== undefined && queued.length > 0)) {
+        const id = queuedAs ?? turnId;
         const message = { text: `!${command}`, origin: { kind: 'user' } };
-        queued.push({ id: turnId, command: { text: command, run }, message });
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        const entry = { id, command: { text: command, run }, message };
+        const at = queued.findIndex((held) => String(held.id) === id);
+        if (at >= 0) queued[at] = entry;
+        else queued.push(entry);
+        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         return;
       }
-      runCommand(turnId, command, run);
+      runCommand(turnId, command, run, queuedAs);
     },
 
     /**

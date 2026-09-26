@@ -473,14 +473,19 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
       begin(turnId, text, model, from);
     },
 
-    ran: (turnId, command, run) => {
-      if (active !== undefined) {
+    ran: (turnId, command, run, queuedAs) => {
+      if (active !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+        const id = queuedAs ?? turnId;
         const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-        queued.push({ id: turnId, command: { text: command, run }, message });
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        const entry: Bag = { id, command: { text: command, run }, message };
+        const at = queued.findIndex((held) => String(held.id) === id);
+        if (at >= 0) queued[at] = entry; else queued.push(entry);
+        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         return;
       }
+      // Taken out of the client's queue the way `startNext` takes one out.
+      if (queuedAs !== undefined) emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: queuedAs });
       runCommand(turnId, command, run);
     },
 

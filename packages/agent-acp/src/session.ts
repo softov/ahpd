@@ -962,15 +962,19 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * of it is still editing - and what waits is the command, not its text, so
      * `startNext` runs it rather than asking the server about `!ping`.
      */
-    ran: (turnId, command, run) => {
-      if (active !== undefined) {
+    ran: (turnId, command, run, queuedAs) => {
+      if (active !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+        const id = queuedAs ?? turnId;
         const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
-        queued.push({ id: turnId, command: { text: command, run }, message });
-        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        const entry: Bag = { id, command: { text: command, run }, message };
+        const at = queued.findIndex((held) => held.id === id);
+        if (at >= 0) queued[at] = entry;
+        else queued.push(entry);
+        emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         return;
       }
-      runCommand(turnId, command, run);
+      runCommand(turnId, command, run, queuedAs);
     },
 
     /**

@@ -3686,6 +3686,60 @@ describe('a command typed into the conversation', () => {
     expect(sdk.said).toEqual(['!  ']);
   });
 
+  /** Queue `text` under `id`, as a composer does while a turn runs. */
+  const queue = (client: Awaited<ReturnType<typeof shelled>>['client'], channel: string, id: string, text: string) => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel, action: { type: 'chat/pendingMessageSet', kind: 'queued', id, message: { text } } },
+    });
+  };
+
+  it('runs a queued one when the turn in front of it ends, not asks the agent', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    queue(client, chatUri, 'q1', '!echo from-the-queue');
+    await settle();
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    for (let i = 0; i < 80 && !actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallComplete'); i++) {
+      await new Promise((r) => { setTimeout(r, 25); });
+    }
+    expect(sdk.said).toEqual(['first']);
+    const said = actions(p, chatUri).map((e) => e.action);
+    expect(said.find((one) => one.type === 'chat/toolCallStart')).toMatchObject({ toolName: 'terminal', intention: 'echo from-the-queue' });
+    // Named on the turn that ran it, so a client takes it out of its queue.
+    expect(said.filter((one) => one.type === 'chat/turnStarted').at(-1)?.queuedMessageId).toBe('q1');
+  });
+
+  it('edits a queued one in place when the same id comes again', async () => {
+    const { client, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    queue(client, chatUri, 'q1', '!echo one');
+    queue(client, chatUri, 'q1', '!echo two');
+    await settle();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { queuedMessages: { id: string; message: { text: string } }[] } };
+    };
+    expect(opened.snapshot.state.queuedMessages.map((m) => [m.id, m.message.text])).toEqual([['q1', '!echo two']]);
+  });
+
+  it('runs a queued one at once when nothing is running, and takes it out of the queue', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    queue(client, chatUri, 'q1', '!echo right-away');
+    const said = await ended(p, chatUri);
+    expect(sdk.said).toEqual([]);
+    const started = said.find((one) => one.type === 'chat/turnStarted');
+    expect(started?.queuedMessageId).toBe('q1');
+    expect(said.find((one) => one.type === 'chat/toolCallStart')).toMatchObject({ toolName: 'terminal', intention: 'echo right-away' });
+  });
+
   it('runs it on a session resumed from disk for it, not asks the agent', async () => {
     // The road the daemon crashed on: a turn for a session nothing was
     // running, resumed on the spot, went to `begin` and the model saw `!ping`.

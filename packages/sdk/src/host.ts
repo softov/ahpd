@@ -3689,8 +3689,12 @@ export function createHost(options: HostOptions): Host {
    * means it was neither: a lone `!` is somebody typing an exclamation mark,
    * and it goes to the agent like any other text. A turn reaches a backend by
    * more than one road - a live session, one resumed from disk for it, a
-   * chat's first message - and each takes this one, so none of them hands
-   * `!ping` to a model.
+   * chat's first message, a message queued behind a running turn - and each
+   * takes this one, so none of them hands `!ping` to a model.
+   *
+   * `queuedAs` is the queued message's id when the text came through
+   * `chat/pendingMessageSet`: a question is queued under it, and a command
+   * is handed to `ran` under it, so it waits its turn as a command.
    *
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
@@ -3703,10 +3707,12 @@ export function createHost(options: HostOptions): Host {
     text: string,
     model: ReturnType<typeof modelIn>,
     from: MessageFrom | undefined,
+    queuedAs?: string,
   ): string | undefined => {
     const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
     if (command === '' || !options.terminals) {
-      session.begin(turnId, text, model, from);
+      if (queuedAs === undefined) session.begin(turnId, text, model, from);
+      else session.queue(queuedAs, text, model, from);
       return undefined;
     }
     if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;
@@ -3717,7 +3723,7 @@ export function createHost(options: HostOptions): Host {
       chat: session.chatUri,
       turnId,
       toolCallId,
-    }));
+    }), queuedAs);
     return undefined;
   };
 
@@ -7927,7 +7933,17 @@ export function createHost(options: HostOptions): Host {
             const model = (typeof message.model === 'object' && message.model !== null
               ? message.model
               : {}) as Record<string, unknown>;
-            session.queue(String(action.id ?? ''), String(message.text ?? ''), modelIn(model), messageFrom(message));
+            const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
+            const refused = beginOrRun(
+              session,
+              provider,
+              crypto.randomUUID(),
+              String(message.text ?? ''),
+              modelIn(model),
+              messageFrom(message),
+              String(action.id ?? ''),
+            );
+            if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
             break;
           }
           /**

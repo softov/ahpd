@@ -1119,15 +1119,19 @@ export function cofoldSession(
      * and not the text of it, so when its turn comes `startNext` runs it
      * rather than handing `!ping` to a model.
      */
-    ran: (turnId, command, run) => {
-      if (active !== undefined || opening !== undefined) {
+    ran: (turnId, command, run, queuedAs) => {
+      if (active !== undefined || opening !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+        const id = queuedAs ?? turnId;
         const message = { text: `!${command}`, origin: { kind: 'user' } };
-        queued.push({ id: turnId, command: { text: command, run }, message });
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
+        const entry = { id, command: { text: command, run }, message };
+        const at = queued.findIndex((held) => String(held.id) === id);
+        if (at >= 0) queued[at] = entry;
+        else queued.push(entry);
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         return;
       }
-      runCommand(turnId, command, run);
+      runCommand(turnId, command, run, queuedAs);
     },
 
     /**

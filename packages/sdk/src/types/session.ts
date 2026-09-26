@@ -258,8 +258,14 @@ export interface Session {
    * backend, because the protocol's capability is the host's - so a backend
    * that leaves this out is one whose `!command` turn the host refuses, with
    * the reason, rather than one it silently turns into a question.
+   *
+   * `queuedAs` is the queued message this command is, when it came through
+   * `chat/pendingMessageSet` rather than as a turn: it waits behind the
+   * running turn and anything already queued, the same id twice edits what
+   * is waiting, and the turn that runs it names it as `queuedMessageId` so a
+   * client takes it out of its queue - whether that turn starts now or later.
    */
-  ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>): void;
+  ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>, queuedAs?: string): void;
 
   /**
    * Put a message into the turn that is already running.
