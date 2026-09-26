@@ -1,6 +1,7 @@
 /** Accepting connections, on whichever JavaScript runtime is running. */
 
 import type { Readable, Writable } from 'node:stream';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Peer, Request } from './rpc.js';
 import type { Principal } from './users.js';
 
@@ -91,6 +92,20 @@ export interface ListenOptions {
   root?: boolean;
   /** Sees every frame, both ways. Nothing is recorded without one. */
   tap?: Tap;
+  /**
+   * Plain HTTP requests, answered on the same port as the WebSocket.
+   *
+   * The upgrade is still the WebSocket's; a request that is not one is handed
+   * here and the handler answers it in full. Left out, this listener answers a
+   * plain request the way it always has - 426, because it speaks AHP over
+   * WebSocket - which is what keeps every host that never asked for an HTTP
+   * surface exactly as it was.
+   *
+   * Node only, because the handler takes `node:http`'s own request and response
+   * rather than a `Request` and a `Response`. A listener on Bun or Deno with
+   * one passed is refused at startup rather than silently answering 426.
+   */
+  request?: (request: IncomingMessage, response: ServerResponse) => void;
 }
 
 /**

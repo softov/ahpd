@@ -81,6 +81,15 @@ const tapping = (tap: Tap | undefined, peer: number): {
 
 export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
   const here = runtime();
+  /*
+   * A plain request handler is `node:http`'s own request and response, which
+   * Bun and Deno do not have. Refused here rather than dropped, because a host
+   * that asked for an HTTP surface and silently got none would be a host whose
+   * API answers 426 on one runtime and not another.
+   */
+  if (here !== 'node' && options.request !== undefined) {
+    throw new Error('A plain HTTP request handler is served on Node, where a request is an IncomingMessage.');
+  }
   const host = options.host ?? '127.0.0.1';
   let accepted = 0;
   const token = options.token;
@@ -246,23 +255,43 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
    * cleaned up when a handshake is refused.
    */
   const decided = new WeakMap<object, { principal?: Principal | undefined; root?: boolean | undefined }>();
-  const server = new WebSocketServer({
-    port: options.port,
-    host,
-    // `ws` answers a rejected handshake with the status this passes back, so
-    // an unauthorised client reads 401 rather than a socket that opened and
-    // then closed for no stated reason.
-    verifyClient: (info, accept) => {
-      void identityOf(info.req.url, info.req.headers.authorization ?? null).then((identity) => {
-        if (identity.admitted) {
-          decided.set(info.req, { principal: identity.principal, root: identity.root });
-          accept(true);
-          return;
-        }
-        accept(false, 401, 'A connection token is required');
-      });
-    },
-  });
+  // `ws` answers a rejected handshake with the status this passes back, so an
+  // unauthorised client reads 401 rather than a socket that opened and then
+  // closed for no stated reason.
+  const verifyClient = (
+    info: { req: NodeRequest },
+    accept: (allow: boolean, code?: number, message?: string) => void,
+  ): void => {
+    void identityOf(info.req.url, info.req.headers.authorization ?? null).then((identity) => {
+      if (identity.admitted) {
+        decided.set(info.req, { principal: identity.principal, root: identity.root });
+        accept(true);
+        return;
+      }
+      accept(false, 401, 'A connection token is required');
+    });
+  };
+  /*
+   * The upgrade, and the plain requests beside it.
+   *
+   * `ws` builds its own `http` server when it is given a port, and that server
+   * answers everything that is not an upgrade with 426. A host with an HTTP
+   * surface on the same port needs the server to be its own, so `request` is
+   * handed one and `ws` attaches to it; the upgrade itself is decided by the
+   * same `verifyClient` either way. With no handler the port path is the
+   * literal one it has always been, which is what keeps every other host
+   * unchanged.
+   */
+  let server: NodeServer;
+  if (options.request === undefined) {
+    server = new WebSocketServer({ port: options.port, host, verifyClient });
+  }
+  else {
+    const { createServer } = await import('node:http');
+    const plain = createServer((request, response) => { options.request?.(request, response); });
+    server = new WebSocketServer({ server: plain, verifyClient });
+    plain.listen(options.port, host);
+  }
   server.on('connection', (socket, request) => {
     const seen = tapping(options.tap, ++accepted);
     const peer = createPeer({
@@ -408,8 +437,10 @@ interface NodeRequest {
 }
 
 interface NodeOptions {
-  port: number;
-  host: string;
+  port?: number;
+  host?: string;
+  /** An `http.Server` to attach to, when it also answers plain requests. */
+  server?: unknown;
   verifyClient(
     info: { req: NodeRequest },
     accept: (allow: boolean, code?: number, message?: string) => void,

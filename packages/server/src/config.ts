@@ -5,6 +5,20 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { issuerKind, type PluginSpec } from '@ahpd/sdk';
 
+/**
+ * The HTTP API, as the configuration turns it on.
+ *
+ * `true` serves it under `/api` on the daemon's own listener, beside the
+ * WebSocket; a `port` moves it to a listener of its own - decision
+ * `the-http-api-is-on-the-daemon-port-under-api`. The API is off unless this
+ * names it, because an administration surface on a public port is a choice
+ * rather than a default.
+ */
+export interface HttpSetting {
+  /** The port the API is bound to. Absent is the daemon's own port. */
+  port?: number;
+}
+
 /** What a config file may say. Every key is what a flag would have said. */
 export interface Config {
   /** TCP port to bind. 0 lets the OS choose. */
@@ -80,6 +94,14 @@ export interface Config {
   advancedTools?: boolean;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
+  /**
+   * Whether the HTTP API is served, and where.
+   *
+   * `true` is the daemon's own listener under `/api`; `{ "port": N }` is a
+   * listener of its own. Absent is off, which is what every install that never
+   * asked for an API keeps.
+   */
+  http?: boolean | HttpSetting;
   /**
    * The plugins to load, in the order they apply.
    *

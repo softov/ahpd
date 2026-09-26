@@ -1,8 +1,12 @@
 # Running the daemon
 
 `@ahpd/server` is `@ahpd/sdk` with every port wired in, plus argv, a
-configuration file and a pid file. [packages/server/src/main.ts](../packages/server/src/main.ts)
-is the whole of it and is short enough to read.
+configuration file and a pid file. Every verb and every flag is one declaration
+under [packages/server/src/commands](../packages/server/src/commands), and
+[packages/server/src/main.ts](../packages/server/src/main.ts) is the
+`@cofold/terminal` program those declarations are rendered by: help, shell
+completion, `--json` and the exit codes all come from the one place a command
+is written.
 
 It installs the `ahpd` command:
 
@@ -79,6 +83,49 @@ ahpd plugin install <name>  install a plugin into the configuration directory
                             naming it, --config-file edits another file
 ahpd plugin remove <name>   drop it from the configuration and uninstall it,
                             unless --keep
+ahpd user list              who is in the user file
+ahpd user add <id>          add a person, with --role and --issuer
+ahpd user token <id>        mint their credential, shown once; --url prints
+                            the whole ws:// URL a client can be given
+ahpd user rm <id>           take a person out of it
+ahpd completion <shell>     print the completion script: bash, zsh or fish
+```
+
+`ahpd [options]` with no verb is the foreground daemon, and it is the same
+declaration `ahpd start` renders. Every command and every flag can be read
+without a daemon running:
+
+```bash
+ahpd --help              # every command, then the foreground run's flags
+ahpd plugin --help       # only what follows `plugin`
+ahpd user add --help     # the flags one sub-command takes
+```
+
+### `--json`, for the things a script reads
+
+Every command declares what it answers, so every command has `--json`: the same
+value the prose is rendered from, as stable JSON on stdout. Diagnostics always
+go to stderr, so stdout is the payload alone.
+
+```bash
+ahpd status --json | jq .url
+ahpd plugin list --json | jq '.[].state'
+ahpd config --json
+```
+
+`--quiet` prints only the identifier a command's answer names, `--verbose` adds
+diagnostics on stderr, and `--no-color` turns colour off, as does a non-terminal
+or `NO_COLOR`. `--json` and `--quiet` cannot be combined.
+
+### Completion
+
+Completion asks the running program, rather than baking the words into a
+script, so the candidates stay live as commands change:
+
+```bash
+ahpd completion bash > /etc/bash_completion.d/ahpd     # system-wide
+ahpd completion zsh  > "${fpath[1]}/_ahpd"             # or a directory on $fpath
+ahpd completion fish > ~/.config/fish/completions/ahpd.fish
 ```
 
 `start` re-runs this same program with the rest of the line and detaches, so
@@ -263,6 +310,9 @@ authorizes, and a record's own `trustToken` overrides it.
 container on this host is the operator's decision and not a plugin's: the
 computer plugin contributes its lifecycle either way, and the reference host's
 own tools declare nothing so this key does not touch them.
+`http` (or `http: { "port": N }`) serves the commands over HTTP under `/api`; it
+has no flag, because it is a property of a deployment rather than of one run.
+See [An HTTP API](#an-http-api-for-the-commands-the-terminal-runs).
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
@@ -303,6 +353,80 @@ With a user directory a person's own token reaches it too, and the deployment's
 token is the host itself; [USERS.md](USERS.md) is the two layers. The token a
 client pushes with `authenticate` is a different thing again and is covered in
 [AHP.md](AHP.md#authentication).
+
+## An HTTP API, for the commands the terminal runs
+
+`http` in the configuration serves the same declarations under `/api`, so
+`status`, `config`, `plugin` and `user` can be run by something that is not a
+terminal. It is off until it is named:
+
+```json
+{
+  "http": true
+}
+```
+
+That puts it on the daemon's own port, beside the WebSocket, at
+`http://127.0.0.1:9187/api`, so a tunnel that reaches the socket reaches the API
+with no more setup. `http.port` moves it to a listener of its own, which is how
+it is bound where AHP is not:
+
+```json
+{
+  "http": { "port": 9188 }
+}
+```
+
+The startup line says where it went: `http on http://127.0.0.1:9187/api`.
+Without `http`, `/api` answers 404 and a request anywhere else keeps the answer
+it always had. The handler is `node:http`'s own request and response, so the API
+is served on Node; a daemon elsewhere starts with a sentence rather than a
+half-served surface.
+
+The same commands under the same grants. A request carries
+`Authorization: Bearer <token>`: the deployment's connection token is root,
+exactly as it is on the socket; anything else is a person's token, verified the
+way `authenticate` verifies one, and the command's scopes are checked against
+the grants their roles resolve to - `config:write` for `config`,
+`plugin install` and `plugin remove`, `admin` for the `user` verbs. A refusal
+carries the same sentence the WebSocket gives, so a script reads the reason:
+
+```bash
+curl http://127.0.0.1:9187/api/status -H "Authorization: Bearer $SECRET"
+curl http://127.0.0.1:9187/api/config -H "Authorization: Bearer $SECRET"
+
+# A person the grant does not cover, and the answer the socket gives too.
+curl -i http://127.0.0.1:9187/api/plugin/install \
+  -H "Authorization: Bearer $ADA" -H "content-type: application/json" \
+  -d '{"name":["@ahpd/agent-claude"]}'
+# HTTP/1.1 403 Forbidden
+# { "message": "ada may not config:write here" }
+```
+
+`GET /api/cli-manifest` is the command surface as JSON - the same declaration
+the CLI parses - and it is not gated, so a client can read what a daemon offers
+before it has a token. It is what `--remote` reads.
+
+### `--remote`: the same CLI, against a daemon
+
+`--remote <url>` runs the administration commands on the daemon the URL names
+instead of here. The manifest is cached on disk, so `--help` is not a round trip
+and the binary still works when the daemon is not answering; `--refresh` fetches
+it again. The token is `--token` or `AHPD_TOKEN`.
+
+```bash
+ahpd --remote http://127.0.0.1:9187 --token "$SECRET" status
+ahpd --remote http://127.0.0.1:9187 --token "$SECRET" plugin list
+ahpd --remote http://127.0.0.1:9187 --refresh config
+```
+
+The URL is the daemon's origin; `/api` is appended. `start` and `stop` are the
+one pair that stays local, because they are about a background daemon on this
+machine rather than the one answering. Everything else - `status`, `config`,
+`plugin` and `user` - is the daemon's declaration, with the same flags, help,
+completion and `--json` it has when typed at its terminal. `status` reads the
+record a detached daemon wrote, so it answers against one started with
+`ahpd start`.
 
 ## Clients
 

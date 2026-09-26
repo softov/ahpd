@@ -309,6 +309,16 @@ const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1]
 export const GATE = { NEEDS, UNGATED, dispatchNeeds };
 
 /**
+ * The sentence a person is refused with when a grant is missing.
+ *
+ * One wording, because the WebSocket and the HTTP API ask the same question:
+ * whoever may not `config:write` is told the same thing whichever door they
+ * knocked on. Exported rather than written twice, so the two surfaces cannot
+ * drift apart as either one moves.
+ */
+export const refusalReason = (id: string, missing: Grant): string => `${id} may not ${missing} here`;
+
+/**
  * The most rows this host will serve in one page, however many were asked for.
  *
  * The protocol says a server MAY impose its own cap, and one exists so that a
@@ -8317,7 +8327,7 @@ export function createHost(options: HostOptions): Host {
                 // negotiate, and the protocol says that field is omitted when
                 // no grant would resolve the denial. Its absence is what tells
                 // a client to stop rather than retry.
-                throw new RpcError(-32009, `${who.id} may not ${missing} here`, {});
+                throw new RpcError(-32009, refusalReason(who.id, missing), {});
               }
             }
           }

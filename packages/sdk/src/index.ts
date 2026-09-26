@@ -23,7 +23,7 @@
  * back.
  */
 
-export { createHost, ROOT } from './host.js';
+export { createHost, ROOT, refusalReason } from './host.js';
 export { foldHostOptions, pluginHost, raise, AGENT_CLASH } from './plugins.js';
 export type { FoldedOptions, HostRecording } from './plugins.js';
 export { sdkVersion } from './version.js';
