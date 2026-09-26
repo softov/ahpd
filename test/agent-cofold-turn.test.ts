@@ -106,6 +106,33 @@ it('turns text into turnStarted, an opened part, deltas and turnComplete, in tha
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('hello there');
 });
 
+it('keeps the origin a client sent with the message, on the wire and in the catalogue', async () => {
+  /*
+   * `Message.origin` is required by the protocol and a client may only send
+   * `MessageKind.User`, and a client keys its own rendering off it: a turn that
+   * comes back without one draws the person's words as a system line rather
+   * than as their message. It went missing at the SDK boundary, which forwarded
+   * `message.text` and `message.model` and dropped the rest, and cofold writes
+   * `origin` only from the `from` it is handed.
+   */
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, chatUri } = await talking(model);
+  const sent = { text: 'who am i', origin: { kind: 'user' }, _meta: { probe: 'origin' } };
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: sent } },
+  });
+  await until(() => ended(p, chatUri));
+
+  const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
+  expect(started?.action.message).toMatchObject(sent);
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { message: unknown }[] } };
+  };
+  expect(opened.snapshot.state.turns[0]?.message).toMatchObject(sent);
+});
+
 it('keeps a delta a plain action and starts no second turn from it', async () => {
   const model = createFakeModel({ script: [{ text: 'one two' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model);

@@ -35,7 +35,7 @@ import { lookup } from 'node:dns/promises';
 import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
 import type { ContainerConnectResult, ContainerSink } from './types/containers.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
-import type { Ran } from './types/session.js';
+import type { MessageFrom, Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
@@ -4588,6 +4588,29 @@ export function createHost(options: HostOptions): Host {
     return Object.keys(config).length === 0 ? { id: held.id } : { id: held.id, config };
   };
 
+  /**
+   * Who a message came from, read off the message itself.
+   *
+   * `Message.origin` is required by the protocol and `message._meta` is
+   * optional, and a backend's `begin`/`queue` take them as `from` because a
+   * `Session` is handed the words rather than the whole envelope. Starting a
+   * turn without them is how a person's own message comes back with no
+   * origin, and a client then has nothing to draw a bubble from.
+   */
+  const messageFrom = (message: Record<string, unknown>): MessageFrom | undefined => {
+    const origin = typeof message.origin === 'object' && message.origin !== null
+      ? message.origin as MessageFrom['origin']
+      : undefined;
+    const meta = typeof message._meta === 'object' && message._meta !== null
+      ? message._meta as Bag
+      : undefined;
+    if (origin === undefined && meta === undefined) return undefined;
+    return {
+      ...(origin === undefined ? {} : { origin }),
+      ...(meta === undefined ? {} : { _meta: meta }),
+    };
+  };
+
   /** Every resource identifier any agent here advertised. */
   const advertised = (): Set<string> => {
     const out = new Set<string>();
@@ -4730,7 +4753,7 @@ export function createHost(options: HostOptions): Host {
       void fire({ type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
     }
     const chatUri = chatUriFor(uri);
-    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text);
+    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text, undefined, { origin: { kind: 'automation' } });
     return uri;
   };
 
@@ -6352,7 +6375,7 @@ export function createHost(options: HostOptions): Host {
             ? params.initialMessage
             : undefined) as Record<string, unknown> | undefined;
           if (first_ !== undefined) {
-            chat.begin(crypto.randomUUID(), String(first_.text ?? ''));
+            chat.begin(crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_));
           }
           return {};
         },
@@ -7378,7 +7401,7 @@ export function createHost(options: HostOptions): Host {
               turn: String(action.turnId ?? ''),
               text: String(message.text ?? ''),
             });
-            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model));
+            session.begin(String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message));
           })();
           return;
         }
@@ -7491,7 +7514,7 @@ export function createHost(options: HostOptions): Host {
               }));
               break;
             }
-            session.begin(turnId, text, modelIn(message.model));
+            session.begin(turnId, text, modelIn(message.model), messageFrom(message));
             break;
           }
           /**
@@ -7897,7 +7920,7 @@ export function createHost(options: HostOptions): Host {
             const model = (typeof message.model === 'object' && message.model !== null
               ? message.model
               : {}) as Record<string, unknown>;
-            session.queue(String(action.id ?? ''), String(message.text ?? ''), modelIn(model));
+            session.queue(String(action.id ?? ''), String(message.text ?? ''), modelIn(model), messageFrom(message));
             break;
           }
           /**

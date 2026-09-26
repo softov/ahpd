@@ -1145,16 +1145,21 @@ export function cofoldSession(
     },
 
     queue: (id, text, model, from) => {
+      const message: Bag = {
+        text,
+        ...(from?.origin !== undefined ? { origin: from.origin } : {}),
+        ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+      };
       const entry: Bag = {
         id,
-        message: { text },
+        message,
         ...(model !== undefined ? { model } : {}),
         ...(from !== undefined ? { from } : {}),
       };
       const at = queued.findIndex((held) => held.id === id);
       if (at >= 0) queued[at] = entry;
       else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message: entry.message });
+      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
       touch();
       startNext();
     },

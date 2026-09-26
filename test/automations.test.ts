@@ -286,10 +286,14 @@ it('starts a session and says the first message, which is the whole point', asyn
   // keyboard to speak to it - so the turn has to have been started here.
   const chat = `ahp-chat:/${(state.primarySession ?? '').replace('ahp-session:/', '')}`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
-    snapshot: { state: { turns?: { message?: { text?: string } }[] } };
+    snapshot: { state: { turns?: { message?: { text?: string; origin?: { kind?: string } } }[] } };
   };
   const turns = opened.snapshot.state.turns ?? [];
-  expect(turns.some((turn) => turn.message?.text === 'review what changed today')).toBe(true);
+  const first = turns.find((turn) => turn.message?.text === 'review what changed today');
+  expect(first).toBeDefined();
+  // Said by the automation, not by a person: `MessageKind.Automation` is the
+  // protocol's word for a session an automation run started.
+  expect(first?.message?.origin?.kind).toBe('automation');
 });
 
 it('reads running while the session it started is still working', async () => {
