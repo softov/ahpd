@@ -1,7 +1,11 @@
+import { existsSync } from 'node:fs';
 import { RpcError } from '@ahpd/sdk';
+import { resolveNeeds } from '@ahpd/sdk';
+import { hasDefinition } from './devcontainer.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
+import type { MachineNeed, ResolvedNeed } from '@ahpd/sdk';
 import type { MachineSpec } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
 
@@ -37,6 +41,62 @@ export interface Profile {
   memory?: string;
   mounts?: string[];
   workdir?: string;
+  /**
+   * The agents this profile prepares the machine for.
+   *
+   * A machine made from this profile carries what each of them says it needs,
+   * rather than the operator listing the same host paths by hand - which is
+   * what this replaces, and why a version pinned in a mount path stopped the
+   * session with a 127. The names are the agents' `provider` ids, and they are
+   * recorded on the machine as its `ahpd.agents` label.
+   */
+  agents?: string[];
+  /** Values this profile gives those agents' needs, by need name. */
+  needs?: Record<string, string>;
+  /**
+   * A host folder to mount at the same path in the machine.
+   *
+   * Where a session in it works; see `MachineSpec.folder`. Named here so an
+   * operator's profile can set it once.
+   */
+  folder?: string;
+  /**
+   * How the host inside this machine is started, as a command and its
+   * arguments.
+   *
+   * What a backend that runs nested asks the port for: `<host> --stdio
+   * --plugin <each>` is run in the machine, so the image has to carry the
+   * program - `ahpd` by default, or a checkout's own entry with `["node",
+   * "/work/main.js"]`. The profile is where this belongs because it is the
+   * machine's recipe: two profiles can differ in what host their image has.
+   */
+  host?: string[];
+  /**
+   * Whether a session that starts may make a machine from this profile.
+   *
+   * A disposable machine has no machine until a session starts, so the profile
+   * is offered in the `computer` picker as `disposable:<profile>` rather than
+   * made ahead of time, and it is made with the needs of the harness that
+   * session runs - which is why a profile like this names no agents.
+   */
+  disposable?: boolean;
+  /**
+   * How long a disposable machine outlives the last session that used it, in
+   * milliseconds.
+   *
+   * Read when the last session is disposed; a session that picks the machine
+   * again before then cancels it. Absent means 300000, five minutes.
+   */
+  disposableDelay?: number;
+  /**
+   * Whether a machine made from this profile is kept out of the picker.
+   *
+   * Out of the picker means only the session it was made for runs there: the
+   * machine is not listed as a `computer://` row, so no other session can pick
+   * it while it is alive. The `disposable:<profile>` row is still offered, so a
+   * session can still ask for a machine of its own.
+   */
+  disposableAlone?: boolean;
 }
 
 /** What the provider holds, and what a manifest may leave out. */
@@ -86,6 +146,35 @@ export interface ManifestDefaults {
    * an image precisely so a machine can be made from it.
    */
   images?: string[];
+  /**
+   * Read one agent's machine needs, as the host knows them.
+   *
+   * The plugin is handed the host's `machineNeeds`, so a profile that names an
+   * agent a host does not have is refused here rather than making a machine
+   * with none of what it needed. Read when a body picks the profile, never at
+   * load, because the agent may be registered after this plugin.
+   */
+  needsOf?: (provider: string) => Record<string, MachineNeed> | undefined;
+  /** Values the plugin option gives any agent's needs, by need name. */
+  needValues?: Record<string, string>;
+  /**
+   * One agent whose needs this machine is made with, beside the profile's own.
+   *
+   * A disposable machine is made for a session, so the harness it must run is
+   * the session's and not the profile's: the profile names no agents because
+   * it does not know which one will pick it, and this is the one the host
+   * named. The result is recorded in the `ahpd.agents` label like any other.
+   */
+  for?: string;
+  /**
+   * A folder whose `devcontainer.json` makes this machine.
+   *
+   * The maker's own source, beside a body's: a session started with a
+   * `devcontainer://<folder>` names it here, the way a disposable profile's
+   * session folder is written into the profile rather than the body - so the
+   * operator's own route is not the gate a hand-written body passes through.
+   */
+  devcontainer?: string;
 }
 
 /**
@@ -175,6 +264,18 @@ export const MANIFEST_SCHEMA = (
       title: 'Working directory',
       description: 'An absolute path inside the machine.',
     },
+    /*
+     * The folder, beside the mounts and gated the same way: it is the host's
+     * filesystem inside the machine too, and a body free to name `/` would be
+     * the whole host at the same path.
+     */
+    ...(options.bodyMounts !== true ? {} : {
+      folder: {
+        type: 'string',
+        title: 'Folder',
+        description: 'A host folder mounted at the same path inside the machine.',
+      },
+    }),
   },
   };
 };
@@ -260,6 +361,41 @@ const list = (value: unknown): string[] | undefined => {
 };
 
 /**
+ * The folder a machine is a dev container of, from the body or the maker.
+ *
+ * The body's `devcontainer` is an object naming a folder, as
+ * `{"devcontainer": {"folder": "/path"}}`; a maker's own source is the plain
+ * string it was configured with. A folder that is not there, is not absolute,
+ * or carries no `devcontainer.json` is refused here, so a body that names one
+ * is answered by this host rather than by a CLI a minute later.
+ */
+const devcontainerOf = (held: Record<string, unknown>, defaults: ManifestDefaults): string | undefined => {
+  const raw = held.devcontainer;
+  let fromBody: string | undefined;
+  if (raw !== undefined) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new RpcError(-32602, 'devcontainer is an object naming a folder, as {"folder": "/path"}, and that body is not one');
+    }
+    fromBody = said(raw as Record<string, unknown>, 'folder');
+    if (fromBody === undefined) {
+      throw new RpcError(-32602, 'devcontainer names the folder whose devcontainer.json makes the machine, and that body names none');
+    }
+  }
+  const folder = fromBody ?? defaults.devcontainer;
+  if (folder === undefined) return undefined;
+  if (!folder.startsWith('/')) {
+    throw new RpcError(-32602, `devcontainer names a folder on this host, and ${folder} is not an absolute path`);
+  }
+  if (!existsSync(folder)) {
+    throw new RpcError(-32602, `devcontainer names ${folder}, and that path is not there`);
+  }
+  if (!hasDefinition(folder)) {
+    throw new RpcError(-32602, `devcontainer names ${folder}, and it has no devcontainer.json or .devcontainer/devcontainer.json`);
+  }
+  return folder;
+};
+
+/**
  * A create body, as a machine to make.
  *
  * Every field is checked here rather than left for the runtime to reject:
@@ -294,37 +430,54 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
   }
   const profile: Profile = picked === undefined ? {} : known[picked] ?? {};
 
-  // Named and blank is a body saying the wrong thing; absent is the default.
-  const named = held.image === undefined ? undefined : said(held, 'image');
-  if (held.image !== undefined && named === undefined) {
-    throw new RpcError(-32602, 'image is a non-empty string, and that body leaves it blank');
-  }
-  const image = named ?? profile.image ?? defaults.image;
-  if (image === '') {
-    throw new RpcError(-32602, 'A computer is made from an image, and that body names none and this host has no default');
-  }
   /*
-   * An image is a name, not a flag.
+   * The folder whose `devcontainer.json` makes this machine, when that is the
+   * recipe: the folder is the source, the CLI reads the file, and no image is
+   * named at all - decision
+   * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`.
    *
-   * It goes into the runtime's argument list in the position where the image
-   * belongs, and for `docker run` that position is still inside the part the
-   * flag parser reads: a body naming `--privileged` as its image would put a
-   * flag there and push the real image along by one. No legal reference
-   * begins with a dash, so refusing one costs nothing and closes the position.
+   * The folder is checked here rather than left to the CLI, so a body naming
+   * one that is not a dev container is a sentence about the body and no
+   * process is spawned for it.
    */
-  if (isFlag(image)) {
-    throw new RpcError(-32602, `image is the name of an image, and ${image} is a flag`);
+  const devcontainer = devcontainerOf(held, defaults);
+  let image: string | undefined;
+  if (devcontainer === undefined) {
+    // Named and blank is a body saying the wrong thing; absent is the default.
+    const named = held.image === undefined ? undefined : said(held, 'image');
+    if (held.image !== undefined && named === undefined) {
+      throw new RpcError(-32602, 'image is a non-empty string, and that body leaves it blank');
+    }
+    image = named ?? profile.image ?? defaults.image;
+    if (image === '') {
+      throw new RpcError(-32602, 'A computer is made from an image, and that body names none and this host has no default');
+    }
+    /*
+     * An image is a name, not a flag.
+     *
+     * It goes into the runtime's argument list in the position where the image
+     * belongs, and for `docker run` that position is still inside the part the
+     * flag parser reads: a body naming `--privileged` as its image would put a
+     * flag there and push the real image along by one. No legal reference
+     * begins with a dash, so refusing one costs nothing and closes the position.
+     */
+    if (isFlag(image)) {
+      throw new RpcError(-32602, `image is the name of an image, and ${image} is a flag`);
+    }
+    /*
+     * And one the deployment allows, where it named a set at all.
+     *
+     * The names are listed, because a person who picked an image this host will
+     * not run needs to know what it will. A profile's own image is in the set,
+     * so picking a profile is never refused by this.
+     */
+    const allowed = allowedImages(defaults);
+    if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+      throw new RpcError(-32602, `This host does not run ${image}; it runs ${allowed.names.join(', ')}`);
+    }
   }
-  /*
-   * And one the deployment allows, where it named a set at all.
-   *
-   * The names are listed, because a person who picked an image this host will
-   * not run needs to know what it will. A profile's own image is in the set,
-   * so picking a profile is never refused by this.
-   */
-  const allowed = allowedImages(defaults);
-  if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
-    throw new RpcError(-32602, `This host does not run ${image}; it runs ${allowed.names.join(', ')}`);
+  else if (said(held, 'image') !== undefined) {
+    throw new RpcError(-32602, 'A computer is made from an image or from a folder\'s devcontainer.json, and that body names both');
   }
 
   const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;
@@ -359,22 +512,113 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     }
   }
   /*
+   * The folder a session in this machine works in, mounted at the same path.
+   *
+   * A body's own is gated like its mounts, and for the same reason: the folder
+   * is the host's filesystem inside the machine, and a body free to name `/`
+   * would be the whole host at the same path. The profile's is the operator's,
+   * so it is always allowed.
+   */
+  const askedFolder = held.folder === undefined ? undefined : said(held, 'folder');
+  if (held.folder !== undefined && askedFolder === undefined) {
+    throw new RpcError(-32602, 'folder is a non-empty string, and that body leaves it blank');
+  }
+  if (askedFolder !== undefined && defaults.bodyMounts !== true) {
+    const names = Object.keys(known);
+    throw new RpcError(-32602, names.length === 0
+      ? 'This host takes its folders from its configuration, and that body names its own'
+      : `This host takes its folders from its profiles, and that body names its own; its profiles are ${names.join(', ')}`);
+  }
+  const folder = askedFolder ?? profile.folder;
+  if (folder !== undefined && !folder.startsWith('/')) {
+    throw new RpcError(-32602, `folder is an absolute path on this host, and ${folder} is not one`);
+  }
+  if (folder !== undefined && !existsSync(folder)) {
+    throw new RpcError(-32602, `folder names ${folder}, and that path is not there`);
+  }
+
+  /*
+   * What the agents this profile prepares for say they need.
+   *
+   * The profile is what names them; each agent answers with its own `machine()`
+   * through the host, and a profile's own `needs` and the plugin option's give
+   * any of them another value. A name this host has no agent for is refused
+   * rather than skipped: a machine made quietly without what it was prepared
+   * for is the failure this plan exists to stop.
+   *
+   * `defaults.for` joins the list, which is how a machine made for a session
+   * carries the needs of the harness that session runs rather than of a
+   * profile that cannot know it.
+   */
+  const agents = [...new Set([
+    ...(profile.agents ?? []),
+    ...(defaults.for === undefined ? [] : [defaults.for]),
+  ])];
+  const resolved: ResolvedNeed[] = [];
+  for (const provider of agents) {
+    const needs = defaults.needsOf?.(provider);
+    if (needs === undefined) {
+      throw new RpcError(-32602, `profile ${picked ?? ''} prepares a machine for ${provider}, and this host has no agent called ${provider}`);
+    }
+    try {
+      resolved.push(...resolveNeeds(needs, {
+        ...(profile.needs === undefined ? {} : { profile: profile.needs }),
+        ...(defaults.needValues === undefined ? {} : { option: defaults.needValues }),
+      }));
+    }
+    catch (error) {
+      throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+    }
+  }
+  /*
+   * Two needs landing on one target is one of them silently winning, which is
+   * how an agent ends up without the file it asked for. Checked across every
+   * agent the profile names, because that is where two of them can collide.
+   */
+  const landed = new Map<string, string>();
+  for (const need of resolved) {
+    const first = landed.get(need.target);
+    if (first !== undefined) {
+      throw new RpcError(-32602, `machine needs ${first} and ${need.name} both land at ${need.target}`);
+    }
+    landed.set(need.target, need.name);
+  }
+  const needMounts = resolved
+    .filter((one) => one.kind === 'directory' || one.kind === 'file')
+    .map((one) => `${one.source}:${one.target}${one.readOnly === true ? ':ro' : ''}`);
+  const env = Object.fromEntries(
+    resolved.filter((one) => one.kind === 'env').map((one) => [one.target, one.source]),
+  );
+  const copies = resolved
+    .filter((one) => one.kind === 'copy')
+    .map((one) => ({ source: one.source, target: one.target }));
+  /*
    * Widest first, so the narrower statement wins where two name one target:
    * the deployment's every machine, then the profile this one was made from,
-   * then what this body itself asked for.
+   * then what this body itself asked for, then what the agents declared.
    */
-  const mounts = [...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? [])];
-  const workdir = said(held, 'workdir') ?? profile.workdir;
+  const mounts = [...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? []), ...needMounts];
+  // A machine with a folder starts a session in it, so a host path inside the
+  // folder is the same path in there.
+  const workdir = said(held, 'workdir') ?? profile.workdir ?? folder;
   if (workdir !== undefined && !workdir.startsWith('/')) {
     throw new RpcError(-32602, `workdir is an absolute path inside the computer, and ${workdir} is not one`);
   }
 
   return {
     name,
-    image,
+    // Which profile this machine is, recorded on it: a `host` inside is the
+    // profile's to say and cannot be read from the image.
+    ...(picked === undefined ? {} : { profile: picked }),
+    ...(devcontainer === undefined ? {} : { devcontainer }),
+    ...(image === undefined ? {} : { image }),
     ...(cpus === undefined ? {} : { cpus }),
     ...(memory === undefined ? {} : { memory }),
     ...(mounts.length === 0 ? {} : { mounts }),
+    ...(Object.keys(env).length === 0 ? {} : { env }),
+    ...(copies.length === 0 ? {} : { copies }),
+    ...(agents.length === 0 ? {} : { agents }),
+    ...(folder === undefined ? {} : { folder }),
     ...(workdir === undefined ? {} : { workdir }),
   };
 };

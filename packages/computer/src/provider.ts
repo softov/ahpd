@@ -1,5 +1,5 @@
 import { RpcError } from '@ahpd/sdk';
-import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
+import type { Entry, MachineNeed, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
 import { bodyText, MANIFEST_SCHEMA, manifestOf } from './manifest.js';
 import type { Profile } from './manifest.js';
 import type { ComputerRuntime } from './runtime.js';
@@ -35,6 +35,17 @@ export interface ProviderOptions {
   bodyMounts?: boolean;
   /** The images a machine may be made from, as patterns. Absent allows any. */
   images?: string[];
+  /**
+   * Read one agent's machine needs, as the host knows them.
+   *
+   * The plugin hands the host's `machineNeeds` down, so a profile that names
+   * an agent is made with what that agent declared. Absent on a host with no
+   * agents to ask, where a profile naming one is refused rather than made
+   * without what it was prepared for.
+   */
+  needsOf?: (provider: string) => Record<string, MachineNeed> | undefined;
+  /** Values the plugin option gives any agent's needs, by need name. */
+  needValues?: Record<string, string>;
 }
 
 /**
@@ -283,6 +294,8 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
         ...(options.images === undefined ? {} : { images: options.images }),
+        ...(options.needsOf === undefined ? {} : { needsOf: options.needsOf }),
+        ...(options.needValues === undefined ? {} : { needValues: options.needValues }),
       });
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);

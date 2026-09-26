@@ -150,7 +150,13 @@ it('makes the container the folder asks for, and answers the reference shape', a
     remoteWorkspaceFolder: '/workspaces/Box',
     hostWorkspaceFolder: folder,
   });
-  expect(read().calls[0]).toEqual(['up', '--log-level', 'debug', '--workspace-folder', folder]);
+  // The id labels are the same pair every other call about this folder uses,
+  // so the CLI finds the folder's own container rather than making another.
+  expect(read().calls[0]).toEqual([
+    'up', '--log-level', 'debug', '--workspace-folder', folder,
+    '--id-label', 'ahpd.computer=1',
+    '--id-label', `ahpd.devcontainer.folder=${folder}`,
+  ]);
   // The command is echoed and the CLI's own progress is a person's to read.
   expect(where.out.join('')).toContain('devcontainer');
   expect(where.out.join('')).toContain('building');

@@ -27,7 +27,7 @@ const fake = () => {
     run: async (spec) => {
       calls.push(`run ${spec.name} ${spec.image} ${spec.cpus ?? '-'} ${spec.memory ?? '-'} ${spec.label}${spec.mounts === undefined ? '' : ` v=${spec.mounts.join(',')}`}${spec.workdir === undefined ? '' : ` w=${spec.workdir}`}`);
       held.set(spec.name, { name: spec.name, image: spec.image, Created: new Date(0).toISOString() });
-      return { id: spec.name, image: spec.image, status: 'running', created: '' };
+      return { id: spec.name, image: spec.image ?? '', status: 'running', created: '' };
     },
     stop: async (id) => { calls.push(`stop ${id}`); },
     start: async (id) => { calls.push(`start ${id}`); },
@@ -340,7 +340,7 @@ it('says in capabilities what a create body may contain', async () => {
   expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'image', 'cpus', 'memory', 'workdir']);
   const open = computerProvider(runtime, { ...options, bodyMounts: true });
   expect(Object.keys((open.describe().manifest as { properties: Record<string, unknown> }).properties))
-    .toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir']);
+    .toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir', 'folder']);
   // The same schema `describe` advertises, with this provider's own default.
   expect(caps.manifest).toEqual(provider.describe().manifest);
   expect(caps.manifest.properties.image?.default).toBe('debian:bookworm-slim');

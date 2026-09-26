@@ -20,6 +20,67 @@ import type { ContainerConnect, ContainerConnectResult, ContainerPort, Container
  * what a frame means is the SDK's to know.
  */
 
+/** The label that carries the folder a dev container computer was made from. */
+export const DEVCONTAINER_FOLDER = 'ahpd.devcontainer.folder';
+
+/** The CLI's program, the words before its verb, and the environment it runs in. */
+export interface CliOptions {
+  /** The CLI program. Default `devcontainer`. */
+  command?: string;
+  /** Arguments before the CLI's own verb, for a wrapper. */
+  args?: string[];
+  /** Environment for the CLI, on top of this process's. */
+  env?: Record<string, string>;
+}
+
+/** A CLI resolved from its options, which is what a caller runs. */
+export interface Cli {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+/** A CLI and its arguments, with every default filled in. */
+export const cliOf = (options: CliOptions = {}): Cli => ({
+  command: options.command ?? 'devcontainer',
+  args: options.args ?? [],
+  ...(options.env === undefined ? {} : { env: options.env }),
+});
+
+/**
+ * The `--id-label` pairs every call about one dev container computer shares.
+ *
+ * The CLI identifies a container by its labels, so the same pair on `up` and
+ * on `exec` is what makes both reach the container the folder's definition
+ * made rather than whichever container Docker happens to find first. The
+ * provider's own label is one of them, so the container is listed like any
+ * other computer - decision
+ * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`.
+ */
+export const idLabels = (label: string, folder: string): string[] => [
+  '--id-label', label,
+  '--id-label', `${DEVCONTAINER_FOLDER}=${folder}`,
+];
+
+/** One run of a program, collected rather than streamed. */
+export const runCli = (cli: Cli, argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(cli.command, [...cli.args, ...argv], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...(cli.env ?? {}) },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    // A program that is not installed is an error rather than an exit code,
+    // and it is the one failure a caller most needs to read.
+    child.once('error', reject);
+    child.once('close', (code) => { resolve({ code: code ?? 0, stdout, stderr }); });
+  });
+
 /** What a launcher can be told. All of it has a default. */
 export interface DevContainerOptions {
   /** The CLI program. Default `devcontainer`. */
@@ -30,6 +91,24 @@ export interface DevContainerOptions {
   env?: Record<string, string>;
   /** The Docker program, asked whether it is there. Default `docker`. */
   docker?: string;
+  /**
+   * The label every computer this deployment makes carries. Default
+   * `ahpd.computer=1`.
+   *
+   * Passed to `up` and `exec` as the CLI's `--id-label`, so the container a
+   * folder's definition made is the same one a session reaches and the same
+   * one a listing shows.
+   */
+  label?: string;
+  /**
+   * The computer already made for a folder, if there is one.
+   *
+   * A relay finds a computer rather than making a second: the host inside is
+   * started in what is there, and `up` runs only when this answers nothing or
+   * when this launcher has not yet learned the folder's remote workspace. The
+   * plugin hands this in from the runtime that lists the computers.
+   */
+  existing?: (folder: string) => Promise<string | undefined>;
   /**
    * How the host inside the container is started.
    *
@@ -158,7 +237,21 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
   const host = options.host ?? ['ahpd'];
   const install = options.install;
   const plugins = options.plugins ?? [];
+  const label = options.label ?? 'ahpd.computer=1';
+  const existing = options.existing;
   const live = new Map<string, ChildProcessWithoutNullStreams>();
+  /*
+   * The remote workspace each folder's container was made with, for this
+   * daemon's life.
+   *
+   * A second `connect` for the same folder must not run `up` again, and the
+   * nested host still has to be told the container path `--path` takes. The
+   * CLI only answers that when it is asked to bring the container up, so what
+   * it said the first time is kept here; a daemon that has not seen the folder
+   * asks the CLI again, which finds the labelled container rather than making
+   * a second one.
+   */
+  const remotes = new Map<string, string>();
 
   /** The CLI's own environment: this process's, plus whatever the caller named. */
   const where = (): Record<string, string> => ({ ...process.env, ...env }) as Record<string, string>;
@@ -211,7 +304,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
 
   /** One command inside the container, by the CLI's own exec. */
   const inside = (folder: string, said: string, sink: ContainerSink) =>
-    run([...base, 'exec', '--log-level', 'debug', '--workspace-folder', folder, '/bin/sh', '-c', said], sink);
+    run([...base, 'exec', '--log-level', 'debug', '--workspace-folder', folder, ...idLabels(label, folder), '/bin/sh', '-c', said], sink);
 
   return {
     docker: async () => there(docker, ['--version']),
@@ -247,14 +340,46 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
       if (!hasDefinition(one.workspaceFolder)) {
         throw new Error(`${one.workspaceFolder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
       }
-      const up = await run(
-        [...base, 'up', '--log-level', 'debug', '--workspace-folder', one.workspaceFolder],
-        sink,
-      );
-      const made = parseUp(up.stdout);
-      if (made === undefined) {
-        const said = [up.stdout.trim(), up.stderr.trim()].filter((one) => one !== '').join(' ');
-        throw new Error(`The Dev Container CLI reported no container: ${said === '' ? `exit ${String(up.code)}` : said}`);
+      /*
+       * The computer that folder already is, when there is one.
+       *
+       * A relay finds the same computer a session makes: the container a
+       * folder's `devcontainer.json` made is one object, listed and reached
+       * like any other - decision
+       * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`. Only
+       * the id is asked for, because this port has no listing of its own: the
+       * plugin hands the runtime's own answer in.
+       */
+      const known = existing === undefined
+        ? undefined
+        : await existing(one.workspaceFolder).catch(() => undefined);
+      let made: { containerId: string; remoteWorkspaceFolder: string };
+      const remembered = remotes.get(one.workspaceFolder);
+      if (known !== undefined && remembered !== undefined) {
+        // Already up, and this daemon knows where in there the folder is: the
+        // CLI is not asked to bring anything up a second time.
+        made = { containerId: known, remoteWorkspaceFolder: remembered };
+      }
+      else {
+        /*
+         * The id labels, on the same `up` a session's create runs.
+         *
+         * They are what makes the CLI find the folder's own container rather
+         * than make another, so a second connect, or a connect after a session
+         * made one, reaches the same computer - decision
+         * `a-dev-container-is-made-by-the-dev-container-cli`.
+         */
+        const up = await run(
+          [...base, 'up', '--log-level', 'debug', '--workspace-folder', one.workspaceFolder, ...idLabels(label, one.workspaceFolder)],
+          sink,
+        );
+        const fresh = parseUp(up.stdout);
+        if (fresh === undefined) {
+          const said = [up.stdout.trim(), up.stderr.trim()].filter((one) => one !== '').join(' ');
+          throw new Error(`The Dev Container CLI reported no container: ${said === '' ? `exit ${String(up.code)}` : said}`);
+        }
+        made = fresh;
+        remotes.set(one.workspaceFolder, fresh.remoteWorkspaceFolder);
       }
       const remote = made.remoteWorkspaceFolder;
 

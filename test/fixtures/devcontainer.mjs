@@ -52,6 +52,39 @@ if (verb === 'up') {
   }
   const made = held.up ?? { outcome: 'success', containerId: 'abc123', remoteWorkspaceFolder: '/workspaces/Box' };
   process.stdout.write(`${JSON.stringify(made)}\n`);
+  /*
+   * The container Docker now holds.
+   *
+   * `up` is the CLI *and* Docker, so a test that reads the listing needs the
+   * machine to exist somewhere. With `DOCKER_FAKE_STATE` set, what the CLI
+   * reported is put in the scripted docker's own record, labelled from the
+   * `--id-label` flags it was given, so a later `docker ps` or
+   * `docker inspect` answers for it the way the real pair would.
+   */
+  const docker = process.env.DOCKER_FAKE_STATE;
+  if (docker !== undefined) {
+    const at = args.indexOf('--workspace-folder');
+    const folder = args[at + 1];
+    const labels = {};
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] !== '--id-label') continue;
+      const said = String(args[i + 1]);
+      const eq = said.indexOf('=');
+      if (eq !== -1) labels[said.slice(0, eq)] = said.slice(eq + 1);
+    }
+    const record = existsSync(docker) ? JSON.parse(readFileSync(docker, 'utf8')) : { machines: [], calls: [] };
+    record.machines.push({
+      name: made.containerId,
+      image: held.image ?? 'devcontainer',
+      labels: { 'ahpd.computer': '1', ...labels },
+      // The workspace mount is what the real CLI makes, and the one thing a
+      // caller's folder can be read through.
+      mounts: [`${folder}:${made.remoteWorkspaceFolder}`],
+      state: 'running',
+    });
+    writeFileSync(`${docker}.${process.pid}.tmp`, JSON.stringify(record));
+    renameSync(`${docker}.${process.pid}.tmp`, docker);
+  }
   keep();
   process.exit(0);
 }

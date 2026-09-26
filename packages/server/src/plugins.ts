@@ -27,7 +27,7 @@ import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
-import type { Contribution, HostOptions, Loaded, Plugin, PluginSpec } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -308,6 +308,14 @@ export interface LoadOneOptions {
    * invent a sink.
    */
   say?(line: string): void;
+  /**
+   * Every agent this host knows, read when a plugin asks for one's needs.
+   *
+   * A function rather than a list because the list grows as plugins load: the
+   * plugin that registers an agent may load after the one that makes machines,
+   * and a machine is made long after both have applied.
+   */
+  agents?: () => Agent[];
 }
 
 /** What one `loadOne` managed: a plugin, or the reasons it is not one. */
@@ -416,7 +424,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     version: options.version,
     log: options.log,
     say: options.say ?? (() => {}),
-  });
+  }, options.agents === undefined ? {} : { agents: options.agents });
   try {
     await apply.call(plugin, host, values);
   }
@@ -486,6 +494,14 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   const contributions: Contribution[] = [];
   const problems: string[] = [];
   const loaded: Loaded[] = [];
+  /*
+   * Every agent this host will have, filled as plugins load.
+   *
+   * The machine-making plugin asks this at create time rather than at load, so
+   * the list may be incomplete while any one plugin applies - a plugin that
+   * registers an agent is allowed to load after one that makes machines.
+   */
+  const known: Agent[] = [...options.base.agents];
 
   for (const spec of specs) {
     if (typeof spec !== 'string' && spec.enabled === false) continue;
@@ -503,10 +519,14 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       version,
       log: options.log,
       ...(options.say === undefined ? {} : { say: options.say }),
+      agents: () => known,
     });
     problems.push(...one.problems);
     if (one.loaded !== undefined) loaded.push(one.loaded);
-    if (one.contribution !== undefined) contributions.push(one.contribution);
+    if (one.contribution !== undefined) {
+      contributions.push(one.contribution);
+      known.push(...one.contribution.agents);
+    }
   }
 
   const folded = foldHostOptions(options.base, contributions);

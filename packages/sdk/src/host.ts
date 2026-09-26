@@ -22,6 +22,8 @@ import type { AnnotationsAction, AnnotationsState, ChangesetFile, ChatAction, Ch
 import type { OnWire, WireTurn } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { notServed } from './resources.js';
+import { computerId, computerSource, computersFor, openComputer } from './computers.js';
+import { nestedAgent } from './nested.js';
 import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { worktreeFor, worktreesOf } from './worktrees.js';
@@ -1431,6 +1433,19 @@ export function createHost(options: HostOptions): Host {
    * nothing to draw.
    */
   const offered = new Map<string, Bag>();
+  /**
+   * The machine a session made from a source, and the source it named.
+   *
+   * A session whose `computer` setting is `disposable:<profile>` - or any
+   * other source a plugin serves - is made a machine when it starts, and the
+   * setting is rewritten to the `computer://<id>` that came back. The source
+   * is kept because a client sends its whole config bag on the first send,
+   * including the source it picked: the two have to be recognised as the same
+   * choice rather than a fixed key that moved, or the session would be started
+   * again with the source a backend cannot enter and, worse, a second machine
+   * would be made for it.
+   */
+  const sessionMachines = new Map<string, { source: string; machine: string }>();
   /** The marks on a session, empty until somebody makes one. */
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
@@ -2911,7 +2926,21 @@ export function createHost(options: HostOptions): Host {
     credentials?: Record<string, string>,
     additional?: string[],
   ): Session => {
-    const session = agent.create({
+    /*
+     * The backend that actually runs this session.
+     *
+     * A backend that cannot move its own process into a machine declares
+     * `runsNested`, and a session of it that names a computer runs through the
+     * SDK's proxy instead: a whole host with that backend loaded is started
+     * inside the machine and its frames are carried out as this session's -
+     * decision `a-cofold-session-in-a-computer-runs-in-a-nested-host`. A
+     * session with no machine, or a backend without the flag, is started here
+     * exactly as it was.
+     */
+    const used = agent.runsNested === true && computerId(config.computer) !== undefined
+      ? nestedAgent(agent)
+      : agent;
+    const session = used.create({
       uri,
       chatUri,
       /*
@@ -2935,7 +2964,7 @@ export function createHost(options: HostOptions): Host {
        */
       ...(options.resources !== undefined ? { resources: options.resources } : {}),
       ...(options.terminals !== undefined ? { terminals: heldTerminals(options.terminals, uri, chatUri) } : {}),
-      ...(options.computers !== undefined ? { computers: options.computers } : {}),
+      ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider) } : {}),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -3756,6 +3785,16 @@ export function createHost(options: HostOptions): Host {
       })();
     }
     sessions.delete(uri);
+    /*
+     * And the machine it was running in, told that this session has left.
+     *
+     * A disposable machine's last session leaving is what starts the delay
+     * before it is removed, so this and `enter` are the only two moments its
+     * count moves.
+     */
+    const left = computerId(held.config.computer);
+    if (left !== undefined) options.computers?.leave?.(left, uri);
+    sessionMachines.delete(uri);
     // Gone from the map first, so a handler asking about it is told the truth.
     void fire({ type: 'session_end', session: uri, reason: 'disposed' });
     /*
@@ -3843,6 +3882,16 @@ export function createHost(options: HostOptions): Host {
       : undefined;
     sessions.delete(uri);
     try {
+      /*
+       * A machine named now, when the config names a source.
+       *
+       * A client that opens a session before deciding can pick a disposable
+       * profile before the first turn, and that arrives as this restart - so
+       * the source is made into a machine here too, rather than handed to a
+       * backend that has no way to enter it. A session that already has its
+       * machine is left exactly as it was.
+       */
+      await placedIn(uri, held.agent.provider, held.config, to);
       spawn(
         held.agent,
         uri,
@@ -3874,6 +3923,15 @@ export function createHost(options: HostOptions): Host {
       throw error;
     }
     log(`restarted ${uri}${to === undefined ? '' : ` in ${to}`}`);
+    /*
+     * And the machine, when this restart is the first one to reach it.
+     *
+     * A restart of a session already inside a machine adds the same session
+     * again, which a set of sessions does not count twice and which cancels
+     * nothing that was running: a pre-turn restart is not a second user.
+     */
+    const inside = computerId(held.config.computer);
+    if (inside !== undefined) options.computers?.enter?.(inside, uri);
     if (before === to) return;
     /*
      * Replaced, not removed and re-added.
@@ -4014,6 +4072,49 @@ export function createHost(options: HostOptions): Host {
     worktrees.set(uri, { repository, path, base, ...(branch !== undefined ? { branch } : {}) });
     log(`made ${path} on ${branch ?? base} for ${uri}`);
     return path;
+  };
+
+  /**
+   * The machine a session should run in, made now when its setting names a source.
+   *
+   * A `disposable:<profile>` setting is a profile the plugin turns into a
+   * machine for this session - with the profile, this harness's `machine()`
+   * needs and the folder the session works in. What comes back is written over
+   * the setting, so everything downstream - the backend's `settings`, a
+   * restart, a second chat - sees an ordinary `computer://<id>` and the session
+   * runs as if it had been given one.
+   *
+   * A session that already has a machine for the source it named keeps it: the
+   * first send pushes the whole config bag, and rewriting the same choice to
+   * the same machine is what stops a pre-turn restart from making a second one.
+   * A different source before the first turn is refused rather than silently
+   * kept, because a machine is where the session is running.
+   */
+  const placedIn = async (
+    uri: string,
+    provider: string,
+    config: Record<string, unknown>,
+    where: string | undefined,
+  ): Promise<void> => {
+    const said = computerSource(config.computer);
+    if (said === undefined) return;
+    const known = sessionMachines.get(uri);
+    if (known !== undefined) {
+      if (known.source !== said) {
+        throw new RpcError(-32602, `This session is already running in ${known.machine}, made from ${known.source}, and cannot switch to ${said} before its first turn; dispose it and create one that asks for ${said}`);
+      }
+      config.computer = known.machine;
+      return;
+    }
+    const agent = agents.get(provider);
+    const machine = await openComputer(options.computers, said, {
+      session: uri,
+      provider,
+      ...(where === undefined ? {} : { folder: where }),
+      ...(agent?.machine === undefined ? {} : { needs: agent.machine() }),
+    });
+    sessionMachines.set(uri, { source: said, machine });
+    config.computer = machine;
   };
 
   /**
@@ -5226,6 +5327,17 @@ export function createHost(options: HostOptions): Host {
     dispatch(uri, { type: 'session/ready' });
     sessionAdded(uri);
     activeSessionsMoved();
+    /*
+     * The machine this session runs in, told to the plugin that owns it.
+     *
+     * A disposable machine counts its sessions and waits out a delay once the
+     * last one is gone, and this is the one moment a count goes up: a session
+     * that picked an existing machine counts the same as the one that made it.
+     * A pre-turn restart never comes through here, which is what keeps a
+     * restart from looking like a second session.
+     */
+    const inside = computerId(config.computer);
+    if (inside !== undefined) options.computers?.enter?.(inside, uri);
     // Named and in the map, which is the moment a handler can act on it.
     void fire({ type: 'session_start', session: uri, provider });
   };
@@ -5246,6 +5358,9 @@ export function createHost(options: HostOptions): Host {
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
     await settle(uri, wanted.workingDirectory, config);
+    // A source in the config is made into a machine before anything runs, the
+    // same step a client's `createSession` takes.
+    await placedIn(uri, wanted.provider ?? first.provider, config, where);
     openSession(
       uri,
       wanted.provider ?? first.provider,
@@ -6743,6 +6858,10 @@ export function createHost(options: HostOptions): Host {
           const running = await isolated(uri, config, where);
           along(1, 'Starting the agent');
           await settle(uri, where, config);
+          // A `disposable:<profile>` setting is a machine made for this
+          // session, with this harness's needs and this folder, before the
+          // backend is started with it.
+          await placedIn(uri, provider, config, running);
           // This connection's tokens and no other's. A client that pushed
           // nothing gets a session on the daemon's own credentials, which is
           // how every session worked before there was anything to push.
@@ -8102,6 +8221,22 @@ export function createHost(options: HostOptions): Host {
             // chat opened after this one is answered starts on it too.
             const owning = holding ?? (byChat.get(channel) ? sessions.get(byChat.get(channel)?.uri ?? '') : undefined);
             /*
+             * A source the session already made a machine from is that machine.
+             *
+             * The first send pushes the whole config bag, including the
+             * `disposable:<profile>` the person picked, while the session is
+             * running in the `computer://<id>` it was made into. Reading the
+             * two as the same choice is what stops the fixed-key rule from
+             * starting the session again with a value no backend can enter -
+             * and from making a second machine while the first is alive.
+             */
+            const made = sessionMachines.get(session.uri);
+            if (made !== undefined) {
+              for (const [key, value] of Object.entries(config)) {
+                if (value === made.source) config[key] = made.machine;
+              }
+            }
+            /*
              * What each key held before this action, read before anything
              * writes over it.
              *
@@ -8214,8 +8349,18 @@ export function createHost(options: HostOptions): Host {
                 void work.then(
                   () => {
                     clear();
-                    for (const [key, value] of moved)
-                      dispatch(uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
+                    for (const [key, value] of moved) {
+                      /*
+                       * The value the session actually has, when the restart
+                       * changed it. A source is made into a machine on the way
+                       * in, so a client told the source back would hold a value
+                       * the session is not running with. This host's own keys
+                       * are not in the backend's config, so they stay as they
+                       * were sent.
+                       */
+                      const answered = owning.config[key] ?? value;
+                      dispatch(uri, { type: 'session/configChanged', config: { [key]: answered } }, origin);
+                    }
                   },
                   (error: unknown) => {
                     clear();

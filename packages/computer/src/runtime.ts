@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { cliOf, DEVCONTAINER_FOLDER, hasDefinition, idLabels, parseUp, runCli } from './devcontainer.js';
+import type { Cli, CliOptions } from './devcontainer.js';
 
 /**
  * What a machine is, and what a runtime does with one.
@@ -24,6 +26,30 @@ export interface Machine {
   status: string;
   /** When it was made, as the runtime says it. */
   created: string;
+  /**
+   * The folder whose `devcontainer.json` made this machine, when one did.
+   *
+   * Read back from the `ahpd.devcontainer.folder` label, so a listing says
+   * which folder a dev container computer belongs to and a picker can tell
+   * that the folder already has one - decision
+   * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`.
+   */
+  folder?: string;
+  /**
+   * The agents this machine was prepared for, from its own label.
+   *
+   * Empty for one made before the label existed, which is offered to every
+   * agent; absent for a runtime that reports no such thing.
+   */
+  agents?: string[];
+  /**
+   * The disposable profile this machine was made from, when it was.
+   *
+   * Read back from its own label, so a daemon that restarted can find the
+   * machines it left behind and a picker can tell one that must not be offered
+   * to a second session. Absent for every machine made any other way.
+   */
+  disposable?: { profile: string; alone: boolean };
 }
 
 /** What to make. */
@@ -36,7 +62,23 @@ export interface MachineSpec {
    * knows what to call it.
    */
   name: string;
-  image: string;
+  /**
+   * The image to make it from, or nothing when a dev container makes it.
+   *
+   * A machine is one of two recipes: an image run by Docker, or a folder's
+   * `devcontainer.json` read by the Dev Container CLI - decision
+   * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`. The
+   * image is absent exactly when `devcontainer` is set, and the CLI's own
+   * file decides what the container is then.
+   */
+  image?: string;
+  /**
+   * The folder whose `devcontainer.json` makes this machine, when it does.
+   *
+   * The CLI reads the file, so this host decides none of the image, the
+   * features, the mounts or the user in there.
+   */
+  devcontainer?: string;
   /** The label every machine this provider made carries. */
   label: string;
   cpus?: string;
@@ -51,6 +93,59 @@ export interface MachineSpec {
    * is readable and writable in there.
    */
   mounts?: string[];
+  /**
+   * Variables set inside the machine, as `docker run -e` flags.
+   *
+   * What an agent's environment needs come to. The docker program's own
+   * environment is `CommandOptions.env` and is a different thing: this is set
+   * in the machine, not around the runtime that makes it.
+   */
+  env?: Record<string, string>;
+  /**
+   * Host paths copied in, rather than made visible.
+   *
+   * Paid on every create and lost when the machine goes, which is why a mount
+   * is preferred; a runtime that cannot bind-mount has this instead. Each one
+   * is `docker cp` between the container being created and its first process
+   * starting, so what is copied is there before anything runs.
+   */
+  copies?: { source: string; target: string }[];
+  /**
+   * The agents this machine is prepared for, recorded as a label.
+   *
+   * What the picker filters by and what the host checks before a session runs
+   * in one, so a session never pairs an agent with a machine not made for it.
+   */
+  agents?: string[];
+  /**
+   * The disposable profile this machine is made from, recorded as a label.
+   *
+   * A disposable machine is made for one session and goes a delay after the
+   * last session using it is disposed, so which profile it came from and
+   * whether it is meant to be alone have to outlive the daemon that made it:
+   * both are read back from the label at startup, when the timers are gone.
+   * `alone` machine is kept out of the picker, so only the session it was made
+   * for runs there.
+   */
+  disposable?: { profile: string; alone?: boolean };
+  /**
+   * The profile this machine was made from, recorded as a label.
+   *
+   * Every machine a body makes from a profile carries it, disposable or not,
+   * so the profile's own recipe - `host`, today - can be read back after the
+   * daemon that made it is gone. Absent for a machine made without one, which
+   * falls back to the runtime's defaults.
+   */
+  profile?: string;
+  /**
+   * A host folder to mount at the same path inside the machine.
+   *
+   * Where a session works, made visible under the name it has outside. The
+   * same path is the point: an agent that keys its own record by the working
+   * directory - Claude's history is one - then finds the same key inside and
+   * out, and resuming on this host shows the turns written in the machine.
+   */
+  folder?: string;
   /** Where a command starts inside the machine. */
   workdir?: string;
 }
@@ -183,6 +278,14 @@ export interface CommandOptions {
 export interface DockerOptions extends CommandOptions {
   /** The label every machine this provider made carries, so a listing is only its own. */
   label: string;
+  /**
+   * The Dev Container CLI, for a machine made from a folder's
+   * `devcontainer.json` rather than from an image.
+   *
+   * Absent leaves the default program, `devcontainer`, which is what the
+   * plugin's own option defaults to as well.
+   */
+  devcontainerCli?: CliOptions;
 }
 
 interface Ran {
@@ -249,6 +352,127 @@ const ours = (found: Record<string, unknown>, label: string): boolean => {
 };
 
 /**
+ * The label a machine prepared for agents carries, as a comma-separated list.
+ *
+ * One label rather than one per agent, because a runtime's label vocabulary is
+ * flat and the empty list has to be tellable from the label being absent: an
+ * absent label is a machine made before any of this, which is offered to every
+ * agent, and an empty value is a machine prepared for none.
+ */
+export const MACHINE_AGENTS = 'ahpd.agents';
+
+/**
+ * The label a machine made from a disposable profile carries, and the one that
+ * marks it alone.
+ *
+ * Two labels rather than one, because the profile is what a listing and a
+ * restart read and `alone` is a rule about who may pick it: a value that packed
+ * both would have to be parsed to answer either question.
+ */
+export const MACHINE_DISPOSABLE = 'ahpd.disposable';
+export const MACHINE_ALONE = 'ahpd.disposable.alone';
+
+/**
+ * The label a machine made from a profile carries.
+ *
+ * Read back so a machine found by a daemon that did not make it is still
+ * reached with its profile's own `host` - the one thing about a machine that
+ * cannot be re-derived from its image alone.
+ */
+export const MACHINE_PROFILE = 'ahpd.profile';
+
+/** The agents in a label value, as a list. */
+const agentsSaid = (value: unknown): string[] =>
+  (typeof value === 'string'
+    ? value.split(',').map((one) => one.trim()).filter((one) => one !== '')
+    : []);
+
+/** The labels `docker inspect` recorded, as a flat record. */
+const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
+  const config = (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
+  return (typeof config.Labels === 'object' && config.Labels !== null ? config.Labels : {}) as Record<string, unknown>;
+};
+
+/** The agents a machine was prepared for, from the record `inspect` answered. */
+export const preparedFor = (found: Record<string, unknown>): string[] =>
+  agentsSaid(labelsOf(found)[MACHINE_AGENTS]);
+
+/**
+ * The folder whose `devcontainer.json` made a machine, from its own label.
+ *
+ * The one place both a listing and a port answer read it, so a machine made by
+ * the Dev Container CLI is reached through the CLI and a machine made from an
+ * image is reached through Docker: the label is what says which recipe it was.
+ */
+export const devcontainerFolder = (found: Record<string, unknown>): string | undefined => {
+  const folder = labelsOf(found)[DEVCONTAINER_FOLDER];
+  return typeof folder === 'string' && folder !== '' ? folder : undefined;
+};
+
+/**
+ * A `source:target[:ro]` mount as the Dev Container CLI's `--mount` takes it.
+ *
+ * A manifest and a need speak the short Docker form, because that is what
+ * `docker run -v` takes; the CLI wants its own. The two halves are the same
+ * statement, so it is spelled once here rather than in every caller.
+ */
+const cliMount = (mount: string): string => {
+  const parts = mount.split(':');
+  const source = parts[0] ?? '';
+  const target = parts[1] ?? '';
+  const readOnly = parts[2] === 'ro';
+  return `type=bind,source=${source},target=${target}${readOnly ? ',readonly' : ''}`;
+};
+
+/**
+ * The disposable profile a machine was made from, from the record `inspect`
+ * answered, and whether it is alone.
+ */
+export const disposableOf = (found: Record<string, unknown>): { profile: string; alone: boolean } | undefined => {
+  const labels = labelsOf(found);
+  const profile = labels[MACHINE_DISPOSABLE];
+  if (typeof profile !== 'string' || profile === '') return undefined;
+  return { profile, alone: labels[MACHINE_ALONE] === 'true' };
+};
+
+/**
+ * The profile a machine was made from, from the record `inspect` answered.
+ *
+ * A disposable machine records its profile under the disposable label, which
+ * is the older spelling; a machine made from a profile any other way records
+ * it under `ahpd.profile`. Either is this machine's recipe.
+ */
+export const profileOf = (found: Record<string, unknown>): string | undefined => {
+  const labels = labelsOf(found);
+  const held = labels[MACHINE_PROFILE];
+  if (typeof held === 'string' && held !== '') return held;
+  return disposableOf(found)?.profile;
+};
+
+/** The labels a `docker ps` row's `Labels` column names, as a flat record. */
+const labelsListed = (labels: string): Record<string, string> => {
+  const held: Record<string, string> = {};
+  for (const pair of labels.split(',')) {
+    const at = pair.indexOf('=');
+    if (at !== -1) held[pair.slice(0, at)] = pair.slice(at + 1);
+  }
+  return held;
+};
+
+/** The agents a `docker ps` row's `Labels` column names. */
+const agentsListed = (labels: string): string[] =>
+  agentsSaid(labelsListed(labels)[MACHINE_AGENTS]);
+
+/** The disposable profile a `docker ps` row names, and whether it is alone. */
+const disposableListed = (labels: string): { profile: string; alone: boolean } | undefined => {
+  const held = labelsListed(labels);
+  const profile = held[MACHINE_DISPOSABLE];
+  return profile === undefined || profile === ''
+    ? undefined
+    : { profile, alone: held[MACHINE_ALONE] === 'true' };
+};
+
+/**
  * Machines, on Docker.
  *
  * Every call is one run of the `docker` program. A failure that is not
@@ -266,16 +490,44 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     return held.stdout;
   };
 
+  /**
+   * What a dev container is called, by the folder label the CLI was given.
+   *
+   * The CLI answers a container id, and a listing answers a name: the two are
+   * the same container, and a session that wrote the id down would be a URI a
+   * picker drawing names could not match. So the name is read back from the
+   * label, which is the one record both share; a container the listing cannot
+   * see yet keeps the id the CLI answered.
+   */
+  const namedByFolder = async (containerId: string, folder: string): Promise<string> => {
+    const held = await rows(await must([
+      'ps', '-a',
+      '--filter', `label=${options.label}`,
+      '--filter', `label=${DEVCONTAINER_FOLDER}=${folder}`,
+      '--format', '{{json .}}',
+    ]));
+    const name = held.map((row) => text(row.Names)).find((one) => one !== '');
+    return name ?? containerId;
+  };
+
   return {
     kind: 'docker',
 
     list: async () => rows(await must(['ps', '-a', '--filter', `label=${options.label}`, '--format', '{{json .}}']))
-      .map((row) => ({
-        id: text(row.Names),
-        image: text(row.Image),
-        status: text(row.Status),
-        created: text(row.CreatedAt),
-      }))
+      .map((row) => {
+        const labels = text(row.Labels);
+        const disposable = disposableListed(labels);
+        const folder = labelsListed(labels)[DEVCONTAINER_FOLDER];
+        return {
+          id: text(row.Names),
+          image: text(row.Image),
+          status: text(row.Status),
+          created: text(row.CreatedAt),
+          ...(folder === undefined || folder === '' ? {} : { folder }),
+          agents: agentsListed(labels),
+          ...(disposable === undefined ? {} : { disposable }),
+        };
+      })
       .filter((one) => one.id !== ''),
 
     inspect: async (id) => {
@@ -291,17 +543,110 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       return parsed;
     },
 
+    /*
+     * Make one.
+     *
+     * The flags are built once, because a create and a run take the same ones:
+     * `run -d` starts what it makes, and a create leaves it stopped. A machine
+     * with a copy-in is made the second way, because what is copied has to be
+     * there before the first process starts - so `create`, then one `cp` per
+     * copy, then `start`. A machine without one stays a single `run`, which is
+     * what every machine was before copy-ins existed.
+     */
     run: async (spec) => {
-      const args = ['run', '-d', '--name', spec.name, '--label', spec.label];
-      if (spec.cpus !== undefined) args.push('--cpus', spec.cpus);
-      if (spec.memory !== undefined) args.push('--memory', spec.memory);
-      for (const mount of spec.mounts ?? []) args.push('-v', mount);
-      if (spec.workdir !== undefined) args.push('-w', spec.workdir);
+      /*
+       * A dev container: the folder's own file, by the CLI that reads it.
+       *
+       * The CLI decides the image, the features, the mounts, the user and the
+       * lifecycle commands, so none of that is built here - which is the whole
+       * reason the CLI makes it - decision
+       * `a-dev-container-is-made-by-the-dev-container-cli`. The two id labels
+       * are the same pair `how` and the relay hand back, so the container this
+       * makes is the one every later call reaches.
+       */
+      if (spec.devcontainer !== undefined) {
+        if (!hasDefinition(spec.devcontainer)) {
+          throw new Error(`${spec.devcontainer} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
+        }
+        const cli = cliOf(options.devcontainerCli);
+        const argv = [
+          'up',
+          '--workspace-folder', spec.devcontainer,
+          ...idLabels(options.label, spec.devcontainer),
+        ];
+        // What the agents this machine is prepared for need, in the CLI's own
+        // two flags: a host path made visible, and a variable set in there.
+        for (const mount of spec.mounts ?? []) argv.push('--mount', cliMount(mount));
+        // A copy-in has no CLI verb: a file or folder is bind-mounted instead,
+        // which is the delivery this recipe has.
+        for (const copy of spec.copies ?? []) {
+          argv.push('--mount', `type=bind,source=${copy.source},target=${copy.target}`);
+        }
+        for (const [key, value] of Object.entries(spec.env ?? {})) argv.push('--remote-env', `${key}=${value}`);
+        let ran: { code: number; stdout: string; stderr: string };
+        try {
+          ran = await runCli(cli, argv);
+        }
+        catch (error) {
+          throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
+        }
+        const made = parseUp(ran.stdout);
+        if (made === undefined) {
+          const said = [ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' ');
+          throw new Error(`The Dev Container CLI reported no container for ${spec.devcontainer}: ${said === '' ? `exit ${String(ran.code)}` : said}`);
+        }
+        return {
+          // The container's own name, which is what a listing reports, so the
+          // id a session writes down and the row a picker offers are one.
+          id: await namedByFolder(made.containerId, spec.devcontainer),
+          image: '',
+          status: 'running',
+          created: new Date().toISOString(),
+          folder: spec.devcontainer,
+        };
+      }
+      const image = spec.image;
+      if (image === undefined) {
+        throw new Error(`${spec.name} names neither an image nor a folder's devcontainer.json, so there is nothing to make it from`);
+      }
+      const flags = ['--name', spec.name, '--label', spec.label];
+      if (spec.agents !== undefined && spec.agents.length > 0) {
+        flags.push('--label', `${MACHINE_AGENTS}=${spec.agents.join(',')}`);
+      }
+      // The disposability, recorded so a daemon that restarts finds the
+      // machines it left behind and a picker knows which ones only one session
+      // may run in.
+      if (spec.disposable !== undefined) {
+        flags.push('--label', `${MACHINE_DISPOSABLE}=${spec.disposable.profile}`);
+        if (spec.disposable.alone === true) flags.push('--label', `${MACHINE_ALONE}=true`);
+      }
+      // And the profile itself, so the machine's recipe - where its host
+      // inside is - survives the daemon that made it.
+      if (spec.profile !== undefined && spec.profile !== '') {
+        flags.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
+      }
+      if (spec.cpus !== undefined) flags.push('--cpus', spec.cpus);
+      if (spec.memory !== undefined) flags.push('--memory', spec.memory);
+      for (const mount of spec.mounts ?? []) flags.push('-v', mount);
+      // The folder a session works in, at the same path, so an agent that keys
+      // its own record by the working directory finds the same key inside and
+      // out - Claude's history is one such record.
+      if (spec.folder !== undefined) flags.push('-v', `${spec.folder}:${spec.folder}`);
+      for (const [key, value] of Object.entries(spec.env ?? {})) flags.push('-e', `${key}=${value}`);
+      if (spec.workdir !== undefined) flags.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine
       // waits for work.
-      args.push(spec.image, 'sleep', 'infinity');
-      await must(args);
-      return { id: spec.name, image: spec.image, status: 'running', created: new Date().toISOString() };
+      const keeps = [image, 'sleep', 'infinity'];
+      const copies = spec.copies ?? [];
+      if (copies.length === 0) {
+        await must(['run', '-d', ...flags, ...keeps]);
+      }
+      else {
+        await must(['create', ...flags, ...keeps]);
+        for (const copy of copies) await must(['cp', copy.source, `${spec.name}:${copy.target}`]);
+        await must(['start', spec.name]);
+      }
+      return { id: spec.name, image, status: 'running', created: new Date().toISOString() };
     },
 
     stop: async (id) => { await must(['stop', id]); },
@@ -318,6 +663,32 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     remove: async (id) => { await must(['rm', '-f', id]); },
 
     exec: async (id, command) => {
+      /*
+       * A dev container is reached by the CLI, not by Docker.
+       *
+       * Its user, its environment and its lifecycle are the repository's own,
+       * so a command that went through `docker exec` would run as whoever the
+       * image defaults to with none of what the file asks for - decision
+       * `a-dev-container-is-made-by-the-dev-container-cli`. The folder comes
+       * from the container's own label, never from the caller.
+       */
+      const found = await (async () => {
+        const held = await ran(options, ['inspect', '--format', '{{json .}}', id]);
+        return held.code === 0 ? rows(held.stdout)[0] : undefined;
+      })();
+      const folder = found === undefined ? undefined : devcontainerFolder(found);
+      if (folder !== undefined) {
+        const cli = cliOf(options.devcontainerCli);
+        const held = await runCli(cli, [
+          'exec',
+          '--workspace-folder', folder,
+          ...idLabels(options.label, folder),
+          ...command,
+        ]);
+        // Not tolerated and not thrown: a command that failed is the tool
+        // working, and its exit code is what the caller asked for.
+        return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
+      }
       const held = await ran(options, ['exec', '-i', id, ...command]);
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.

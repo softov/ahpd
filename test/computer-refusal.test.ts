@@ -19,8 +19,10 @@ import type { ComputerPort } from '../packages/sdk/src/types/computers.js';
  * **The port is not the permission.** The host hands `computers` to every
  * backend, so a gate that read the port as the backend's own capability let
  * Claude run on the host while the session said `computer://box`. What decides
- * is whether the backend does something with it: Claude Code spawns the CLI
- * through it, and cofold has no child process to move and so still refuses.
+ * is whether the backend does something with it - Claude Code spawns the CLI
+ * through it - or whether it declares `runsNested`, which is the host running a
+ * whole host in the machine instead. cofold declares it; a backend that
+ * declares neither must refuse.
  */
 
 const port: ComputerPort = {
@@ -48,7 +50,11 @@ async function backends(): Promise<{ name: string; agent: Agent }[]> {
 }
 
 it('refuses a named machine on a host with no computers port', async () => {
-  for (const { name, agent } of await backends()) {
+  // The backends that have no answer for a machine. A backend that declared
+  // `runsNested` is not one of them: the host serves it elsewhere.
+  const refusing = (await backends()).filter(({ agent }) => agent.runsNested !== true);
+  expect(refusing.length).toBeGreaterThan(0);
+  for (const { name, agent } of refusing) {
     // Synchronous, before anything is spawned: the refusal is the first thing
     // the factory does, so no backend that refuses has started a process yet.
     const failure = (): void => { void agent.create(asking('computer://box')); };
@@ -59,15 +65,27 @@ it('refuses a named machine on a host with no computers port', async () => {
   }
 });
 
-it('refuses a backend that cannot enter one, port or no port', async () => {
+it('refuses a backend that cannot enter one, port or no port', () => {
+  // A backend with nothing to move and no `runsNested` refusal of its own: a
+  // port changes nothing about that, and a session that named a machine must
+  // not quietly run on the host instead.
+  const failure = (): void => { refuseComputer(asking('computer://box', port), 'plain'); };
+  expect(failure).toThrow(/cannot run a session inside computer:\/\/box/);
+  expect(failure).toThrow('plain');
+  // And without a port the same sentence, because the setting is what decides.
+  expect(() => { refuseComputer(asking('computer://box'), 'plain'); }).toThrow('plain');
+});
+
+it('cofold runs nested, so a machine is served by a host started inside it', async () => {
   // cofold's loop, tools and shell all run in this process, so there is no
-  // child to start anywhere else: a port changes nothing about that, and a
-  // session that named a machine must not quietly run here instead.
+  // child to start anywhere else. `runsNested` is how it says so, and what the
+  // host does with it is `test/nested-proxy.test.ts` and the proxy's own
+  // suites: the backend itself no longer refuses, because refusing would make
+  // a machine cofold can now run in unusable.
   const { cofoldAgent } = await import('../packages/agent-cofold/src/agent.js');
   const agent = cofoldAgent({ memory: true });
-  const failure = (): void => { void agent.create(asking('computer://box', port)); };
-  expect(failure).toThrow(/cannot run a session inside computer:\/\/box/);
-  expect(failure).toThrow('cofold');
+  expect(agent.runsNested).toBe(true);
+  expect(() => { void agent.create(asking('computer://box', port)); }).not.toThrow();
 });
 
 it('lets Claude Code through, because it spawns the CLI in the machine', async () => {
@@ -76,6 +94,7 @@ it('lets Claude Code through, because it spawns the CLI in the machine', async (
   // backend that has nothing to move, not for every backend.
   const { claude } = await import('../packages/agent-claude/src/claude.js');
   const agent = claude({ paths: [mkdtempSync(join(tmpdir(), 'ahpd-refusal-'))] });
+  expect(agent.runsNested).toBeUndefined();
   expect(() => { void agent.create(asking('computer://box', port)); }).not.toThrow();
 });
 

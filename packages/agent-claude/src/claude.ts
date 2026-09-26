@@ -3,13 +3,29 @@ import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue } from './catalog.js';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, Spawned } from './spawn.js';
-import type { Agent, Bag, Start } from '@ahpd/sdk';
+import type { Agent, Bag, MachineNeed, Start } from '@ahpd/sdk';
+
+/**
+ * The host's Claude Code CLI, as the installer leaves it.
+ *
+ * `~/.local/bin/claude` is a symlink into a versioned directory, and the
+ * version changes under it on every update - which is why the computer docs
+ * once pinned `versions/2.1.267` and the mount became an empty directory the
+ * session exited 127 from. So this follows the link when it is asked, rather
+ * than reading it once, and answers the path it points at. A missing link
+ * answers the path itself, which a machine is then refused over by name.
+ */
+export const claudeExecutablePath = (home: string = homedir()): string => {
+  const named = join(home, '.local', 'bin', 'claude');
+  try { return realpathSync(named); }
+  catch { return named; }
+};
 
 /**
  * The resource a token for this backend is for.
@@ -351,6 +367,44 @@ export function claude(options: ClaudeOptions): Agent {
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
+
+    /*
+     * What a machine needs for this CLI to run in it.
+     *
+     * The configuration directory and the file beside it are what the CLI
+     * signs in from, and the executable is what runs. They are the same host
+     * paths the computer docs used to list as mounts by hand, and the
+     * executable is resolved here so an update on this host is followed rather
+     * than a pinned version that stops existing. `computerConfigDir: false`
+     * leaves the image's own configuration alone, and a machine for this
+     * backend then carries the executable alone.
+     */
+    machine: (): Record<string, MachineNeed> => {
+      const config = configDir === false ? {} : {
+        claudeConfigDirectory: {
+          directory: '~/.claude',
+          target: configDir,
+          required: true,
+          description: 'The Claude Code configuration directory, which holds the sign-in and the settings.',
+        },
+        claudeConfigJson: {
+          file: '~/.claude.json',
+          target: `${configDir}/.claude.json`,
+          required: true,
+          description: 'The Claude Code configuration file beside that directory.',
+        },
+      };
+      return {
+        ...config,
+        claudeExecutable: {
+          file: claudeExecutablePath(),
+          target: executable.startsWith('/') ? executable : '/usr/local/bin/claude',
+          readOnly: true,
+          required: true,
+          description: 'The Claude Code CLI, as this host has it installed.',
+        },
+      };
+    },
 
     directories: () => [...dirs],
 

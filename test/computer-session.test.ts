@@ -161,3 +161,41 @@ it('spawns its own command when the session names no machine', async () => {
   expect(asked).toBe(0);
   expect(types(p, chatUri)).toContain('chat/turnComplete');
 });
+
+/*
+ * A session is kept to the machines prepared for its own agent.
+ *
+ * A machine records the agents it was made for, and a session forced onto one
+ * prepared for another must not run there - it would fail inside, if it ran at
+ * all, which is much further away from the value a person set.
+ */
+it('refuses a machine prepared for another agent, and allows an unlabelled one', async () => {
+  const labelled: ComputerPort = {
+    how: async () => ({ command: process.execPath, args: [FIXTURE] }),
+    agents: async (id) => (id === 'box' ? ['claude'] : undefined),
+  };
+  const refused = await talking({
+    command: process.execPath, args: [FIXTURE], computers: labelled, computer: 'computer://box',
+  });
+  begin(refused.client, refused.chatUri);
+  await until(() => settled(refused.peer, refused.chatUri));
+
+  const failure = actions(refused.peer, refused.chatUri).find((one) => one.action.type === 'chat/error');
+  const part = failure?.action.part as { error?: { message?: string } } | undefined;
+  expect(part?.error?.message).toMatch(/computer:\/\/box was prepared for claude/);
+  expect(part?.error?.message).toMatch(/this session runs acp/);
+  expect(types(refused.peer, refused.chatUri)).not.toContain('chat/turnComplete');
+
+  // A machine with no label was made before any of this existed, and stays
+  // offered to every agent.
+  const open: ComputerPort = {
+    how: async () => ({ command: process.execPath, args: [FIXTURE] }),
+    agents: async () => [],
+  };
+  const allowed = await talking({
+    command: process.execPath, args: [FIXTURE], computers: open, computer: 'computer://box',
+  });
+  begin(allowed.client, allowed.chatUri);
+  await until(() => settled(allowed.peer, allowed.chatUri));
+  expect(types(allowed.peer, allowed.chatUri)).toContain('chat/turnComplete');
+});

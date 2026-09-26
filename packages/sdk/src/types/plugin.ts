@@ -16,6 +16,7 @@ import type { Agent } from './agent.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
+import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
 
 /**
@@ -115,6 +116,21 @@ export interface PluginContext {
  * subscribes to the host's own events.
  */
 export interface PluginHost extends PluginContext {
+  /**
+   * One agent's machine needs, read when called rather than at load.
+   *
+   * The plugin that makes machines is the one that asks: a machine whose
+   * profile lists `agents` is made at create time, and the plugin that
+   * registers an agent may load before or after this one, so nothing can be
+   * read while `apply` runs. The host is the one thing that knows every agent,
+   * and it answers the agent's `machine()` here - decision
+   * `the-host-hands-an-agents-machine-needs-to-the-machine-maker`.
+   *
+   * `undefined` when no agent has that provider, which is a profile naming an
+   * agent this host does not have. An agent that declares nothing answers an
+   * empty record, which is a machine with nothing added to it.
+   */
+  machineNeeds(provider: string): Record<string, MachineNeed> | undefined;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */

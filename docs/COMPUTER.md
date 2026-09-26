@@ -4,7 +4,9 @@
 
 Docker is the only runtime today.
 
-A machine is named `computer://<id>`. Writing a manifest to that name makes one, deleting it destroys it, and a session whose `computer` setting names it runs its agent in there.
+A machine is named `computer://<id>`, and it has two recipes: an image the host runs, or a folder's `devcontainer.json`, which the Dev Container CLI reads.
+Writing a manifest to that name makes one, deleting it destroys it, and a session whose `computer` setting names it runs its agent in there.
+A dev container is listed, picked and reached like any machine made from an image, and it survives the connection that made it - decision [a dev container is a computer, made from its devcontainer.json](../.project/decisions/a-dev-container-is-a-computer-made-from-its-devcontainer-json.md).
 
 ## Setup
 
@@ -48,6 +50,31 @@ Write a JSON manifest to the machine's name:
 
 Only `image` is expected. `runtime` must match the host's, the limits are optional, and `workdir` is where commands start. `createOnly` makes a taken name fail with `-32010`. An invalid manifest fails with a message naming the field.
 
+A manifest may name `folder`, a host folder mounted at the same path inside the machine; `workdir` defaults to it when the manifest names neither. Like `mounts` it reaches outside the machine, so a body may name one only where the operator allowed `bodyMounts`; a profile's own `folder` is always allowed.
+
+### From a folder's devcontainer.json
+
+In place of `image`, a manifest may name a folder whose `devcontainer.json` makes the container:
+
+```json
+{ "devcontainer": { "folder": "/path/to/repo" } }
+```
+
+The Dev Container CLI reads the file, so the image, the features, the mounts, the `remoteUser` and the lifecycle commands are the repository's and this host decides none of them - decision [a dev container is made by the Dev Container CLI](../.project/decisions/a-dev-container-is-made-by-the-dev-container-cli.md).
+The create runs `devcontainer up --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder>`, and the folder is refused before the CLI runs when it is not there or has no `.devcontainer/devcontainer.json` or `.devcontainer.json`.
+`image` and `devcontainer` are exclusive, and a body that names both is refused.
+The create form a client draws offers no such field: the manifest is a flat set of properties and this source is not one of them, so a body written by hand or by a client that knows the field is the route.
+
+A session in one is reached through the CLI rather than Docker, so its user and environment are the file's:
+
+```
+devcontainer exec --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder> <command>
+```
+
+The folder comes from the container's own label, never from the session, so a session can only reach the container that folder's file made.
+Removing the computer removes the container and never the folder or its `devcontainer.json`.
+A container someone made with `devcontainer up` by hand, without the labels, is not listed and cannot be reached as a computer.
+
 | Command | What it does |
 | --- | --- |
 | `resourceList` on `computer://` | The machines this host made |
@@ -86,58 +113,147 @@ The plugin adds a `computer` key to the session settings:
 { "method": "createSession", "params": { "channel": "ahp-session:/work", "provider": "acp", "config": { "computer": "computer://box" } } }
 ```
 
-The machine must already exist. A session naming one that does not, or a backend that cannot reach one, is refused. It never falls back to running on the host.
+The machine must already exist. A session naming one that does not is refused. A backend that cannot enter a machine is refused too, unless it declares `runsNested`, which is the host starting a whole host in there instead - see [a backend that runs nested](#a-backend-that-runs-nested). It never falls back to running on the host.
+
+A setting may also name a source to make one from, rather than a machine that exists. `devcontainer://<folder>` makes the folder's dev container when the session starts, with the session agent's needs, and the session then runs in the `computer://<id>` it became. Nothing makes a second container for one folder, and the picker offers that source only while no computer is labelled with the folder.
+
+A machine is also kept to the agents it was prepared for. A profile with `agents` labels the machine `ahpd.agents=<list>`, and a session whose agent is not on that list is refused with a sentence naming both. A machine with no label was made before any of this existed and is available to every agent.
 
 | Backend | In a machine |
 | --- | --- |
-| `@ahpd/agent-acp` | Its command runs under `docker exec` |
-| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec` |
-| `@ahpd/agent-cofold` | Refused, since it runs inside the host process. Use a [dev container](CONTAINERS.md) with cofold in `devcontainer.plugins` instead |
+| `@ahpd/agent-acp` | Its command runs under `docker exec`, or `devcontainer exec` in a dev container |
+| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec`, or `devcontainer exec` in a dev container |
+| `@ahpd/agent-cofold` | A whole `ahpd` with the plugin runs inside the machine, and its frames are carried out as the session's - see below |
 
-Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image and status.
+Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image or folder and status. When the client says which agent the session would run, the machines not prepared for it are left out. A [disposable profile](#disposable-machines) is offered too, as `disposable:<profile>`, and once the session has made one it is an ordinary `computer://<id>`. A `devcontainer://<folder>` row is offered when the session's folder has a `devcontainer.json` and no computer is labelled with it.
 
 The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own `workdir`.
 
-### Claude Code in a machine
+### A backend that runs nested
 
-The image needs the CLI. It runs `claude` from the image's `PATH`; `computerExecutable` in the `@ahpd/agent-claude` options names another path inside the machine.
+Some backends cannot be moved into a machine: cofold's loop, tools and shell all run in the host process, and there is no server mode a process outside could drive. Such a backend declares `runsNested: true`, and a session of it whose `computer` setting names a machine is given the SDK's proxy backend instead of the backend itself.
 
-The CLI's configuration has to be mounted. The backend sets `CLAUDE_CONFIG_DIR=/ahpd/claude` (change it with `computerConfigDir`, or `false` to leave the image's). Mount both the directory and the file beside it, or the CLI signs in but reports its configuration missing:
+The proxy starts a whole `ahpd` **inside the machine**, in stdio mode, with that backend loaded, and presents the inner session to the client exactly as a local one:
+
+```
+<host> --stdio --plugin <each>
+```
+
+The inner host creates the session with the same config minus `computer`, and the outer session forwards turns, tool confirmations, input answers, config changes, cancel and dispose to it and emits its chat and session actions as its own. The inner host's protocol version has to be this host's; another one is refused at the handshake.
+
+**The image carries the host and the plugin.** There is no install step: a machine whose image has neither is a session that ends with a sentence carrying what the inner host last wrote to stderr. The plugin a provider needs is `@ahpd/agent-<provider>`, so cofold is `@ahpd/agent-cofold`:
+
+```dockerfile
+FROM node:22-bookworm-slim
+RUN npm i -g @ahpd/server @ahpd/agent-cofold
+```
+
+**The profile says how the host starts.** `host` is the command and its arguments, `["ahpd"]` when it names none, and it is where an image that keeps its host somewhere else says so:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/computer", "options": { "mounts": [
-  "/home/you/.claude:/ahpd/claude",
-  "/home/you/.claude.json:/ahpd/claude/.claude.json"
-] } }] }
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "profiles": {
+    "cofold": {
+      "title": "Cofold",
+      "image": "ghcr.io/acme/ahpd-cofold:22",
+      "agents": ["cofold"],
+      "disposable": true,
+      "host": ["node", "/work/ahpd/main.js"]
+    }
+  }
+} }] }
 ```
+
+The machine remembers the profile that made it, so a daemon that restarts - or one that did not make it - still starts the host the profile named. The profile's `agents` is what shares cofold's configuration and provider key into the machine, the same mechanism [Claude Code](#claude-code-in-a-machine) uses, and a profile without them is a cofold session that cannot sign in.
+
+`--stdio` and one `--plugin` per spec are appended to `host`, so `host` names only the program: `ahpd`, a pinned `node /work/ahpd/main.js`, or whatever an image actually has.
+
+### Claude Code in a machine
+
+A machine made from a profile that names `claude` carries what the agent says it needs, so the CLI and its configuration come from the host without a person listing them by hand:
+
+| Need | What it is on the host | Where it goes |
+| --- | --- | --- |
+| `claudeConfigDirectory` | `~/.claude` | `/ahpd/claude` |
+| `claudeConfigJson` | `~/.claude.json` | `/ahpd/claude/.claude.json` |
+| `claudeExecutable` | what `~/.local/bin/claude` points at, read-only | `/usr/local/bin/claude` |
+
+The executable is resolved at the moment the machine is made, so an update on the host is followed rather than a version pinned in a path. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
+
+The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/claude`. `computerConfigDir` in the `@ahpd/agent-claude` options names another path inside the machine, and `false` leaves the image's own configuration alone and mounts only the executable.
 
 Only `CLAUDE_*` and `ANTHROPIC_*` variables are passed into the machine. The host's `HOME`, `PATH` and `PWD` are not.
 
-Anything running in a machine with your `~/.claude` mounted can use your subscription. Use a profile to decide which machines get it.
+**One `~/.claude` is one sign-in.** Every machine that mounts this host's configuration uses the same subscription, and anything running in one can read it. Use a profile to decide which machines get it, and treat the folder as shared for now.
 
 ## Profiles
 
 A profile is a named set of machine settings in the plugin options:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/computer", "options": { "profiles": {
-  "claude": {
-    "title": "Claude",
-    "description": "The CLI and this host's configuration, shared in.",
-    "image": "node:22", "cpus": "2", "memory": "512m", "workdir": "/work",
-    "mounts": [
-      "/home/you/.claude:/ahpd/claude",
-      "/home/you/.claude.json:/ahpd/claude/.claude.json",
-      "/home/you/.local/share/claude/versions/2.1.267:/usr/local/bin/claude:ro"
-    ]
-  },
-  "plain": { "title": "Plain", "description": "Nothing shared.", "memory": "256m" }
-} } }] }
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "needs": { "claudeConfigDirectory": "/srv/claude-home" },
+  "profiles": {
+    "claude": {
+      "title": "Claude",
+      "description": "The CLI and this host's configuration, shared in.",
+      "image": "node:22", "cpus": "2", "memory": "512m", "workdir": "/work",
+      "agents": ["claude"]
+    },
+    "plain": { "title": "Plain", "description": "Nothing shared.", "memory": "256m" }
+  }
+} }] }
 ```
 
-A manifest picks one with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed); a later one wins for the same target. Other fields come from the manifest, then the profile, then the host default.
+`agents` names the harnesses a machine is prepared for. Each of them declares what it needs with its own `machine()`, and the machine is made with the result and labelled `ahpd.agents=<list>`. A profile that names no agents is a machine with nothing added, as every profile was before this.
 
-An unknown profile is refused with the list of known ones. The names are published in the create schema as an `enum` with titles and descriptions in `x-choices`, so a client can draw a picker. No profiles means no such property.
+A need is filled from the profile, then the plugin option, then the agent's own default. So `"needs": { "claudeConfigDirectory": "/srv/claude-home" }` in a profile points that one need elsewhere for that one machine, and the same key in the plugin options does it for every profile:
+
+```json
+{ "profiles": { "claude": { "agents": ["claude"], "needs": { "claudeConfigJson": "/srv/claude.json" } } } }
+```
+
+A need is delivered as a bind mount, an environment variable or a file copied in. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine.
+
+`folder` names a host folder mounted at the same path inside the machine, and `workdir` defaults to it. The same path is what keeps an agent's own record consistent: Claude writes its history under the working directory it saw, so the same spelling inside and out is what makes a session written in a machine resumable on this host.
+
+A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed); a later one wins for the same target. Other fields come from the manifest, then the profile, then the host default.
+
+An unknown profile is refused with the list of known ones. A profile that names an agent this host does not have is refused too, rather than made without what it was prepared for. Two needs landing on one target is refused, because one of them would silently lose.
+
+The names are published in the create schema as an `enum` with titles and descriptions in `x-choices`, so a client can draw a picker. No profiles means no such property.
+
+## Disposable machines
+
+A profile that sets `disposable: true` has no machine until a session starts. It is offered in the session's `computer` picker as `disposable:<profile>`, labelled with the profile's title, and the machine is made at session start from the profile, that session's harness needs and the session's folder mounted at the same path:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "profiles": {
+    "scratch": {
+      "title": "Scratch",
+      "description": "A machine of this session's own, with the CLI shared in.",
+      "image": "node:22",
+      "mounts": ["/srv/claude-home:/ahpd/claude"],
+      "disposable": true,
+      "disposableDelay": 300000,
+      "disposableAlone": true
+    }
+  }
+} }] }
+```
+
+| Field | What it does |
+| --- | --- |
+| `disposable` | The profile is offered as a `disposable:<profile>` row instead of being made ahead of time. The machine takes the `machine()` needs of the harness the session runs, so the profile names no `agents`. |
+| `disposableDelay` | Milliseconds after the last session using the machine is disposed before it is removed. Default `300000`, five minutes. A session that picks the machine again in that window cancels the timer. |
+| `disposableAlone` | The machine is not listed in the picker, so only the session it was made for runs in it. The `disposable:<profile>` row is still offered. |
+
+The machine is labelled `ahpd.disposable=<profile>`, so a daemon that restarts finds the machines it left behind and gives each the delay again. Its `computer` setting is the `computer://<id>` it became, so a session started again before its first turn keeps the machine it already made rather than making a second one.
+
+A session that picks the running machine, by its `computer://<id>`, counts as a user of it too; the delay starts when the last of them is disposed. A machine that could not be made answers the session with the runtime's own sentence.
+
+**A copy-in is paid on every create**, so a disposable profile prefers mounts. A need delivered as a copy is paid again for every session's machine and lost with it, which is the opposite of what a profile picked per session wants.
 
 ## Stats
 
@@ -164,13 +280,15 @@ Read this before exposing the plugin to anyone but yourself.
 
 **Only machines this host made.** Each machine carries a label, and every read and action checks it. Any other container on the same Docker answers `-32008`, the same as a name that does not exist. `computer:write` covers this host's machines, not the Docker daemon.
 
-**Mounts in a manifest are off by default.** A manifest that could name `/:/host` would give root on the host to anyone with `computer:write`. By default a machine sees only the plugin's `mounts` and its profile's, a manifest with `mounts` is refused, and the field is left out of the create schema. To allow them:
+**Mounts in a manifest are off by default.** A manifest that could name `/:/host` would give root on the host to anyone with `computer:write`. By default a machine sees only the plugin's `mounts` and its profile's, a manifest with `mounts` or a `folder` is refused, and both fields are left out of the create schema. To allow them:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "bodyMounts": true } }] }
 ```
 
 That is reasonable on a single-person host. With it on, `computer:write` is root on the host.
+
+A `devcontainer` source is not gated by `bodyMounts`: the folder names a `devcontainer.json`, and what that file mounts is the CLI's to apply, so a body that may name one is a body that may build a folder's container. It is not a way to mount an arbitrary host path by itself, but `computer:write` with it reaches whatever the named file declares.
 
 **Allowed images.** By default any image may be used. To limit them:
 

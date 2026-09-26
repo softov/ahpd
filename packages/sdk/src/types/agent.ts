@@ -9,6 +9,7 @@ import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { StartTerminals } from './terminals.js';
 import type { ComputerPort } from './computers.js';
+import type { MachineNeed } from './machine.js';
 
 /**
  * What running a tool does to the world.
@@ -320,6 +321,39 @@ export interface Agent {
   schema(): Bag;
   /** What each schema key sits at when nothing has been chosen. */
   defaults(): Record<string, unknown>;
+
+  /**
+   * What this agent needs from the host for a machine to run it.
+   *
+   * Read when a machine is made for this agent, never at load, so an agent
+   * registered after the plugin that makes machines still declares them -
+   * decision `an-agent-declares-its-machine-needs-with-a-method`. Each entry is
+   * named by this backend and delivered as a mount, an environment variable or
+   * a copy-in; the machine's runtime turns the resolved needs into its own
+   * flags. A backend that needs nothing of the host leaves it out, which is
+   * every backend that runs against the host's own filesystem.
+   *
+   * The paths are the host's, not the machine's: `target` is where one lands
+   * inside, and a `~` in a value is expanded when the machine is made.
+   */
+  machine?(): Record<string, MachineNeed>;
+
+  /**
+   * Whether a session in a machine runs in a host started inside it.
+   *
+   * A backend that cannot move its own process - cofold's loop, tools and
+   * shell all run in this process - answers `true` here, and the host gives a
+   * session that names a computer a session of the SDK's proxy backend
+   * instead of this one: a whole `ahpd` with this backend loaded is started
+   * inside the machine, and its actions are carried out as the session's -
+   * decision `a-cofold-session-in-a-computer-runs-in-a-nested-host`.
+   *
+   * Absent or `false` is a backend that must refuse a computer it cannot
+   * enter, which is what every backend did before this existed. A backend
+   * that spawns through the `computers` port itself - `@ahpd/agent-acp` is
+   * one - leaves this out too, because its own process is already in there.
+   */
+  runsNested?: boolean;
 
   /**
    * What the backend offers, asked once at startup.

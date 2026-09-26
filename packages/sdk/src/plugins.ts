@@ -250,17 +250,33 @@ export interface HostRecording {
   contribution: Contribution;
 }
 
+/** What a plugin host is given besides its context. */
+export interface HostRecordingOptions {
+  /**
+   * Every agent this host knows, read when `machineNeeds` is called.
+   *
+   * A function rather than a list because the list is not complete while
+   * plugins are being applied: the plugin that registers an agent may load
+   * after the one that makes machines, and a machine is made long after both.
+   */
+  agents?: () => Agent[];
+}
+
 /**
  * The `PluginHost` one plugin's `apply` is handed.
  *
- * Every method checks what it is given before it records it, so a bad
- * registration throws out of `apply` and the loader discards that plugin's
- * whole contribution rather than keeping the part registered before the bad
- * one. A registration made twice by the same plugin is refused here, because
- * that is one `apply` making a mistake; the same port claimed by two plugins
- * is the fold's problem, because only the fold can see both.
+ * Every method that contributes checks what it is given before it records it,
+ * so a bad registration throws out of `apply` and the loader discards that
+ * plugin's whole contribution rather than keeping the part registered before
+ * the bad one. A registration made twice by the same plugin is refused here,
+ * because that is one `apply` making a mistake; the same port claimed by two
+ * plugins is the fold's problem, because only the fold can see both.
+ *
+ * `machineNeeds` is the one method that reads rather than registers: it answers
+ * an agent's `machine()` from the live list, so a plugin that makes machines
+ * needs nothing of this package and no agent has to be loaded yet.
  */
-export function pluginHost(by: string, context: PluginContext): HostRecording {
+export function pluginHost(by: string, context: PluginContext, options: HostRecordingOptions = {}): HostRecording {
   /*
    * The listeners, keyed by event. Held as a loose record and narrowed to
    * `HostHandlers` through the contribution, because the mapped type gives
@@ -292,6 +308,14 @@ export function pluginHost(by: string, context: PluginContext): HostRecording {
 
   const host: PluginHost = {
     ...context,
+    // Read from the live list, not a snapshot: the agents this host will have
+    // are not all known while any one plugin is applying. An agent that
+    // declares nothing answers an empty record, which is a machine with
+    // nothing added to it rather than a provider nobody has.
+    machineNeeds: (provider) => {
+      const agent = options.agents?.().find((one) => one.provider === provider);
+      return agent === undefined ? undefined : agent.machine?.() ?? {};
+    },
     registerAgent(agent) {
       checkAgent(agent, by);
       if (providers.has(agent.provider)) {

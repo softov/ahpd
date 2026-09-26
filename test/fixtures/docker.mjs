@@ -9,7 +9,7 @@
  * Docker.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 const state = process.env.DOCKER_FAKE_STATE;
 if (state === undefined) {
@@ -22,7 +22,18 @@ const held = existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8'))
   : { machines: [], calls: [] };
 held.calls.push(args);
-const keep = () => writeFileSync(state, JSON.stringify(held));
+/*
+ * Written beside the state and renamed over it, so a test reading the file
+ * while the provider is between calls never sees it half-written. A plain
+ * `writeFileSync` truncates first, and a reader that lands in that window gets
+ * an empty file - which a test waiting for a machine to disappear must not
+ * mistake for the machine being gone.
+ */
+const keep = () => {
+  const scratch = `${state}.${process.pid}.tmp`;
+  writeFileSync(scratch, JSON.stringify(held));
+  renameSync(scratch, state);
+};
 
 const verb = args[0];
 
@@ -44,6 +55,10 @@ if (verb === 'ps') {
       Image: machine.image,
       Status: 'Up 1 second',
       CreatedAt: '2026-09-22 00:00:00 +0000',
+      // As `docker ps --format '{{json .}}'` reports it: one comma-separated
+      // column, which is where the runtime reads the `ahpd.agents` label from
+      // for the picker's filter.
+      Labels: Object.entries(machine.labels ?? {}).map(([key, value]) => `${key}=${value}`).join(','),
     })}\n`);
   }
   keep();
@@ -117,12 +132,32 @@ if (verb === 'stats') {
   process.exit(0);
 }
 
-if (verb === 'run') {
+if (verb === 'run' || verb === 'create') {
+  /*
+   * A create that fails, on purpose.
+   *
+   * A test that wants the runtime's own sentence - what a session is answered
+   * with when a machine cannot be made - sets this in the state file first.
+   */
+  if (held.failRun === true) {
+    keep();
+    process.stderr.write('Error response from daemon: the scripted docker refuses to make this one\n');
+    process.exit(1);
+  }
   const named = args.indexOf('--name');
   const image = args[args.length - 3];
+  /** `key=value` as its two halves, on the first `=`. */
+  const pair = (said) => {
+    const at = String(said).indexOf('=');
+    return at === -1 ? [String(said), ''] : [String(said).slice(0, at), String(said).slice(at + 1)];
+  };
   const mounts = [];
+  const env = {};
+  const labels = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '-v') mounts.push(args[i + 1]);
+    if (args[i] === '-e') { const [key, value] = pair(args[i + 1]); env[key] = value; }
+    if (args[i] === '--label') { const [key, value] = pair(args[i + 1]); labels[key] = value; }
   }
   held.machines.push({
     name: named === -1 ? `unnamed-${held.machines.length}` : args[named + 1],
@@ -130,10 +165,25 @@ if (verb === 'run') {
     cpus: args.includes('--cpus') ? args[args.indexOf('--cpus') + 1] : undefined,
     memory: args.includes('--memory') ? args[args.indexOf('--memory') + 1] : undefined,
     mounts,
+    env,
+    // The provider's own label plus whatever it added, which is what `inspect`
+    // and `ps` read back.
+    labels: { 'ahpd.computer': '1', ...labels },
     workdir: args.includes('-w') ? args[args.indexOf('-w') + 1] : undefined,
+    // A create leaves it stopped, which is the whole point of the verb: what a
+    // copy-in puts there has to be before the first process starts.
+    state: verb === 'create' ? 'created' : 'running',
   });
   keep();
   process.stdout.write(`${'a'.repeat(64)}\n`);
+  process.exit(0);
+}
+
+if (verb === 'cp') {
+  // Recorded like every other call, so a test can assert the order: after the
+  // create and before the start.
+  keep();
+  process.stdout.write('');
   process.exit(0);
 }
 

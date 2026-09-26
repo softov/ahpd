@@ -17,9 +17,8 @@ import { createMemoryStore, textOf } from '@cofold/agents';
 import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@cofold/agents';
 import { openaiCompat } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
-import { refuseComputer } from '@ahpd/sdk';
-import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
-import { harnessConfig, splitModel } from './config.js';
+import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
+import { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
 import { cofoldSession } from './session.js';
@@ -540,6 +539,26 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     schema,
     defaults,
     /*
+     * What a machine needs for this harness to find its providers.
+     *
+     * The harness configuration holds the provider keys, and it is read from
+     * the same path inside a machine as on this host, so a cofold host in
+     * there finds the same endpoints. Read here rather than at construction,
+     * so a profile that points `XDG_CONFIG_HOME` elsewhere is followed.
+     */
+    machine: (): Record<string, MachineNeed> => {
+      const path = harnessConfigPath();
+      return {
+        cofoldConfig: {
+          file: path,
+          target: path,
+          readOnly: true,
+          required: true,
+          description: 'The cofold configuration, which holds the provider endpoints and their keys.',
+        },
+      };
+    },
+    /*
      * What the endpoint serves, as the root channel's model list.
      *
      * The configured `model` is the default a session starts on, not the only
@@ -605,15 +624,15 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      * resumed one, which is `Store.sessions.fork` and `Store.sessions.truncate`
      * doing the work before the first turn runs. `session.ts` refuses a turn if
      * the cut could not be made, rather than carrying on from the wrong place.
+     *
+     * `runsNested` is the machine half. cofold's loop, tools and shell all run
+     * in this process, so a session that names a computer cannot be served
+     * here: the host starts a whole `ahpd` with this backend loaded inside the
+     * machine and gives the session the SDK's proxy instead - decision
+     * `a-cofold-session-in-a-computer-runs-in-a-nested-host`.
      */
+    runsNested: true,
     create: (start) => {
-      /*
-       * cofold runs in this process, against a connection this host holds: it
-       * cannot be moved into a machine. A session that names one is refused
-       * rather than run on the host - decision
-       * `a-backend-reaches-a-computer-through-a-port`.
-       */
-      refuseComputer(start, 'cofold');
       return cofoldSession(options, start, store, harness, (settings, credentials) =>
         knownCatalogue(connectionOf(options, settings, credentials, harness, false)));
     },
