@@ -3,6 +3,8 @@ import { createHost } from '../packages/sdk/src/host.js';
 import { memoryAutomations } from '../packages/sdk/src/automations.js';
 import { echo } from '../examples/echo/agent.js';
 import type { Peer } from '../packages/sdk/src/types/rpc.js';
+import type { Agent, Start } from '../packages/sdk/src/types/agent.js';
+import type { Chosen, MessageFrom, Session } from '../packages/sdk/src/types/session.js';
 
 /*
  * Automations, on a host that holds no clock.
@@ -294,6 +296,39 @@ it('starts a session and says the first message, which is the whole point', asyn
   // Said by the automation, not by a person: `MessageKind.Automation` is the
   // protocol's word for a session an automation run started.
   expect(first?.message?.origin?.kind).toBe('automation');
+});
+
+it('starts the first turn on the model the session template names', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  const models: unknown[] = [];
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start);
+      return {
+        ...session,
+        begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom) => {
+          models.push(model);
+          session.begin(turnId, text, model, from);
+        },
+      };
+    },
+  };
+  const host = createHost({ path: DIR, agents: [agent], automations: memoryAutomations() });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await write(client, { ...DEFINITION, session: { ...DEFINITION.session, model: { id: 'echo/fast', config: { effort: 'low' } } } });
+
+  await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  });
+  await until(() => models.length > 0);
+  // Without it a backend with no default of its own refuses the turn, and
+  // nobody is at the keyboard to pick one.
+  expect(models[0]).toEqual({ id: 'echo/fast', config: { effort: 'low' } });
 });
 
 it('reads running while the session it started is still working', async () => {

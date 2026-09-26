@@ -52,6 +52,8 @@ export interface StartSession {
   workingDirectory?: string;
   /** Config values for the new session. */
   config?: Record<string, unknown>;
+  /** The model the session template names, as the protocol's `ModelSelection`. */
+  model?: unknown;
   /** The first message, which is what the automation is *for*. */
   text: string;
   /**

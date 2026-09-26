@@ -155,6 +155,7 @@ export function memoryAutomations(): AutomationStore {
         ...(typeof template.config === 'object' && template.config !== null
           ? { config: template.config as Record<string, string> }
           : {}),
+        ...(template.model !== undefined ? { model: template.model } : {}),
         text: typeof message.text === 'string' ? message.text : String(found.definition.title ?? ''),
         origin: { kind: 'automation', automation: resource, run: run.resource },
       };

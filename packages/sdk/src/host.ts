@@ -4792,7 +4792,7 @@ export function createHost(options: HostOptions): Host {
       void fire({ type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
     }
     const chatUri = chatUriFor(uri);
-    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text, undefined, { origin: { kind: 'automation' } });
+    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
     return uri;
   };
 
