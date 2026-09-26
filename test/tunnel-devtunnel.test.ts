@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { connect } from 'node:net';
@@ -10,7 +13,7 @@ import type { PluginContext } from '../packages/sdk/src/types/plugin.js';
 import {
   deriveConnectionToken, displayLabel, nameLabel, LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT,
 } from '../packages/tunnel-devtunnel/src/discovery.js';
-import { create, find, prepare, TunnelError } from '../packages/tunnel-devtunnel/src/devtunnel.js';
+import { create, find, prepare, run as runCli, TunnelError } from '../packages/tunnel-devtunnel/src/devtunnel.js';
 import type { Result, Runner } from '../packages/tunnel-devtunnel/src/devtunnel.js';
 import { forward } from '../packages/tunnel-devtunnel/src/forward.js';
 import { apply } from '../packages/tunnel-devtunnel/src/plugin.js';
@@ -82,66 +85,89 @@ it('turns a machine name into something that can be a label', () => {
 
 // The CLI -----------------------------------------------------------------
 
-it('finds a tunnel this plugin made before, by its own label', () => {
+it('finds a tunnel this plugin made before, by its own label', async () => {
   const run = runner({ list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'older', labels: [] }, { tunnelId: 'newest', labels: ['_ahpd'] }] })) });
-  expect(find(run)?.tunnelId).toBe('newest');
+  expect((await find(run))?.tunnelId).toBe('newest');
   expect(run.calls[0]).toEqual(['list', '--labels', '_ahpd', '--json']);
 });
 
-it('reads the older tags spelling as well as labels', () => {
+it('reads the older tags spelling as well as labels', async () => {
   const run = runner({ list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'one', tags: [LAUNCHER_LABEL, 'dev82'] }] })) });
-  expect(find(run)?.labels).toEqual([LAUNCHER_LABEL, 'dev82']);
+  expect((await find(run))?.labels).toEqual([LAUNCHER_LABEL, 'dev82']);
 });
 
-it('has no tunnel when the account has none', () => {
-  expect(find(runner({ list: ok(JSON.stringify({ tunnels: [] })) }))).toBeUndefined();
+it('has no tunnel when the account has none', async () => {
+  expect(await find(runner({ list: ok(JSON.stringify({ tunnels: [] })) }))).toBeUndefined();
 });
 
-it('creates one carrying every label the convention needs', () => {
+it('creates one carrying every label the convention needs', async () => {
   const run = runner({ create: ok(JSON.stringify({ tunnel: { tunnelId: 'made', labels: [] } })) });
-  expect(create('dev82', run).tunnelId).toBe('made');
+  expect((await create('dev82', run)).tunnelId).toBe('made');
   const args = run.calls[0] as string[];
   expect(args.slice(0, 2)).toEqual(['create', '--json']);
   expect(args.filter((one, at) => args[at - 1] === '--labels'))
     .toEqual([LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev82']);
 });
 
-it('refuses output that names no tunnel rather than carrying on without one', () => {
-  expect(() => create(undefined, runner({ create: ok('{"tunnel":{}}') }))).toThrow(TunnelError);
-  expect(() => create(undefined, runner({ create: ok('not json') }))).toThrow(/did not print JSON/);
+it('refuses output that names no tunnel rather than carrying on without one', async () => {
+  await expect(create(undefined, runner({ create: ok('{"tunnel":{}}') }))).rejects.toThrow(TunnelError);
+  await expect(create(undefined, runner({ create: ok('not json') }))).rejects.toThrow(/did not print JSON/);
 });
 
-it('says the command failed, with what it printed', () => {
-  expect(() => find(runner({ list: no('not logged in') }))).toThrow(/not logged in/);
+it('says the command failed, with what it printed', async () => {
+  await expect(find(runner({ list: no('not logged in') }))).rejects.toThrow(/not logged in/);
 });
 
-it('puts the well-known port on the tunnel and leaves access alone by default', () => {
+it('puts the well-known port on the tunnel and leaves access alone by default', async () => {
   const run = runner({ port: ok(''), access: ok('') });
-  prepare({ tunnelId: 'made', labels: [] }, false, run);
+  await prepare({ tunnelId: 'made', labels: [] }, false, run);
   expect(run.calls).toEqual([['port', 'create', 'made', '-p', String(TUNNEL_PORT), '--protocol', 'http']]);
 });
 
-it('opens it to the signed-out only when asked', () => {
+it('opens it to the signed-out only when asked', async () => {
   const run = runner({ port: ok(''), access: ok('') });
-  prepare({ tunnelId: 'made', labels: [] }, true, run);
+  await prepare({ tunnelId: 'made', labels: [] }, true, run);
   expect(run.calls[1]).toEqual(['access', 'create', 'made', '--anonymous', '--port', String(TUNNEL_PORT)]);
 });
 
-it('treats a port that is already there as prepared, which is what reuse means', () => {
+it('treats a port that is already there as prepared, which is what reuse means', async () => {
   const run = runner({ port: no('Port already exists on tunnel') });
-  expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).not.toThrow();
+  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).resolves.toBeUndefined();
 });
 
-it('treats the service\'s conflict on an existing port as prepared too', () => {
+it('treats the service\'s conflict on an existing port as prepared too', async () => {
   const run = runner({
     port: no('Tunnel service error: Conflict with existing entity. Tunnel port number conflicts with an existing port in the tunnel.'),
   });
-  expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).not.toThrow();
+  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).resolves.toBeUndefined();
 });
 
-it('still fails on a port error that is not a conflict', () => {
+it('still fails on a port error that is not a conflict', async () => {
   const run = runner({ port: no('Tunnel service error: Unauthorized.') });
-  expect(() => prepare({ tunnelId: 'made', labels: [] }, false, run)).toThrow(/Unauthorized/);
+  await expect(prepare({ tunnelId: 'made', labels: [] }, false, run)).rejects.toThrow(/Unauthorized/);
+});
+
+it('lets the daemon go on while the CLI talks to the service', async () => {
+  // One real `devtunnel` call takes seconds; a runner that waited for it
+  // synchronously expired every timer the daemon had running, cofold's
+  // catalogue fetch among them.
+  const bin = mkdtempSync(join(tmpdir(), 'devtunnel-'));
+  const path = process.env.PATH;
+  try {
+    writeFileSync(join(bin, 'devtunnel'), '#!/bin/sh\nsleep 0.3\necho \'{"tunnels":[]}\'\n');
+    chmodSync(join(bin, 'devtunnel'), 0o755);
+    process.env.PATH = `${bin}${delimiter}${path ?? ''}`;
+    let ticked = false;
+    const timer = setTimeout(() => { ticked = true; }, 20);
+    const found = await find(runCli);
+    clearTimeout(timer);
+    expect(found).toBeUndefined();
+    expect(ticked).toBe(true);
+  }
+  finally {
+    process.env.PATH = path;
+    rmSync(bin, { recursive: true, force: true });
+  }
 });
 
 // The hop -----------------------------------------------------------------

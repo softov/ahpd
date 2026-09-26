@@ -10,11 +10,14 @@
  * that adds a field keeps working, and refuses a missing or wrong-typed one
  * rather than carrying on with a tunnel id that is `undefined`.
  *
- * The process boundary is `Runner` rather than `spawnSync` reached for
- * directly, so the arrangement above it can be tested without the CLI.
+ * The process boundary is `Runner` rather than `spawn` reached for directly,
+ * so the arrangement above it can be tested without the CLI. It is never
+ * waited for synchronously: one `devtunnel` call takes seconds against the
+ * service, and a daemon whose event loop stood still that long lets every
+ * timer that started before it expire, as cofold's catalogue fetch did.
  */
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { IDENTITY_LABEL, LABELS, TUNNEL_PORT } from './discovery.js';
 
@@ -30,7 +33,7 @@ export interface Result {
 }
 
 /** How a `devtunnel` command is run. Replaced in tests. */
-export type Runner = (args: readonly string[]) => Result;
+export type Runner = (args: readonly string[]) => Result | Promise<Result>;
 
 /** How the long-running `devtunnel host` is started. Replaced in tests. */
 export type Spawner = (args: readonly string[]) => ChildProcess;
@@ -50,16 +53,18 @@ const install = [
   '    devtunnel user login         with a Microsoft account',
 ].join('\n');
 
-/** The default runner: the CLI, on this machine, waited for. */
-export const run: Runner = (args) => {
-  const done = spawnSync('devtunnel', [...args], { encoding: 'utf8' });
-  if (done.error) {
-    const why = done.error as NodeJS.ErrnoException;
-    if (why.code === 'ENOENT') throw new TunnelError(install);
-    throw new TunnelError(`could not start devtunnel: ${why.message}`);
-  }
-  return { status: done.status, signal: done.signal, stdout: done.stdout ?? '', stderr: done.stderr ?? '' };
-};
+/** The default runner: the CLI, on this machine, without holding the event loop. */
+export const run: Runner = (args) => new Promise<Result>((done, fail) => {
+  const child = spawn('devtunnel', [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+  child.on('error', (error: NodeJS.ErrnoException) => {
+    fail(new TunnelError(error.code === 'ENOENT' ? install : `could not start devtunnel: ${error.message}`));
+  });
+  child.on('close', (status, signal) => { done({ status, signal, stdout, stderr }); });
+});
 
 /** The default spawner, for the one command that does not end. */
 export const start: Spawner = (args) => spawn('devtunnel', [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -72,8 +77,8 @@ const why = (done: Result): string => {
 };
 
 /** Run one command and insist it worked. */
-function ok(runner: Runner, args: readonly string[]): Result {
-  const done = runner(args);
+async function ok(runner: Runner, args: readonly string[]): Promise<Result> {
+  const done = await runner(args);
   if (done.status !== 0) throw new TunnelError(`devtunnel ${args[0] ?? ''} failed:\n${why(done)}`);
   return done;
 }
@@ -111,8 +116,8 @@ function tunnelOf(value: unknown): Tunnel | undefined {
  * the newest is taken when there is more than one: an account that accumulated
  * two of these should not stop working while somebody tidies up.
  */
-export function find(runner: Runner = run): Tunnel | undefined {
-  const done = ok(runner, ['list', '--labels', IDENTITY_LABEL, '--json']);
+export async function find(runner: Runner = run): Promise<Tunnel | undefined> {
+  const done = await ok(runner, ['list', '--labels', IDENTITY_LABEL, '--json']);
   const listed = parse('list', done.stdout).tunnels;
   if (!Array.isArray(listed)) return undefined;
   const mine = listed.map(tunnelOf).filter((one): one is Tunnel => one !== undefined);
@@ -120,10 +125,10 @@ export function find(runner: Runner = run): Tunnel | undefined {
 }
 
 /** Make one, labelled so the convention's clients will look at it. */
-export function create(name: string | undefined, runner: Runner = run): Tunnel {
+export async function create(name: string | undefined, runner: Runner = run): Promise<Tunnel> {
   const labels = [...LABELS, ...(name === undefined ? [] : [name])];
   const args = ['create', '--json', ...labels.flatMap((label) => ['--labels', label])];
-  const made = tunnelOf(parse('create', ok(runner, args).stdout).tunnel);
+  const made = tunnelOf(parse('create', (await ok(runner, args)).stdout).tunnel);
   if (made === undefined) throw new TunnelError('devtunnel create did not say which tunnel it made');
   return made;
 }
@@ -141,26 +146,26 @@ export function create(name: string | undefined, runner: Runner = run): Tunnel {
  * only thing between them and the daemon is the derived connection token,
  * which is computed from the tunnel id rather than kept secret.
  */
-export function prepare(tunnel: Tunnel, anonymous: boolean, runner: Runner = run): void {
+export async function prepare(tunnel: Tunnel, anonymous: boolean, runner: Runner = run): Promise<void> {
   // The service has said this more than one way: older CLIs print "already
   // exists", current ones "Conflict with existing entity ... conflicts with an
   // existing port in the tunnel".
   const already = (done: Result): boolean =>
     /already exists|already has|conflicts? with (an )?existing/i.test(`${done.stdout}${done.stderr}`);
-  const port = runner(['port', 'create', tunnel.tunnelId, '-p', String(TUNNEL_PORT), '--protocol', 'http']);
+  const port = await runner(['port', 'create', tunnel.tunnelId, '-p', String(TUNNEL_PORT), '--protocol', 'http']);
   if (port.status !== 0 && !already(port)) {
     throw new TunnelError(`devtunnel port create failed:\n${why(port)}`);
   }
   if (!anonymous) return;
-  const access = runner(['access', 'create', tunnel.tunnelId, '--anonymous', '--port', String(TUNNEL_PORT)]);
+  const access = await runner(['access', 'create', tunnel.tunnelId, '--anonymous', '--port', String(TUNNEL_PORT)]);
   if (access.status !== 0 && !already(access)) {
     throw new TunnelError(`devtunnel access create failed:\n${why(access)}`);
   }
 }
 
 /** Take it down, for a run that did not ask to keep it. */
-export function remove(tunnel: Tunnel, runner: Runner = run): void {
-  runner(['delete', tunnel.tunnelId, '--force']);
+export async function remove(tunnel: Tunnel, runner: Runner = run): Promise<void> {
+  await runner(['delete', tunnel.tunnelId, '--force']);
 }
 
 /**

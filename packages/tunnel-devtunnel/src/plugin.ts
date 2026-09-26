@@ -102,11 +102,11 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     // token a client already derived from it.
     let tunnel: Tunnel;
     try {
-      tunnel = find(seams.runner) ?? create(
+      tunnel = await find(seams.runner) ?? await create(
         nameLabel(wanted ?? hostname()) ?? undefined,
         seams.runner,
       );
-      prepare(tunnel, anonymous, seams.runner);
+      await prepare(tunnel, anonymous, seams.runner);
     }
     catch (error) {
       // A tunnel that could not be made costs the tunnel and not the daemon:
@@ -131,7 +131,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     }
     catch (error) {
       plugin.log(`${name}: nothing can listen on ${TUNNEL_PORT}: ${error instanceof Error ? error.message : String(error)}`);
-      if (!keep) remove(tunnel, seams.runner);
+      if (!keep) await remove(tunnel, seams.runner).catch(() => undefined);
       return;
     }
 
@@ -171,7 +171,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     // Kept unless the run asked otherwise, because the id is what the
     // connection token is derived from: a new tunnel is a new token and every
     // client pointed at the old one is pointed at nothing.
-    if (!stood.keep) remove(stood.tunnel, seams.runner);
+    if (!stood.keep) await remove(stood.tunnel, seams.runner).catch(() => undefined);
   });
 
   plugin.log(`${name}: labelled ${IDENTITY_LABEL}, forwarding ${TUNNEL_PORT}`);
