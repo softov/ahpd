@@ -1,7 +1,7 @@
 import { probe } from './probe.js';
 import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
-import { turnsOf } from './transcript.js';
+import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue } from './catalog.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -415,6 +415,24 @@ export function claude(options: ClaudeOptions): Agent {
     },
 
     /*
+     * The conversations that ran inside that session's calls.
+     *
+     * The CLI writes each one beside the session, with a meta file naming the
+     * tool call that spawned it - which is the link, read exactly rather than
+     * inferred. The spawning call's own result is the fallback for a harness
+     * that writes no meta file, and a worker neither names is left out rather
+     * than linked to the wrong call.
+     */
+    subagents: async (id, turns) => {
+      for (const served of dirs) {
+        const rows = await catalogue(served).catch(() => []);
+        if (!rows.some((row) => row.id === id)) continue;
+        return subagentsOf(id, served, turns ?? await turnsOf(id, served));
+      }
+      return undefined;
+    },
+
+    /*
      * The one resource this backend can be given a token for.
      *
      * `required: false`, and that is the honest declaration rather than the
@@ -476,6 +494,11 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),
+      // The host's worker-chat seam, carried through unchanged: this backend
+      // names a call and what the harness said about it, and the host opens
+      // the chat. A host without one leaves a subagent's frames in the turn
+      // that spawned them, which is what a session did before this existed.
+      ...(start.subagent ? { subagent: start.subagent } : {}),
       /*
        * A pushed token, as the variable the CLI reads.
        *

@@ -13,6 +13,59 @@ import type { BoundTool } from './agent.js';
 export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
 
 /**
+ * What a backend knows about the worker chat it wants for one of its calls.
+ *
+ * A subagent runs inside a single tool call of a turn, and the protocol has a
+ * place for it: a read-only chat whose origin is that call. The backend is the
+ * only thing that can see the call and what the harness said about it, so it
+ * brings the words; the host brings the URI, the catalogue row and the turn.
+ */
+export interface SubagentRequest {
+  /** What the chat is called in a list. */
+  title: string;
+  /** The harness's own name for the kind of worker, when it said one. */
+  agentName?: string;
+  /** One line about the work, which the spawning call also shows. */
+  description?: string;
+  /** The message the worker was given, which opens its turn. */
+  prompt?: string;
+  /**
+   * The spawning call's own parent, when this worker was spawned inside one.
+   *
+   * Empty for a call in the session's own chat, which is how a nested worker's
+   * origin names the worker chat its call is in rather than the default chat.
+   */
+  parentToolCallId?: string;
+}
+
+/**
+ * The worker chat a host opened, and the way a backend writes to it.
+ *
+ * `emit` takes the same chat actions the backend already emits for its own
+ * chat, addressed to this one; `end` closes the turn the host opened, which is
+ * the only thing that ends a worker's turn besides a cancellation.
+ */
+export interface SubagentChat {
+  /** The URI the host named. */
+  readonly uri: string;
+  /**
+   * The turn the host opened with the worker's prompt.
+   *
+   * Every response part and tool call the backend emits for this worker has to
+   * name it, because a part that names no open turn lands nowhere.
+   */
+  readonly turnId: string;
+  /** One state action on this chat's channel. */
+  emit(action: Bag): void;
+  /**
+   * End the turn the host opened, and say how it went.
+   *
+   * `why` is the failure's own sentence and is only read for `error`.
+   */
+  end(state: 'complete' | 'error' | 'cancelled', why?: string): void;
+}
+
+/**
  * The model a turn runs on.
  *
  * An object rather than a name, because a model that carries a `configSchema`

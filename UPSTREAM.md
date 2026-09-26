@@ -26,6 +26,7 @@ VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commit
 
 - [x] **A chat keeps the title it was given, across a restart.** `packages/sdk/src/host.ts:3302`. Built in `host/02`.
 - [x] **`deferredTitleGeneration`, and a `rename_chat` shaped by the session's title strategy.** `packages/sdk/src/sessiontools.ts:497`. Built in `host/02`.
+- [x] **A subagent is its own read-only chat, opened from the call that spawned it.** `packages/sdk/src/host.ts` (`Start.subagent`, the `subagent` chat authority), `packages/agent-claude/src/session.ts` (routing by `parent_tool_use_id`, `forwardSubagentText`), `packages/agent-claude/src/transcript.ts` (restore from the CLI's `subagents/*.meta.json`). Built in `claude/04`.
 
 ### What the Claude backend reports as a customization
 

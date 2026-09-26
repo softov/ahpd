@@ -59,6 +59,10 @@ against its contract before it is recorded.
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
 
+### A backend's worker chats
+
+A backend that runs a subagent inside one of its tool calls asks the host for a chat of its own through the `Start` it was handed: `start.subagent(toolCallId, { title, agentName?, description?, prompt?, parentToolCallId? })`. The host is the only thing that knows what a chat URI looks like, so it mints `ahp-chat://subagent/<session>/<call>`, announces the row read-only, opens its turn with the prompt, links the spawning call with a `subagent` content and hands back `{ uri, turnId, emit, end }`. The backend writes the worker's parts through `emit` and closes its turn with `end`. A backend without it draws a worker's output inline, and the member is optional, so a backend written before this existed keeps working unchanged.
+
 ### A contributed setting can be a question
 
 A key registered with a schema alone is a fact somebody types. A property with no `enum` is exactly that to a client, so `computer` - the key the machine plugin contributes - reached VS Code and a terminal client as a text box, and a person had to know a machine's name and spell it. Only a client holding code for that key by name could do better, which is one client rather than every client.

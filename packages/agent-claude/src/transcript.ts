@@ -1,6 +1,9 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
-import type { Bag, OnWire, WireTurn } from '@ahpd/sdk';
+import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { toolMetaOf } from './kinds.js';
 
 /**
@@ -60,6 +63,114 @@ export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<
     }
   }
 
+  return buildTurns(messages);
+}
+
+/**
+ * Where a session's own files are, by the CLI's layout.
+ *
+ * `<config>/projects/<directory>/<id>.jsonl` for the session, and
+ * `<config>/projects/<directory>/<id>/subagents/agent-<id>.jsonl` for the
+ * conversations that ran inside its calls - with a `.meta.json` beside each
+ * naming the tool call that spawned it. The directory is spelled the way the
+ * CLI spells it, and a session resumed elsewhere may have been written under
+ * the directory it started in, so the other projects are looked through.
+ */
+function sessionFiles(sessionId: string, dir: string): { project: string; session: string } | undefined {
+  const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
+  const own = join(projects, dir.replace(/[^A-Za-z0-9]/g, '-'));
+  if (existsSync(join(own, `${sessionId}.jsonl`))) return { project: own, session: sessionId };
+  let names: string[];
+  try { names = readdirSync(projects); }
+  catch { return undefined; }
+  for (const name of names) {
+    const project = join(projects, name);
+    if (existsSync(join(project, `${sessionId}.jsonl`))) return { project, session: sessionId };
+  }
+  return undefined;
+}
+
+/** One JSON object per line, which is what the CLI writes. */
+function readJsonl(path: string): unknown[] {
+  try {
+    return readFileSync(path, 'utf8').split('\n').filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as unknown);
+  }
+  catch { return []; }
+}
+
+/**
+ * The `agentId` a spawning call's result ends with, when it says one.
+ *
+ * Some harness versions append a synthetic `agentId: <id>` line to the
+ * `Task`/`Agent` result instead of writing it where the host can read it
+ * exactly. Tolerant of spacing and case, because it is the CLI's text and not
+ * a field, and anchored to a line so a mention in the body is not a match.
+ */
+export function agentIdIn(turns: WireTurn<Turn>[], agentId: string): string | undefined {
+  const wanted = new RegExp(`^\\s*agentId:\\s*${agentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'im');
+  for (const turn of turns as unknown as Bag[]) {
+    for (const part of list(turn.responseParts)) {
+      const call = bag(bag(part).toolCall);
+      const id = str(call.toolCallId);
+      if (id === undefined) continue;
+      for (const content of list(call.content)) {
+        const text = str(bag(content).text);
+        if (text !== undefined && wanted.test(text)) return id;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The worker chats a session ran, read from the CLI's own files.
+ *
+ * The meta file is the exact link - `toolUseId` names the call that spawned
+ * the worker and nothing has to be inferred - and the `agentId:` suffix in the
+ * spawning call's result is the fallback for a harness that writes no meta or
+ * leaves the id out of it. A worker with neither is skipped rather than
+ * guessed at: a chat linked to the wrong call is worse than one that is not
+ * there, and a session with an orphaned file on disk still opens.
+ */
+export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<Turn>[]): RestoredSubagent[] {
+  const files = sessionFiles(sessionId, dir);
+  if (files === undefined) return [];
+  const folder = join(files.project, files.session, 'subagents');
+  if (!existsSync(folder)) return [];
+  let names: string[];
+  try { names = readdirSync(folder); }
+  catch { return []; }
+
+  const out: RestoredSubagent[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.jsonl') || name.startsWith('.')) continue;
+    const agentId = name.slice(0, -'.jsonl'.length);
+    const meta = join(folder, `${agentId}.meta.json`);
+    let about: Bag = {};
+    if (existsSync(meta)) {
+      try { about = bag(JSON.parse(readFileSync(meta, 'utf8'))); }
+      catch { about = {}; }
+    }
+    const fromMeta = str(about.toolUseId);
+    const toolCallId = fromMeta ?? agentIdIn(mainTurns, agentId.replace(/^agent-/, ''));
+    // Nothing names the call that ran it, so there is no link to draw.
+    if (toolCallId === undefined) continue;
+    const agentType = str(about.agentType);
+    const description = str(about.description);
+    out.push({
+      toolCallId,
+      title: agentType ?? 'Subagent',
+      ...(agentType !== undefined ? { agentName: agentType } : {}),
+      ...(description !== undefined ? { description } : {}),
+      turns: buildTurns(readJsonl(join(folder, name))) as unknown as Bag[],
+    });
+  }
+  return out;
+}
+
+/** One session's history, from the frames a reader already parsed. */
+function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
 

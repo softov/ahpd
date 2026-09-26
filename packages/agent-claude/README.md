@@ -59,12 +59,15 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 | `createSession(options)` | one live session |
 | `catalogue(dir)` | Claude's sessions in a directory, as rows a host can list |
 | `turnsOf(sessionId, dir)` | a past session read from its transcript, as turns |
+| `subagentsOf(sessionId, dir, turns)` | the subagent chats a past session ran, linked to the calls that spawned them |
 | `probe(options)` | runs a CLI at startup to read the available models and commands |
 | `apply(host, options)` | the plugin entry, with `name` and `title` beside it |
 
 ## Supported
 
 Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, session titles, token usage, and context compaction.
+
+A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent` seam, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking and tool calls are drawn there rather than in the turn that spawned them - `forwardSubagentText` is on for exactly that. A permission ask from inside the subagent is drawn in its chat too. On a host without the seam the frames stay inline, which is what a session did before this existed, and a session read back from disk rebuilds each subagent's chat from the CLI's own `subagents/*.meta.json` and `.jsonl`.
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 

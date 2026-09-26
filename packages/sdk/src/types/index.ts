@@ -16,7 +16,7 @@ export type { Bag } from './common.js';
 export type { OnWire, WireTurn } from './wire.js';
 export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
-export type { Emit, SessionOptions, Session, Ran, Chosen, MessageFrom } from './session.js';
+export type { Emit, SessionOptions, Session, Ran, Chosen, MessageFrom, SubagentChat, SubagentRequest } from './session.js';
 export type { HostOptions, Connection, Credential, Host, Diagnostics, HostTool, ToolCall } from './host.js';
 export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, Contribution, PortContribution, PortKey, PortOf } from './plugin.js';
 export type {
@@ -27,7 +27,7 @@ export type {
 export type { Page } from './paging.js';
 export type { Connected, OnConnect, Runtime, Listener, ListenOptions, StdioOptions, Tap } from './listen.js';
 export type { Offered } from './probe.js';
-export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects } from './agent.js';
+export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects, RestoredSubagent } from './agent.js';
 export type { Entry, Metadata, Read, ResourceProvider, ResourceStore, SchemeDescription, Write } from './resources.js';
 export type { ComputerPort, Spawn, SpawnOptions } from './computers.js';
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';

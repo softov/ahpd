@@ -8,7 +8,7 @@ import { protectedResource, urlOf } from './mcp.js';
 import { toolMetaOf } from './kinds.js';
 import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, SubagentChat, SubagentRequest, WireTurn } from '@ahpd/sdk';
 import type { Asked, Spawned } from './spawn.js';
 
 /**
@@ -554,6 +554,15 @@ export interface ClaudeSessionOptions extends SessionOptions {
   spawnExecutable?: string;
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
+  /**
+   * The host's seam for a chat of one tool call's own.
+   *
+   * A subagent is a conversation inside one call, and the host owns what a
+   * chat is: this backend names the call and the words, and writes what the
+   * harness said to the chat it is handed back. Absent on a host that does not
+   * offer one, and then a subagent's frames stay in the turn that spawned it.
+   */
+  subagent?: (toolCallId: string, request: SubagentRequest) => SubagentChat;
 }
 
 export function createSession(options: ClaudeSessionOptions): Session {
@@ -817,6 +826,146 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   const rounds = new Map<string, { answered: boolean; stopped?: string }>();
 
+  /**
+   * One conversation inside the SDK stream, with its own parts and its turn.
+   *
+   * The session's own agent and every subagent it delegates to share one
+   * stream, told apart only by `parent_tool_use_id`. A response part is
+   * identified *within its turn* - `#<message>:<index>` names the same slot in
+   * two conversations - so each keeps its own maps, and the main scope's are
+   * the session's own. A worker's parts are emitted on its chat rather than
+   * mixed into the turn that spawned it.
+   */
+  interface Scope {
+    /** The call that spawned it; empty for the session's own agent. */
+    parent: string;
+    /** The chat a worker writes to; nothing for the session's own agent. */
+    chat: SubagentChat | undefined;
+    turn: Bag | undefined;
+    parts: Map<string, Bag>;
+    calling: Map<string, string>;
+    streaming: string | undefined;
+  }
+
+  /** The session's own agent, which is the scope a frame without a parent is in. */
+  const mainScope: Scope = {
+    parent: '',
+    chat: undefined,
+    get turn() { return active; },
+    set turn(next) { active = next; },
+    parts,
+    calling,
+    get streaming() { return streaming; },
+    set streaming(next) { streaming = next; },
+  };
+  const scopes = new Map<string, Scope>([['', mainScope]]);
+
+  /**
+   * What each spawning call said, by its own id.
+   *
+   * `Task` and `Agent` both spawn, and the call's input is the only place the
+   * harness says what the worker is for: its kind, its one-line description
+   * and the prompt it is run with. `parent` is the scope the call is in, which
+   * is how a worker spawned from inside another worker's chat is linked from
+   * that chat rather than from the session's.
+   */
+  interface Spawning {
+    subagentType?: string;
+    description?: string;
+    prompt?: string;
+    parent: string;
+  }
+  const spawning = new Map<string, Spawning>();
+  /** The calls `task_started` said were background, so their result does not end them. */
+  const background = new Set<string>();
+  /** The agent ids a permission ask was seen with, so the next one lands in the same chat. */
+  const byAgent = new Map<string, Scope>();
+  /** The scopes whose turn has ended, so a second end is not a second turn. */
+  const ended = new Set<string>();
+
+  /**
+   * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
+   *
+   * The host mints the chat, announces it, opens its turn with the prompt and
+   * links the call to it; what is left here is the scope the frames land in.
+   * Without the host's seam there is nowhere to put a worker, so its frames
+   * stay in the turn that spawned them - which is what every session did
+   * before this existed.
+   */
+  const scopeFor = (parent: string): Scope => {
+    if (parent === '') return mainScope;
+    const known = scopes.get(parent);
+    if (known !== undefined) return known;
+    if (options.subagent === undefined) return mainScope;
+    const info = spawning.get(parent);
+    const subagentType = info?.subagentType;
+    const chat = options.subagent(parent, {
+      title: subagentType ?? 'Subagent',
+      ...(subagentType !== undefined ? { agentName: subagentType } : {}),
+      ...(info?.description !== undefined ? { description: info.description } : {}),
+      ...(info?.prompt !== undefined ? { prompt: info.prompt } : {}),
+      ...(info?.parent !== undefined && info.parent !== '' ? { parentToolCallId: info.parent } : {}),
+    });
+    const scope: Scope = {
+      parent,
+      chat,
+      turn: {
+        id: chat.turnId,
+        startedAt: new Date().toISOString(),
+        message: { text: info?.prompt ?? '', origin: { kind: 'tool' } },
+        responseParts: [],
+        usage: undefined,
+      },
+      parts: new Map(),
+      calling: new Map(),
+      streaming: undefined,
+    };
+    scopes.set(parent, scope);
+    return scope;
+  };
+
+  /** The scope a tool call was opened in, whichever conversation that is. */
+  const scopeOfCall = (toolCallId: string): Scope | undefined => {
+    for (const scope of scopes.values()) {
+      if (scope.parts.has(toolCallId)) return scope;
+    }
+    return undefined;
+  };
+
+  /** One action on the chat a scope writes to. */
+  const emitOn = (scope: Scope, action: Bag): void => {
+    if (scope.chat !== undefined) scope.chat.emit(action);
+    else emit('chat', action);
+  };
+
+  /**
+   * End a worker's turn, once, whichever signal got here first.
+   *
+   * A foreground worker ends on the `tool_result` of the call that spawned it
+   * and a background one on its terminal `task_notification`; both can also
+   * arrive - the harness sends a notification for a foreground worker too -
+   * and a second ending would be a second turn on a chat that has none open.
+   * Anything the worker was still asking is declined rather than left on a
+   * promise nothing will settle.
+   */
+  const endWorker = (callId: string, state: 'complete' | 'error' | 'cancelled', why?: string): void => {
+    if (ended.has(callId)) return;
+    const scope = scopes.get(callId);
+    if (scope?.chat === undefined) return;
+    ended.add(callId);
+    for (const one of [...pending.values()]) {
+      if (one.entry.chat !== scope.chat.uri) continue;
+      pending.delete(one.id);
+      one.settle({ behavior: 'deny', message: 'The subagent finished' });
+      inputNeededRemoved(one.id);
+    }
+    scope.chat.end(state, why);
+    scopes.delete(callId);
+    rounds.delete(callId);
+    background.delete(callId);
+    byAgent.forEach((held, key) => { if (held === scope) byAgent.delete(key); });
+  };
+
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session a session rather than a series of them.
   const waiting: { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null }[] = [];
@@ -991,14 +1140,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   // ------------------------------------------------------------- translation
 
-  const openTurn = (): Bag => {
-    if (active) return active;
+  const openTurn = (scope: Scope = mainScope): Bag => {
+    if (scope.turn) return scope.turn;
     // A turn the client did not begin: the agent spoke first, which happens on
     // a resumed session. Better an id of our own than a turn with none.
     // `usage` is required on an `ActiveTurn` and means "not measured yet".
     // Leaving the key off put a turn on the wire that did not satisfy its own
     // type, which nothing here would have noticed.
-    active = {
+    const opened = {
       id: `turn-${Date.now()}`,
       startedAt: new Date().toISOString(),
       // The agent spoke first, so the message in front of this turn is its
@@ -1007,21 +1156,28 @@ export function createSession(options: ClaudeSessionOptions): Session {
       responseParts: [],
       usage: undefined,
     } satisfies WireTurn<ActiveTurn> as Bag;
-    startedAt = Date.now();
-    failed = undefined;
-    emit('chat', {
+    scope.turn = opened;
+    // Only the session's own turn moves the session's clock and clears its
+    // last failure; a worker's turn is not what the session is doing.
+    if (scope === mainScope) {
+      startedAt = Date.now();
+      failed = undefined;
+    }
+    emitOn(scope, {
       type: 'chat/turnStarted',
-      turnId: active.id,
-      startedAt: active.startedAt,
-      message: { text: '', origin: { kind: 'agent' } },
+      turnId: opened.id,
+      startedAt: opened.startedAt,
+      message: opened.message,
     });
-    return active;
+    return opened;
   };
 
   /** Prose: the part is announced, then filled by deltas. */
-  const addPart = (turn: Bag, part: Bag): void => {
+  const addPart = (scope: Scope, part: Bag): void => {
+    const turn = scope.turn;
+    if (turn === undefined) return;
     (turn.responseParts as Bag[]).push(part);
-    emit('chat', { type: 'chat/responsePart', turnId: turn.id, part });
+    emitOn(scope, { type: 'chat/responsePart', turnId: turn.id, part });
   };
 
   /**
@@ -1067,12 +1223,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   const streamed = (event: Bag, parent = ''): void => {
     const type = str(event.type);
+    /*
+     * The conversation this frame belongs to. Opened here rather than at the
+     * first `assistant` frame, because a delta can arrive before the canonical
+     * message that completes it.
+     */
+    const scope = scopeFor(parent);
 
     if (type === 'message_start') {
-      streaming = str(bag(event.message).id) ?? 'm';
+      scope.streaming = str(bag(event.message).id) ?? 'm';
       // A new round: whatever the last one said, this one has said nothing.
       rounds.set(parent, { answered: false });
-      openTurn();
+      openTurn(scope);
       return;
     }
 
@@ -1095,12 +1257,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const round = rounds.get(parent);
       rounds.delete(parent);
       /*
-       * The session's own rounds only. The reference announces a subagent's
-       * on that subagent's scope, and this backend draws a subagent's output
-       * in the main turn with no scope of its own, so announcing it here
-       * would settle the main agent's thinking for a round it did not end.
+       * A round nobody answered, announced where it happened.
+       *
+       * The session's own rounds go on the session's chat, and a subagent's on
+       * the chat it was given - which is what `claude/03` left out, because
+       * a subagent had no scope to announce it on. Without the host's seam a
+       * subagent has no chat either, so its round stays unannounced rather
+       * than settling the main agent's thinking for a round it did not end.
        */
-      if (parent === '' && round !== undefined && !round.answered && round.stopped === 'end_turn' && active) {
+      if ((parent === '' || scope.chat !== undefined)
+        && round !== undefined && !round.answered && round.stopped === 'end_turn' && scope.turn) {
         /*
          * The reference's part, keyed the way its client reads it.
          *
@@ -1109,7 +1275,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
          * nothing. No id: `SystemNotificationResponsePart` has none, and the
          * reference's own carries none either.
          */
-        addPart(active, {
+        addPart(scope, {
           kind: 'systemNotification',
           content: '',
           _meta: { kind: 'responseRoundEnded' },
@@ -1118,11 +1284,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
       return;
     }
 
-    const of = streaming ?? 'm';
+    const of = scope.streaming ?? 'm';
     const key = `#${of}:${String(event.index)}`;
 
     if (type === 'content_block_start') {
-      const turn = openTurn();
+      const turn = openTurn(scope);
       const block = bag(event.content_block);
       const kind = str(block.type);
       // Prose or a tool call is an answer; thinking is not, which is the whole
@@ -1143,8 +1309,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
        */
       if (kind === 'tool_use') {
         const id = str(block.id) ?? `${of}:${String(event.index)}`;
-        calling.set(key, id);
-        if (parts.has(id)) return;
+        scope.calling.set(key, id);
+        if (scope.parts.has(id)) return;
         const name = str(block.name) ?? 'tool';
         // Whose tool it is, when it is an MCP server's. The reducer refuses
         // `chat/toolCallAuthRequired` on a call with no MCP contributor, so
@@ -1166,9 +1332,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
           ...(meta ? { _meta: meta } : {}),
         };
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
-        parts.set(id, part);
+        scope.parts.set(id, part);
         holdPart(turn, part);
-        emit('chat', {
+        emitOn(scope, {
           type: 'chat/toolCallStart',
           turnId: turn.id,
           toolCallId: id,
@@ -1181,33 +1347,33 @@ export function createSession(options: ClaudeSessionOptions): Session {
       }
       // Everything else that is not prose has no part to open.
       if (kind !== 'text' && kind !== 'thinking') return;
-      if (parts.has(key)) return;
+      if (scope.parts.has(key)) return;
       const part: Bag = {
         id: `${of}:${String(event.index)}`,
         kind: kind === 'text' ? 'markdown' : 'reasoning',
         content: '',
       };
-      parts.set(key, part);
+      scope.parts.set(key, part);
       // The part first, always. A delta naming a part nobody opened is text
       // the client has nowhere to put.
-      addPart(turn, part);
+      addPart(scope, part);
       return;
     }
 
     if (type === 'content_block_delta') {
-      const toolCallId = calling.get(key);
+      const toolCallId = scope.calling.get(key);
       if (toolCallId !== undefined) {
         const json = str(bag(event.delta).partial_json);
-        const call = bag(parts.get(toolCallId)?.toolCall);
+        const call = bag(scope.parts.get(toolCallId)?.toolCall);
         // Only while it is streaming: once the arguments are complete the
         // call carries `toolInput`, and appending to `partialInput` after
         // that is writing into a field the reducer has stopped reading.
         if (json === undefined || str(call.status) !== 'streaming') return;
         call.partialInput = `${String(call.partialInput ?? '')}${json}`;
-        emit('chat', { type: 'chat/toolCallDelta', turnId: active?.id, toolCallId, content: json });
+        emitOn(scope, { type: 'chat/toolCallDelta', turnId: scope.turn?.id, toolCallId, content: json });
         return;
       }
-      const part = parts.get(key);
+      const part = scope.parts.get(key);
       if (!part) return;
       const text = str(bag(event.delta).text) ?? str(bag(event.delta).thinking);
       if (text === undefined) return;
@@ -1223,14 +1389,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * header with nothing under it for as long as the model thinks.
        */
       const append = part.kind === 'reasoning' ? 'chat/reasoning' : 'chat/delta';
-      emit('chat', { type: append, turnId: active?.id, partId: part.id, content: text });
+      emitOn(scope, { type: append, turnId: scope.turn?.id, partId: part.id, content: text });
     }
   };
 
-  const assistant = (message: Bag): void => {
-    const turn = openTurn();
+  const assistant = (message: Bag, parent = ''): void => {
+    const scope = scopeFor(parent);
+    const turn = openTurn(scope);
     const of = str(message.id) ?? 'm';
-    ran = str(message.model) ?? ran;
+    // The model a turn ran on is the session's own answer; a worker's may be
+    // a different one and is not what the session reports.
+    if (scope === mainScope) ran = str(message.model) ?? ran;
     const blocks = list(message.content);
 
     for (let index = 0; index < blocks.length; index++) {
@@ -1240,14 +1409,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
       if (kind === 'text' || kind === 'thinking') {
         // Already opened and already filled by the deltas. Writing the complete
         // block on top of it prints the whole answer twice.
-        if (parts.has(`#${of}:${index}`)) continue;
+        if (scope.parts.has(`#${of}:${index}`)) continue;
         const part: Bag = {
           id: `${of}:${index}`,
           kind: kind === 'text' ? 'markdown' : 'reasoning',
           content: str(block.text) ?? str(block.thinking) ?? '',
         };
-        parts.set(`#${of}:${index}`, part);
-        addPart(turn, part);
+        scope.parts.set(`#${of}:${index}`, part);
+        addPart(scope, part);
         continue;
       }
 
@@ -1264,11 +1433,30 @@ export function createSession(options: ClaudeSessionOptions): Session {
          * put. The same assistant message can also arrive more than once while
          * it streams, and a second part for it is the same row drawn twice.
          */
-        const open = parts.get(id);
+        const open = scope.parts.get(id);
         if (open !== undefined && str(bag(open.toolCall).status) !== 'streaming') continue;
         const name = str(block.name) ?? 'tool';
         const command = summarize(name, bag(block.input));
         const from = serverOf(name);
+        /*
+         * A spawning call, whose input is the only place the harness says what
+         * the worker is for. Recorded here rather than where the block streams
+         * in, because the input is complete only in the canonical message -
+         * and a worker's first frame can arrive before this one does, which is
+         * what the `Subagent` fallback is for.
+         */
+        if (name === 'Task' || name === 'Agent') {
+          const given = bag(block.input);
+          const kind = str(given.subagent_type);
+          const about = str(given.description);
+          const prompt = str(given.prompt);
+          spawning.set(id, {
+            ...(kind !== undefined ? { subagentType: kind } : {}),
+            ...(about !== undefined ? { description: about } : {}),
+            ...(prompt !== undefined ? { prompt } : {}),
+            parent: scope.parent,
+          });
+        }
         /*
          * Whose tool this is, which decides who has to run it.
          *
@@ -1312,7 +1500,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         } satisfies OnWire<ToolCallRunningState>;
         if (open === undefined) {
           const part: Bag = { id, kind: 'toolCall', toolCall: call };
-          parts.set(id, part);
+          scope.parts.set(id, part);
           holdPart(turn, part);
         }
         else {
@@ -1324,7 +1512,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           delete call.partialInput;
           if (command) call.toolInput = command;
         }
-        doing(busyWith(name, bag(block.input)));
+        if (scope === mainScope) doing(busyWith(name, bag(block.input)));
         /*
          * The file as it is *now*, before the tool has run.
          *
@@ -1339,7 +1527,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
         }
         if (open === undefined) {
-          emit('chat', {
+          emitOn(scope, {
             type: 'chat/toolCallStart',
             turnId: turn.id,
             toolCallId: id,
@@ -1349,7 +1537,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
             ...(meta ? { _meta: meta } : {}),
           });
         }
-        emit('chat', {
+        emitOn(scope, {
           type: 'chat/toolCallReady',
           turnId: turn.id,
           toolCallId: id,
@@ -1368,12 +1556,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
     }
   };
 
-  const results = (message: Bag): void => {
+  const results = (message: Bag, parent = ''): void => {
+    const scope = scopeFor(parent);
     for (const raw of list(message.content)) {
       const block = bag(raw);
       if (str(block.type) !== 'tool_result') continue;
       const id = str(block.tool_use_id);
-      const part = id ? parts.get(id) : undefined;
+      const part = id ? scope.parts.get(id) : undefined;
       if (!part) continue;
       const call = bag(part.toolCall);
       /*
@@ -1392,7 +1581,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       if (id !== undefined) onServer.delete(id);
       // Back to thinking. Leaving the last tool's name up makes a session look
       // busy with something that finished.
-      doing('Thinking');
+      if (scope === mainScope) doing('Thinking');
       const text = resultText(block.content);
       /*
        * The result, as one object, because that is the only part of the action
@@ -1410,10 +1599,22 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * of a tool name, and the CLI knows what it asked for.
        */
       const said = str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      /*
+       * The link survives the result.
+       *
+       * The worker's chat points at this call, and the protocol requires the
+       * call to point back. The completion action replaces the call's whole
+       * content, so the block the host put there when the chat opened has to
+       * be carried into the completion or the link is gone the moment the
+       * worker finishes.
+       */
+      const workerContent = id === undefined ? undefined : workerBlock(id);
       const result = {
         success: ok,
         pastTenseMessage: said,
-        ...(text !== undefined ? { content: [{ type: 'text', text }] } : {}),
+        ...(text !== undefined || workerContent !== undefined
+          ? { content: [...(workerContent !== undefined ? [workerContent] : []), ...(text !== undefined ? [{ type: 'text', text }] : [])] as OnWire<ToolResultContent>[] }
+          : {}),
         ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;
       /*
@@ -1448,16 +1649,46 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const changed = id === undefined ? undefined : editing.get(id);
       if (id !== undefined && changed !== undefined) {
         editing.delete(id);
-        options.onFileEdit?.(str(active?.id) ?? '', changed, 'after');
+        options.onFileEdit?.(str(scope.turn?.id) ?? '', changed, 'after');
       }
-      emit('chat', {
+      emitOn(scope, {
         type: 'chat/toolCallComplete',
-        turnId: active?.id,
+        turnId: scope.turn?.id,
         toolCallId: id,
         result,
         ...(progressed ? { _meta: call._meta ?? {} } : {}),
       });
+      /*
+       * A spawning call's result ends the worker it ran - unless the worker is
+       * background, whose result says only that it was launched. A harness
+       * that omitted `is_backgrounded` is caught by the result's own words.
+       */
+      if (id !== undefined && spawning.has(id)) {
+        if (!background.has(id) && /async agent launched/i.test(text ?? '')) background.add(id);
+        if (!background.has(id)) endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
+      }
     }
+  };
+
+  /**
+   * The `subagent` content for a worker, as the spawning call's result shows it.
+   *
+   * Read off the scope the worker was opened in, so a call that never saw a
+   * frame from its worker carries nothing - the chat does not exist and a
+   * link to it would be a link to nowhere.
+   */
+  const workerBlock = (callId: string): Bag | undefined => {
+    const scope = scopes.get(callId);
+    if (scope?.chat === undefined) return undefined;
+    const info = spawning.get(callId);
+    const title = info?.subagentType ?? 'Subagent';
+    return {
+      type: 'subagent',
+      resource: scope.chat.uri,
+      title,
+      ...(info?.subagentType !== undefined ? { agentName: info.subagentType } : {}),
+      ...(info?.description !== undefined ? { description: info.description } : {}),
+    };
   };
 
   // ------------------------------------------------------ asking a person
@@ -1490,8 +1721,24 @@ export function createSession(options: ClaudeSessionOptions): Session {
     if (already === 'allow') return { behavior: 'allow', updatedInput: raw };
     if (already === 'deny') return { behavior: 'deny', message: `${toolName} is denied for this session` };
     return await new Promise((settle) => {
-      const turn = openTurn();
       const about = bag(asked);
+      /*
+       * The conversation the tool is running in.
+       *
+       * A permission ask from inside a subagent belongs on that subagent's
+       * chat, against the call it is for - not on the lead chat, where it
+       * would read as a question about the parent's own work. The SDK hands
+       * the subagent's id on `agentID`; a call whose frames already arrived is
+       * joined by its own id, which is the fallback that also works for a
+       * harness that says nothing about the subagent.
+       */
+      const agentId = str(about.agentID);
+      const callId = str(about.toolUseID);
+      const scope = (callId !== undefined ? scopeOfCall(callId) : undefined)
+        ?? (agentId !== undefined ? byAgent.get(agentId) : undefined)
+        ?? mainScope;
+      if (agentId !== undefined && scope.chat !== undefined) byAgent.set(agentId, scope);
+      const turn = openTurn(scope);
       /*
        * The agent's own id for this call.
        *
@@ -1501,6 +1748,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * client had never been given, so approving did nothing.
        */
       const id = str(about.toolUseID) ?? `req-${Date.now()}`;
+      /** Where a question about this call is drawn: the worker's chat, or the lead. */
+      const where = scope.chat?.uri ?? chatUri;
 
       if (toolName === 'AskUserQuestion') {
         const asked = new Map<string, string>();
@@ -1533,9 +1782,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         });
         const request = { id, message: str(raw.header) ?? 'The agent has a question', questions };
         // `chat` is required on every input request and was never sent.
-        const entry: Bag = { id, chat: chatUri, kind: 'chatInput', request };
+        const entry: Bag = { id, chat: where, kind: 'chatInput', request };
         pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle });
-        emit('chat', { type: 'chat/inputRequested', turnId: turn.id, request });
+        emitOn(scope, { type: 'chat/inputRequested', turnId: turn.id, request });
         inputNeededSet(entry);
         touch();
         return;
@@ -1557,7 +1806,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
       // The call the assistant message opened, if it arrived first. Which of
       // the two comes first is the CLI's business; either order is one call.
-      const held = parts.get(id);
+      const held = scope.parts.get(id);
       const meta = toolMetaOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
@@ -1574,14 +1823,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
       delete call.confirmed;
       if (!held) {
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
-        parts.set(id, part);
+        scope.parts.set(id, part);
         holdPart(turn, part);
-        emit('chat', {
+        emitOn(scope, {
           type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
           ...(meta ? { _meta: meta } : {}),
         });
       }
-      emit('chat', {
+      emitOn(scope, {
         type: 'chat/toolCallReady',
         turnId: turn.id,
         toolCallId: id,
@@ -1590,10 +1839,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ...(command ? { toolInput: command } : {}),
       });
 
-      doing(`Waiting on you: ${displayName}`);
+      if (scope === mainScope) doing(`Waiting on you: ${displayName}`);
       // `chat` and `turnId` are both required on a tool confirmation and
       // neither was sent.
-      const entry: Bag = { id, chat: chatUri, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
+      const entry: Bag = { id, chat: where, kind: 'toolConfirmation', turnId: str(turn.id) ?? '', toolCall: call };
       pending.set(id, {
         id,
         entry,
@@ -1668,6 +1917,15 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: options.instructions.join('\n\n'), snapshot: true } }
         : {}),
       includePartialMessages: true,
+      /*
+       * A subagent's own words, not only its tool calls.
+       *
+       * Without this the harness forwards a worker's `tool_use` and
+       * `tool_result` and nothing else - so a chat opened for it has rows and
+       * no text and no thinking, which is a transcript with the reasoning cut
+       * out. The reference host turns this on for the same reason.
+       */
+      forwardSubagentText: true,
       /*
        * Over the daemon's own environment, never instead of it.
        *
@@ -2125,7 +2383,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
             const was = typeof about.pre_tokens === 'number' ? about.pre_tokens : undefined;
             const now = typeof about.post_tokens === 'number' ? about.post_tokens : undefined;
             const how = str(about.trigger) === 'manual' ? 'Context compacted' : 'Context compacted automatically';
-            addPart(turn, {
+            addPart(mainScope, {
               id: `${String(turn.id)}:compact:${String(turns.length)}`,
               kind: 'systemNotification',
               content: was !== undefined && now !== undefined
@@ -2166,16 +2424,20 @@ export function createSession(options: ClaudeSessionOptions): Session {
          */
         if (type === 'system' && str(message.subtype) === 'task_progress') {
           const id = str(message.tool_use_id);
-          const part = id === undefined ? undefined : parts.get(id);
+          // The call is in the chat of the agent that made it, which for a
+          // nested worker is another worker's chat and not the lead's.
+          const scope = id === undefined ? undefined : scopeOfCall(id);
+          const part = scope === undefined || id === undefined ? undefined : scope.parts.get(id);
           const call = part === undefined ? undefined : bag(part.toolCall);
           const line = str(message.summary)
             ?? (str(message.last_tool_name) !== undefined ? `Running ${String(message.last_tool_name)}` : undefined);
           if (call !== undefined && line !== undefined && str(call.status) === 'running'
+            && scope !== undefined
             && str(bag(call._meta).progressMessage) !== line) {
             call._meta = { ...bag(call._meta), progressMessage: line };
-            emit('chat', {
+            emitOn(scope, {
               type: 'chat/toolCallContentChanged',
-              turnId: active?.id,
+              turnId: scope.turn?.id,
               toolCallId: id,
               content: list(call.content),
               _meta: call._meta,
@@ -2184,8 +2446,36 @@ export function createSession(options: ClaudeSessionOptions): Session {
           continue;
         }
 
-        if (type === 'stream_event') { streamed(bag(message.event), str(message.parent_tool_use_id)); continue; }
-        if (type === 'assistant') { assistant(bag(message.message)); continue; }
+        /*
+         * A worker the harness says is running, and the one that says it ended.
+         *
+         * `task_started` carries `is_backgrounded`, and that flag - not the
+         * message's presence - is what decides whether the spawning call's
+         * `tool_result` ends the worker or whether its terminal
+         * `task_notification` does. This harness sends `task_started` for a
+         * foreground worker too, so treating the message itself as the mark
+         * would leave every foreground worker running until its notification.
+         * A background worker's `tool_result` arrives at once, saying only
+         * that it was launched, which is why the result alone cannot end it.
+         */
+        if (type === 'system' && str(message.subtype) === 'task_started') {
+          const id = str(message.tool_use_id);
+          if (id !== undefined && message.is_backgrounded === true) background.add(id);
+          continue;
+        }
+        if (type === 'system' && str(message.subtype) === 'task_notification') {
+          const id = str(message.tool_use_id);
+          const status = str(message.status);
+          if (id !== undefined && background.has(id)
+            && (status === 'completed' || status === 'failed' || status === 'stopped')) {
+            endWorker(id, status === 'completed' ? 'complete' : status === 'stopped' ? 'cancelled' : 'error',
+              status === 'failed' ? str(message.summary) : undefined);
+          }
+          continue;
+        }
+
+        if (type === 'stream_event') { streamed(bag(message.event), str(message.parent_tool_use_id) ?? ''); continue; }
+        if (type === 'assistant') { assistant(bag(message.message), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'user') {
           // The prompt's own id, which is what a fork is cut at. Recorded on
           // the first echo of a turn and not after: later `user` frames in one
@@ -2193,7 +2483,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           // halfway through work the agent had already started.
           const said = str(message.uuid);
           if (active && said !== undefined && !cuts.has(String(active.id))) cuts.set(String(active.id), said);
-          results(bag(message.message));
+          results(bag(message.message), str(message.parent_tool_use_id) ?? '');
           continue;
         }
 
@@ -2907,6 +3197,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // promise settled by somebody else is one a stopped turn still waits on.
       releaseCalls('The turn was stopped');
       void handle.interrupt().catch(() => {});
+      /*
+       * And the workers that turn was running.
+       *
+       * A worker's turn is a turn of its own, and a main turn stopped halfway
+       * leaves every one of them with nothing left to answer it. Cancelling
+       * them here is what keeps a stopped conversation from showing workers
+       * still thinking for as long as the session is open.
+       */
+      for (const scope of [...scopes.values()]) {
+        if (scope.parent !== '' && scope.chat !== undefined) endWorker(scope.parent, 'cancelled');
+      }
       const turn = active;
       if (turn) {
         turn.state = 'cancelled';
@@ -2933,21 +3234,24 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const settle = held.settle;
       pending.delete(held.id);
       inputNeededRemoved(held.id);
-      const part = parts.get(toolCallId);
+      // The call's own conversation, so an approval given in a worker's chat
+      // is said back there rather than on the lead chat.
+      const scope = scopeOfCall(toolCallId) ?? mainScope;
+      const part = scope.parts.get(toolCallId);
       if (part) {
         bag(part.toolCall).status = approved ? 'running' : 'cancelled';
         // And how it was approved, which is required on the call and was only
         // ever said in the action.
         if (approved) bag(part.toolCall).confirmed = 'user-action';
       }
-      doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
+      if (scope === mainScope) doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       // Said back, like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here stayed
       // `pending-confirmation` on every screen watching it - including the
       // one that had just answered it.
-      emit('chat', {
+      emitOn(scope, {
         type: 'chat/toolCallConfirmed',
-        turnId: active?.id,
+        turnId: scope.turn?.id,
         toolCallId,
         approved,
         ...(approved ? { confirmed: 'user-action' } : {}),

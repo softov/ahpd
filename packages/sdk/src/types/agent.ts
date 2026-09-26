@@ -3,7 +3,7 @@
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { WireTurn } from './wire.js';
-import type { Emit, Session } from './session.js';
+import type { Emit, Session, SubagentChat, SubagentRequest } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
@@ -162,6 +162,21 @@ export interface Start {
   seedCustomizations?: Bag[];
   /** Where state actions go. The host routes them to the right channel. */
   emit: Emit;
+  /**
+   * Ask the host for a read-only chat for one of this backend's tool calls.
+   *
+   * A worker the harness runs inside a tool call is a conversation of its own,
+   * and the host is the only thing that knows what a chat URI looks like and
+   * what a chat's row says. The backend names the call and the words; the host
+   * mints the URI, announces the row, opens the turn with the prompt, links
+   * the call to it and hands back an emitter for that chat. The first call for
+   * a tool call id is the one that opens it, and a second returns the same
+   * chat without announcing it again.
+   *
+   * Optional. A backend without it draws a worker's output inline, which is
+   * what every backend did before this existed.
+   */
+  subagent?(toolCallId: string, request: SubagentRequest): SubagentChat;
   /** A session of this backend's to continue, rather than starting a new one. */
   resume?: string;
   /** The prompt to resume *at*, so a fork leaves the turns after it behind. */
@@ -200,6 +215,30 @@ export interface Start {
    * belongs to a resource and nothing else about it.
    */
   credentials?: Record<string, string>;
+}
+
+/**
+ * A worker chat a backend read back out of its own record.
+ *
+ * The counterpart of `Start.subagent` for a session that already happened:
+ * the harness wrote the worker's conversation down beside the session's own,
+ * and this is what is left to rebuild its chat from. The tool call it was
+ * spawned by is the link; the host mints the chat URI from the two because
+ * only the host knows what one looks like.
+ */
+export interface RestoredSubagent {
+  /** The spawning call, in the chat below or in another worker's chat. */
+  toolCallId: string;
+  /** The chat the call is in, when it is not the session's own. */
+  parentToolCallId?: string;
+  /** What the chat is called in a list. */
+  title: string;
+  /** The harness's own name for the kind of worker, when it said one. */
+  agentName?: string;
+  /** One line about the work. */
+  description?: string;
+  /** The worker's own conversation, in the protocol's shape. */
+  turns: Bag[];
 }
 
 /**
@@ -343,6 +382,20 @@ export interface Agent {
    * content blocks no `type`.
    */
   transcript?(id: string): Promise<WireTurn<Turn>[] | undefined>;
+
+  /**
+   * The worker chats one past session holds, read without starting anything.
+   *
+   * What makes a restored session's worker chats openable again: the host
+   * serves each of them read-only from here, and lists them on the session's
+   * catalogue with the tool call that spawned each as the origin. Undefined
+   * means this backend keeps no such record, which is a real answer.
+   *
+   * `turns` is the session's own transcript, which the host has already read
+   * to serve the chat: handed over so a backend that needs it to resolve a
+   * worker's link does not read the same file a second time.
+   */
+  subagents?(id: string, turns?: WireTurn<Turn>[]): Promise<RestoredSubagent[] | undefined>;
 
   /** Start one. */
   create(start: Start): Session;
