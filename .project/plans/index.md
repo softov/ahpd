@@ -57,8 +57,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [01 - Host tools load when the instruction says so, and a customization keeps its source](claude/01-host-tools-and-customizations/plan.md) | high | built 2026-09-20 ([implemented.md](claude/01-host-tools-and-customizations/implemented.md)) | research/claude-customization-attribution.md | - |
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | built 2026-09-20 ([implemented.md](claude/02-round-ended/implemented.md)) | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification; the gap is in [deferred.md](claude/02-round-ended/deferred.md) |
 | [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | active 2026-09-26 | claude 02 | - |
+| [04 - A subagent has its own chat, linked from the call that started it](claude/04-a-subagent-has-its-own-chat/plan.md) | medium | planned 2026-09-26 | claude 03 | - |
 
-Next free number in `claude`: `04`.
+Next free number in `claude`: `05`.
 
 ## documentation
 

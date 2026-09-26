@@ -28,6 +28,10 @@ A running session shows every value it was created with, in the same place it wa
 The published `sessionMutable: true` is not literally true; a client that ignores `readOnly` offers a control the host refuses.
 The settings view still leaves these keys out, since it excludes `readOnly`, and that is VS Code's choice.
 
+## Which VS Code draws it, 2026-09-26
+
+The reference read for this decision (`832cf23c5`) draws per-key chips only in the New view, and a running session there showed the computer only in its settings JSON. VS Code from the week of 2026-09-21 draws them on a running session: Softov's window showed `computer://lulu`, the output style and the thinking chip after the first turn.
+
 ## Options
 
 - **Leave them hidden.** What VS Code does for its own fixed keys, but then nothing says where a session runs.
