@@ -1,5 +1,5 @@
 ---
-title: One computer: provider, one package, the runtime chosen by option
+title: "One computer: provider, one package, the runtime chosen by option"
 status: accepted
 date: 2026-09-22
 refs:

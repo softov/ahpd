@@ -8,7 +8,7 @@ refs:
   - code://packages/sdk/src/artifacttools.ts#L207-L215 - the REMOVE run and its answer
   - code://packages/sdk/src/artifacttools.ts#L113-L121 - `valueOf` and `describe`, which the promoted match and the list keep using
   - code://test/artifacttools.test.ts#L63-L88 - the assertions on the old strings, which move
-  - code://test/host.test.ts#L6293-L6306 - the recorded-artifact test, whose "Added reference: " assertion moves
+  - "code://test/host.test.ts#L6293-L6306 - the recorded-artifact test, whose \"Added reference: \" assertion moves"
   - file:///github/externals/vscode/src/vs/platform/agentHost/common/sessionArtifactCollection.ts#L149-L175 - `add` and `addOrPromoteArtifact`, the rule to copy
   - file:///github/externals/vscode/src/vs/platform/agentHost/node/shared/artifactServerTools.ts#L212-L237 - the answers to copy, status and id
 ---

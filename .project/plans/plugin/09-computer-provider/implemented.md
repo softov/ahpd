@@ -1,5 +1,5 @@
 ---
-title: A computer: provider that makes machines - implemented
+title: "A computer: provider that makes machines - implemented"
 date: 2026-09-22
 refs:
   - code://packages/computer

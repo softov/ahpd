@@ -1,5 +1,5 @@
 ---
-title: `ahpd` keeps its own user directory
+title: "`ahpd` keeps its own user directory"
 status: accepted
 date: 2026-09-23
 refs:

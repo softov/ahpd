@@ -7,7 +7,7 @@ refs:
   - code://packages/sdk/src/types/session.ts#L189-L203 - `forkPoint` and `endPoint`, what a host asks a backend for
   - code://packages/sdk/src/types/agent.ts#L106-L121 - `Start.forkAt` and `Start.rewindAt`, what a resumed session arrives with
   - code://packages/agent-cofold/src/session.ts - the session and its `create`, which this extends
-  - code://packages/agent-cofold/src/agent.ts - `chats: { fork: true }`, the capability a fork is offered through
+  - "code://packages/agent-cofold/src/agent.ts - `chats: { fork: true }`, the capability a fork is offered through"
   - file:///github/cofold/packages/agents/src/types/store.ts - `RunRecord.inputMessageId` and `lastMessageId`, the slots a fork and a rewind cut at
   - file:///github/cofold/packages/agents/src/store/cut.ts - `selectCut`, the one rule both stores cut by
   - file:///github/cofold/packages/store-file/src/store.ts - `truncate` and `fork`, and the `lastMessageId` an append advances

@@ -1,5 +1,5 @@
 ---
-title: A computer: provider that makes machines
+title: "A computer: provider that makes machines"
 domain: plugin
 status: built
 priority: medium

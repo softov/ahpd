@@ -1,5 +1,5 @@
 ---
-title: `ahpd plugin list` reads manifests without importing
+title: "`ahpd plugin list` reads manifests without importing"
 status: done
 depends:
   - task-03-load-and-apply.md
