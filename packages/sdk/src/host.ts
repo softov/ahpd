@@ -4980,8 +4980,14 @@ export function createHost(options: HostOptions): Host {
        * nothing another client can spell reaches it, and a socket that drops
        * takes its containers with it. That is where the reference host keeps
        * them too - decision `the-relay-surface-is-the-reference-one`.
+       *
+       * `tail` is the launcher's own last words, kept only so a container that
+       * dies can say why in this log - see `ended` below.
        */
-      const containers = new Map<string, { name: string; folder: string }>();
+      const containers = new Map<string, { name: string; folder: string; tail: string[] }>();
+
+      /** How much of the launcher's output is kept to explain an ending. */
+      const CONTAINER_TAIL = 24;
 
       /**
        * The three strings a connect carries, checked once.
@@ -6644,7 +6650,13 @@ export function createHost(options: HostOptions): Host {
           }
           // Held before the first await, so a second connect under the same
           // name cannot slip in while this one is building an image.
-          containers.set(one.connectionId, { name: one.name, folder: one.workspaceFolder });
+          containers.set(one.connectionId, { name: one.name, folder: one.workspaceFolder, tail: [] });
+          /*
+           * A starting line, because "asked for" and "never asked" otherwise
+           * look the same in this log: the only other thing written about a
+           * container is its ending, and by then the question has moved on.
+           */
+          log(`dev container ${one.connectionId} starting in ${one.workspaceFolder}`);
           /**
            * The relay ended, whoever ended it.
            *
@@ -6653,10 +6665,22 @@ export function createHost(options: HostOptions): Host {
            * asked is not told what it already knows.
            */
           const ended = (why?: string): void => {
+            const held = containers.get(one.connectionId);
             if (!containers.delete(one.connectionId)) return;
             connection.peer.notify('vscode/devContainers/relayClose', { connectionId: one.connectionId });
             connection.peer.notify('vscode/devContainers/closeConnection', { connectionId: one.connectionId });
-            if (why !== undefined && why !== '') log(`dev container ${one.connectionId} ended: ${why}`);
+            if (why !== undefined && why !== '') {
+              /*
+               * The launcher's own last words, which are usually the reason.
+               *
+               * `ended: exit 1` was all this said, and the cause - a path that
+               * does not exist inside the container, an install that failed -
+               * was sent only to whichever client happened to be watching.
+               */
+              const tail = (held?.tail ?? []).filter((line) => line.trim() !== '').slice(-8);
+              log(`dev container ${one.connectionId} ended: ${why}${
+                tail.length === 0 ? '' : `\n  ${tail.join('\n  ')}`}`);
+            }
           };
           const sink: ContainerSink = {
             message: (data) => {
@@ -6664,18 +6688,30 @@ export function createHost(options: HostOptions): Host {
             },
             output: (data) => {
               connection.peer.notify('vscode/devContainers/output', { connectionId: one.connectionId, data });
+              // Kept for an ending to explain itself, bounded so a long build
+              // cannot grow the daemon's memory with output nobody will read.
+              const held = containers.get(one.connectionId);
+              if (held === undefined) return;
+              for (const line of String(data).split('\n')) {
+                if (line.trim() !== '') held.tail.push(line);
+              }
+              if (held.tail.length > CONTAINER_TAIL) {
+                held.tail.splice(0, held.tail.length - CONTAINER_TAIL);
+              }
             },
             close: (why) => { ended(why); },
           };
           let result: ContainerConnectResult;
           try {
             result = await launcher.connect(one, sink);
+            log(`dev container ${one.connectionId} up: ${result.address} (${result.remoteWorkspaceFolder})`);
           }
           catch (error) {
             // Nothing left running: the launcher is told to release whatever it
             // had begun, and the name is free again.
             containers.delete(one.connectionId);
             try { await launcher.disconnect(one.connectionId); } catch { /* already gone */ }
+            log(`dev container ${one.connectionId} failed: ${reason(error)}`);
             throw error;
           }
           if (!alive) {
@@ -6683,6 +6719,7 @@ export function createHost(options: HostOptions): Host {
             // not something to leave behind for nobody.
             containers.delete(one.connectionId);
             try { await launcher.disconnect(one.connectionId); } catch { /* already gone */ }
+            log(`dev container ${one.connectionId} abandoned: the client went away while it was starting`);
             throw new Error(`The connection went away while ${one.connectionId} was starting`);
           }
           return { connectionId: one.connectionId, name: one.name, ...result };
