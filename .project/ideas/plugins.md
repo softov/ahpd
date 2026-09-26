@@ -78,7 +78,8 @@ Their ordering rule is the one facio already uses in `packages/commands/src/regi
 Three ways in, narrowest last.
 
 A plugin that is a backend is named `@ahpd/agent-<name>`, matching the `@ahpd/agent-claude` that ships, and the idea file for the rest already names `@ahpd/agent-acp` and `@ahpd/agent-openai`.
-A plugin that is not a backend has no convention in this repository yet, so it takes its author's scope, or `@ahpd/plugin-<name>` where the author is this repository, and the loader never reads the name for anything but a listing.
+A plugin that is not a backend is `@ahpd/<name>` where the author is this repository, as `@ahpd/computer` and `@ahpd/tunnel-devtunnel` are, and takes its author's scope otherwise ([decision](../decisions/plugin-packages-are-named-ahpd-name.md)).
+The loader never reads the name for anything but a listing.
 
 Install it where the daemon can resolve it, which is the config directory:
 

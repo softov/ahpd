@@ -43,3 +43,7 @@ ahpd [start|stop|status|config|plugin list] [flags]
 ## Known gaps
 
 - The record the detached daemon keeps about itself holds the port and where the token came from, and not the token, so a connection URL has to be assembled by hand; plan [02 - Connect URL in the record](02-connect-url-in-record/plan.md).
+- The `--wire` capture is ahpd's own line shape and unbounded; plan [06 - The wire capture is the traffic log VS Code writes](06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md).
+- The host already serves its traces, metrics and log as OTLP on `ahp-otlp://` ([`code://packages/sdk/src/host.ts#L1035-L1045`](../../../packages/sdk/src/host.ts#L1035-L1045)), and nothing pushes them to a collector.
+  VS Code does this with a host setting, `chat.agentHost.otel.otlpEndpoint`, so forwarding is a daemon option rather than a plugin.
+  Not planned.

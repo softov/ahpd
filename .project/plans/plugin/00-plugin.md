@@ -16,6 +16,8 @@ Every kind after those waits, and the whole list is in [deferred.md](01-plugins-
 - `code://packages/agent-claude`, `code://packages/agent-cofold` and `code://packages/agent-acp` - the backends that ship, and the worked examples of a package the host knows nothing about: one over a harness library, one over a protocol, and one over a protocol spoken to a subprocess.
 - `code://packages/computer` - the first package to serve a host-owned URI scheme, so the resource-provider kind has a consumer that is not a test fixture.
 
+A plugin package from this repository is `@ahpd/<name>`, and an agent backend is `@ahpd/agent-<name>` ([decision](../../decisions/plugin-packages-are-named-ahpd-name.md)).
+
 ## Contracts
 
 - `code://packages/sdk/src/types/host.ts#L132-L245` - `HostOptions`, the whole contribution surface: `agents`, `tools`, and the ports `resources`, `terminals`, `changes`, `directories`, `worktrees`, `github`, `automations` and `sessions`.
@@ -59,7 +61,7 @@ Four things are deliberately not kinds, so that a plugin does not look for a met
 Models are not, because each agent reports its own through `probe()`.
 Slash commands are not separate from customizations, because `Offered.commands` is already one projection of them.
 UI is not, because a client owns its own screen and the host serves it resources.
-HTTP routes are not, because there is no HTTP server.
+HTTP routes are not yet: [plan 21](21-a-plugin-serves-an-http-route/plan.md) adds them beside daemon plan 05's HTTP API.
 
 ## Runtime path
 
@@ -80,3 +82,9 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 - [03 - An agent backend over cofold](03-agent-cofold/plan.md) is built: `@ahpd/agent-cofold` is the first real consumer of this mechanism, one installed package that runs a harness and serves every model it can reach, and it is also the worked example in [docs/PLUGINS.md](../../../docs/PLUGINS.md).
 - [04 - The cofold extras](04-agent-cofold-extras/plan.md) is built: a host tool says what running it does, a cofold conversation forks and rewinds, and a tool a client runs is offered and waited for.
 - [07 - The ACP bridge](07-agent-acp/plan.md) is built: `@ahpd/agent-acp` speaks the Agent Client Protocol to any server, so `copilot --acp`, `codex-acp`, `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` are configuration lines, and the file, shell and permission requests a server makes back are answered through the host's own ports; the decision [agent-package-only-when-it-brings-a-runtime](../../decisions/agent-package-only-when-it-brings-a-runtime.md) is why a model or an endpoint is not a package of its own.
+- The next plans, in order:
+  1. [17 - A plugin hears when a session needs a person](17-a-plugin-hears-a-session-needs-a-person/plan.md) adds `input_needed_set` and `input_needed_removed`.
+  2. [20 - A plugin is a client of its own host, as a principal of its own](20-a-plugin-is-a-client-of-its-own-host/plan.md) lets a plugin start sessions, send turns and run automations as `plugin:<name>`.
+  3. [21 - A plugin serves an HTTP route on the daemon's listener](21-a-plugin-serves-an-http-route/plan.md) adds `registerRoute`, after daemon 05 tasks 15 and 16.
+  4. [18 - The ACP bridge resumes, forks and asks](18-the-acp-bridge-resumes-forks-and-asks/plan.md) adds `session/resume`, `session/fork` and `elicitation/create`; ACP v2 waits in its [deferred.md](18-the-acp-bridge-resumes-forks-and-asks/deferred.md).
+  5. [19 - A docker machine may run under gVisor](19-a-docker-machine-may-run-under-gvisor/plan.md) adds `ociRuntime`; every other runtime is an [idea](../../ideas/more-computer-runtimes.md).

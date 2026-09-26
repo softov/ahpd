@@ -20,8 +20,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 05-16, 12 done (`@cofold/commands` 0.2.1), the rest todo | daemon 03 | daemon 05 |
 | [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 06-16, 06 done (`@cofold/remote` 0.3.1), the rest todo, 09 after daemon 04 task 14, 15 in the cofold repository (`@cofold/remote` 0.4.0) | daemon 04 | - |
+| [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 
-Next free number in `daemon`: `06`.
+Next free number in `daemon`: `07`.
 
 ## host
 
@@ -96,8 +97,13 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [14 - A cofold session has files, shell, web and memory, run by cofold itself](plugin/14-cofold-runs-its-own-tools/plan.md) | high | active 2026-09-26, reviewed; fix tasks 05-13, 05 and 06 done (`@cofold/agents` 0.1.1, `@cofold/tools` 0.1.0), the rest todo | plugin 03 | container 04 |
 | [15 - An agent says what a machine needs, and the machine is made with it](plugin/15-an-agent-says-what-a-machine-needs/plan.md) | high | active 2026-09-26, reviewed; task 06 reopened, fix tasks 08-12 todo | plugin 11 | plugin 16, container 03, container 04 |
 | [16 - A disposable machine is made for a session and goes after it](plugin/16-a-disposable-machine/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 05-11 todo | plugin 15 | - |
+| [17 - A plugin hears when a session needs a person](plugin/17-a-plugin-hears-a-session-needs-a-person/plan.md) | high | planned 2026-09-26 | plugin 02 | the notify plugin, which reads the two events |
+| [18 - The ACP bridge resumes, forks and asks](plugin/18-the-acp-bridge-resumes-forks-and-asks/plan.md) | medium | planned 2026-09-26, after plugin 21; ACP v2 in [deferred.md](plugin/18-the-acp-bridge-resumes-forks-and-asks/deferred.md) | plugin 07, host 19 (task 02 after host 19 task 01) | - |
+| [19 - A docker machine may run under gVisor](plugin/19-a-docker-machine-may-run-under-gvisor/plan.md) | low | planned 2026-09-26, after plugin 18 | plugin 10 | - |
+| [20 - A plugin is a client of its own host, as a principal of its own](plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md) | high | planned 2026-09-26, after plugin 17 | plugin 01, host 11 | plugin 21, and every gateway, trigger and facade plugin |
+| [21 - A plugin serves an HTTP route on the daemon's listener](plugin/21-a-plugin-serves-an-http-route/plan.md) | medium | planned 2026-09-26, after plugin 20; task 02 after daemon 05 tasks 15 and 16 | daemon 05, plugin 20 | webhook, callback and facade plugins |
 
-Next free number in `plugin`: `17`.
+Next free number in `plugin`: `22`.
 
 ## container
 
