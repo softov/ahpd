@@ -1,43 +1,40 @@
+---
+title: "Handoff: where ahpd stands, and what is pending"
+---
+
 # Handoff: where `ahpd` stands, and what is pending
 
-Rewritten 2026-09-25, the day `v0.7.0` went out, replacing everything this file said about the work that shipped in it. History is in `git log`; the reasoning behind a decision or a plan is in its own `implemented.md`, `deferred.md` or decision file. This file is current state, what still has to be checked, and what is open.
+Rewritten 2026-09-26. History is in `git log`; the reasoning behind a decision or a plan is in its own `implemented.md`, `deferred.md` or decision file. This file is current state, what still has to be checked, and what is open.
 
 ## Read this first
 
-- **`/github/ahpd` `main` is at `6bce9dd`**, "Bump every package to 0.7.0, and the SDK range with it", and it is **pushed**. `origin/main` is the same commit. The working tree is clean apart from untracked `.scratch/devc-demo`, a dev container fixture from the container work.
-- **`v0.7.0` is tagged, released and live.** All eight packages are on npm at `0.7.0`, staged with provenance by `.github/workflows/release.yml` in one pass and approved: `@ahpd/sdk`, `@ahpd/agent-claude`, `@ahpd/agent-cofold`, `@ahpd/agent-acp`, `@ahpd/agent-pi`, `@ahpd/computer`, `@ahpd/tunnel-devtunnel`, `@ahpd/server`. The last three published for the first time, bootstrapped with a `0.0.1` stub that is still in their version list.
-- **Suite:** 84 files / 1104 tests, with `pnpm typecheck`, `pnpm boundary` and `pnpm build` green at `6bce9dd`, and `pnpm install --frozen-lockfile` clean.
-- **`/github/ahpc`** is at `a5987f2`, one commit **ahead of `origin/main` and unpushed**: the picker fix below. `@softov/ahpc` is `0.5.1` on npm with **six unreleased commits**, four of them another session's sign-in and token-file work. That repository's tree is dirty with that session's files.
-- **`/github/ahpapp`** is clean at `4d2f5c7`, not touched this session.
-
-## What 0.7.0 changes for somebody who already had it
-
-- **The daemon bundles no agent.** `npm i -g @ahpd/server` upgraded over 0.6.x is a daemon that exits 1 until its configuration names a backend, and the update check will offer that upgrade to every running 0.6.x host. The sentence it exits with names the configuration file and the directory to `npm i` the plugin into. Decision `the-daemon-bundles-no-agent`.
-- **A contributed session key's picker is seeded** at `resolveSessionConfig`, so a client draws a label for the value it is holding instead of a raw `computer://box` or an empty chip. Decision `a-contributed-picker-is-seeded-when-a-config-is-resolved`.
-- **A host inside a dev container must be given plugins of its own.** `devcontainer.plugins` has no default, an empty list is not advertised as available, and `connect` refuses before anything is built.
-- **`@ahpd/computer` is public.** What it does with Docker, and what an operator has to allow it, is now documentation strangers read.
-- **Every plugin's `peerDependencies["@ahpd/sdk"]` is `^0.7`.** `^0.6` does not match `0.7.0`, so a 0.6.x plugin beside a 0.7.0 daemon is refused by the loader's range check, by name, before it is imported.
+- **`/github/ahpd` `main` is at `7a7e9d1`** and pushed; `origin/main` is the same commit. `v0.7.0` is the last tag, and the six commits after it are unreleased: a dev container says what it is doing and why it ended, a message's origin reaches every turn, a `!command` runs on every road a turn takes, a cofold turn that cannot start fails the turn and not the daemon, the devtunnel CLI no longer holds the event loop, and the plans below.
+- **The working tree is not clean, and most of it is dsh's.** dsh is implementing `claude/04`, `daemon/04`, `daemon/05`, `plugin/14` and `plugin/15` in this tree. Do not stash, revert or commit its changes; review them when it reports back.
+- **Ours, uncommitted and awaiting Softov's approval:** an automation starts its first turn on the model its session template names. `StartSession.model` in `packages/sdk/src/types/automations.ts`, copied from `session.model` in `packages/sdk/src/automations.ts`, passed through `modelIn(wanted.model)` in `startForAutomation` in `packages/sdk/src/host.ts`, and held by "starts the first turn on the model the session template names" in `test/automations.test.ts`. Also ours: nine `.project` files whose frontmatter did not parse as YAML now quote the offending value, and this file.
+- **Suite:** 93 files / 1201 tests and `pnpm typecheck` green on the working tree, dsh's changes included.
+- **`/github/ahpc`** is at `136fd3f`, pushed. `@softov/ahpc` is `0.5.1` on npm with unreleased commits after it. Its tree has another session's uncommitted `.project` changes.
+- **`/github/ahpapp`** is at `86c4d23`, pushed. Its tree is dirty with other people's work, and among it is our uncommitted plan `plans/container/01-a-container-is-there-after-a-relaunch`.
 
 ## Checks still to perform
 
 1. **The upgrade a 0.6.x operator actually meets.** Moved to the next release: no machine here had 0.6.x installed. The fresh install is verified.
-2. **VS Code, with the seeded picker.** The chip should read `This host` or a machine's name. The chip appearing only once is still unconfirmed. The sign-in prompt is fixed by `host/16`, implemented and awaiting this check: a root or signed-in connection is now told the host's sign-in resource is `required: false`, so VS Code on the deployment token reaches `createSession`. With a `users` directory and the issuer down, a root connection and a personal-token connection must read different `required` from the same host, in the snapshot, the live `root/agentsChanged` and a reconnect replay.
-3. **ahpapp against the published packages**: the computer picker, and the dev container relay with `devcontainer.plugins`. `daemon/03` is implemented: `ahpd plugin install` installs into `~/.config/ahpd` and names it in `config.json`, and the dev container's install step runs `ahpd plugin install --no-enable` for every npm-named entry, so `"plugins": ["@ahpd/agent-cofold"]` no longer exits on startup. The relay itself is still to be run against a real container.
-4. **`docs/COMPUTER.md`** was rewritten on 2026-09-25 (shorter, one paragraph per line, security in one section) and Softov is reading it. `packages/computer/README.md` is stale (it says nothing under `computer:` is written) and waits on whether it becomes the full user doc.
+2. **VS Code, with the seeded picker.** The chip should read `This host` or a machine's name, and appear once.
+3. **ahpapp against the published packages**: the computer picker, and the dev container relay with `devcontainer.plugins` against a real container.
+4. **`docs/COMPUTER.md`** was rewritten on 2026-09-25 and Softov is reading it. `packages/computer/README.md` is stale and waits on whether it becomes the full user doc.
 
 ## Open work
 
-1. **A real dev container run for `daemon/03`**: a session with `"plugins": ["@ahpd/agent-cofold"]` and no mounted checkout. The plan is built and the launcher is tested against the fake CLI only.
-2. **`host/18` is planned, for dsh**: a fixed key picked in VS Code's New view (the computer) restarts the session before its first turn instead of being dropped, and a running session shows its fixed keys as read-only chips.
-3. **`container/01`'s ahpapp half is built, awaiting Softov's check**: ahpapp draws the Dev Container CLI's build log (`9e95cf2`), ties a container to the connection that opened it with Reopen bringing it back (`e12fad3`), and ends the row when the relay closes (`86c4d23`). Once checked, close `container/01` with its `implemented.md`.
-4. **ahpc has unreleased commits**, and `a5987f2` plus `136fd3f` (the token-file work) are committed and not pushed. The push was blocked by the permission check and waits on Softov.
-5. **Verify a JWT locally.** The last deferred item of `host/08`: check a token against the issuer's key set instead of asking `userinfo`. Does not help GitHub, which issues opaque tokens.
-6. **`@ahpd/computer`'s other two thirds**: a `kvm` runtime, the per-session gate on the machine tools proposed in [`research/a-computer-three-things.md`](../research/a-computer-three-things.md), and an ephemeral machine destroyed when its session ends.
-7. **The upstream backlog in `UPSTREAM.md`** was triaged on 2026-09-26: eight Pass 4 boxes were already built and are ticked, the empty round is planned as `claude/03`, the terminal auto-approver and the turn diagnostics are ideas, and the rest is recorded as not possible from a host or not a host feature. The next pass starts from VS Code `832cf23c5`.
+1. **Cofold has no default model.** With no `model` in the session, the package options or `~/.config/cofold/config.json`, `connectionOf` in `packages/agent-cofold/src/agent.ts` throws and the turn fails. Softov chooses: fall back to the first model the endpoint's catalogue lists, or require `model` in the cofold configuration and say so. The first needs the catalogue before `modelOf` returns, which is synchronous today while the catalogue is fetched with a five-second timeout.
+2. **A queued `!command` still goes to the agent.** `chat/pendingMessageSet` with `kind: 'queued'` in `packages/sdk/src/host.ts` calls `session.queue` with the text, and each backend drains its queue through `begin`. `chat/turnStarted`, a resumed session and a new chat's first message go through `beginOrRun`. The backends already hold a queued command when `ran` is called mid-turn, but `ran` neither replaces an entry by id when a queued message is edited nor carries `queuedMessageId` when it runs at once, so routing the queue through it is a change in all four backends, two of which dsh is editing.
+3. **Review dsh's work** on `claude/04`, `daemon/04`, `daemon/05`, `plugin/14` and `plugin/15`. Its task files say `status: implemented`, which is not a task status; `done` is.
+4. **`container/02` is parked**: VS Code does not list the ahpd dev tunnel, so task 01 is blocked and task 02 records what the try found missing.
+5. **`container/01`'s ahpapp half is built, awaiting Softov's check.** Once checked, close `container/01` with its `implemented.md`.
+6. **Planned and not started:** `plugin/16` (a disposable machine), `container/03` (a dev container is a computer) and `container/04` (a cofold session in a computer runs an ahpd inside it).
+7. **Verify a JWT locally.** The last deferred item of `host/08`.
+8. **`@ahpd/computer`'s `kvm` runtime** and the per-session gate on the machine tools, from [`research/a-computer-three-things.md`](../research/a-computer-three-things.md).
+9. **The upstream backlog in `UPSTREAM.md`.** The next pass starts from VS Code `832cf23c5`.
 
-Closed on 2026-09-26: `host/16` (a root or signed-in connection is told sign-in is not required, checked by Softov in VS Code) and `daemon/03` (`ahpd plugin install` and `remove`, after review fixes: `plugins` gets the package name without its version, the container installs with the `host` command and skips what it already has).
-
-Closed on 2026-09-25: host configuration has its own grant (`host/17`: `config:write` for host-wide root keys and `replace`, a sign-in for your own `defaultShell`); the npm listing is correct; route one (Claude in a machine through `spawnClaudeCodeProcess`) was already built in `packages/agent-claude/src/spawn.ts`; `@ahpd/agent-pi` is in the README; `plugin/13` has its `implemented.md`, with a real-Docker run; the `defaultShell` echo reaches only its sender (`seenBy` in `host.ts`); the worktree tests wait on the dirty check instead of the clock. `node-pty` needs `--allow-scripts=node-pty` on npm 12, now in the install docs.
+Next free plan numbers: `daemon` 06, `host` 19, `claude` 05, `plugin` 17, `container` 05.
 
 ## Constraints worth knowing before touching any of that
 
