@@ -800,6 +800,22 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   const calling = new Map<string, string>();
   let streaming: string | undefined;
+  /**
+   * What each model round being streamed has said so far, by scope.
+   *
+   * A *model round* is one API message: `message_start` to `message_stop`.
+   * A round that ends having produced neither text nor a tool call is one the
+   * reference announces as `responseRoundEnded`, which is what tells a client
+   * to settle whatever thinking section is open instead of drawing the next
+   * round's thinking as the same one. Thinking does not count as an answer -
+   * that is the whole case this exists for.
+   *
+   * Keyed by the stream event's `parent_tool_use_id`, empty for the session's
+   * own agent, so a subagent's rounds cannot reset or satisfy the main one.
+   * `stopped` is why the round stopped, from `message_delta`: `end_turn` is
+   * the only reason that means the model chose to finish.
+   */
+  const rounds = new Map<string, { answered: boolean; stopped?: string }>();
 
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session a session rather than a series of them.
@@ -1049,12 +1065,56 @@ export function createSession(options: ClaudeSessionOptions): Session {
     return part;
   };
 
-  const streamed = (event: Bag): void => {
+  const streamed = (event: Bag, parent = ''): void => {
     const type = str(event.type);
 
     if (type === 'message_start') {
       streaming = str(bag(event.message).id) ?? 'm';
+      // A new round: whatever the last one said, this one has said nothing.
+      rounds.set(parent, { answered: false });
       openTurn();
+      return;
+    }
+
+    /*
+     * The end of a model round, and the one place a round can be seen to have
+     * ended empty.
+     *
+     * The SDK has no event for "the round produced nothing" - the message's
+     * own `message_start`/`message_stop` boundary is that event, and the
+     * stream is the only thing that reports it. The reason is read here so
+     * `message_stop` can tell a round the model finished from one it quit.
+     */
+    if (type === 'message_delta') {
+      const round = rounds.get(parent);
+      const reason = str(bag(event.delta).stop_reason);
+      if (round !== undefined && reason !== undefined) round.stopped = reason;
+      return;
+    }
+    if (type === 'message_stop') {
+      const round = rounds.get(parent);
+      rounds.delete(parent);
+      /*
+       * The session's own rounds only. The reference announces a subagent's
+       * on that subagent's scope, and this backend draws a subagent's output
+       * in the main turn with no scope of its own, so announcing it here
+       * would settle the main agent's thinking for a round it did not end.
+       */
+      if (parent === '' && round !== undefined && !round.answered && round.stopped === 'end_turn' && active) {
+        /*
+         * The reference's part, keyed the way its client reads it.
+         *
+         * `content` is empty because there is nothing to draw; the `_meta`
+         * says why, and a client settles an open thinking section and renders
+         * nothing. No id: `SystemNotificationResponsePart` has none, and the
+         * reference's own carries none either.
+         */
+        addPart(active, {
+          kind: 'systemNotification',
+          content: '',
+          _meta: { kind: 'responseRoundEnded' },
+        });
+      }
       return;
     }
 
@@ -1065,6 +1125,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const turn = openTurn();
       const block = bag(event.content_block);
       const kind = str(block.type);
+      // Prose or a tool call is an answer; thinking is not, which is the whole
+      // point of the round-ends-empty signal.
+      if (kind === 'text' || kind === 'tool_use') {
+        const round = rounds.get(parent);
+        if (round !== undefined) round.answered = true;
+      }
       /*
        * A tool call, opened while its arguments are still arriving.
        *
@@ -2118,7 +2184,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           continue;
         }
 
-        if (type === 'stream_event') { streamed(bag(message.event)); continue; }
+        if (type === 'stream_event') { streamed(bag(message.event), str(message.parent_tool_use_id)); continue; }
         if (type === 'assistant') { assistant(bag(message.message)); continue; }
         if (type === 'user') {
           // The prompt's own id, which is what a fork is cut at. Recorded on
