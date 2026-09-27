@@ -5,7 +5,8 @@ status: planned
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
-requires: []
+requires:
+  - plans/host/21-commit-asks-and-takes-what-is-staged/plan.md
 changes: []
 creates: []
 decisions:
@@ -17,6 +18,7 @@ refs:
   - "[code://packages/sdk/src/changes.ts#L425](../../../../packages/sdk/src/changes.ts#L425) - a modified file's `before`, minted with `beforeUri`"
   - "[code://packages/sdk/src/changes.ts#L733](../../../../packages/sdk/src/changes.ts#L733) - a captured side kept under its minted text"
   - "[code://packages/sdk/src/changes.ts#L759-L779](../../../../packages/sdk/src/changes.ts#L759-L779) - `read`, which slices `ahp-git://` off and looks `ahp-edit:` up by exact text"
+  - "[code://packages/sdk/src/changes.ts#L70-L76](../../../../packages/sdk/src/changes.ts#L70-L76) - `pathIn`, which reads an operation's `file://` target without decoding it"
   - "[code://packages/sdk/src/host.ts#L71-L73](../../../../packages/sdk/src/host.ts#L71-L73) - `ahp-root://` and `ahp-automations://`, other schemes ahpd mints"
   - git://6e4b2c4 - `gitChanges` and the `ahp-git:` URI
   - file:///github/externals/vscode - `src/vs/base/common/uri.ts` at the clone's HEAD, the `URI` class every VS Code request passes a URI through; the clone is sparse and has no working copy of it, so read it with `git -C /github/externals/vscode show HEAD:src/vs/base/common/uri.ts`, and its imports `charCode.ts`, `marshallingIds.ts`, `path.ts`, `platform.ts` and `process.ts` the same way
@@ -68,19 +70,20 @@ changeset row (before/after content URI) -> client URI.parse + toString -> resou
 | [01 - ahp-git: is minted with an authority and read in any client's form](task-01-ahp-git-reads-any-form.md) | todo | - |
 | [02 - ahp-edit: keeps the session out of the authority and is read by its parts](task-02-ahp-edit-reads-by-its-parts.md) | todo | 01 |
 | [03 - Every URI ahpd mints opens after a client normalises it](task-03-every-minted-uri-round-trips.md) | todo | 02 |
+| [04 - A file target an operation names is read decoded](task-04-a-file-target-is-read-decoded.md) | todo | 03 |
 
 ## Risks and tradeoffs
 
-- Another session has uncommitted work in `packages/sdk/src/changes.ts`; this plan starts after it is committed, and the line numbers in the refs are that working tree's.
+- Plan host/21 changes the same file and folds in the uncommitted draft in it; this plan starts after host/21's tasks are committed, and the line numbers in the refs are the working tree's with that draft.
 - The round-trip cases carry a normaliser written to VS Code's rules; if VS Code changes them, the cases stay green while VS Code breaks.
   The by-hand check in task 03 is what catches that.
 
 ## Resume state
 
 - **Done so far:** nothing; planned 2026-09-27.
-- **Next action:** [task-01-ahp-git-reads-any-form.md](task-01-ahp-git-reads-any-form.md), once the other session's `changes.ts` work is committed.
+- **Next action:** [task-01-ahp-git-reads-any-form.md](task-01-ahp-git-reads-any-form.md), once plan host/21's tasks are committed.
 - **Open questions:** none.
-- **Watch out for:** `packages/sdk/test/commit.test.ts` belongs to the other session; the cases here go in a file of their own.
+- **Watch out for:** `packages/sdk/test/commit.test.ts` is host/21's; the cases here go in a file of their own.
   A normaliser in a test must be checked against VS Code's `uri.ts`, not written from memory.
   The VS Code clone is sparse: read `uri.ts` with `git -C /github/externals/vscode show HEAD:src/vs/base/common/uri.ts`, not from its working tree.
 
