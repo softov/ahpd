@@ -1,6 +1,6 @@
 ---
 title: A served config answers from the daemon's own file, hides its secrets, or says it is gone
-status: done
+status: implemented
 depends: [task-08-served-commands-act-on-the-daemons-own-options.md]
 layer: "server"
 refs:
@@ -35,3 +35,5 @@ refs:
 Seen to fail first: with the daemon's own configuration file deleted, `GET /api/config` answered `port: 1234` from the `XDG_CONFIG_HOME` default where it wanted the daemon's path and no port; and a served answer whose file listed a plugin with `options: { apiKey: "k1", region: "eu" }` contained both `k1` and `eu` where it wanted `<set>` twice. Both pass after the change.
 
 Done: the served branch reads `served.configFile` and nothing else, answering `{}` under that path when the file is gone, and the terminal branch still has `loadConfig` refuse a `--config-file` that names nothing. `withoutToken` is now `withoutSecrets`: it masks `connectionToken` and, for every plugin entry that is an object with `options`, keeps the keys and replaces every value with `<set>`, leaving a string entry alone. Its comment names [the-config-command-hides-its-secrets](../../../decisions/the-config-command-hides-its-secrets.md).
+
+Review 2026-09-26: not passed against its decision. `config` masks the option values, but served `plugin list`, which needs only `config:read`, answers them in full. Task 24 masks them there.

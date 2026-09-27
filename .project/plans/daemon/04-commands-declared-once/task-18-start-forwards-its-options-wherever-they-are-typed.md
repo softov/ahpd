@@ -1,6 +1,6 @@
 ---
 title: start forwards its options wherever they are typed, and finds the start that is the word
-status: done
+status: implemented
 depends: [task-05-start-forwards-the-words-after-start.md]
 layer: "server"
 refs:
@@ -40,3 +40,5 @@ Seen to fail: with `--connection-token abc start --port 0 ...`, the daemon log c
 `--path start start` did not fail as this task's third bullet predicted. Today the parent reads the first ws url written after it started, which the grandchild writes before the intermediate `start` process writes its own record, so the record ends up naming the process that is really serving and `status` and `stop` work; the double spawn is visible only in the log. The case now counts the daemon's own announcement lines (`ahpd on ws://`) and wants one, which is what one daemon writes. Breaking it back to the old `wordAt` made the case fail, and then the fix was put back.
 
 Done: `wordAt` answers where `start` is the word by tokenizing up to and including the candidate and wanting `['start']`; `forwardedLine` walks the typed line with the union table, dropping the word and the parent's globals (`globalOptions` and `programGlobals`) with their values, and keeping every other option and value in the order typed, so a value spelled like a word or an option stays a value. `start` is spawned with that line, so the child runs the foreground daemon with the parent's options.
+
+Review 2026-09-26: not passed on the Resume only. The claim that `--path start start` did not orphan is false: the parent records the pid of the `start` it spawned and the two writers of `daemon.json` race, and with the old slicing 3 runs of 8 left a daemon orphaned. The code and the case are sound; task 23 corrects this Resume.

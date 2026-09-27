@@ -1,7 +1,7 @@
 ---
 title: A cofold session has files, shell, web and memory, run by cofold itself
 domain: plugin
-status: built
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -106,7 +106,10 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | [13 - A turn with no model says to add "model" to the cofold configuration file](task-13-no-model-says-what-to-add.md) | done | - |
 | [14 - ahpd's workspace check follows a dangling symlink, through cofold's own resolver](task-14-inside-follows-a-dangling-link.md) | done | 07, 08 |
 | [15 - A declined edit sends its after when the person declines](task-15-a-declined-edit-sends-its-after-when-declined.md) | done | 09 |
-| [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | done | 14, 15 |
+| [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | implemented | 14, 15 |
+| [17 - cofold follows a link's target one name at a time, released by Softov](task-17-cofold-follows-a-link-target-one-name-at-a-time.md) | todo | 14 |
+| [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | todo | 15 |
+| [19 - The close is true](task-19-the-close-is-true.md) | todo | 16, 18 |
 
 ## Risks and tradeoffs
 
@@ -121,7 +124,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 ## Resume state
 
 - **Done so far:** every task is done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the rewritten tool section in `docs/PLUGINS.md`, and the new `packages/agent-cofold/README.md`. ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0. Tasks 14 and 15 are done from the second review, and task 16 closed the plan.
-- **Next action:** none. The three VS Code checks and cofold's own `pnpm test` are in [deferred.md](deferred.md).
+- **Next action:** reviewed twice on 2026-09-26; tasks 18 and 19 fix what did not pass (16); task 17 is in the cofold repository and waits for Softov's release.
 - **Open questions:** none.
 - **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too. Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do. A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is the client's own row to move and not this plan's.
 

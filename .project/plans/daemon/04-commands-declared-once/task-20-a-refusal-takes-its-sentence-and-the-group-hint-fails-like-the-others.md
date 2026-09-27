@@ -13,7 +13,7 @@ refs:
 
 ## Objective
 
-`refuse` takes the sentence and nothing else, and `ahpd plugin` and `ahpd user` fail with the `ahpd: ` prefix and, under `--json`, in the shape every other failure has there.
+`refuse` takes the sentence and nothing else, and `ahpd plugin` and `ahpd user` fail the way every other failure does: one `ahpd: ` line on stderr and exit 2, whatever the output mode.
 
 ## Files
 
@@ -25,12 +25,12 @@ refs:
 ## Steps
 
 1. Drop the surface parameter: keep `refuse` only if it says something `stop` does not; otherwise the callers call `stop` and `refuse` is removed.
-2. Write the group hint through the same path a thrown `stop` takes to stderr and to `--json`, so its prefix, its exit code 2 and its JSON shape are the ones `runEntry` gives any usage failure.
+2. Write the group hint through the same path a thrown `stop` takes, so its `ahpd: ` prefix and exit code 2 are the ones `runEntry` gives any usage failure. A JSON shape for failures is later work, kept in `.project/ideas/failures-have-a-json-shape.md`.
 
 ## Validation
 
-- `rg -n "refuse\(context.surface" packages/server/src` finds nothing.
-- `packages/server/test/server-cli.test.ts`, the task 15 cases: stderr starts with `ahpd: plugin takes`, exit 2; with `--json`, stdout or stderr carries the failure in the JSON shape a usage error has (read `runEntry` for it) and no prose line.
+- `grep -rn "refuse(context.surface" packages/server/src` finds nothing.
+- `packages/server/test/server-cli.test.ts`, the task 15 cases: stderr is `ahpd: plugin takes list, install or remove.`, exit 2, nothing on stdout; the same with `--json`.
 - `node_modules/.bin/vitest run packages/server/test` green, and `pnpm typecheck` green.
 
 ## Resume
@@ -42,4 +42,6 @@ Which way:
 1. Give the hint the failure every other failure has: one `ahpd: plugin takes list, install or remove.` line on stderr and exit 2, with the `--json` clause dropped from this task.
 2. Add a JSON failure shape to the program, which is a `@cofold/terminal` release and a change to every failure, not only the group hint.
 
-The rest of the task is decided by its own step 1: `refuse` is `(_surface, message) => stop(message)`, so it says nothing `stop` does not, and its five callers are changed to call `stop`.
+The rest of the task is decided by its own step 1: `refuse` is `(_surface, message) => stop(message)`, so it says nothing `stop` does not, and its five callers will call `stop`; they still call `refuse` today.
+
+Decided 2026-09-26: Softov chose option 1 now and option 2 later ("one... and another latter"); option 2 is `.project/ideas/failures-have-a-json-shape.md`.

@@ -1,6 +1,6 @@
 ---
 title: The comments under commands/ document the declarations, and the refs point at them
-status: done
+status: implemented
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
@@ -54,3 +54,5 @@ The earlier bare `used to` matched `refused together` in `main.ts` because it ha
 The decision's refs name `git://7a7e9d1` and `code://packages/server/src/commands/options.ts`; its body is untouched.
 A comment in `authorize.ts` that said "before this" was rewritten with them, since the `rg` runs over all of `commands/`.
 `pnpm typecheck` green; `packages/server/test/server-cli.test.ts` and `server-commands.test.ts` green, 44 cases.
+
+Review 2026-09-26: not passed. `packages/server/src/commands/user.ts:79` still says "refused the way the loop refused a flag", the removed loop, which the grep pattern cannot catch; task 23 fixes it.

@@ -1,6 +1,6 @@
 ---
 title: The plan closes on what is true - statuses, deferred work, docs, ranges and refs
-status: done
+status: implemented
 depends: [task-14-inside-follows-a-dangling-link.md, task-15-a-declined-edit-sends-its-after-when-declined.md]
 layer: "docs, agent-cofold"
 refs:
@@ -43,3 +43,5 @@ plugin/14 is `built` again with every task `done` or `dropped`, a `deferred.md` 
 Tasks 01 to 04 were run against the code in the tree and pass, so their status is `done` in the file and in the plan's table: the four capabilities and the names a default turn offers, the mode table, the edit reporting and the terminal drawing are in `agent-cofold-tools.test.ts`, and `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm typecheck` and `pnpm boundary` are green.
 
 The close: `deferred.md` holds the three VS Code checks and cofold's own `pnpm test`; the checklist unticked the `shell_exec` row, because the case pins the input and no editor was driven, and ticked the ahpd half of the pnpm row; `plan.md` is `built`, says what waits, names `deferred.md`, and gains the risk that `resolveWithin` and cofold's own write are separate steps. `docs/PLUGINS.md` and `packages/agent-cofold/README.md` say that a name answering with a different address at the connection is not caught and that a session naming no mode gets `auto`; the symlink sentence is kept and now covers a dangling link. `@cofold/agents`, `@cofold/model-openai-compat` and `@cofold/store-file` are `^0.1.1` in both manifests, `pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store` ran once, and `pnpm-workspace.yaml` keeps only the versions the lockfile holds, one per line. Every ref in tasks 01 to 15 and the plan's own seven were re-pointed against the tree, and four inline citations in Steps and Resumes were corrected as well.
+
+Review 2026-09-26: not passed. The `shell_exec` row check is still ticked and not in `deferred.md`; `docs/PLUGINS.md` still says a page cannot reach the daemon's own machine; the Resumes of 01 to 04 do not record the re-run, and those of 07, 08, 10, 11 and 12 are empty; this task's ref notes and two plan lines describe the old state. Task 19 finishes it.

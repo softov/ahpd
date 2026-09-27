@@ -61,6 +61,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | `CliField.negatable` in `@cofold/commands`, released as 0.2.1 on 2026-09-26; ahpd depends on `^0.2.1`. | Softov, 2026-09-26: "Add negatable to cofold". | 12, 06 |
 | `serve()` passes what its `authorize` returned to `registry.execute` as `request.actor`, released in `@cofold/remote` 0.3.1 on 2026-09-26. | Softov, 2026-09-26: "serve() passes actor". | 14 |
 | A command's options typed before `start` are forwarded to the child like those after it, and only the program's own globals stay with the parent. | the program accepts a command's options before its word, and task 05's objective: the record names the process that is serving | 18 |
+| The group hint fails as every other failure does, one `ahpd: ` line and exit 2 in every mode; a JSON shape for failures is [an idea](../../../ideas/failures-have-a-json-shape.md). | Softov, 2026-09-26, asked how `ahpd plugin` with no sub-command should fail: "one... and another latter". | 20 |
 | Each handler throws a `CofoldError` that keeps today's exit code (`ArgumentError` for 2, kind `conflict` for 1) and writes only through its context; a failure's sentence moves to stderr as `ahpd: <sentence>`. | Softov, 2026-09-26, asked "How should ahpd's command handlers answer failure, instead of process.exit and process.stderr?": "Throw CofoldError". | 16 |
 
 ## Tasks
@@ -77,17 +78,19 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [08 - plugin install and remove say each line as it happens, and npm writes to stderr](task-08-plugin-writes-say-each-line-as-it-happens.md) | done | 04 |
 | [09 - The bare run completes its flags, and -v and --help are read only where they are flags](task-09-the-bare-run-completes-and-reads-flags-only-as-flags.md) | done | 04 |
 | [10 - The pinning tests bind a port and start a daemon](task-10-the-pinning-tests-bind-a-port-and-start.md) | done | 05 |
-| [11 - The comments under commands/ document the declarations, and the refs point at them](task-11-comments-document-the-declarations.md) | done | 04 |
+| [11 - The comments under commands/ document the declarations, and the refs point at them](task-11-comments-document-the-declarations.md) | implemented | 04 |
 | [12 - A cofold field says whether its flag negates, released by Softov](task-12-cofold-fields-say-whether-they-negate.md) | done | 04 |
 | [13 - --plugins is an unknown option again](task-13-plugins-is-an-unknown-option.md) | done | 12 |
 | [14 - The registry's authorize hook checks a command's scopes on every surface](task-14-the-registry-hook-checks-every-surface.md) | done | 04 |
 | [15 - A bare plugin or user names its sub-commands](task-15-a-bare-verb-names-its-sub-commands.md) | done | 04 |
 | [16 - The command handlers fail by throwing a cofold error, and never touch the process](task-16-handlers-fail-by-throwing.md) | done | 04 |
 | [17 - cofold leaves a boolean flag nobody typed out of the canonical input, released by Softov](task-17-cofold-leaves-an-untyped-flag-out.md) | blocked | 12 |
-| [18 - start forwards its options wherever they are typed, and finds the start that is the word](task-18-start-forwards-its-options-wherever-they-are-typed.md) | done | 05 |
+| [18 - start forwards its options wherever they are typed, and finds the start that is the word](task-18-start-forwards-its-options-wherever-they-are-typed.md) | implemented | 05 |
 | [19 - The pinning cases fail when --host or a conflict's 409 breaks, and read no personal configuration](task-19-the-pinning-cases-fail-when-host-or-a-conflict-breaks.md) | done | 10, 16 |
 | [20 - A refusal takes only its sentence, and the group hint fails like every other failure](task-20-a-refusal-takes-its-sentence-and-the-group-hint-fails-like-the-others.md) | todo | 15, 16 |
-| [21 - The task refs and Resumes in this plan point at the code as it is](task-21-the-refs-follow-the-code.md) | done | 18, 19, 20 |
+| [21 - The task refs and Resumes in this plan point at the code as it is](task-21-the-refs-follow-the-code.md) | implemented | 18, 19, 20 |
+| [22 - A start regression leaves no daemon running, and the token case can fail](task-22-a-start-regression-leaves-no-daemon-and-the-token-case-can-fail.md) | todo | 18 |
+| [23 - The comments and records of this plan say what is true](task-23-the-comments-and-records-say-what-is-true.md) | todo | 20 |
 
 ## Risks and tradeoffs
 
@@ -97,7 +100,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ## Resume state
 
 - **Done so far:** tasks 01 to 05, 07 to 16, 18 and 19 are done: the pinning cases, the declarations with their scopes, `main.ts` through `@cofold/terminal`'s `Program`, `docs/DAEMON.md`, `start` forwarding the words after it, the port and `start` pinning cases, the handlers failing by throwing, `-v` and `--help` read only where they are flags, the group hint, the restored `--help`, the plugin lines with npm on stderr, the scopes checked in the registry's `authorize` hook, and `--plugins` refused. Task 12 done: `@cofold/commands` 0.2.1 is released and ahpd depends on `^0.2.1`. Task 18 done: `start` gives the child every option and value from the typed line except the word and the parent's globals, and finds the `start` that is the word. Task 19 done: the bind cases use `localhost` and the missing-person case is pinned at 409. Task 21 done: every ref in tasks 05 to 20 names the lines it describes, and the in-prose pointers were corrected with them.
-- **Next action:** none in the second review. Task 20 waits on the answer written in its Resume, task 17 waits on the `@cofold/commands` release Softov publishes, and task 06 waits on that release.
+- **Next action:** reviewed twice on 2026-09-26; tasks 20, 22 and 23 fix what did not pass (11, 18, 21). Task 17 waits for Softov to publish the cofold release, then task 06.
 - **Open questions:** none. Task 06's fold is decided: [an-untyped-flag-stays-absent-in-cofold-input](../../../decisions/an-untyped-flag-stays-absent-in-cofold-input.md). Task 20 is stopped: it wants a `--json` failure shape for the group hint, and no failure has one, so the choice between prose-only and a cofold release that adds one is Softov's, written in [task 20](task-20-a-refusal-takes-its-sentence-and-the-group-hint-fails-like-the-others.md)'s Resume. Task 17 needs `packages/commands` published: its change is in cofold, its release is Softov's, and it is written in [task 17](task-17-cofold-leaves-an-untyped-flag-out.md)'s Resume.
 - **Watch out for:** task 16 landed before [daemon/05 task 08](../05-an-http-api/task-08-served-commands-act-on-the-daemons-own-options.md), so that task rebases on the throwing handlers; task 14 landed before [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md), so task 09 applies the grants in the registry's `authorize` hook and `authorizeOverHttp` only identifies; `run` is a hidden command given its word when a line has no command, so the foreground daemon keeps matching `ahpd [options]`; this environment's global pnpm store is read-only, so installs need `--store-dir /tmp/pnpm-store`; the pinning cases set `CI=1`, which silences the update line in every case that does not remove it; [daemon/05](../05-an-http-api/plan.md) changes the scopes `packages/server/test/server-commands.test.ts:41-51` pins, so a scope failure there is daemon/05's to fix.
 

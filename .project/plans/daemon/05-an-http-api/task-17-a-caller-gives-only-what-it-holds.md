@@ -1,6 +1,6 @@
 ---
 title: A user command gives, mints for and removes only what its caller holds
-status: done
+status: implemented
 depends: [task-09-the-grants-each-command-needs.md]
 layer: "server, sdk"
 refs:
@@ -48,3 +48,5 @@ Seen to fail: `server-http.test.ts`, "refuses a caller the roles and people it d
 Done: `Users` gains `grantsOfRoles(roles)` and `grantsOfPerson(id)`, declared in `packages/sdk/src/types/users.ts` and implemented over the directory's own `grantsOf`, which now takes role names rather than a record so both methods reuse it; `user add` checks the roles being given and `user token` and `user rm` check the person's roles, each throwing the 403 `refusalReason` gives for the first grant the caller lacks. A name that resolves to nothing gives no grant, and a person who does not exist is left to the verb's own answer.
 
 Files in this task did not name `packages/sdk/src/types/users.ts`, which the interface addition needed.
+
+Review 2026-09-26: not passed. `user add` on a person who exists replaces their roles and checks only the new ones, so `pat` re-added the admin `ada` as `people` (200), and then minted her token (200). Task 23 bounds the person's current grants too.

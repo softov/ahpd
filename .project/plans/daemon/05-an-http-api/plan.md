@@ -117,12 +117,17 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | done | 09, 10, 11, 12, 13 |
 | [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | todo | 06 |
 | [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | todo | 07, 15 |
-| [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | done | 09 |
+| [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | implemented | 09 |
 | [18 - The API's guards have no gaps](task-18-the-guards-have-no-gaps.md) | done | 11, 12, 13 |
 | [19 - The API's tests prove what their tasks' Validation says](task-19-the-tests-prove-their-validation.md) | done | 08, 10, 12, 13 |
-| [20 - A served config answers from the daemon's own file, hides its secrets, or says it is gone](task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md) | done | 08 |
+| [20 - A served config answers from the daemon's own file, hides its secrets, or says it is gone](task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md) | implemented | 08 |
 | [21 - npm runs without holding the daemon, and a served install says to restart](task-21-npm-runs-without-holding-the-daemon.md) | done | 08 |
 | [22 - The docs, comments and task refs for the API say what the code does](task-22-the-docs-comments-and-refs-say-what-the-code-does.md) | done | 17, 18, 19, 20, 21 |
+| [23 - user add on a person who exists is bounded by the roles they hold](task-23-user-add-on-an-existing-person-is-bounded.md) | todo | 17 |
+| [24 - A served plugin list hides every plugin option value](task-24-plugin-list-hides-option-values.md) | todo | 20 |
+| [25 - Served plugin installs and removes run one at a time](task-25-served-plugin-writes-run-one-at-a-time.md) | todo | 21 |
+| [26 - The addresses the daemon prints and accepts read back as URLs](task-26-addresses-read-back-as-urls.md) | todo | 18 |
+| [27 - A blank token or host is refused, and the comments and refs say what is true](task-27-blank-values-are-refused-and-the-records-are-true.md) | todo | 22 |
 
 ## Risks and tradeoffs
 
@@ -132,7 +137,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 ## Resume state
 
 - **Done so far:** tasks 01 to 14, except 15 and 16, and tasks 17, 18 and 20. Task 06 is `@cofold/remote` 0.3.1, released, and ahpd depends on `^0.3.1`. With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook, a served command reads the daemon's own options, malformed requests and foreign Origins and Hosts are answered, `http.host` binds the API's own listener, `--remote` needs and can read a token, and `docs/DAEMON.md` documents it. Task 17 bounds `user add`, `user rm` and `user token` by what the caller holds. Task 18 closes the guards: a request with no `Host`, an IPv6 bind, an empty `http.host`, a request with no actor and an uppercase cleartext scheme. Task 20 makes a served `config` answer from the daemon's own file, mask every plugin option value, and say nothing is set when that file is gone. Task 21 makes npm run without holding the daemon, streams its stderr and tells a served install to restart. Task 19 makes the API's cases fail when the bind, the sentence, the cache mode or the plugin list breaks. Task 22 makes the docs and the comments say what the code does and re-points every ref in tasks 07 to 21.
-- **Next action:** none in the second review. Tasks 15 and 16 stay out of it: 15 is in the cofold repository and 16 waits for `@cofold/remote` 0.4.0 on npm.
+- **Next action:** reviewed twice on 2026-09-26; tasks 23 to 27 fix what did not pass (17, 20) and the review's other findings. Task 15 is in the cofold repository, and task 16 waits for `@cofold/remote` 0.4.0.
 - **Open questions:** none.
 - **Watch out for:**
   - Task 15 changes `serve()` to take a `Request` and answer a `Response`, with a Node adapter; task 16 then serves the API on Node, Bun and Deno. Both wait on a cofold release.
