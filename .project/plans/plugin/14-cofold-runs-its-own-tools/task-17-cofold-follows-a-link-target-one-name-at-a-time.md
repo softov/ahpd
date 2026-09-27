@@ -40,3 +40,4 @@ In `@cofold/tools`, `resolveWithin` judges a link whose relative target has `..`
 - Seen failing first: against the committed `paths.ts`, `resolveWithin(ws, 'trick').inside` was `true` (the `expect(...).toBe(false)` on `trick`), because `resolve(dirname(path), target)` collapsed `sublink/..` to the workspace before any name was read.
 - `vitest run --project @cofold/tools` green (29 tests, no type errors) and `tsc -p tsconfig.test.json --noEmit` clean in `packages/tools`.
 - Waiting on: Softov to commit the cofold change and publish `@cofold/tools` through `release.yml`. Step 4 (the version bump in ahpd and the `trick` row in `ROWS`) is not done.
+- 2026-09-27: committed in cofold as `d9d229e` ("tools: follow a link's target one name at a time; 0.1.1"). Waiting on Softov to tag and publish `@cofold/tools` 0.1.1; step 4 follows the release.

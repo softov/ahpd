@@ -25,7 +25,7 @@ Source: Softov, 2026-09-26, asked "Which way for daemon/04 task 06, the update-c
 ## Consequences
 
 Every boolean in `options.ts` keeps the header rule, and a flag that is on by default can be declared positively.
-A cofold consumer that reads `input.x === false` for an untyped flag now reads `undefined`, so the release is a minor version for a 0.x package and says so in its notes.
+A cofold consumer that reads `input.x === false` for an untyped flag now reads `undefined`. The release is still a patch, 0.2.2, because `@cofold/terminal`, `remote`, `config` and `mcp` depend on `^0.2`: a 0.3.0 would leave the published `@cofold/terminal` on its own 0.2.1 copy, and ahpd's parse with it, until each of them was released again (Softov, 2026-09-27, asked "Which version for the @cofold/commands change?": "0.2.2").
 Task 06 waits for the release, which Softov publishes.
 
 ## Options

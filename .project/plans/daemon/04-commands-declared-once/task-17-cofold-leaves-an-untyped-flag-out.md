@@ -27,7 +27,7 @@ In the cofold repository, a boolean flag with no typed value, no environment val
 2. Make `context.flag` answer `false` when the key is absent, and check `finish` and schema validation accept a missing boolean that is not required.
 3. Search the cofold repository for readers of a canonical boolean (`=== false`, `input[...]` on a flag) in `packages/terminal`, `packages/remote` and `packages/mcp`, and keep each one's behaviour.
 4. The cofold tree may hold other people's uncommitted work: change only what this task names, and commit nothing there without Softov's approval.
-5. The release is Softov's, through cofold's `release.yml` from a `release-*` tag: stop when the cofold tests are green and ask him to publish. It is a minor version, because a consumer reading `false` now reads `undefined`.
+5. The release is Softov's, through cofold's `release.yml` from a `release-*` tag: stop when the cofold tests are green and ask him to publish. It is a patch, 0.2.2, per the decision: the dependents' `^0.2` ranges take it.
 6. Once it is on npm, move ahpd's `@cofold/commands` (and `@cofold/terminal` or `@cofold/remote` if the release moves them) to it, run `pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store` once, and add the version to `minimumReleaseAgeExclude` if it is younger than the minimum age.
 7. In ahpd, check every boolean `optionsFrom` folds (`packages/server/src/commands/options.ts`) still gives the same options for an untyped flag, since each now reads `undefined` where it read `false`.
 
@@ -48,3 +48,5 @@ Steps 1 to 4 are done in `/github/cofold`, uncommitted, on `main`, in `packages/
 - cofold's whole suite is green: 70 files, 828 tests, no type errors. Nothing was committed there.
 
 Stopped at step 5, waiting on Softov: `packages/commands` is still 0.2.1 and nothing is tagged or published. It is a minor release, 0.3.0, because a consumer reading `false` for an untyped flag now reads `undefined`. Softov publishes it; steps 6 and 7 then move ahpd's `@cofold/commands` to it and check every boolean `optionsFrom` folds.
+
+Committed in cofold on 2026-09-27 as `db8f7af` ("commands: a flag nobody typed stays out of the input; 0.2.2"), at 0.2.2 as Softov chose rather than 0.3.0. Waiting on Softov to tag and publish it; steps 6 and 7 follow the release.
