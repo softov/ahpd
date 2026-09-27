@@ -199,8 +199,8 @@ export const serverFields = {
   },
   updateCheck: {
     type: 'boolean',
-    description: 'Never ask npm whether a newer version exists.',
-    cli: { flag: '--no-update-check' },
+    description: 'Ask npm, in the background, whether a newer version exists. On by default; --no-update-check, NO_UPDATE_NOTIFIER, CI and "updateCheck": false in the configuration turn it off.',
+    cli: { negatable: true },
   },
 } satisfies Record<string, Field>;
 
@@ -383,7 +383,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     ...(http === undefined ? {} : { http }),
     plugins,
     noPlugins,
-    updateCheck: input['updateCheck'] !== true && file.updateCheck !== false,
+    updateCheck: typeof input['updateCheck'] === 'boolean' ? input['updateCheck'] : file.updateCheck !== false,
   };
 }
 

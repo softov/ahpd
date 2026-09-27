@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRegistry } from '@cofold/commands';
 import type { AuthorizeRequest } from '@cofold/commands';
+import { optionsFrom } from '../src/commands/options.js';
 import { cliRegistry } from '../src/commands/registry.js';
 import { checkScopes } from '../src/commands/scopes.js';
 import { declareUser } from '../src/commands/user.js';
@@ -37,7 +38,7 @@ const DAEMON_FLAGS = [
   '--connection-token-file', '--without-connection-token', '--config-file',
   '--users', '--resource', '--issuer', '--trust-token', '--advanced-tools',
   '--automations', '--sessions', '--wire', '--plugin', '--no-plugins',
-  '--no-update-check',
+  '--update-check',
 ];
 
 describe('the command registry', () => {
@@ -111,5 +112,13 @@ describe('the command registry', () => {
       request: { actor: caller },
     });
     expect(answer).not.toBeNull();
+  });
+});
+
+describe('the update check', () => {
+  it('is on unless the input or the file turns it off', () => {
+    expect(optionsFrom({ configFile: config, updateCheck: false }).updateCheck).toBe(false);
+    expect(optionsFrom({ configFile: config, updateCheck: true }).updateCheck).toBe(true);
+    expect(optionsFrom({ configFile: config }).updateCheck).toBe(true);
   });
 });

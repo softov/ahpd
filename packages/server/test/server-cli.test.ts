@@ -98,7 +98,7 @@ const put = (value: unknown): void => {
  * this program again for the daemon, and a child inherits the environment
  * rather than this process's argv.
  */
-const daemonEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => {
+const daemonEnv = (extra: Record<string, string> = {}, unset: readonly string[] = []): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     XDG_CONFIG_HOME: home,
@@ -106,16 +106,26 @@ const daemonEnv = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => {
     NODE_OPTIONS: '--conditions development --import ./scripts/dev.mjs',
   };
   delete env.NO_UPDATE_NOTIFIER;
-  return Object.assign(env, extra);
+  Object.assign(env, extra);
+  for (const name of unset) delete env[name];
+  return env;
 };
 
-/** The daemon as a process: argv in, what it said and the code it left, out. */
-const cli = (args: string[], options: { config?: unknown; env?: Record<string, string> } = {}): Promise<Said> => {
+/**
+ * The daemon as a process: argv in, what it said and the code it left, out.
+ *
+ * `unset` names variables taken out of the environment, which is how a case
+ * runs without the `CI` every other case is silenced by.
+ */
+const cli = (
+  args: string[],
+  options: { config?: unknown; env?: Record<string, string>; unset?: readonly string[] } = {},
+): Promise<Said> => {
   if (options.config !== undefined) put(options.config);
   const child = spawn(
     process.execPath,
     [MAIN, ...args],
-    { cwd: REPO, env: daemonEnv(options.env ?? {}), stdio: ['pipe', 'pipe', 'pipe'] },
+    { cwd: REPO, env: daemonEnv(options.env ?? {}, options.unset ?? []), stdio: ['pipe', 'pipe', 'pipe'] },
   );
   // The peer's end of the pipe, closed at once: a stdio host serves until the
   // client goes away, and a case that starts one has nothing to say to it.
@@ -469,16 +479,22 @@ describe('start, stop and status', () => {
     expect(said.stdout).not.toContain('secret');
   });
 
-  it('takes --no-update-check from the configuration as well as the flag', async () => {
+  it('turns the update check off from the flag and from the configuration', async () => {
     writeFileSync(join(home, 'ahpd', 'daemon.json'), JSON.stringify({
       pid: process.pid, url: 'ws://127.0.0.1:9187', paths: [], startedAt: '2026-09-18T12:00:00.000Z',
     }));
     writeFileSync(join(home, 'ahpd', 'update.json'), JSON.stringify({ name: '@ahpd/server', latest: '9.9.9', checkedAt: '2026-09-18T12:00:00Z' }));
-    const without = await cli(['status', '--no-update-check']);
+    const unset = ['CI', 'NO_UPDATE_NOTIFIER'];
+    const on = await cli(['status'], { unset });
+    expect(on.stdout.split('\n')).toHaveLength(3);
+    expect(on.stdout).toContain('update:');
+    const without = await cli(['status', '--no-update-check'], { unset });
     expect(without.stdout.split('\n')).toHaveLength(2);
+    expect(without.stdout).not.toContain('update:');
     writeFileSync(join(home, 'ahpd', 'config.json'), '{ "updateCheck": false }\n');
-    const fromFile = await cli(['status']);
+    const fromFile = await cli(['status'], { unset });
     expect(fromFile.stdout.split('\n')).toHaveLength(2);
+    expect(fromFile.stdout).not.toContain('update:');
   });
 });
 

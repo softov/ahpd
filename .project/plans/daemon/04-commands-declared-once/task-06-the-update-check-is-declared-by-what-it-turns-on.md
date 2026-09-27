@@ -1,14 +1,14 @@
 ---
 title: The update check is declared by what it turns on, and its test can fail
-status: todo
+status: implemented
 depends: [task-12-cofold-fields-say-whether-they-negate.md, task-17-cofold-leaves-an-untyped-flag-out.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L200-L204](../../../../packages/server/src/commands/options.ts#L200-L204) - `updateCheck` spelled `--no-update-check`, `true` meaning off"
+  - "[code://packages/server/src/commands/options.ts#L200-L204](../../../../packages/server/src/commands/options.ts#L200-L204) - the `updateCheck` field"
   - "[code://packages/server/src/commands/options.ts#L386](../../../../packages/server/src/commands/options.ts#L386) - the fold"
   - "[code://packages/server/src/update.ts#L124-L125](../../../../packages/server/src/update.ts#L124-L125) - `checkingUpdates`, off whenever `CI` or `NO_UPDATE_NOTIFIER` is set"
-  - "[code://packages/server/test/server-cli.test.ts#L94-L133](../../../../packages/server/test/server-cli.test.ts#L94-L133) - `daemonEnv`, which sets `CI: '1'`, and `cli()`, which runs every case in it"
-  - "[code://packages/server/test/server-cli.test.ts#L472-L482](../../../../packages/server/test/server-cli.test.ts#L472-L482) - the update-check case, which passes whatever the flag does"
+  - "[code://packages/server/test/server-cli.test.ts#L94-L142](../../../../packages/server/test/server-cli.test.ts#L94-L142) - `daemonEnv`, which sets `CI: '1'`, and `cli()`, which runs every case in it and takes the `unset` list"
+  - "[code://packages/server/test/server-cli.test.ts#L481-L497](../../../../packages/server/test/server-cli.test.ts#L481-L497) - the update-check case"
 ---
 
 ## Objective
@@ -27,7 +27,8 @@ refs:
 ## Steps
 
 1. Apply decision [a-daemon-flag-is-declared-by-what-it-turns-on](../../../decisions/a-daemon-flag-is-declared-by-what-it-turns-on.md): the field `updateCheck` is a boolean whose `true` means the check runs, with a description that says it is on by default and that `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` and `"updateCheck": false` turn it off.
-2. The spelling: the field is spelled `--update-check` with `cli: { negatable: true }`, so `--no-update-check` sets it to `false` and `--update-check` to `true`. This needs the cofold release from task 12, and the fold in step 3 needs the one from task 17, which Softov publishes; do not start until ahpd depends on it.
+2. The spelling: the field is spelled `--update-check` with `cli: { negatable: true }`, so `--no-update-check` sets it to `false` and `--update-check` to `true`.
+   This needs the cofold release from task 12, and the fold in step 3 needs the one from task 17, which Softov publishes; do not start until ahpd depends on it.
 3. Keep the field without a schema `default`, as the header of `options.ts` requires, so a flag is told apart from the file; in `optionsFrom` the fold becomes, per decision [an-untyped-flag-stays-absent-in-cofold-input](../../../decisions/an-untyped-flag-stays-absent-in-cofold-input.md): the input's boolean when one was typed (after task 17 an untyped flag is absent, not `false`), else `false` when the file says `"updateCheck": false`, else `true`.
 4. Give `cli()` in `packages/server/test/server-cli.test.ts` a way to run a case with `CI` and `NO_UPDATE_NOTIFIER` both removed from the environment (for example an `unset` list), leaving every other case as it is.
 
@@ -54,3 +55,14 @@ Question for you: which way do you want this?
 Tried and reverted: the `--update-check` plus `negatable: true` declaration, the input-first fold, the `unset` list in `cli()`, the rewritten update case, the `optionsFrom` case and `DAEMON_FLAGS` renaming. The failing assertion was `['status']` printing no `update:` line, because the default had become off.
 
 Decided 2026-09-26: Softov chose option 2, recorded in [an-untyped-flag-stays-absent-in-cofold-input](../../../decisions/an-untyped-flag-stays-absent-in-cofold-input.md). Task 17 makes the cofold change and takes the release; this task starts again after it, from the steps above.
+
+- 2026-09-27: built on `@cofold/commands` 0.2.2.
+  `updateCheck` is declared with `cli: { negatable: true }` and no schema default, so help spells it `--update-check` and `--no-update-check` still turns it off, and its description says it is on by default and names the four ways to turn it off.
+  The fold in `optionsFrom` is the typed boolean, else `file.updateCheck !== false`.
+  `cli()` takes an `unset` list, and the update case runs with `CI` and `NO_UPDATE_NOTIFIER` removed.
+  `DAEMON_FLAGS` names `--update-check`.
+- Seen to fail first: the new `optionsFrom` case (`updateCheck: false` answered `true`) and `DAEMON_FLAGS` (`--update-check` missing).
+  The rewritten CLI case passed on the old declaration too, because `--no-update-check` was always right from the terminal, and what was inverted was the JSON and HTTP meaning, which the `optionsFrom` case pins.
+  With `CI` removed, its first assertion is the one that fails if the update line can never print.
+- Not touched: `docs/DAEMON.md` still lists the flag as `--no-update-check` in its table and heading, which stays a valid spelling; it is not in this task's Files.
+- `vitest run` on the two files green (54 tests); `pnpm typecheck`, `pnpm boundary` and `pnpm test` (102 files, 1349 tests) green.
