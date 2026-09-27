@@ -1,6 +1,6 @@
 ---
 title: cofold records the model each run used, released by Softov
-status: todo
+status: implemented
 depends: []
 layer: "cofold agents"
 refs:
@@ -38,3 +38,11 @@ A run takes the model reference its caller names as an option, and every `RunRec
 - cofold's whole suite green.
 
 ## Resume
+
+Implemented 2026-09-27 in `/github/cofold`, committed there as `5f19a07` with `@cofold/agents` at `0.1.2`. No tag and no publish; the release is Softov's.
+
+The agents case was written first and seen to fail: `run({ model: 'open_router/x' })` wrote a record whose `model` was undefined. `RunArgs.model` and `RunRecord.model` are new, and `setupRun` copies the option onto the record as given, conditionally so a run that named none writes no field. The file store's case is a guard, not a failing-first: `runs.create` already writes the whole record and `runs.get` reads it, which the plan expected.
+
+`pnpm test` in cofold: 71 files, 832 tests, no type errors, with `@cofold/agents` built first.
+
+Task 03 waits for the release.

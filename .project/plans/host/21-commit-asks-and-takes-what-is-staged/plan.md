@@ -1,7 +1,7 @@
 ---
 title: The commit operation asks first, and commits what is staged when anything is
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -72,16 +72,22 @@ Commit clicked -> confirmation shown -> invokeChangesetOperation commit -> git c
 | `_meta['ahp.commit'].files` goes: staging is the selection. | decision [a-commit-takes-the-index-when-anything-is-staged](../../../decisions/a-commit-takes-the-index-when-anything-is-staged.md), Consequences | 02 |
 | `_meta['ahp.commit'].message` stays as the subject's replacement when a client sends one. | (defaulted: the protocol has no field for it, and the draft already reads it; Softov may drop it) | 02 |
 | The uncommitted changeset also refreshes on git's `index` and `HEAD`, a completed tool call, a client's file write, and a terminal's exit, only while a client watches and coalesced per directory. | Softov, 2026-09-27, asked which extra refresh triggers go in: "Git index and HEAD, Tool call completes, Client file writes, Terminal exits". | 04 |
+| The git watch closes whenever nobody watches its directory, and a watcher error falls back to the other triggers. | Softov, 2026-09-27, asked which review findings become fix tasks: "Git watcher lifecycle". | 06 |
+| The git watch also covers the checked-out branch's ref and `packed-refs`. | Softov, 2026-09-27, asked what happens to a ref that moves alone: "Watch the branch ref too". | 07 |
+| The joined `turn_end` line is split, and the unwatched case counts tool calls. | Softov, 2026-09-27, asked which review findings become fix tasks: "Joined line in host.ts, Unwatched test uses tool calls". | 08 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A row says what is staged, and a staged rename is one row](task-01-a-row-says-what-is-staged.md) | todo | - |
-| [02 - Commit takes the index when anything is staged](task-02-commit-takes-the-index-when-staged.md) | todo | 01 |
-| [03 - Commit asks first, naming its subject and its files](task-03-commit-asks-first.md) | todo | 02 |
-| [04 - The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn](task-04-staging-elsewhere-reaches-the-changeset.md) | todo | 03 |
-| [05 - The docs say what commit does](task-05-the-docs-say-what-commit-does.md) | todo | 04 |
+| [01 - A row says what is staged, and a staged rename is one row](task-01-a-row-says-what-is-staged.md) | implemented | - |
+| [02 - Commit takes the index when anything is staged](task-02-commit-takes-the-index-when-staged.md) | implemented | 01 |
+| [03 - Commit asks first, naming its subject and its files](task-03-commit-asks-first.md) | implemented | 02 |
+| [04 - The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn](task-04-staging-elsewhere-reaches-the-changeset.md) | implemented | 03 |
+| [05 - The docs say what commit does](task-05-the-docs-say-what-commit-does.md) | implemented | 04 |
+| [06 - The git watch closes when nobody watches its directory, and a watcher error falls back](task-06-the-git-watch-closes-with-its-directory.md) | implemented | 04 |
+| [07 - The git watch sees the checked-out branch move](task-07-the-git-watch-sees-a-branch-move.md) | implemented | 06 |
+| [08 - The host's turn_end line is two lines again, and the unwatched case counts tool calls](task-08-the-host-line-and-the-unwatched-case.md) | implemented | 04 |
 
 ## Risks and tradeoffs
 
@@ -94,8 +100,8 @@ Commit clicked -> confirmation shown -> invokeChangesetOperation commit -> git c
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-09-27.
-- **Next action:** [task-01-a-row-says-what-is-staged.md](task-01-a-row-says-what-is-staged.md).
+- **Done so far:** tasks 01 to 08 are implemented; tasks 06 to 08 were the 2026-09-27 review's fixes.
+- **Next action:** nothing in this plan; plan host/20 starts after this plan's tasks are committed.
 - **Open questions:** none.
 - **Watch out for:** VS Code shows no staging in the session view; the person stages in VS Code's Source Control and the session's Commit acts on it.
   A test commits in a scratch repository, never in the tree it runs from.

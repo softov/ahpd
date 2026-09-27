@@ -84,14 +84,17 @@ function tokenFor(argv: readonly string[], url: string): string {
   }
   let held: string | undefined;
   if (file !== undefined) {
-    try { held = readFileSync(file, 'utf8').trim(); }
+    try { held = readFileSync(file, 'utf8'); }
     catch {
       process.stderr.write(`ahpd: no token file at ${file}.\n`);
       process.exit(2);
     }
   }
   else held = inline ?? process.env['AHPD_TOKEN'];
-  if (held !== undefined && held.trim() !== '') return held;
+  // Trimmed once, whichever source it came from, so the three spellings of one
+  // secret cannot disagree about the space around it.
+  const token = held?.trim();
+  if (token !== undefined && token !== '') return token;
   process.stderr.write(`ahpd: ${url} needs a token: pass --token, --token-file or AHPD_TOKEN.\n`);
   process.exit(2);
 }

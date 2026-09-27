@@ -638,9 +638,41 @@ behind a URI this host resolves itself, because what a file used to be is not a
 file on disk.
 
 Operations are server-advertised per scope, `disabled` while a turn is running,
-and destructive ones carry the `confirmation` a client MUST show. `commit` acts
-on the working tree, `discard` on a file, `revert` on a file back to the state
-the agent found it in.
+and destructive ones carry the `confirmation` a client MUST show. `commit` takes
+the index when it holds anything and the whole working tree when it holds nothing,
+`discard` acts on a file, `revert` puts a file back to the state the agent found
+it in, and `stage` and `unstage` move a file or a folder in or out of the index.
+
+`commit` carries a `confirmation` naming the subject line it will use and what it
+will take: the staged files when the index holds any, and every file with the
+untracked ones counted when it holds none. The operation is re-declared when the
+changeset or the session title moves, so the sentence stays true, and the
+invocation decides again from the index at the moment it runs.
+
+A row of an `uncommitted` changeset carries `_meta.staged` and `_meta.unstaged`,
+read from `git status --porcelain`'s two letters, so a client can tell what the
+index already holds from what the working tree does. A file can be both (`MM`): a
+change staged and then changed again. A staged rename or copy is one row, under
+its new name. The protocol declares no staging field; the pair lives in `_meta`,
+which is the bag it leaves for a server's own vocabulary.
+
+A person stages and unstages from the session. `stage` and `unstage` take a file
+or a folder, and the session's own folder means everything under it. VS Code
+draws both buttons on every row, a folder is staged from a client that sends one
+such as ahpapp, and `git add` in a terminal or VS Code's Source Control work
+too. A target above the session's folder is refused, for every resource-scoped
+operation and not only these two.
+
+`commit` also takes an optional `_meta['ahp.commit']`. `message` is the sentence
+the commit goes in with, replacing the session title this host would otherwise
+use. The protocol has no field for it, so it travels in the bag the reference
+client already uses for an operation's arguments.
+
+The uncommitted changeset follows the tree between turns. It is re-read when git's
+`index` or `HEAD` moves, when a tool call completes, when a client writes a file
+through the host, and when a terminal in the session's directory exits. No
+trigger costs anything while no client watches a changeset in that directory, the
+re-reads are coalesced per directory, and only a move is sent.
 
 The reference host's three are offered under its ids and driven by its request
 `_meta`, so its window's buttons work here. `prepare-pull-request` answers a

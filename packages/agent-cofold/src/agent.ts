@@ -222,6 +222,18 @@ interface Connection {
 const LOCAL_ENDPOINT = 'http://127.0.0.1:1234/v1';
 
 /**
+ * The model reference a turn runs on, where nothing here builds an adapter.
+ *
+ * One rule for the adapter and the reference both: the values in force name a
+ * model, else the plugin option names one, else the harness file does.
+ */
+export const modelReferenceOf = (
+  options: CofoldOptions,
+  settings: Record<string, unknown>,
+  harness: HarnessConfig,
+): string | undefined => text(settings.model) ?? options.model ?? harness.model;
+
+/**
  * Resolve the connection a model setting names, without requiring that a model
  * was chosen: a probe lists what an endpoint serves before anybody picks.
  *
@@ -238,7 +250,7 @@ const connectionOf = (
   strict: boolean,
 ): Connection => {
   const own = options.provider ?? 'cofold';
-  const reference = text(settings.model) ?? options.model ?? harness.model;
+  const reference = modelReferenceOf(options, settings, harness);
   const named = reference === undefined ? undefined : splitModel(reference);
   const provider = endpointOf(options, harness, reference);
   const explicitBase = text(settings.baseUrl) ?? options.baseUrl;

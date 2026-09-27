@@ -1,6 +1,6 @@
 ---
 title: A live cofold turn carries its model on the message
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -33,3 +33,9 @@ A cofold turn's `chat/turnStarted` carries `message.model` with the reference it
 - `node_modules/.bin/vitest run packages/agent-cofold` green.
 
 ## Resume
+
+Implemented 2026-09-27. Both cases were written first and seen to fail: a `chat/turnStarted` message carried no `model`, so the id was `undefined`.
+
+`modelReferenceOf` is exported from `agent.ts` and used by `connectionOf` and by `openTurn`, so the reference on the message is the one the run resolves: the turn's model over the session's, else `options.model`, else the harness file's. `openTurn` puts it on `active.message.model` with the client's `config`, as a claude turn does. The non-protocol `Turn.model` is gone, and `mapTurn`'s `model` still carries the reference for the usage report; nothing in agent-cofold or the host read `Turn.model`.
+
+`node_modules/.bin/vitest run packages/agent-cofold`: 110 passed. `pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1363 tests passed.

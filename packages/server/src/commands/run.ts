@@ -9,7 +9,6 @@
  */
 
 import { appendFileSync, writeFileSync } from 'node:fs';
-import { isIPv6 } from 'node:net';
 import { hostname } from 'node:os';
 import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, Tap } from '@ahpd/sdk';
@@ -35,7 +34,7 @@ import {
   shellTerminals,
   signInRecord,
 } from '@ahpd/sdk';
-import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier } from '../config.js';
+import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier, urlHost } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
@@ -44,9 +43,6 @@ import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npm
 import { manifest, version } from '../version.js';
 import { optionsFrom, secret, serverFields, stop } from './options.js';
 import type { Options } from './options.js';
-
-/** A host as a URL writes it: an IPv6 address in brackets, any other host as it is. */
-export const urlHost = (host: string): string => (isIPv6(host) ? `[${host}]` : host);
 
 /**
  * The names the API answers to.

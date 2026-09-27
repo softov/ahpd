@@ -381,6 +381,29 @@ describe('reaching a daemon elsewhere', () => {
     expect(said.code).toBe(2);
     expect(said.stderr).toContain('the token travels in cleartext');
   }, 20000);
+
+  it('takes space around the token from --token and AHPD_TOKEN as it does from a file', async () => {
+    // The API on, so `--remote` has a manifest and a route to reach.
+    put({ http: true, plugins: [BACKEND] });
+    const began = await cli([
+      'start', '--config-file', config, '--port', '0', '--connection-token', 'abc', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = recordOf();
+    spawned.push(record.pid);
+    // Only the port is read back: the announcement names the loopback host.
+    const url = `http://127.0.0.1:${new URL(record.url).port}`;
+    // The client's own cache, so nothing lands in the machine's real one.
+    const env = { XDG_CACHE_HOME: join(home, 'cache') };
+
+    const inline = await cli(['--remote', url, '--token', ' abc ', 'status'], { env });
+    expect(inline.code).toBe(0);
+    expect(inline.stdout).toContain(String(record.pid));
+
+    const inherited = await cli(['--remote', url, 'status'], { env: { ...env, AHPD_TOKEN: ' abc\n' } });
+    expect(inherited.code).toBe(0);
+    expect(inherited.stdout).toContain(String(record.pid));
+  }, 40000);
 });
 
 describe('start, stop and status', () => {
@@ -496,6 +519,31 @@ describe('start, stop and status', () => {
     expect(fromFile.stdout.split('\n')).toHaveLength(2);
     expect(fromFile.stdout).not.toContain('update:');
   });
+
+  it('starts the daemon under the node flags the parent was given', async () => {
+    // The dev runner puts its loader on node's own argv rather than in
+    // `NODE_OPTIONS`, so `cli()` cannot reproduce it: its child inherits the
+    // environment whatever `start` passes on. This spawns the runner's shape.
+    const child = spawn(
+      process.execPath,
+      ['--conditions', 'development', '--import', './scripts/dev.mjs', MAIN, 'start', '--port', '0', '--plugin', BACKEND, '--no-update-check'],
+      { cwd: REPO, env: daemonEnv({}, ['NODE_OPTIONS']), stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let err = '';
+    child.stderr.on('data', (chunk: Buffer) => { err += String(chunk); });
+    child.stdout.on('data', () => { /* drained, so a full pipe cannot block it */ });
+    child.stdin.end();
+    const code = await new Promise<number | null>((done) => { child.on('exit', (one) => done(one)); });
+    expect({ code, err }).toEqual({ code: 0, err: '' });
+
+    const record = recordOf();
+    spawned.push(record.pid);
+    const status = await cli(['status']);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain(record.url);
+    const stopped = await cli(['stop']);
+    expect(stopped.code).toBe(0);
+  }, 40000);
 });
 
 describe('a daemon that binds a port', () => {

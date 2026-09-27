@@ -246,6 +246,15 @@ it('refuses a role named like an object key, and resolves none to anything', asy
   expect(await users.grantsOfRoles(['constructor', 'toString'])).toEqual([]);
 });
 
+it('reads a role named __proto__ as a role, and nothing it names changes the table', async () => {
+  // Written as JSON text, because an object literal's `__proto__` sets the
+  // literal's prototype instead of making a key.
+  writeFileSync(path, '{"roles":{"__proto__":["config:read"]},"users":[{"id":"a","roles":["__proto__"]}]}');
+  const users = open();
+  expect(await users.grantsOfRoles(['__proto__'])).toEqual(['config:read']);
+  expect(await users.grantsOfPerson('a')).toContain('config:read');
+});
+
 it('mints a new secret each time, and only the last one verifies', async () => {
   const users = open();
   await users.add('a', ['member']);

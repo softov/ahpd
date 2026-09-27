@@ -1,6 +1,6 @@
 ---
 title: A turn with no model reaches the person as the sentence that says what to add
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -31,3 +31,11 @@ This task changes nothing unless VS Code draws nothing for the refusal, so it ha
 - By hand, for Softov: with no `"model"` in the cofold configuration and "default" picked in VS Code, the turn shows the sentence naming the file.
 
 ## Resume
+
+Checked 2026-09-27 by reading VS Code; nothing changed. This task has no case that fails first, because it changes nothing unless VS Code draws nothing.
+
+`agent-cofold` sends the refusal as `run.finished` with `outcome.status: 'failed'` and `outcome.error.message`, which `mapping.ts` draws as a `chat/error` part. In VS Code, `getTurnError` (`src/vs/platform/agentHost/common/state/sessionState.ts:1123`) reads the last response part of kind `Error`, and `turnsToHistory` (`src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/stateToProgressAdapter.ts:1062-1083`) turns it into the response's `errorDetails.message`. `getChatErrorDetailsFromMeta` (`src/vs/workbench/contrib/chat/common/chatErrorMessages.ts:355`) answers nothing unless the error carries `_meta.chatError`, which this refusal does not, so the fallback draws `Error: (start_failed) <the sentence>`. The sentence that names the configuration file is what the person reads, with the code in front of it.
+
+The existing case in `agent-cofold-turn.test.ts` still passes.
+
+By hand, for Softov: with no `"model"` in the cofold configuration and "default" picked in VS Code, the turn shows the sentence naming the file.

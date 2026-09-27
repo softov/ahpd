@@ -1,6 +1,6 @@
 ---
 title: Served answers hide the credentials in a plugin's URL
-status: todo
+status: implemented
 depends: [task-24-plugin-list-hides-option-values.md]
 layer: "server"
 refs:
@@ -36,3 +36,9 @@ refs:
 - `node_modules/.bin/vitest run packages/server/test/server-http.test.ts` green.
 
 ## Resume
+
+Implemented 2026-09-27. The case was written first and seen to fail: `/api/config` carried `PAT12345`.
+
+`withoutUserinfoIn` replaces any URL's userinfo in a sentence, `withoutUserinfo` applies it to a spec's string or `name`, and `withoutSpecSecrets` composes it with `withoutOptionValues`. `withoutSecrets` uses it for every plugin entry, and a served `plugin list` uses it for the spec and for every other string field that may quote it: `url`, `path`, `name`, `title` and `problem`. The comment on `withoutOptionValues` names the decision that supersedes the old one, and `docs/DAEMON.md` says so.
+
+`node_modules/.bin/vitest run packages/server/test/server-http.test.ts`: 53 passed. `pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1363 tests passed. One `agent-cofold` case flaked under load and passes on its own.

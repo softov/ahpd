@@ -14,7 +14,7 @@ import { running } from '../daemon.js';
 import { installPlugins, removePlugins, run as runProgram } from '../install.js';
 import { describePlugin, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
-import { withoutOptionValues } from './config.js';
+import { withoutSpecSecrets, withoutUserinfoIn } from './config.js';
 import { optionsFrom, pluginWriteFields, serverFields, servedPluginWriteFields, stop } from './options.js';
 import type { ServedFacts } from './served.js';
 
@@ -37,9 +37,18 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       for (const spec of options.plugins) {
         const row = await describePlugin(spec, { configDir: configDir(), cwd: process.cwd() });
         // Served, a row is read by anyone holding `config:read`, so it says
-        // which options a plugin has and never their values; the terminal's
-        // listing is the owner reading their own configuration.
-        rows.push(served === undefined ? row : { ...row, spec: withoutOptionValues(row.spec) });
+        // which options a plugin has and never their values, and every string
+        // that may quote a spec URL has that URL's userinfo replaced; the
+        // terminal's listing is the owner reading their own configuration.
+        rows.push(served === undefined ? row : {
+          ...row,
+          spec: withoutSpecSecrets(row.spec),
+          ...(row.url === undefined ? {} : { url: withoutUserinfoIn(row.url) }),
+          ...(row.path === undefined ? {} : { path: withoutUserinfoIn(row.path) }),
+          ...(row.name === undefined ? {} : { name: withoutUserinfoIn(row.name) }),
+          ...(row.title === undefined ? {} : { title: withoutUserinfoIn(row.title) }),
+          ...(row.problem === undefined ? {} : { problem: withoutUserinfoIn(row.problem) }),
+        });
       }
       return output(rows, `${rows.map(pluginLine).join('\n')}\n`);
     },

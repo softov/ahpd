@@ -157,7 +157,7 @@ anything has been let go of.
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
 | `--no-plugins` | Load none, whatever the configuration file says |
-| `--no-update-check` | Never ask npm whether a newer version exists. See below |
+| `--update-check`, `--no-update-check` | Ask npm, in the background, whether a newer version exists. On by default; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` and `"updateCheck": false` turn it off. See below |
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
 
@@ -194,7 +194,7 @@ typed, and a host that refused everything outside `--path` was one where no
 folder outside it could be picked at all. Who may ask is decided once, by the
 connection token - which is why a host on `0.0.0.0` will not start without one.
 
-### `--no-update-check`, and knowing when it is old
+### `--update-check`, and knowing when it is old
 
 The daemon asks npm, six hours apart, whether a newer `@ahpd/server` exists,
 and writes the answer to `update.json` beside the configuration. Its startup
@@ -413,9 +413,12 @@ that, and a person's token is refused whatever its roles. A served install
 answers `restart: true`, because the daemon that answered is the one holding the
 list it started with. `GET /api/config` answers every key of the daemon's own
 file, with `connectionToken` and every value under a plugin entry's `options`
-reported as `<set>` rather than as what they are, so a grant to read or change
-settings carries neither the root credential nor a plugin's own secrets.
-`GET /api/plugin/list` reports each plugin's `options` the same way.
+reported as `<set>` rather than as what they are, and the userinfo of a plugin
+spec's URL replaced the same way (`git+https://<set>@host/repo`), so a grant to
+read or change settings carries neither the root credential nor a plugin's own
+secrets.
+`GET /api/plugin/list` reports each plugin's `options` and every string that may
+quote its spec the same way.
 
 A refusal carries the same sentence the WebSocket gives, so a script reads the
 reason:
@@ -462,12 +465,12 @@ before it has a token. It is what `--remote` reads.
 instead of here. A token is required: `--token <secret>`, `--token-file <path>`
 or `AHPD_TOKEN`, and a call with none, or with one that is empty or only
 spaces, is refused before anything is fetched. `--token` and `--token-file`
-together are refused, as is a file that is missing or empty. Plain `http://` to a host that is not loopback sends the token
-readable by anything on the path, so the client says so on stderr and proceeds;
-`https://`, or `http://` on loopback, says nothing. The manifest is cached under
-`~/.cache/ahpd/remote`, mode 0700, so `--help` is not a round trip and the
-binary still works while the daemon is not answering; `--refresh` fetches it
-again.
+together are refused, as is a file that is missing or empty. Plain `http://` to
+a host that is not loopback sends the token readable by anything on the path,
+so the client says so on stderr and proceeds; `https://`, or `http://` on
+loopback, says nothing. The manifest is cached under `~/.cache/ahpd/remote`,
+mode 0700, so `--help` is not a round trip and the binary still works while the
+daemon is not answering; `--refresh` fetches it again.
 
 ```bash
 ahpd --remote http://127.0.0.1:9187 --token "$SECRET" status

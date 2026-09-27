@@ -1,6 +1,6 @@
 ---
 title: Commit takes the index when anything is staged
-status: todo
+status: implemented
 depends: [task-01-a-row-says-what-is-staged.md]
 layer: "sdk"
 refs:
@@ -36,3 +36,12 @@ refs:
 - `node_modules/.bin/vitest run packages/sdk/test/commit.test.ts` green.
 
 ## Resume
+
+Implemented 2026-09-27. Tests first, seen to fail: with `a.txt` staged and `b.txt` modified, the commit took `b.txt`'s working-tree change too (`HEAD:b.txt` was `b2`), and the `MM` case committed `three` instead of the staged `two`.
+
+`commit` asks `git diff --cached --quiet` and commits the index with no `add` when it differs, falling back to `add -A` and a commit when it does not. A repository with no HEAD yet counts any staged entry, through `git ls-files --cached`. `_meta['ahp.commit'].files` and everything that read it are gone; `message` and the session-title fallback stay. `COMMIT.description` now says it commits what is staged, or every change when nothing is.
+
+The test file's `git` helper trims its answer, which ate porcelain's first column, so a `porcelain` helper keeps it for the status assertions.
+
+`node_modules/.bin/vitest run packages/sdk/test/commit.test.ts`: 8 passed.
+`pnpm typecheck`, `pnpm boundary` and `pnpm test`: 102 files, 1350 tests passed.

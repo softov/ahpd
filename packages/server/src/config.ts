@@ -1,6 +1,7 @@
 /** What this daemon was told before anybody typed a flag, and where it is. */
 
 import { mkdirSync, readFileSync } from 'node:fs';
+import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { issuerKind, type PluginSpec } from '@ahpd/sdk';
@@ -288,6 +289,11 @@ export const isIdentifier = (value: string): boolean => /^https:\/\/[^\s#]+$/.te
 export const namedIssuer = issuerKind;
 
 /**
+ * A host as a URL writes it: an IPv6 address in brackets, any other host as it is.
+ */
+export const urlHost = (host: string): string => (isIPv6(host) ? `[${host}]` : host);
+
+/**
  * The URL a person pastes where a client asks for a host.
  *
  * The token in the query, which is the shape this daemon's door and the
@@ -298,5 +304,5 @@ export const namedIssuer = issuerKind;
  */
 export const personalUrl = (secret: string, host: string, port: number, machine: string): string => {
   const wildcard = host === '' || host === '0.0.0.0' || host === '::';
-  return `ws://${wildcard ? machine : host}:${port}/?tkn=${encodeURIComponent(secret)}`;
+  return `ws://${wildcard ? machine : urlHost(host)}:${port}/?tkn=${encodeURIComponent(secret)}`;
 };

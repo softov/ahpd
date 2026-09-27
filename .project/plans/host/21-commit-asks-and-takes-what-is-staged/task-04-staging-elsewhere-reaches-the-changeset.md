@@ -1,6 +1,6 @@
 ---
 title: The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn
-status: todo
+status: implemented
 depends: [task-03-commit-asks-first.md]
 layer: "sdk"
 refs:
@@ -50,3 +50,12 @@ No trigger costs anything when no client watches that directory's changesets.
 - `pnpm typecheck` and `pnpm test` green.
 
 ## Resume
+
+Implemented 2026-09-27. Every case was written first and seen to fail: the git case arrived with no move while the watcher was not started, the tool-call and client-write cases never moved with their trigger off, and the terminal case needed the client `createTerminal` exit trigger, which only the tool and backend terminals had.
+
+`refresh` compares the rows' staging as well as the summary (`treeSignature` in `changes.ts`), so `git add` alone is a move. `ChangesetSource.watch` is new: `changes.ts` watches the git directory found with `git rev-parse --absolute-git-dir`, debounces its own events, and closes the handle when the host releases it. The host keeps one coalescing re-read per directory (`refreshWatched`): an unwatched directory runs no git, one re-read runs at a time with at most one waiting behind it, and a move sends `session/changesetsChanged` plus `contentMoved` for every session there. The triggers are the source watch (started when a changeset is first read, stopped on the last unsubscribe), `chat/toolCallComplete`, `resourceWrite`, `resourceDelete`, `resourceMkdir`, `resourceMove` and `resourceCopy` inside a session's directory, and `terminal/exited` on the tool, backend and client terminals. A finished turn keeps `refreshFacts`.
+
+A one-file changeset comes back as `changeset/contentChanged` rather than `changeset/operationsChanged` because `sameFiles` includes `_meta`; the verbs ride along either way, and the git case reads them from whichever action carried them.
+
+`packages/sdk/test/changes-refresh.test.ts`: 6 passed.
+`pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1359 tests passed. One `agent-cofold` case flaked in a loaded full run and passes on its own.

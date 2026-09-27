@@ -1,6 +1,6 @@
 ---
 title: A role named __proto__ in the users file is read as a role
-status: todo
+status: implemented
 depends: [task-23-user-add-on-an-existing-person-is-bounded.md]
 layer: "sdk"
 refs:
@@ -32,3 +32,9 @@ A users file whose `roles` names a role `__proto__` gives that role its grants l
 - `node_modules/.bin/vitest run packages/sdk/test/users.test.ts` green.
 
 ## Resume
+
+Implemented 2026-09-27. The case was written first and seen to fail: a file holding `"roles": {"__proto__": ["config:read"]}` resolved `__proto__` to nothing.
+
+The role table is built with `Object.create(null)`, so an assignment for `__proto__` makes an own key instead of setting the table's prototype. `roleIn` already reads only own keys, so the role resolves. No other table in `users.ts` is keyed by a name from the file: the users and a person's roles are arrays.
+
+`node_modules/.bin/vitest run packages/sdk/test/users.test.ts`: 18 passed. `pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1363 tests passed.

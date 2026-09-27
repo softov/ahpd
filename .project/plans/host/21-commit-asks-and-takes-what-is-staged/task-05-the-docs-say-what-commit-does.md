@@ -1,6 +1,6 @@
 ---
 title: The docs say what commit does
-status: todo
+status: implemented
 depends: [task-04-staging-elsewhere-reaches-the-changeset.md]
 layer: "docs"
 refs:
@@ -27,3 +27,7 @@ refs:
 - No em dash in the changed lines.
 
 ## Resume
+
+Implemented 2026-09-27. `docs/AHP.md` now says Commit takes the index when it holds anything and the whole working tree when it holds nothing, that it carries a `confirmation` naming the subject line and what it takes and is re-declared when either moves, that a row carries `_meta.staged` and `_meta.unstaged` and a staged rename is one row, that VS Code shows no staging in its session view so a person stages in its Source Control, and that `_meta['ahp.commit'].message` replaces the subject. The `files` set is gone, and the four refresh triggers are described.
+
+This task's Validation is the plan's read side by side and names no test, so there was no case to watch fail. No em dash is in the changed lines.

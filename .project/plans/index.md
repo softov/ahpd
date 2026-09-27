@@ -19,7 +19,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-27, reviewed twice; tasks 01-04, 06, 11, 17, 18 and 20-23 implemented and awaiting review (`@cofold/commands` 0.2.2 taken) | daemon 03 | daemon 05 |
-| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; tasks 01-05, 17, 20 and 23-27 implemented and awaiting review; tasks 28-31, found in review, todo; 15 in the cofold repository, 16 waits for `@cofold/remote` 0.4.0 | daemon 04 | - |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; tasks 01-05, 17, 20 and 23-34 implemented and awaiting review; 15 in the cofold repository, 16 waits for `@cofold/remote` 0.4.0 | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 
 Next free number in `daemon`: `07`.
@@ -50,9 +50,10 @@ Reference: [00-host.md](host/00-host.md)
 | [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | built 2026-09-26 ([implemented.md](host/18-a-provisional-session-takes-any-key/implemented.md)) | host 02 | - |
 | [19 - A fork copies the conversation through the chosen turn](host/19-a-fork-copies-through-the-turn/plan.md) | medium | planned 2026-09-26, tasks 01-03 todo | - | pi 05, and the ACP fork in plugin 18, which must cut at the turn's end |
 | [20 - A changes URI opens in a client that normalises it](host/20-a-changes-uri-survives-a-client/plan.md) | high | planned 2026-09-27; starts after host 21 | host 21 | - |
-| [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | planned 2026-09-27; folds in the uncommitted `changes.ts` draft | - | host 20 |
+| [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | active 2026-09-27; tasks 01 to 08 implemented, review fixes 06 to 08 awaiting review; folds in the uncommitted `changes.ts` draft | - | host 20 |
+| [22 - A file or a folder is staged and unstaged from the session's changeset](host/22-a-file-or-folder-is-staged-from-the-session/plan.md) | high | active 2026-09-27; tasks 01 to 03 implemented and awaiting review | host 21 | - |
 
-Next free number in `host`: `22`.
+Next free number in `host`: `23`.
 
 ## claude
 
@@ -96,7 +97,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [11 - A session runs inside a computer](plugin/11-a-session-inside-a-computer/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/11-a-session-inside-a-computer/implemented.md)) | plugin 10, plugin 07 | - |
 | [12 - A client can tell what a scheme does before it asks one](plugin/12-a-client-can-tell-what-a-scheme-does/plan.md) | high | built 2026-09-23 ([implemented.md](plugin/12-a-client-can-tell-what-a-scheme-does/implemented.md)) | plugin 08, plugin 10 | the ahpapp Computers screen, which reads the advertisement |
 | [13 - Only the images an operator named](plugin/13-only-the-images-an-operator-named/plan.md) | medium | built 2026-09-24 ([implemented.md](plugin/13-only-the-images-an-operator-named/implemented.md)) | plugin 10 | - |
-| [14 - A cofold session has files, shell, web and memory, run by cofold itself](plugin/14-cofold-runs-its-own-tools/plan.md) | high | active 2026-09-27, reviewed twice; fix tasks 17-19 implemented and awaiting review (`@cofold/tools` 0.1.1 taken) ([implemented.md](plugin/14-cofold-runs-its-own-tools/implemented.md), [deferred.md](plugin/14-cofold-runs-its-own-tools/deferred.md)) | plugin 03 | container 04 |
+| [14 - A cofold session has files, shell, web and memory, run by cofold itself](plugin/14-cofold-runs-its-own-tools/plan.md) | high | active 2026-09-27, reviewed twice; fix tasks 17-20 implemented and awaiting review (`@cofold/tools` 0.1.1 taken) ([implemented.md](plugin/14-cofold-runs-its-own-tools/implemented.md), [deferred.md](plugin/14-cofold-runs-its-own-tools/deferred.md)) | plugin 03 | container 04 |
 | [15 - An agent says what a machine needs, and the machine is made with it](plugin/15-an-agent-says-what-a-machine-needs/plan.md) | high | active 2026-09-26, reviewed; task 06 reopened, fix tasks 08-12 todo | plugin 11 | plugin 16, container 03, container 04 |
 | [16 - A disposable machine is made for a session and goes after it](plugin/16-a-disposable-machine/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 05-11 todo | plugin 15 | - |
 | [17 - A plugin hears when a session needs a person](plugin/17-a-plugin-hears-a-session-needs-a-person/plan.md) | high | planned 2026-09-26 | plugin 02 | the notify plugin, which reads the two events |
@@ -105,7 +106,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [20 - A plugin is a client of its own host, as a principal of its own](plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md) | high | planned 2026-09-26, after plugin 17 | plugin 01, host 11 | plugin 21, and every gateway, trigger and facade plugin |
 | [21 - A plugin serves an HTTP route on the daemon's listener](plugin/21-a-plugin-serves-an-http-route/plan.md) | medium | planned 2026-09-26, after plugin 20; task 02 after daemon 05 tasks 15 and 16 | daemon 05, plugin 20 | webhook, callback and facade plugins |
 | [22 - A cofold write lands on the file its check allowed, and not on one that changed since it was read](plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) | medium | draft 2026-09-27; task 01 chooses the approach with Softov | plugin 14 | - |
-| [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | planned 2026-09-27; task 01 is a cofold release, task 02 needs none | plugin 14 | - |
+| [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | active 2026-09-27; tasks 01, 02 and 04 implemented and awaiting review; task 01 is committed in cofold (`5f19a07`, `@cofold/agents` 0.1.2) and waits for Softov's release, task 03 waits for it | plugin 14 | - |
 
 Next free number in `plugin`: `24`.
 

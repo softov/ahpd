@@ -54,11 +54,15 @@ const types = (p: ReturnType<typeof peer>, channel: string): string[] =>
   actions(p, channel).map((e) => String(e.action.type));
 
 /** A connected client with one cofold session, watching both its channels. */
-async function talking(model: ModelAdapter, tools: HostTool[] = []) {
+async function talking(
+  model: ModelAdapter,
+  tools: HostTool[] = [],
+  extra: Parameters<typeof cofoldAgent>[0] = {},
+) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
   const host = createHost({
     path,
-    agents: [cofoldAgent({ adapter: model, memory: true })],
+    agents: [cofoldAgent({ adapter: model, memory: true, ...extra })],
     ...(tools.length > 0 ? { tools } : {}),
   });
   const p = peer();
@@ -131,6 +135,32 @@ it('keeps the origin a client sent with the message, on the wire and in the cata
     snapshot: { state: { turns: { message: unknown }[] } };
   };
   expect(opened.snapshot.state.turns[0]?.message).toMatchObject(sent);
+});
+
+it('carries the model a turn runs on, on the message', async () => {
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, chatUri } = await talking(model);
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'open_router/x' } } },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
+  expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/x');
+});
+
+it('carries the configured model when the turn names none', async () => {
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/y' });
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => ended(p, chatUri));
+
+  const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
+  expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/y');
 });
 
 it('keeps a delta a plain action and starts no second turn from it', async () => {

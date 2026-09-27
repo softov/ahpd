@@ -1,7 +1,10 @@
 /** What git says a directory has changed, as a host's `ChangesetSource`. */
 
 import { execFile } from 'node:child_process';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { watch, type FSWatcher } from 'node:fs';
+import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetOperationResult, ChangesetSource, ChangesetState,
 } from './types/changes.js';
@@ -66,13 +69,73 @@ const run = (dir: string, args: string[]): Promise<{ ok: boolean; out: string; e
       }));
   });
 
-/** The path a `file://` URI names, or nothing for a URI that names none. */
-const pathIn = (dir: string, uri: string): string | undefined => {
+/**
+ * Whether the index holds a change, which decides how `commit` runs.
+ *
+ * `--cached` compares the index against HEAD and `--quiet` answers through its
+ * exit code. A repository with no commit yet has no HEAD to compare against, so
+ * any entry in the index counts there.
+ */
+const indexHolds = async (dir: string): Promise<boolean> => {
+  if (await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']) === undefined) {
+    const listed = await git(dir, ['ls-files', '--cached']);
+    return listed !== undefined && listed.trim() !== '';
+  }
+  const differs = await run(dir, ['diff', '--cached', '--quiet']);
+  return !differs.ok;
+};
+
+/**
+ * What a changeset's rows say, for deciding whether a re-read found a move.
+ *
+ * The counts alone miss `git add`: staging a file that was already changed moves
+ * nothing in the summary and changes what a commit would take, which is the
+ * answer a client holding the changeset is showing.
+ */
+const treeSignature = (value: { files: ChangesetFile[]; summary: ChangesSummary } | undefined): string =>
+  JSON.stringify({
+    summary: value?.summary ?? null,
+    staging: (value?.files ?? []).map((one) => [one.id, one._meta?.staged === true, one._meta?.unstaged === true]),
+  });
+
+/**
+ * A path with its symlinks resolved, keeping a name that does not exist yet.
+ *
+ * The real path of the nearest ancestor that does, with the rest appended: a
+ * target that is not on disk still has to be judged by where it would land.
+ */
+const settled = async (path: string): Promise<string> => {
+  const rest: string[] = [];
+  let at = resolve(path);
+  for (;;) {
+    const real = await realpath(at).catch(() => undefined);
+    if (real !== undefined) return rest.length === 0 ? real : join(real, ...rest);
+    const up = dirname(at);
+    if (up === at) return resolve(path);
+    rest.unshift(basename(at));
+    at = up;
+  }
+};
+
+/**
+ * The path a `file://` URI names, relative to the changeset's directory.
+ *
+ * The URI is decoded and resolved, and it is inside only when both the path as
+ * written and the path with its symlinks followed are, so a target that leaves
+ * the directory - by `..`, by a percent-escaped one or by a link - is not. The
+ * answer is the path as written: git stages, restores and cleans a link as the
+ * entry it is, not the file it points at. `.` is the directory itself, and
+ * nothing for a URI that names no file.
+ */
+const pathIn = async (dir: string, uri: string): Promise<string | undefined> => {
   if (!uri.startsWith('file://')) return undefined;
-  const path = uri.slice('file://'.length);
-  // Inside the directory this changeset is about, and not merely starting with
-  // its name: `/src/brb` must not reach `/src/brb_framework`.
-  return path === dir || path.startsWith(`${dir}/`) ? path : undefined;
+  let asked: string;
+  try { asked = resolve(fileURLToPath(uri)); }
+  catch { return undefined; }
+  const within = (rel: string): boolean => rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  const written = relative(resolve(dir), asked);
+  if (!within(written) || !within(relative(await settled(dir), await settled(asked)))) return undefined;
+  return written === '' ? '.' : written;
 };
 
 /**
@@ -121,11 +184,32 @@ interface Captured {
 const COMMIT: ChangesetOperation = {
   id: 'commit',
   label: 'Commit',
-  description: 'Commit the working tree, including files git has not been told about',
+  description: 'Commit what is staged, or every change when nothing is',
   scopes: ['changeset'],
   icon: 'git-commit',
   group: 'commit',
   writes: true,
+};
+
+/**
+ * The question `commit` asks, built from the last look at the directory.
+ *
+ * Taking the index and taking the whole tree are different acts, so the
+ * sentence says which one this would be, names the subject line, and counts
+ * what it would take. A session nobody has named is named by the fallback the
+ * commit would use, so the sentence does not promise a title that will not be
+ * there.
+ */
+const commitConfirmation = (files: readonly ChangesetFile[], subject: string | undefined): string => {
+  const named = (subject ?? '').trim();
+  const name = named === '' ? 'Changes from an agent session' : named;
+  const staged = files.filter((one) => one._meta?.staged === true).length;
+  if (staged > 0) {
+    return `Commit ${staged} staged ${staged === 1 ? 'file' : 'files'} as '${name}'?`;
+  }
+  const untracked = files.filter((one) => one._meta?.staged !== true && one.edit.before === undefined).length;
+  const counted = `${files.length} ${files.length === 1 ? 'file' : 'files'}`;
+  return `Commit ${counted}${untracked > 0 ? `, ${untracked} untracked` : ''}, as '${name}'?`;
 };
 
 const DISCARD: ChangesetOperation = {
@@ -136,6 +220,26 @@ const DISCARD: ChangesetOperation = {
   confirmation: 'Discard the changes to this file? This cannot be undone.',
   icon: 'discard',
   writes: true,
+};
+
+/** Staging a path, so the index holds it for the next commit. */
+const STAGE: ChangesetOperation = {
+  id: 'stage',
+  label: 'Stage Changes',
+  description: 'Add this file or folder to what the next commit takes',
+  scopes: ['resource'],
+  icon: 'add',
+  group: 'stage',
+};
+
+/** Taking a path back out of the index, leaving the working tree as it is. */
+const UNSTAGE: ChangesetOperation = {
+  id: 'unstage',
+  label: 'Unstage Changes',
+  description: 'Take this file or folder out of what the next commit takes, keeping its changes',
+  scopes: ['resource'],
+  icon: 'remove',
+  group: 'stage',
 };
 
 /**
@@ -397,13 +501,23 @@ export function gitChanges(): ChangesetSource {
     const files: ChangesetFile[] = [];
     const summary: ChangesSummary = { files: 0, additions: 0, deletions: 0 };
     const records = status.split('\0').filter((record) => record !== '');
-    for (const record of records) {
-      // `XY <path>`: two status letters, a space, then the path.
+    for (let at = 0; at < records.length; at++) {
+      // `XY <path>`: two status letters, a space, then the path. `X` is the
+      // index and `Y` the working tree, which is the whole of what staging is.
+      const record = records[at] as string;
       const code = record.slice(0, 2);
       const path = record.slice(3);
       if (path === '') continue;
+      // A rename or a copy writes a second NUL record after its own, holding the
+      // path the file came from, and it is consumed here or it is read as a row
+      // of its own with a status made of that path's first two letters.
+      if ((code[0] ?? ' ') === 'R' || (code[0] ?? ' ') === 'C') at += 1;
       const gone = code.includes('D');
       const fresh = code.includes('A') || code.includes('?');
+      // `?` is git's untracked mark, and an untracked file is in neither the
+      // index nor HEAD: it is a working-tree change and never a staged one.
+      const staged = (code[0] ?? ' ') !== ' ' && (code[0] ?? ' ') !== '?';
+      const unstaged = (code[1] ?? ' ') !== ' ';
       const uri = `file://${dir}/${path}`;
       // An untracked file is in no diff against HEAD, so git reports nothing
       // for it. Every line of it is an addition, which is what it is.
@@ -424,6 +538,9 @@ export function gitChanges(): ChangesetSource {
           }),
           diff: { added: count.added, removed: count.removed },
         },
+        // A file can be both (`MM`): staged, then changed again. Saying only one
+        // of the two would hide half of what a commit form has to decide.
+        _meta: { staged, unstaged },
       });
       summary.files = (summary.files ?? 0) + 1;
       summary.additions = (summary.additions ?? 0) + count.added;
@@ -815,7 +932,9 @@ export function gitChanges(): ChangesetSource {
         : [];
       if (scope === 'uncommitted') {
         return [
-          ...(dirty ? [COMMIT, DISCARD] : []),
+          ...(dirty
+            ? [{ ...COMMIT, confirmation: commitConfirmation(held.get(dir)?.files ?? [], context?.subject) }, DISCARD, STAGE, UNSTAGE]
+            : []),
           ...pr,
           ...(context?.unused === true ? [CHECKOUT] : []),
         ];
@@ -839,28 +958,57 @@ export function gitChanges(): ChangesetSource {
         return pullRequest(dir, operationId, subject, meta ?? {}, base, github);
       }
       if (operationId === 'commit') {
-        // `-A`, including files git has not been told about: the changeset this
-        // was invoked on counted untracked files as changes, and committing
-        // less than was listed would commit something other than what was
-        // shown.
-        const staged = await run(dir, ['add', '-A']);
-        if (!staged.ok) throw new Error(`Could not stage: ${staged.err}`);
+        /*
+         * The message, under this host's own key.
+         *
+         * The protocol has no field for it, so it travels in `_meta` - the bag
+         * the reference client already puts a pull request's arguments in.
+         * `message` replaces the session title a client did not get to write;
+         * with neither, the commit keeps the sentence this host always used.
+         */
+        const asked = typeof meta?.['ahp.commit'] === 'object' && meta['ahp.commit'] !== null
+          ? meta['ahp.commit'] as Record<string, unknown>
+          : undefined;
+        const typed = typeof asked?.message === 'string' ? asked.message.trim() : '';
         // The session's own title, which is the sentence somebody already wrote
         // about this work. A generated one would need the agent, and running a
         // turn to commit a turn is a lot of machinery for a subject line.
         const line = (subject ?? '').split('\n')[0]?.trim();
-        const message = line !== undefined && line !== '' ? line : 'Changes from an agent session';
+        const message = typed !== '' ? typed : line !== undefined && line !== '' ? line : 'Changes from an agent session';
+        /*
+         * What is staged is the selection, and `add -A` is the fallback.
+         *
+         * A person stages in git, and a commit that also swept in the working
+         * tree would commit something other than what they chose. `-A` is kept
+         * for the empty index, because there the changeset the person is
+         * looking at is the only thing that says what a commit should take,
+         * untracked files included.
+         */
+        if (!await indexHolds(dir)) {
+          const added = await run(dir, ['add', '-A']);
+          if (!added.ok) throw new Error(`Could not stage: ${added.err}`);
+        }
         const done = await run(dir, ['commit', '-m', message]);
         if (!done.ok) throw new Error(`Could not commit: ${done.err || done.out.trim()}`);
         const at = (await git(dir, ['rev-parse', '--short', 'HEAD']))?.trim();
-        return { message: at ? `Committed ${at}: ${message}` : `Committed: ${message}` };
+        // The subject line, because the rest of the message is a body a row
+        // cannot hold - the same first line `git log --oneline` would show.
+        const subject_ = message.split('\n')[0] ?? message;
+        return { message: at ? `Committed ${at}: ${subject_}` : `Committed: ${subject_}` };
       }
 
-      const path = target?.resource === undefined ? undefined : pathIn(dir, target.resource);
+      const path = target?.resource === undefined ? undefined : await pathIn(dir, target.resource);
       // Refused rather than clamped: a target outside this directory is a
       // client asking to write somewhere this changeset is not about.
       if (path === undefined) throw new Error('That file is not in this directory.');
-      const named = path.slice(dir.length + 1);
+      const folder = path === '.';
+      const named = folder ? 'the folder' : path;
+      const at = folder ? dir : join(dir, path);
+      // The two undos below act on one file, and a folder is a different act
+      // than either of them means.
+      if (folder && (operationId === 'discard' || operationId === 'revert')) {
+        throw new Error('That operation takes one file, not a folder.');
+      }
 
       if (operationId === 'discard') {
         /*
@@ -880,7 +1028,7 @@ export function gitChanges(): ChangesetSource {
       }
 
       if (operationId === 'revert') {
-        const sides = capturedFor(session, scope)?.get(path);
+        const sides = capturedFor(session, scope)?.get(at);
         if (!sides) throw new Error('This changeset does not hold that file.');
         /*
          * No `before` is a file the turn created, and putting a creation back
@@ -891,11 +1039,30 @@ export function gitChanges(): ChangesetSource {
          * row that shows as a creation reverts as one.
          */
         if (sides.before === undefined || sides.before === '') {
-          await rm(path, { force: true });
+          await rm(at, { force: true });
           return { message: `Removed ${named}, which this changeset created` };
         }
-        await writeFile(path, sides.before, 'utf8');
+        await writeFile(at, sides.before, 'utf8');
         return { message: `Reverted ${named}` };
+      }
+
+      if (operationId === 'stage') {
+        const added = await run(dir, ['add', '-A', '--', path]);
+        if (!added.ok) throw new Error(`Could not stage: ${added.err || added.out.trim()}`);
+        return { message: `Staged ${named}` };
+      }
+
+      if (operationId === 'unstage') {
+        /*
+         * A repository with no commit yet has no `HEAD` for `restore --staged`
+         * to read, and taking an entry out of the index there is `rm --cached`.
+         */
+        const noCommit = await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']) === undefined;
+        const done = noCommit
+          ? await run(dir, ['rm', '--cached', '-r', '-q', '--', path])
+          : await run(dir, ['restore', '--staged', '--', path]);
+        if (!done.ok) throw new Error(`Could not unstage: ${done.err || done.out.trim()}`);
+        return { message: `Unstaged ${named}` };
       }
 
       throw new Error(`No operation called ${operationId}`);
@@ -903,14 +1070,148 @@ export function gitChanges(): ChangesetSource {
 
     refresh: async (dir) => {
       const found = await look(dir);
-      const before = JSON.stringify(held.get(dir)?.summary ?? null);
+      const before = treeSignature(held.get(dir));
       if (!found) {
         if (!held.has(dir)) return false;
         held.delete(dir);
         return true;
       }
       held.set(dir, found);
-      return JSON.stringify(found.summary) !== before;
+      return treeSignature(found) !== before;
+    },
+
+    /*
+     * What git writes outside the host: the index, HEAD and the branch's ref.
+     *
+     * A person stages, commits, checks out or resets in a program this host is
+     * not, and none of it comes through the host. The git directory is watched
+     * rather than the files themselves because git replaces the index by
+     * rename: a watch on the file would be watching an inode nothing writes
+     * again. A linked worktree keeps its index and HEAD in its own git
+     * directory and its refs in the common one, so each is watched where it
+     * lives. Non-recursive handles, one per directory.
+     */
+    watch: (dir, onChange) => {
+      let closed = false;
+      let stop: (() => void) | undefined;
+      void (async () => {
+        const found = await git(dir, ['rev-parse', '--absolute-git-dir']);
+        if (found === undefined || found === '' || closed) return;
+        const gitDir = found.trim();
+        const common = (await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']))
+          ?.trim() || gitDir;
+
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const fire = () => {
+          if (timer !== undefined) clearTimeout(timer);
+          // One `git add` writes the index more than once, and a commit writes
+          // both files, so the events are coalesced before anything runs git.
+          timer = setTimeout(() => {
+            timer = undefined;
+            if (!closed) onChange();
+          }, 150);
+        };
+
+        const handles: FSWatcher[] = [];
+        /**
+         * One directory watched, through the shared debounce.
+         *
+         * `wanted` says which names there are worth a re-read; `onName` is told
+         * every name before that, which is where a moved `HEAD` is caught.
+         */
+        const opened = (
+          at: string,
+          wanted: (name: string | null) => boolean,
+          onName?: (name: string) => void,
+        ): FSWatcher | undefined => {
+          if (closed) return undefined;
+          let watcher: FSWatcher;
+          try {
+            watcher = watch(at, (_event, name) => {
+              if (name !== null) onName?.(name);
+              if (wanted(name)) fire();
+            });
+          }
+          catch {
+            // A directory this process may not watch: the other triggers still
+            // work, and a watcher is an extra rather than the answer.
+            return undefined;
+          }
+          handles.push(watcher);
+          /*
+           * A failed watcher takes its own handle and anything it queued with
+           * it. The other directories stay watched, and an `error` with no
+           * listener on an `FSWatcher` ends the process instead.
+           */
+          watcher.on('error', () => {
+            if (timer !== undefined) clearTimeout(timer);
+            timer = undefined;
+            watcher.close();
+            const held = handles.indexOf(watcher);
+            if (held >= 0) handles.splice(held, 1);
+            if (watcher === refWatcher) {
+              refWatcher = undefined;
+              refDir = undefined;
+            }
+          });
+          return watcher;
+        };
+
+        /** The checked-out branch, as `refs/heads/...`, or nothing when detached. */
+        const branchOf = async (): Promise<string | undefined> => {
+          const said = await git(dir, ['symbolic-ref', '-q', 'HEAD']);
+          const branch = said?.trim();
+          return branch === undefined || branch === '' ? undefined : branch;
+        };
+
+        /*
+         * The branch's own ref, watched where the ref lives.
+         *
+         * A ref moves without the index or `HEAD` being written - a soft reset,
+         * or a commit from another program - and the loose ref file is then the
+         * only thing that says the uncommitted changeset moved.
+         */
+        let refDir: string | undefined;
+        let refWatcher: FSWatcher | undefined;
+        const watchRef = async (): Promise<void> => {
+          const branch = await branchOf();
+          const at = branch === undefined ? undefined : dirname(join(common, branch));
+          if (at === refDir) return;
+          refDir = at;
+          if (refWatcher !== undefined) {
+            refWatcher.close();
+            const held = handles.indexOf(refWatcher);
+            if (held >= 0) handles.splice(held, 1);
+          }
+          refWatcher = undefined;
+          if (branch === undefined || at === undefined) return;
+          const name = basename(branch);
+          refWatcher = opened(at, (event) => event === null || event === name);
+        };
+
+        // The index and HEAD; `packed-refs` joins them only where it lives in
+        // this same directory, since a worktree keeps it in the common one.
+        opened(gitDir, (name) => name === null || name === 'index' || name === 'HEAD'
+          || (common === gitDir && name === 'packed-refs'),
+        (name) => { if (name === 'HEAD') void watchRef(); });
+        if (common !== gitDir) {
+          opened(common, (name) => name === null || name === 'packed-refs');
+        }
+        await watchRef();
+
+        const shut = (): void => {
+          closed = true;
+          if (timer !== undefined) clearTimeout(timer);
+          timer = undefined;
+          for (const held of handles) held.close();
+        };
+        stop = shut;
+        if (closed) stop();
+      })().catch(() => {});
+      return () => {
+        closed = true;
+        stop?.();
+      };
     },
   };
 }

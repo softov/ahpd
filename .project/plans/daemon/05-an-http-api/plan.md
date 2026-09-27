@@ -102,6 +102,9 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | A users-file role named `__proto__` is read as a role. | Softov, 2026-09-27, asked whether the `__proto__` role becomes a task: "Make it a task". | 29 |
 | `ahpd start` passes `process.execArgv` to the child. | Softov, 2026-09-27, asked whether `start` under the dev runner becomes a task: "Make it a task". | 30 |
 | Tasks 28 to 31 go in this plan. | Softov, 2026-09-27, asked where the four new tasks go: "daemon/05". | 28-31 |
+| The comment on `urlHost` says what it is, not why it moved. | Softov, 2026-09-27, asked which review findings become fix tasks: "urlHost comment narrates". | 32 |
+| A `--remote` token is trimmed from `--token` and `AHPD_TOKEN` as it is from a file. | Softov, 2026-09-27, asked which earlier findings become tasks: "tokenFor trims every source". | 33 |
+| `docs/DAEMON.md`'s long `--remote` line is wrapped, and the flag row names the update check as declared. | Softov, 2026-09-27, asked which earlier findings become tasks: "DAEMON.md long line and wording". | 34 |
 
 ## Tasks
 
@@ -134,10 +137,13 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [25 - Served plugin installs and removes run one at a time](task-25-served-plugin-writes-run-one-at-a-time.md) | implemented | 21 |
 | [26 - The addresses the daemon prints and accepts read back as URLs](task-26-addresses-read-back-as-urls.md) | implemented | 18 |
 | [27 - A blank token or host is refused, and the comments and refs say what is true](task-27-blank-values-are-refused-and-the-records-are-true.md) | implemented | 22 |
-| [28 - A personal URL brackets an IPv6 host](task-28-a-personal-url-brackets-an-ipv6-host.md) | todo | 26 |
-| [29 - A role named __proto__ in the users file is read as a role](task-29-a-role-named-proto-is-a-role.md) | todo | 23 |
-| [30 - ahpd start runs the daemon under the same node flags it was run with](task-30-start-runs-the-child-under-the-same-node-flags.md) | todo | - |
-| [31 - Served answers hide the credentials in a plugin's URL](task-31-served-answers-hide-credentials-in-a-plugin-url.md) | todo | 24 |
+| [28 - A personal URL brackets an IPv6 host](task-28-a-personal-url-brackets-an-ipv6-host.md) | implemented | 26 |
+| [29 - A role named __proto__ in the users file is read as a role](task-29-a-role-named-proto-is-a-role.md) | implemented | 23 |
+| [30 - ahpd start runs the daemon under the same node flags it was run with](task-30-start-runs-the-child-under-the-same-node-flags.md) | implemented | - |
+| [31 - Served answers hide the credentials in a plugin's URL](task-31-served-answers-hide-credentials-in-a-plugin-url.md) | implemented | 24 |
+| [32 - The comment on urlHost says what it is](task-32-urlhost-says-what-it-is.md) | implemented | 28 |
+| [33 - A --remote token is trimmed whichever of the three it came from](task-33-a-remote-token-is-trimmed-from-every-source.md) | implemented | 27 |
+| [34 - DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared](task-34-daemon-md-is-wrapped-and-names-the-update-flag.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -147,7 +153,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 ## Resume state
 
 - **Done so far:** tasks 06 to 14, 18, 19, 21 and 22 are done.
-  Tasks 01 to 05, 17, 20 and 23 to 27 are implemented and wait for Softov's review.
+  Tasks 01 to 05, 17, 20 and 23 to 31 are implemented and wait for Softov's review.
   Task 06 is `@cofold/remote` 0.3.1, released, and ahpd depends on `^0.3.1`.
   With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, and a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook.
   A served command reads the daemon's own options, malformed requests and foreign Origins and Hosts are answered, `http.host` binds the API's own listener, `--remote` needs and can read a token, and `docs/DAEMON.md` documents it.
@@ -162,8 +168,14 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
   Task 25 runs served plugin installs and removes one at a time.
   Task 26 prints and names an IPv6 bind in brackets, and answers a `resource` with a port by that port.
   Task 27 refuses a blank `--remote` token and an `http.host` with space around it.
-- **Next action:** Softov reviews tasks 01 to 05, 17, 20 and 23 to 27.
-  Tasks 28 to 31 are todo, found in review and planned 2026-09-27.
+  Task 28 makes `personalUrl` bracket an IPv6 host, with `urlHost` moved from the run command into `config.ts`.
+  Task 29 reads a role named `__proto__` as a role, by building the role table with no prototype.
+  Task 30 runs the started daemon under the parent's `process.execArgv`, so the dev runner's loader reaches it.
+  Task 31 masks a plugin spec URL's userinfo in a served `config` and `plugin list`, the row's other string fields included.
+  Task 32 makes `urlHost`'s comment say what the function is and nothing about where it came from.
+  Task 33 makes `tokenFor` trim the chosen value once, so `--token`, `--token-file` and `AHPD_TOKEN` share one rule; the case is a behaviour lock, since the HTTP layer already strips the header's surrounding whitespace.
+  Task 34 wraps `docs/DAEMON.md`'s `--remote` paragraph at 80 columns and makes the flag row name `--update-check`, `--no-update-check` as `updateCheck` declares them.
+- **Next action:** Softov reviews tasks 01 to 05, 17, 20 and 23 to 34.
   Task 15 is todo and is in the cofold repository, and task 16 is todo and waits for `@cofold/remote` 0.4.0.
 - **Open questions:** none.
 - **Watch out for:**

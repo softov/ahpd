@@ -86,6 +86,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | Both checks resolve symlinks with `realpath` before comparing, a path that does not exist yet judged by its nearest existing ancestor; replaced for ahpd's check by the `resolveWithin` row below. | Softov, 2026-09-26: "yes, both". | 06, 07 |
 | ahpd's check is `@cofold/tools`' `resolveWithin`, so a dangling link is followed as cofold's own tools follow it. | the second review, 2026-09-26: the hand-written copy judged a dangling link by its own name | 14 |
 | ahpd depends on `@cofold/tools` `^0.1`. | Softov, 2026-09-26: "Release tools 0.1.x". | 06, 08 |
+| The tool section and the README go back to one sentence per line, with today's wording. | Softov, 2026-09-27, asked what the reflow goes back to: "One sentence per line". | 20 |
 
 ## Tasks
 
@@ -110,6 +111,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | [17 - cofold follows a link's target one name at a time, released by Softov](task-17-cofold-follows-a-link-target-one-name-at-a-time.md) | implemented | 14 |
 | [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | implemented | 15 |
 | [19 - The close is true](task-19-the-close-is-true.md) | implemented | 16, 18 |
+| [20 - The tool section and the README are one sentence per line again](task-20-the-tool-docs-are-one-sentence-per-line.md) | implemented | 19 |
 
 ## Risks and tradeoffs
 
@@ -131,6 +133,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
   Task 16 is implemented and was not passed by the second review.
   Tasks 18 and 19 are implemented: `when` waits on wall-clock time and throws, the mode table is one case per row, and the checklist, docs, comments and Resumes say what is true.
   Task 17 is implemented: its fix is committed in cofold as `d9d229e` and published as `@cofold/tools` 0.1.1, which `packages/agent-cofold/package.json` takes as `^0.1.1`.
+  Task 20 is implemented: the tool section of `docs/PLUGINS.md` and `packages/agent-cofold/README.md` are one sentence per line again, with the wording they had, and nothing but line breaks moved.
 - **Next action:** Softov's review of tasks 16 to 19; after it, task 19 step 6 closes the plan (the `..`-after-a-symlink caveats come out of the docs, the Risks and the checklist, since `@cofold/tools` 0.1.1 catches it).
 - **Open questions:** none.
 - **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too.

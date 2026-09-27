@@ -2287,6 +2287,7 @@ export function createHost(options: HostOptions): Host {
       ...(github !== undefined ? { github } : {}),
       ...(facts?.pullRequestUrls !== undefined && facts.pullRequestBranchName === git?.branchName ? { pullRequest: true } : {}),
       ...(lead !== undefined && lead.allTurns().length === 0 ? { unused: true } : {}),
+      ...(lead !== undefined ? { subject: lead.title() } : {}),
     };
   };
   const operationsOf = (channel: string): Bag[] => {
@@ -2673,6 +2674,111 @@ export function createHost(options: HostOptions): Host {
       operationsMoved(uri);
     }
   };
+
+  /**
+   * Whether any connection is watching a changeset of a session in `dir`.
+   *
+   * The uncommitted changeset is only worth re-reading for a client that is
+   * showing it: a directory nobody is looking at has nothing to update, and
+   * `git status` is not free.
+   */
+  const watchedIn = (dir: string): boolean => {
+    const prefixes = inThere(dir).map((uri) => `${uri}/changeset/`);
+    if (prefixes.length === 0) return false;
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        if (prefixes.some((prefix) => channel.startsWith(prefix))) return true;
+      }
+    }
+    return false;
+  };
+
+  /** The session directory a path or a `file:` URI is inside, longest first. */
+  const dirOfFile = (uri: string): string | undefined => {
+    const path = uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
+    const dirs = new Set<string>();
+    for (const uri_ of sessions.keys()) {
+      const dir = dirOf(uri_);
+      if (dir !== undefined) dirs.add(dir);
+    }
+    return [...dirs]
+      .filter((dir) => path === dir || path.startsWith(`${dir}/`))
+      .sort((a, b) => b.length - a.length)[0];
+  };
+
+  /** A write that landed through the host moves the changeset of its directory. */
+  const wroteThrough = (uri: string): void => {
+    const dir = dirOfFile(uri);
+    if (dir !== undefined) void refreshWatched(dir);
+  };
+
+  /** The directories with a re-read in flight, and one waiting behind it. */
+  const refreshing = new Set<string>();
+  const waiting = new Set<string>();
+
+  /**
+   * A re-read of one directory, watched-only and coalesced.
+   *
+   * Every trigger below ends here. A move runs `git status` and `git diff`,
+   * which is not free, so it happens only while a client watches a changeset of
+   * a session in this directory, and a burst is at most two re-reads: one
+   * running and one waiting behind it.
+   */
+  const refreshWatched = async (dir: string): Promise<void> => {
+    if (refreshing.has(dir)) {
+      waiting.add(dir);
+      return;
+    }
+    refreshing.add(dir);
+    try {
+      for (;;) {
+        waiting.delete(dir);
+        if (!watchedIn(dir)) return;
+        let moved = false;
+        try {
+          moved = await options.changes?.refresh?.(dir) ?? false;
+        }
+        catch {
+          moved = false;
+        }
+        if (moved) {
+          for (const uri of inThere(dir)) {
+            dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+            summaryMoved(uri);
+            await contentMoved(uri);
+          }
+        }
+        if (!waiting.has(dir)) return;
+      }
+    }
+    finally {
+      refreshing.delete(dir);
+    }
+  };
+
+  /** A source watch per directory, opened when the first changeset there is read. */
+  const dirWatchers = new Map<string, () => void>();
+  const stopWatchingDir = (dir: string): void => {
+    dirWatchers.get(dir)?.();
+    dirWatchers.delete(dir);
+  };
+  const startWatchingDir = (dir: string): void => {
+    if (dirWatchers.has(dir)) return;
+    const stop = options.changes?.watch?.(dir, () => {
+      // The last session left: nothing here is worth a watcher, so this closes
+      // the handle rather than leaving it firing for nobody.
+      if (!watchedIn(dir)) {
+        stopUnwatched(dir);
+        return;
+      }
+      void refreshWatched(dir);
+    });
+    if (stop !== undefined) dirWatchers.set(dir, stop);
+  };
+  /** The watch on a directory, closed once no subscribed changeset is there. */
+  const stopUnwatched = (dir: string): void => {
+    if (!watchedIn(dir)) stopWatchingDir(dir);
+  };
   /**
    * Ask GitHub about the branch a directory is on, answering whether what it
    * said differs from what was held.
@@ -2991,6 +3097,12 @@ export function createHost(options: HostOptions): Host {
       subagent: (toolCallId: string, request: SubagentRequest) => openSubagent(uri, chatUri, toolCallId, request),
       emit: (channel, action) => {
         dispatch(channel === 'chat' ? chatUri : uri, action);
+        // A tool call that finished may have written to this session's tree, so
+        // the changeset is re-read then rather than waiting for the turn's end.
+        if (action.type === 'chat/toolCallComplete') {
+          const dir = dirOf(uri);
+          if (dir !== undefined) void refreshWatched(dir);
+        }
         // The two ends of a turn, as the host sees them: the backend saying it
         // began, and saying it finished or was stopped. A per-token delta is
         // not an event, because a plugin that wants the stream is a client.
@@ -3029,12 +3141,19 @@ export function createHost(options: HostOptions): Host {
          * Only on a change: a chat says something on every delta, and a
          * summary re-sent per token is a list redrawn per token.
          */
-        const moved = sessions.get(uri)?.chats.get(chatUri);
+        const owner = sessions.get(uri);
+        const moved = owner?.chats.get(chatUri);
         if (moved) {
+          const previous = described.get(chatUri) ?? '';
           const now = `${moved.title()}\u0000${String(moved.status())}\u0000${String(moved.activity() ?? '')}`;
           if (now !== described.get(chatUri)) {
             described.set(chatUri, now);
             dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: chatSummary(uri, chatUri, moved) });
+            // A title the backend derived is the subject a commit would use, so
+            // the question the changeset's commit asks has changed with it.
+            if (owner !== undefined && chatUri === owner.defaultChat && previous.split('\u0000')[0] !== moved.title()) {
+              operationsMoved(uri);
+            }
           }
         }
         // A turn starting or finishing moves the catalogue too, and a client
@@ -3784,7 +3903,13 @@ export function createHost(options: HostOptions): Host {
           });
       })();
     }
+    /*
+     * The directory's git watch, closed when this was the last watched session
+     * in it: a session that is gone keeps nothing there watched.
+     */
+    const gone = dirOf(uri);
     sessions.delete(uri);
+    if (gone !== undefined) stopUnwatched(gone);
     /*
      * And the machine it was running in, told that this session has left.
      *
@@ -3880,7 +4005,13 @@ export function createHost(options: HostOptions): Host {
     const talking = keeping !== undefined && lead !== undefined && lead.agentId() !== undefined
       ? { resume: lead.agentId() as string, seed: lead.allTurns() }
       : undefined;
+    /*
+     * The old directory's watch, kept while the session comes back to the same
+     * place: the clients watching it there still watch it.
+     */
+    const previous = dirOf(uri);
     sessions.delete(uri);
+    if (previous !== undefined && previous !== to) stopUnwatched(previous);
     try {
       /*
        * A machine named now, when the config names a source.
@@ -4195,6 +4326,10 @@ export function createHost(options: HostOptions): Host {
           dispatch(uri, action);
           if ((action as Bag).type !== 'terminal/exited') return;
           dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+          // A command that ran in this session's directory may have moved it:
+          // a commit, a checkout, or anything that wrote a file.
+          const ranIn = dirOfFile(cwd);
+          if (ranIn !== undefined) void refreshWatched(ranIn);
           const code = terminal.exitCode() ?? 0;
           /*
            * Read off the terminal rather than accumulated here.
@@ -4280,6 +4415,9 @@ export function createHost(options: HostOptions): Host {
           // stale the moment one exits and reaches nobody unless it moves.
           if ((action as Bag).type === 'terminal/exited') {
             dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+            // A command that ran in this session's directory may have moved it.
+            const ranIn = dirOfFile(asked.cwd);
+            if (ranIn !== undefined) void refreshWatched(ranIn);
           }
         },
       });
@@ -4467,6 +4605,9 @@ export function createHost(options: HostOptions): Host {
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
     else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     summaryMoved(uri);
+    // The session's title is the subject a commit would use, so the question
+    // the changeset's commit asks names a different line now.
+    operationsMoved(uri);
   };
 
   /**
@@ -4966,6 +5107,9 @@ export function createHost(options: HostOptions): Host {
        * about the host's own cache being true at the moment it is read.
        */
       await options.changes?.refresh?.(at.dir).catch(() => false);
+      // Somebody reads this directory's changesets now, so the source watches
+      // what only git writes: staging, committing and checking out elsewhere.
+      startWatchingDir(at.dir);
       const state = await options.changes?.state(at.dir, at.owner, at.scope);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
       // The verbs, alongside the files. Omitted when there are none, which
@@ -6319,6 +6463,10 @@ export function createHost(options: HostOptions): Host {
                */
               if ((action as Bag).type === 'terminal/exited') {
                 dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+                // A command that ran in this session's directory may have moved
+                // it: a commit, a checkout, or anything that wrote a file.
+                const ranIn = dirOfFile(asked);
+                if (ranIn !== undefined) void refreshWatched(ranIn);
               }
             },
           });
@@ -6618,6 +6766,7 @@ export function createHost(options: HostOptions): Host {
           });
           void fire({ type: 'resource_write', uri });
           log(`${connection.clientId} wrote ${uri}`);
+          wroteThrough(uri);
           return {};
         },
         resourceDelete: async (params) => {
@@ -6626,11 +6775,13 @@ export function createHost(options: HostOptions): Host {
             uri, params.recursive === true,
           );
           log(`${connection.clientId} removed ${uri}`);
+          wroteThrough(uri);
           return {};
         },
         resourceMkdir: async (params) => {
           const uri = String(params.uri ?? '');
           await need(need(storeFor(uri), 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
+          wroteThrough(uri);
           return {};
         },
         /*
@@ -6654,6 +6805,8 @@ export function createHost(options: HostOptions): Host {
             source, destination, params.failIfExists === true,
           );
           log(`${connection.clientId} moved ${source} to ${destination}`);
+          wroteThrough(source);
+          wroteThrough(destination);
           return {};
         },
         resourceCopy: async (params) => {
@@ -6664,6 +6817,7 @@ export function createHost(options: HostOptions): Host {
           await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
             source, destination, params.failIfExists === true,
           );
+          wroteThrough(destination);
           return {};
         },
         /**
@@ -6739,8 +6893,6 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32004, `${at.owner} is mid-turn`);
 
           const key = opKey(channel, operationId);
-          const held = sessions.get(at.owner);
-          const lead = held && leadOf(held);
           inFlight.add(key);
           lastError.delete(key);
           dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
@@ -6753,7 +6905,6 @@ export function createHost(options: HostOptions): Host {
               scope: at.scope,
               operationId,
               ...(target !== undefined ? { target } : {}),
-              ...(lead ? { subject: lead.title() } : {}),
               ...(meta !== undefined ? { meta } : {}),
             });
             inFlight.delete(key);
@@ -8835,6 +8986,10 @@ export function createHost(options: HostOptions): Host {
           // shed one consumer kills the stream the others are reading.
           const channel = String(params.channel ?? '');
           connection.watching.delete(channel);
+          // A changeset nobody watches any more is a directory with no reason
+          // for a git watch, so the last unsubscribe is what closes it.
+          const at = changesetAt(channel);
+          if (at !== undefined) stopUnwatched(at.dir);
           for (const [meant, alias] of connection.aliases) {
             if (alias === channel) connection.aliases.delete(meant);
           }
@@ -8996,6 +9151,15 @@ export function createHost(options: HostOptions): Host {
           }
           connections.delete(connection);
           void fire({ type: 'client_disconnect', client: connection.clientId || 'anonymous' });
+          /*
+           * And the git watch of a directory this was the last watcher of. The
+           * connection is out of the set above, so a directory only it watched
+           * has nobody left watching.
+           */
+          for (const channel of was) {
+            const at = changesetAt(channel);
+            if (at !== undefined) stopUnwatched(at.dir);
+          }
           // The tokens went with the connection; so do their clocks.
           for (const resource of [...expiring.keys()]) forgetExpiry(resource);
           // And the watches it was keeping for other clients: the channel was

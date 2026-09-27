@@ -31,6 +31,14 @@ export interface ChangesetFile {
   id: string;
   edit: FileEdit;
   reviewed?: boolean;
+  /**
+   * Server-defined metadata, the protocol's opaque bag.
+   *
+   * This host puts `staged` and `unstaged` here for an `uncommitted` scope, so a
+   * client can tell a change the index already holds from one it does not. The
+   * protocol declares no staging field and leaves `_meta` for exactly this.
+   */
+  _meta?: Record<string, unknown>;
 }
 
 /** What a client subscribed to a changeset URI is looking at. */
@@ -172,6 +180,15 @@ export interface ChangesetOperationContext {
   pullRequest?: boolean;
   /** Nothing has been said in the session yet, so its tree is nobody's work. */
   unused?: boolean;
+  /**
+   * What the session is called, offered as a commit subject.
+   *
+   * The host's to know and not this source's: a changeset is a set of files and
+   * a session is a conversation, and the sentence somebody would write on a
+   * commit is in the second one. `operations` names it in the commit's
+   * confirmation and `invoke` commits under it.
+   */
+  subject?: string;
 }
 
 /** One invocation, as the host hands it to the source. */
@@ -183,14 +200,6 @@ export interface ChangesetOperationRequest extends ChangesetOperationContext {
   operationId: string;
   /** Absent for a changeset-scoped operation. */
   target?: ChangesetOperationTarget;
-  /**
-   * What the session is called, offered as a commit subject.
-   *
-   * The host's to know and not this source's: a changeset is a set of files and
-   * a session is a conversation, and the sentence somebody would write on a
-   * commit is in the second one.
-   */
-  subject?: string;
   /**
    * The request's `_meta`, verbatim.
    *
@@ -263,6 +272,16 @@ export interface ChangesetSource {
   read?(uri: string): Promise<{ data: string; encoding: string } | undefined>;
   /** Look again, answering whether anything moved. */
   refresh?(dir: string): Promise<boolean>;
+  /**
+   * Watch a directory for a change a re-read would see and nothing else reports.
+   *
+   * The index and HEAD move when somebody stages, commits or checks out in a
+   * program this host is not, and no client writes through the host for that.
+   * `onChange` is called after the source has debounced its own events, and the
+   * returned function stops the watch. `undefined` is a source that cannot
+   * watch, which is most of them; the host then has only its other triggers.
+   */
+  watch?(dir: string, onChange: () => void): (() => void) | undefined;
   /**
    * Mark files reviewed, or clear them.
    *

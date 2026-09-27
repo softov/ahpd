@@ -25,7 +25,7 @@ import { resolveWithin } from '@cofold/tools';
 import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
-import { PERMISSION_MODES, defaultStoreRoot, modelOf, storeOf } from './agent.js';
+import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf, storeOf } from './agent.js';
 import type { CofoldOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
@@ -733,7 +733,9 @@ export function cofoldSession(
     // A model named on the turn wins over the session's, and is what the
     // usage report names; it is applied before the agent is built.
     const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
-    const chosen = model?.id ?? str(settings.model);
+    // The reference the turn runs on, by the one rule `connectionOf` resolves:
+    // the values in force, then the plugin option, then the harness file.
+    const reference = modelReferenceOf(options, values, harness);
     const began = Date.now();
     /*
      * The markdown part is opened now rather than at the first delta, the way
@@ -748,9 +750,14 @@ export function cofoldSession(
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        // The protocol's `Message.model`: the model this turn runs on, so a
+        // client that reconnects shows it. The client's own `config` travels
+        // with it, as a claude turn's does.
+        ...(reference !== undefined
+          ? { model: { id: reference, ...(model?.config === undefined ? {} : { config: model.config }) } }
+          : {}),
       },
       responseParts: [part],
-      ...(chosen !== undefined ? { model: chosen } : {}),
     };
     start.emit('chat', {
       type: 'chat/turnStarted',
@@ -771,7 +778,7 @@ export function cofoldSession(
       displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
       ownerOf: (name) => offered.find((one) => one.definition.name === name)?.owner,
       cancelled: () => cancelRequested,
-      ...(chosen !== undefined ? { model: chosen } : {}),
+      ...(reference !== undefined ? { model: reference } : {}),
     });
     activeMapping = mapping;
     return { mapping, values };

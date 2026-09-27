@@ -6947,4 +6947,21 @@ describe('the pull request a create-pr recorded', () => {
     expect(held).toHaveLength(1);
     expect(held?.[0]).toMatchObject({ id, isArtifact: true, link: URL });
   });
+
+  it('re-declares commit with the new subject when the session is renamed', async () => {
+    const { client, peer: p, uri, changeset } = await withRepo();
+    await client.handle({ method: 'subscribe', params: { channel: changeset } });
+    await settle(6);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/titleChanged', title: 'Fix the build' } },
+    });
+    await settle(6);
+
+    const moved = actions(p, changeset).filter((one) => one.action.type === 'changeset/operationsChanged').at(-1);
+    const commit = (moved?.action.operations as { id: string; confirmation?: string }[] | undefined)
+      ?.find((one) => one.id === 'commit');
+    expect(commit?.confirmation).toContain("'Fix the build'");
+  });
 });

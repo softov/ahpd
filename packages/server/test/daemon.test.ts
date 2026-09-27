@@ -81,6 +81,10 @@ describe('personalUrl', () => {
   it('stands the machine name in for a wildcard address', () => {
     expect(personalUrl('abc', '0.0.0.0', 9187, 'box')).toBe('ws://box:9187/?tkn=abc');
   });
+  it('brackets an IPv6 host so a URL parser reads it back', () => {
+    expect(personalUrl('abc', '::1', 9187, 'box')).toBe('ws://[::1]:9187/?tkn=abc');
+    expect(new URL(personalUrl('abc', '::1', 9187, 'box')).hostname).toBe('[::1]');
+  });
 });
 
 describe('recordOf', () => {

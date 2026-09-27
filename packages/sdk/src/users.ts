@@ -225,7 +225,10 @@ export function fileUsers(options: FileUserOptions): Users {
       const parsed = JSON.parse(text) as unknown;
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object');
       const held = parsed as UserFile;
-      const roles: Record<string, Grant[]> = {};
+      // No prototype, so a role the file names `__proto__` is an own key: on a
+      // plain object that assignment would set the table's prototype and the
+      // role would resolve to nothing.
+      const roles: Record<string, Grant[]> = Object.create(null) as Record<string, Grant[]>;
       for (const [name, grants] of Object.entries(held.roles ?? {})) {
         if (!Array.isArray(grants)) continue;
         const kept: Grant[] = [];

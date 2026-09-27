@@ -140,7 +140,15 @@ export async function start(argv: string[], self: string, token?: string): Promi
    * with no output at all does not.
    */
   const log = openSync(daemonLog(), 'a');
-  const child = spawn(process.execPath, [self, ...argv], {
+  /*
+   * The flags this process was given, ahead of the script.
+   *
+   * A daemon started by the dev runner is a second run of this program, and the
+   * runner's loader is on node's own argv rather than in `NODE_OPTIONS`. A child
+   * that is not handed the same flags cannot load the workspace's sources. An
+   * installed daemon has an empty `execArgv`, so nothing changes for it.
+   */
+  const child = spawn(process.execPath, [...process.execArgv, self, ...argv], {
     detached: true,
     stdio: ['ignore', log, log],
   });

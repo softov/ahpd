@@ -1,6 +1,6 @@
 ---
 title: A row says what is staged, and a staged rename is one row
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,10 @@ Each row of an `uncommitted` changeset carries `_meta.staged` and `_meta.unstage
 - `node_modules/.bin/vitest run packages/sdk/test/commit.test.ts` green.
 
 ## Resume
+
+Implemented 2026-09-27. The rename case was written first and seen to fail: `packages/sdk/test/commit.test.ts` read two rows for `git mv tracked.txt new.txt`, `file://<dir>/new.txt` and `file://<dir>/cked.txt`, the second being the old path whose first two letters became its status.
+
+The status loop in `packages/sdk/src/changes.ts` now walks the records by index and consumes the record after an `R` or `C` record as the old path. A rename is one row under its new name with `_meta.staged` true. The draft's `_meta.staged` and `_meta.unstaged` on a row and its two staging cases are kept unchanged.
+
+`node_modules/.bin/vitest run packages/sdk/test/commit.test.ts`: 8 passed.
+`pnpm typecheck`, `pnpm boundary` and `pnpm test`: 102 files, 1350 tests passed.

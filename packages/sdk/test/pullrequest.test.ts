@@ -78,12 +78,12 @@ describe('what the working tree offers', () => {
     const source = gitChanges();
     await source.refresh?.(dir);
     const ids = (context?: ChangesetOperationContext) => (source.operations?.(dir, 'ahp-session:/s', 'uncommitted', context) ?? []).map((one) => one.id);
-    expect(ids()).toEqual(['commit', 'discard']);
-    expect(ids(withGithub(github()))).toEqual(['commit', 'discard', 'create-pr', 'prepare-pull-request']);
-    expect(ids({ ...withGithub(github()), pullRequest: true })).toEqual(['commit', 'discard']);
+    expect(ids()).toEqual(['commit', 'discard', 'stage', 'unstage']);
+    expect(ids(withGithub(github()))).toEqual(['commit', 'discard', 'stage', 'unstage', 'create-pr', 'prepare-pull-request']);
+    expect(ids({ ...withGithub(github()), pullRequest: true })).toEqual(['commit', 'discard', 'stage', 'unstage']);
     // And checkout on a tree nobody has worked in yet, the way the reference
     // host offers it on an unused draft.
-    expect(ids({ unused: true })).toEqual(['commit', 'discard', 'checkout']);
+    expect(ids({ unused: true })).toEqual(['commit', 'discard', 'stage', 'unstage', 'checkout']);
   });
 });
 

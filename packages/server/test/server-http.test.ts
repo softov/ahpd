@@ -653,6 +653,45 @@ describe('what a served command reads', () => {
     expect(rows[0]?.spec.options).toEqual({ apiKey: '<set>' });
   }, 30000);
 
+  it('masks the credentials in a plugin spec URL, in the file and in a served row', async () => {
+    writeFileSync(usersFile, JSON.stringify({
+      roles: { writer: ['config:write'], reader: ['config:read'] },
+      users: [],
+    }));
+    const directory = fileUsers({ path: usersFile });
+    await directory.add('wri', ['writer']);
+    const writer = await directory.mint('wri');
+    await directory.add('rea', ['reader']);
+    const reader = await directory.mint('rea');
+    const one = await daemon(
+      {
+        http: true,
+        plugins: [
+          'git+https://someone:PAT12345@example.com/x.git',
+          { name: 'git+https://someone:PAT12345@example.com/y.git' },
+          BACKEND,
+        ],
+      },
+      ['--connection-token', 'root-secret', '--users', usersFile],
+    );
+
+    for (const [path, token] of [['config', writer], ['plugin/list', reader]] as const) {
+      const answered = await get(`http://127.0.0.1:${String(one.port)}/api/${path}`, token);
+      expect(answered.status).toBe(200);
+      const body = await answered.text();
+      expect(body).not.toContain('PAT12345');
+      expect(body).not.toContain('someone');
+    }
+
+    const config = JSON.parse(await (await get(`http://127.0.0.1:${String(one.port)}/api/config`, writer)).text()) as {
+      config: { plugins: (string | { name: string })[] };
+    };
+    expect(config.config.plugins[0]).toBe('git+https://<set>@example.com/x.git');
+    expect((config.config.plugins[1] as { name: string }).name).toBe('git+https://<set>@example.com/y.git');
+    // A spec with no credentials is answered as the file holds it.
+    expect(config.config.plugins[2]).toBe(BACKEND);
+  }, 30000);
+
   it('ignores the query on plugin list, and the daemon keeps running', async () => {
     const one = await daemon({ http: true, plugins: [BACKEND] }, ['--connection-token', 'root-secret']);
     const query = `http://127.0.0.1:${String(one.port)}/api/plugin/list?noPlugins=true&plugins=x&plugins=y`;

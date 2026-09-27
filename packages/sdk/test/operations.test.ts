@@ -326,8 +326,9 @@ it('hands the source the request\'s _meta and what the host knows, and passes a 
   const { source, invoked, asked } = scripted();
   const { client, changeset } = await watching(source);
   // Asked with the host's context: a session that has said nothing yet is an
-  // unused one, which is when the reference host offers a checkout.
-  expect(asked.at(-1)).toEqual({ unused: true });
+  // unused one, which is when the reference host offers a checkout, and the
+  // subject is the title a commit would use.
+  expect(asked.at(-1)).toEqual({ unused: true, subject: 'Echo session' });
   await client.handle({
     method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look', _meta: { treeish: 'main', preCheckoutAction: 'stash' } },
   });

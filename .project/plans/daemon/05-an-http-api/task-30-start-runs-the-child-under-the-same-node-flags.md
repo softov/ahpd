@@ -1,6 +1,6 @@
 ---
 title: ahpd start runs the daemon under the same node flags it was run with
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -36,3 +36,9 @@ refs:
 - By hand: the command in the Objective, on a scratch `XDG_CONFIG_HOME` and a port away from 9187, then `stop`.
 
 ## Resume
+
+Implemented 2026-09-27. The case was written first and seen to fail: the runner-shaped child exited 1 with `Could not start it: it exited with 1`.
+
+`start` spawns `process.execPath` with `...process.execArgv` ahead of the script and the forwarded words. An installed daemon has an empty `execArgv`, so nothing changes for it, which the existing `start` cases check.
+
+The case spawns its own child because `cli()` puts the loader in `NODE_OPTIONS`, which a child inherits whatever `start` passes it. `node_modules/.bin/vitest run packages/server/test/server-cli.test.ts`: 47 passed. `pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1363 tests passed.

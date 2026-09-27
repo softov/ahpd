@@ -1,6 +1,6 @@
 ---
 title: A personal URL brackets an IPv6 host
-status: todo
+status: implemented
 depends: [task-26-addresses-read-back-as-urls.md]
 layer: "server"
 refs:
@@ -36,3 +36,9 @@ refs:
 - `node_modules/.bin/vitest run packages/server/test/daemon.test.ts` green; `pnpm typecheck` and `pnpm boundary` green.
 
 ## Resume
+
+Implemented 2026-09-27. The IPv6 case was written first and seen to fail: `personalUrl('abc', '::1', 9187, 'box')` was `ws://::1:9187/?tkn=abc`, which `new URL` rejects.
+
+`urlHost` moved from `packages/server/src/commands/run.ts` into `packages/server/src/config.ts`, which `run.ts` already imports, and `personalUrl` writes a non-wildcard host through it. A wildcard's machine name is written as it is.
+
+The existing `127.0.0.1` and wildcard cases pass. `node_modules/.bin/vitest run packages/server/test/daemon.test.ts`: 19 passed. `pnpm typecheck`, `pnpm boundary` and `pnpm test`: 103 files, 1363 tests passed.

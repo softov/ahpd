@@ -1,6 +1,6 @@
 ---
 title: Commit asks first, naming its subject and its files
-status: todo
+status: implemented
 depends: [task-02-commit-takes-the-index-when-staged.md]
 layer: "sdk"
 refs:
@@ -38,3 +38,12 @@ The `commit` operation carries a `confirmation` naming the subject line it will 
 - `pnpm typecheck` and `node_modules/.bin/vitest run packages/sdk` green.
 
 ## Resume
+
+Implemented 2026-09-27. Tests first, each seen to fail: `operations` offered `commit` with no `confirmation`, and a host rename sent no `changeset/operationsChanged`.
+
+`subject` moved from `ChangesetOperationRequest` to `ChangesetOperationContext`, and the host's `operationContext` fills it from the lead chat, so `operations` and `invoke` are handed the same title. `operations` builds `commit` per call with a `confirmation` from the last `look`: `Commit N staged file(s) as '<subject>'?` when the index holds a change, and `Commit N file(s), M untracked, as '<subject>'?` otherwise, singular at one, the untracked part left out at none, and the fallback sentence when the session has no title. `renameChat` calls `operationsMoved`, and the emit hook does the same when the default chat's title moves from the backend. The invoke call no longer spreads its own `subject`.
+
+`packages/sdk/test/operations.test.ts` now expects the context to carry `subject: 'Echo session'`.
+
+`node_modules/.bin/vitest run packages/sdk/test/commit.test.ts`: 10 passed.
+`pnpm typecheck`, `pnpm boundary` and `pnpm test`: 102 files, 1353 tests passed.
