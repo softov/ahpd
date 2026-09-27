@@ -115,8 +115,19 @@ Reference: [00-container.md](container/00-container.md)
 | [02 - VS Code offers a dev container on a folder served by ahpd](container/02-vscode-offers-our-dev-container/plan.md) | high | planned 2026-09-26, task 01 blocked: the tunnel is not listed in VS Code | container 01 | - |
 | [03 - A dev container is a computer, listed and reachable without the connection that made it](container/03-a-dev-container-is-a-computer/plan.md) | medium | active 2026-09-26, reviewed; task 03 unblocked by a flat source choice, task 06 reopened, fix tasks 07-16 todo | container 01, plugin 15 | - |
 | [04 - A cofold session in a computer runs in an ahpd started inside it](container/04-a-cofold-session-in-a-computer/plan.md) | medium | active 2026-09-26, reviewed; fix tasks 07-17 todo | plugin 14, plugin 15 | - |
+| [05 - An agent in a machine is built once, started fast, and reached from anywhere](container/05-an-agent-in-a-machine/plan.md) | high | planned 2026-09-26, a parent of ten child plans; before more agents and plugins ([deferred.md](container/05-an-agent-in-a-machine/deferred.md)) | plugin 15, plugin 16, container 04 | the next agent and plugin plans |
+| [05 p1 - A secret reaches a machine by name](container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | 05 p2 |
+| [05 p2 - An ACP spec says what its machine needs](container/05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md) | high | planned 2026-09-26, tasks 01 and 04 todo; 02 and 03 dropped, moved to acp 04 and acp 05 | 05 p1 | 05 p5 |
+| [05 p3 - Parts are built from one versions file](container/05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md) | high | planned 2026-09-26, tasks 01-06 todo | - | 05 p4 |
+| [05 p4 - A part is mounted into a machine](container/05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md) | high | planned 2026-09-26, tasks 01-06 todo | 05 p3 | 05 p5 |
+| [05 p5 - Agents run from their parts and keep their own state](container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md) | high | planned 2026-09-26, tasks 01-08 todo; pi joins cofold's nested route | 05 p2, 05 p4, 05 p6, acp 05 | 05 p8, 05 p9 |
+| [05 p6 - An agent's configuration lives in a volume per profile](container/05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/plan.md) | high | planned 2026-09-26, tasks 01-04 todo | - | 05 p5 |
+| [05 p7 - A worktree reaches its machine with its repository](container/05-an-agent-in-a-machine-p7-a-worktree-brings-its-repository/plan.md) | high | planned 2026-09-26, tasks 01-04 todo | plugin 16 | 05 p8 |
+| [05 p8 - A profile's machines may live on another Docker](container/05-an-agent-in-a-machine-p8-a-profile-on-another-docker/plan.md) | medium | draft 2026-09-26 | 05 p5, 05 p7 | - |
+| [05 p9 - An ssh machine runs a nested host](container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md) | medium | draft 2026-09-26 | 05 p5 | 05 p10 |
+| [05 p10 - A host joins another, which relays its sessions](container/05-an-agent-in-a-machine-p10-a-host-joins-a-hub/plan.md) | medium | draft 2026-09-26 | 05 p9 | - |
 
-Next free number in `container`: `05`.
+Next free number in `container`: `06`.
 
 ## pi
 
@@ -138,7 +149,30 @@ Worked in this order: 01, 02, 09, then problem [a pi transcript opens empty](../
 
 Next free number in `pi`: `10`.
 
+## acp
+
+Reference: [00-acp.md](acp/00-acp.md)
+
+Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06 to 10 in any order, 12; 11 is a draft.
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | planned 2026-09-26, tasks 01-05 todo | - | acp 12 |
+| [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | plugin 18, acp 01 task 03 |
+| [03 - A turn ends as the agent ended it](acp/03-a-turn-ends-as-the-agent-ended-it/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | - |
+| [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | acp 05 |
+| [05 - A spec can name a preset for a known ACP agent](acp/05-presets/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 04 | container 05 p5 |
+| [06 - Tool calls say what happened, and an agent's edits reach review](acp/06-tool-calls-say-what-happened/plan.md) | medium | planned 2026-09-26, tasks 01-04 todo | - | - |
+| [07 - A person answers with the agent's own permission options](acp/07-the-agents-own-permission-options/plan.md) | medium | planned 2026-09-26, tasks 01-03 todo | - | - |
+| [08 - Usage, title, plan and mode changes reach the client](acp/08-session-updates-reach-the-client/plan.md) | medium | planned 2026-09-26, tasks 01-04 todo | - | acp 09 |
+| [09 - Every option an agent offers is a control](acp/09-every-config-option-is-a-control/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 08 | - |
+| [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | - | - |
+| [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | draft 2026-09-26, two open questions | - | - |
+| [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | planned 2026-09-26, tasks 01-02 todo | acp 01 | - |
+
+Next free number in `acp`: `13`.
+
 ## Domains without a plan
 
-None. `host`, `claude`, `documentation`, `plugin` and `container` were the domains listed here, and each has a plan above now.
+None. `host`, `claude`, `documentation`, `plugin`, `container`, `pi` and `acp` each have a plan above.
 Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md).

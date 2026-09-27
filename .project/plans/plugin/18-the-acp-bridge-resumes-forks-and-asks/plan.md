@@ -8,6 +8,7 @@ revalidated: 2026-09-26
 requires:
   - plans/plugin/07-agent-acp/plan.md
   - plans/host/19-a-fork-copies-through-the-turn/plan.md
+  - plans/acp/02-replay-lands-in-history/plan.md
 changes: []
 creates: []
 decisions:
