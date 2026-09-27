@@ -4,11 +4,11 @@ status: todo
 depends: [task-12-cofold-fields-say-whether-they-negate.md, task-17-cofold-leaves-an-untyped-flag-out.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L208-L212](../../../../packages/server/src/commands/options.ts#L208-L212) - `updateCheck` spelled `--no-update-check`, `true` meaning off"
-  - "[code://packages/server/src/commands/options.ts#L394](../../../../packages/server/src/commands/options.ts#L394) - the fold"
+  - "[code://packages/server/src/commands/options.ts#L200-L204](../../../../packages/server/src/commands/options.ts#L200-L204) - `updateCheck` spelled `--no-update-check`, `true` meaning off"
+  - "[code://packages/server/src/commands/options.ts#L386](../../../../packages/server/src/commands/options.ts#L386) - the fold"
   - "[code://packages/server/src/update.ts#L124-L125](../../../../packages/server/src/update.ts#L124-L125) - `checkingUpdates`, off whenever `CI` or `NO_UPDATE_NOTIFIER` is set"
-  - "[code://packages/server/test/server-cli.test.ts#L79-L118](../../../../packages/server/test/server-cli.test.ts#L79-L118) - `daemonEnv`, which sets `CI: '1'`, and `cli()`, which runs every case in it"
-  - "[code://packages/server/test/server-cli.test.ts#L433-L443](../../../../packages/server/test/server-cli.test.ts#L433-L443) - the update-check case, which passes whatever the flag does"
+  - "[code://packages/server/test/server-cli.test.ts#L94-L133](../../../../packages/server/test/server-cli.test.ts#L94-L133) - `daemonEnv`, which sets `CI: '1'`, and `cli()`, which runs every case in it"
+  - "[code://packages/server/test/server-cli.test.ts#L472-L482](../../../../packages/server/test/server-cli.test.ts#L472-L482) - the update-check case, which passes whatever the flag does"
 ---
 
 ## Objective
@@ -18,11 +18,11 @@ refs:
 ## Files
 
 - `UPDATE: packages/server/src/commands/options.ts:68-69` - the `Options.updateCheck` comment, which stays "Ask npm, in the background, whether a newer version exists".
-- `UPDATE: packages/server/src/commands/options.ts:208-212` - the field, declared positively.
-- `UPDATE: packages/server/src/commands/options.ts:394` - the fold.
-- `UPDATE: packages/server/test/server-cli.test.ts:79-118` - `cli()` can run a case without `CI`.
-- `UPDATE: packages/server/test/server-cli.test.ts:433-443` - the update-check case, run without `CI`.
-- `UPDATE: packages/server/test/server-commands.test.ts:32-39` - `DAEMON_FLAGS` still names `--no-update-check`.
+- `UPDATE: packages/server/src/commands/options.ts:200-204` - the field, declared positively.
+- `UPDATE: packages/server/src/commands/options.ts:386` - the fold.
+- `UPDATE: packages/server/test/server-cli.test.ts:94-133` - `cli()` can run a case without `CI`.
+- `UPDATE: packages/server/test/server-cli.test.ts:472-482` - the update-check case, run without `CI`.
+- `UPDATE: packages/server/test/server-commands.test.ts:34-41` - `DAEMON_FLAGS` still names `--no-update-check`.
 
 ## Steps
 

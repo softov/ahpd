@@ -41,7 +41,8 @@ function wordAt(table: Map<string, OptionTableEntry>, argv: readonly string[]): 
  *
  * Walked with the table rather than sliced, so a value that spells a word or an
  * option stays the value it was typed as: `--path start` forwards its `start`
- * and `--connection-token --port` forwards both words as the token and the port.
+ * as the path, and `--connection-token=--port` forwards its `--port` as the
+ * token.
  */
 function forwardedLine(
   argv: readonly string[],

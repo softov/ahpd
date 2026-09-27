@@ -4,12 +4,12 @@ status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L118-L119](../../../../packages/server/src/commands/options.ts#L118-L119) - `serverFields`, and the comment that now says what it is"
-  - "[code://packages/server/src/commands/options.ts#L130-L133](../../../../packages/server/src/commands/options.ts#L130-L133) - `stdio`'s description, with the container explanation"
-  - "[code://packages/server/src/commands/options.ts#L197-L202](../../../../packages/server/src/commands/options.ts#L197-L202) - `plugins`' description, with the trust warning"
-  - "[code://packages/server/src/main.ts#L133-L138](../../../../packages/server/src/main.ts#L133-L138) - `liveHelp`, which renders the run's section itself"
-  - "[code://packages/server/src/main.ts#L213-L241](../../../../packages/server/src/main.ts#L213-L241) - `optionLine` and `runHelp`, the section and the epilogue"
-  - "[code://packages/server/test/server-cli.test.ts#L169-L183](../../../../packages/server/test/server-cli.test.ts#L169-L183) - the help case, pinning the restored sentences"
+  - "[code://packages/server/src/commands/options.ts#L110-L111](../../../../packages/server/src/commands/options.ts#L110-L111) - `serverFields`, and the comment that now says what it is"
+  - "[code://packages/server/src/commands/options.ts#L122-L125](../../../../packages/server/src/commands/options.ts#L122-L125) - `stdio`'s description, with the container explanation"
+  - "[code://packages/server/src/commands/options.ts#L189-L194](../../../../packages/server/src/commands/options.ts#L189-L194) - `plugins`' description, with the trust warning"
+  - "[code://packages/server/src/main.ts#L128-L133](../../../../packages/server/src/main.ts#L128-L133) - `liveHelp`, which renders the run's section itself"
+  - "[code://packages/server/src/main.ts#L211-L239](../../../../packages/server/src/main.ts#L211-L239) - `optionLine` and `runHelp`, the section and the epilogue"
+  - "[code://packages/server/test/server-cli.test.ts#L184-L198](../../../../packages/server/test/server-cli.test.ts#L184-L198) - the help case, pinning the restored sentences"
   - "git://7a7e9d1 - `USAGE` in packages/server/src/main.ts, where the restored sentences are worded"
   - file:///github/cofold/packages/terminal/src/help.ts - `helpForCommand` always writes a usage line and a global options section; `renderDefinitions` renders rows alone
 ---
@@ -20,11 +20,11 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/options.ts:118` - the comment on `serverFields`, which now says what the object is.
-- `UPDATE: packages/server/src/commands/options.ts:130-133` - `stdio`'s description gains the container explanation.
-- `UPDATE: packages/server/src/commands/options.ts:197-202` - `plugins`' description gains the trust warning.
-- `UPDATE: packages/server/src/main.ts:133-138, 213-241` - `liveHelp` renders the run's options and the epilogue itself.
-- `UPDATE: packages/server/test/server-cli.test.ts:169-183` - the help case pins the restored sentences.
+- `UPDATE: packages/server/src/commands/options.ts:110` - the comment on `serverFields`, which now says what the object is.
+- `UPDATE: packages/server/src/commands/options.ts:122-125` - `stdio`'s description gains the container explanation.
+- `UPDATE: packages/server/src/commands/options.ts:189-194` - `plugins`' description gains the trust warning.
+- `UPDATE: packages/server/src/main.ts:128-133, 211-239` - `liveHelp` renders the run's options and the epilogue itself.
+- `UPDATE: packages/server/test/server-cli.test.ts:184-198` - the help case pins the restored sentences.
 
 ## Steps
 

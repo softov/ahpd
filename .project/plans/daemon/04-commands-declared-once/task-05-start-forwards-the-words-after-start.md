@@ -4,11 +4,11 @@ status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/start.ts#L97-L104](../../../../packages/server/src/commands/start.ts#L97-L104) - the program's option table, and the words after the `start` word it finds"
+  - "[code://packages/server/src/commands/start.ts#L98-L105](../../../../packages/server/src/commands/start.ts#L98-L105) - the program's option table, and the words after the `start` word it finds"
   - "[code://packages/server/src/commands/start.ts#L22-L36](../../../../packages/server/src/commands/start.ts#L22-L36) - `wordAt`, which reads a candidate `start` as a word only when nothing before it is one"
-  - "[code://packages/server/src/commands/options.ts#L101-L116](../../../../packages/server/src/commands/options.ts#L101-L116) - `programGlobals`, the program's own options the table has to know"
+  - "[code://packages/server/src/commands/options.ts#L93-L108](../../../../packages/server/src/commands/options.ts#L93-L108) - `programGlobals`, the program's own options the table has to know"
   - "[code://packages/server/src/daemon.ts#L118-L148](../../../../packages/server/src/daemon.ts#L118-L148) - `start`, which spawns this program again with the words it is given"
-  - "[code://packages/server/test/server-cli.test.ts#L350-L367](../../../../packages/server/test/server-cli.test.ts#L350-L367) and [#L79-L95](../../../../packages/server/test/server-cli.test.ts#L79-L95) - the case, and the `daemonEnv` loader a detached child inherits"
+  - "[code://packages/server/test/server-cli.test.ts#L386-L403](../../../../packages/server/test/server-cli.test.ts#L386-L403) and [#L94-L110](../../../../packages/server/test/server-cli.test.ts#L94-L110) - the case, and the `daemonEnv` loader a detached child inherits"
 ---
 
 ## Objective
@@ -17,14 +17,14 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/start.ts:97-104` - `rest` is the slice of `process.argv` after the word `start`, found with the same grammar the program parses with, rather than everything after the first word.
-- `UPDATE: packages/server/src/commands/options.ts:101-116` - `programGlobals`, the program's own options, declared where `start` can build the table from them.
-- `UPDATE: packages/server/src/main.ts:144` - the program takes its globals from that declaration rather than from an inline list.
+- `UPDATE: packages/server/src/commands/start.ts:98-105` - `rest` is the slice of `process.argv` after the word `start`, found with the same grammar the program parses with, rather than everything after the first word.
+- `UPDATE: packages/server/src/commands/options.ts:93-108` - `programGlobals`, the program's own options, declared where `start` can build the table from them.
+- `UPDATE: packages/server/src/main.ts:139` - the program takes its globals from that declaration rather than from an inline list.
 - `UPDATE: packages/server/test/server-cli.test.ts` - a `start` group that detaches, reads the record and stops.
 
 ## Steps
 
-1. In `declareStart`'s `run`, find the index of the `start` command word in `process.argv.slice(2)` with `@cofold/commands`' `tokenize` over the program's option table (the one `main.ts:157-159` builds), so a flag value that happens to be the string `start` is never taken for the word.
+1. In `declareStart`'s `run`, find the index of the `start` command word in `process.argv.slice(2)` with `@cofold/commands`' `tokenize` over the program's option table (the one `main.ts:152-154` builds), so a flag value that happens to be the string `start` is never taken for the word.
 2. Forward only the words after it to `start()` in `daemon.ts`; globals typed before `start` (`--json`, `--no-color`, `-q`, `--verbose`, `--remote`, `--token`) are not forwarded.
 3. This is the plan's settled row "`start` forwards the words after `start` wherever it appears"; it is a fix, not a fork.
 

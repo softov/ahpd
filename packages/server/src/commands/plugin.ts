@@ -14,7 +14,8 @@ import { running } from '../daemon.js';
 import { installPlugins, removePlugins, run as runProgram } from '../install.js';
 import { describePlugin, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
-import { optionsFrom, pluginWriteFields, refuse, serverFields, servedPluginWriteFields } from './options.js';
+import { withoutOptionValues } from './config.js';
+import { optionsFrom, pluginWriteFields, serverFields, servedPluginWriteFields, stop } from './options.js';
 import type { ServedFacts } from './served.js';
 
 export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
@@ -34,11 +35,28 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       if (options.plugins.length === 0) return output([], 'plugins: none named\n');
       const rows = [];
       for (const spec of options.plugins) {
-        rows.push(await describePlugin(spec, { configDir: configDir(), cwd: process.cwd() }));
+        const row = await describePlugin(spec, { configDir: configDir(), cwd: process.cwd() });
+        // Served, a row is read by anyone holding `config:read`, so it says
+        // which options a plugin has and never their values; the terminal's
+        // listing is the owner reading their own configuration.
+        rows.push(served === undefined ? row : { ...row, spec: withoutOptionValues(row.spec) });
       }
       return output(rows, `${rows.map(pluginLine).join('\n')}\n`);
     },
   });
+
+  /*
+   * The writes, one at a time: an install or a remove starts once the one before
+   * it has settled, failure or not, so two served requests never run npm in the
+   * same directory together or edit the configuration file between each
+   * other's steps.
+   */
+  let settled: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+    const turn = settled.then(work);
+    settled = turn.catch(() => undefined);
+    return turn;
+  };
 
   const write = (sub: 'install' | 'remove') => registry.action({
     id: `plugin.${sub}`,
@@ -54,7 +72,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     // Installing or removing a plugin runs code in this process, so over HTTP
     // it is the deployment's own token and never a person.
     meta: { deploymentTokenOnly: true },
-    run: async (context) => {
+    run: (context) => oneAtATime(async () => {
       const names = context.list<string>('name');
       // Served, the file edited is the daemon's, whatever the request names.
       const configFile = served === undefined ? context.optional<string>('configFile') : served.configFile;
@@ -83,7 +101,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         }
       }
       catch (error) {
-        refuse(context.surface, error instanceof Error ? error.message : String(error));
+        stop(error instanceof Error ? error.message : String(error));
       }
       /*
        * The list a running daemon serves is the one it started with, and a
@@ -93,7 +111,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       const restart = served !== undefined || running() !== undefined;
       if (restart) say('Restart the daemon to load the change: ahpd stop && ahpd start');
       return output({ plugins: names, ...(restart ? { restart: true } : {}) }, '');
-    },
+    }),
   });
 
   return [list, write('install'), write('remove')];

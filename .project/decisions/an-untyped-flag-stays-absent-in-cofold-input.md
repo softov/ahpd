@@ -5,7 +5,7 @@ date: 2026-09-26
 refs:
   - file:///github/cofold/packages/commands/src/input.ts - line 129 in `canonicalFromCli` and line 173 in `canonicalFromObject`, which write `false` for a flag with no value, no environment and no default
   - "[code://packages/server/src/commands/options.ts#L9-L12](../../packages/server/src/commands/options.ts#L9-L12) - the fields carry no `default`, so a flag is told apart from the file"
-  - "[code://packages/server/src/commands/options.ts#L392](../../packages/server/src/commands/options.ts#L392) - the `updateCheck` fold"
+  - "[code://packages/server/src/commands/options.ts#L386](../../packages/server/src/commands/options.ts#L386) - the `updateCheck` fold"
 ---
 
 ## Context

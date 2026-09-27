@@ -1,14 +1,14 @@
 ---
 title: A refusal takes only its sentence, and the group hint fails like every other failure
-status: todo
+status: implemented
 depends: [task-15-a-bare-verb-names-its-sub-commands.md, task-16-handlers-fail-by-throwing.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L87](../../../../packages/server/src/commands/options.ts#L87) - `refuse`, whose `_surface` is ignored"
-  - "[code://packages/server/src/commands/plugin.ts#L86](../../../../packages/server/src/commands/plugin.ts#L86) - a caller passing `context.surface`"
-  - "[code://packages/server/src/commands/user.ts#L57-L82](../../../../packages/server/src/commands/user.ts#L57-L82) - three more callers"
-  - "[code://packages/server/src/commands/user.ts#L135](../../../../packages/server/src/commands/user.ts#L135) - the last caller"
-  - "[code://packages/server/src/main.ts#L168-L178](../../../../packages/server/src/main.ts#L168-L178) - the group hint, written with no `ahpd: ` and as prose under `--json`"
+  - "[code://packages/server/src/commands/options.ts#L72-L79](../../../../packages/server/src/commands/options.ts#L72-L79) - `stop`, which the callers call now that `refuse` is gone"
+  - "[code://packages/server/src/commands/plugin.ts#L104](../../../../packages/server/src/commands/plugin.ts#L104) - a caller"
+  - "[code://packages/server/src/commands/user.ts#L60-L85](../../../../packages/server/src/commands/user.ts#L60-L85) - three more callers"
+  - "[code://packages/server/src/commands/user.ts#L141](../../../../packages/server/src/commands/user.ts#L141) - the last caller"
+  - "[code://packages/server/src/main.ts#L155-L176](../../../../packages/server/src/main.ts#L155-L176) - the group hint, refused with the program's name and an `ArgumentError`'s exit code"
 ---
 
 ## Objective
@@ -17,9 +17,9 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/options.ts:87` - `refuse(message)`, or its callers call `stop` and `refuse` goes.
-- `UPDATE: packages/server/src/commands/plugin.ts:86`, `packages/server/src/commands/user.ts:57,66,82,135` - the callers.
-- `UPDATE: packages/server/src/main.ts:168-178` - the group hint.
+- `UPDATE: packages/server/src/commands/options.ts` - `refuse(message)`, or its callers call `stop` and `refuse` goes.
+- `UPDATE: packages/server/src/commands/plugin.ts:104`, `packages/server/src/commands/user.ts:60,69,85,141` - the callers.
+- `UPDATE: packages/server/src/main.ts:155-176` - the group hint.
 - `UPDATE: packages/server/test/server-cli.test.ts` - the task 15 cases.
 
 ## Steps
@@ -45,3 +45,5 @@ Which way:
 The rest of the task is decided by its own step 1: `refuse` is `(_surface, message) => stop(message)`, so it says nothing `stop` does not, and its five callers will call `stop`; they still call `refuse` today.
 
 Decided 2026-09-26: Softov chose option 1 now and option 2 later ("one... and another latter"); option 2 is `.project/ideas/failures-have-a-json-shape.md`.
+
+Implemented 2026-09-26, option 1. The two task 15 cases were tightened first to an exact stderr of `ahpd: <verb> takes ....\n`, an empty stdout, and a `--json <verb>` line; both failed on the missing `ahpd: ` prefix (stderr was `plugin takes list, install or remove.`). `refuse` is removed and its five callers call `stop`. The group hint builds an `ArgumentError`, writes `${program.name}: <sentence>` and exits with `exitCodeFor` of it, which are the prefix and code `runEntry` gives a thrown `stop`; it does not go through `runEntry` itself, because `runEntry` takes a `Program` and the hint is decided before the program runs. `grep -rn "refuse(context.surface" packages/server/src` finds nothing; the cases and `pnpm typecheck` pass.

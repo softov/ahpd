@@ -404,8 +404,8 @@ the grants their roles resolve to:
 | `plugin install`, `plugin remove` | the deployment's token only |
 
 `users:write` manages people at or below the caller: `user add` refuses a role,
-and `user token` and `user rm` refuse a person, that holds a grant the caller
-does not hold, so the grant is not `admin` under another name.
+and `user add`, `user token` and `user rm` refuse a person, that holds a grant
+the caller does not hold, so the grant is not `admin` under another name.
 
 `plugin install` runs `npm install` and names a package the daemon loads at its
 next start, so it runs code as the host; no grant a person may hold confers
@@ -415,6 +415,7 @@ list it started with. `GET /api/config` answers every key of the daemon's own
 file, with `connectionToken` and every value under a plugin entry's `options`
 reported as `<set>` rather than as what they are, so a grant to read or change
 settings carries neither the root credential nor a plugin's own secrets.
+`GET /api/plugin/list` reports each plugin's `options` the same way.
 
 A refusal carries the same sentence the WebSocket gives, so a script reads the
 reason:
@@ -438,8 +439,9 @@ curl -i http://127.0.0.1:9187/api/plugin/install \
 
 A request is answered only when its `Host` is one of the daemon's own names -
 the loopback names at the port the API is bound to, the address it is bound to
-when that is a specific one, and the host of `resource` when a deployment names
-it - and when its `Origin`, if a browser sends one, is one of them too. A body
+when that is a specific one (an IPv6 one in brackets), and the host of
+`resource` when a deployment names it, with the port it names if it names one -
+and when its `Origin`, if a browser sends one, is one of them too. A body
 is served only when its `content-type` is `application/json`; anything else is
 answered 415. That keeps a page on another site, or one that rebinds its own
 name to loopback, from driving the API.
@@ -458,9 +460,9 @@ before it has a token. It is what `--remote` reads.
 
 `--remote <url>` runs the administration commands on the daemon the URL names
 instead of here. A token is required: `--token <secret>`, `--token-file <path>`
-or `AHPD_TOKEN`, and a call with none is refused before anything is fetched.
-`--token` and `--token-file` together are refused, as is a file that is missing
-or empty. Plain `http://` to a host that is not loopback sends the token
+or `AHPD_TOKEN`, and a call with none, or with one that is empty or only
+spaces, is refused before anything is fetched. `--token` and `--token-file`
+together are refused, as is a file that is missing or empty. Plain `http://` to a host that is not loopback sends the token
 readable by anything on the path, so the client says so on stderr and proceeds;
 `https://`, or `http://` on loopback, says nothing. The manifest is cached under
 `~/.cache/ahpd/remote`, mode 0700, so `--help` is not a round trip and the

@@ -41,3 +41,5 @@ A call that never finishes still sends the `after`: a policy denial (`tool.denie
 `mapping.ts` puts both on the `chat/toolCallStart` action and on the part a subscription reads.
 What the plan did not know: cofold emits no `tool.denied` for a declined approval, which is why that path is handled too.
 A declined approval's own tool-call row is left `pending-confirmation` by `mapping.ts`, which is pre-existing and outside this plan.
+
+Re-run 2026-09-26: the second review ran this Validation against the tree and it passed; it was run again with `node_modules/.bin/vitest run packages/agent-cofold` green (11 files, 107 tests), five times beside a full `pnpm test`.

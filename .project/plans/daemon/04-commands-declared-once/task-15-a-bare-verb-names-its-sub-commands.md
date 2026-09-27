@@ -4,9 +4,9 @@ status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/main.ts#L160-L178](../../../../packages/server/src/main.ts#L160-L178) - the hint for a group with no known sub-command"
-  - "[code://packages/server/test/server-cli.test.ts#L526-L532](../../../../packages/server/test/server-cli.test.ts#L526-L532) - the `user` cases, bare and unknown"
-  - "[code://packages/server/test/server-cli.test.ts#L573-L585](../../../../packages/server/test/server-cli.test.ts#L573-L585) - the `plugin` cases, bare, unknown and `--help`"
+  - "[code://packages/server/src/main.ts#L155-L176](../../../../packages/server/src/main.ts#L155-L176) - the hint for a group with no known sub-command"
+  - "[code://packages/server/test/server-cli.test.ts#L565-L572](../../../../packages/server/test/server-cli.test.ts#L565-L572) - the `user` cases, bare and unknown"
+  - "[code://packages/server/test/server-cli.test.ts#L613-L626](../../../../packages/server/test/server-cli.test.ts#L613-L626) - the `plugin` cases, bare, unknown and `--help`"
   - file:///github/cofold/packages/terminal/src/program.ts - line 140, `unknown command "<words>"`
   - "git://7a7e9d1 - packages/server/src/main.ts before the migration: \"plugin takes list, install or remove.\" and \"user takes add, rm, list or token.\""
 ---
@@ -17,8 +17,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/main.ts:160-178` - the hint for a group with no known sub-command.
-- `UPDATE: packages/server/test/server-cli.test.ts:526-532, 573-585` - the two "refuses a sub-command it does not have" cases, plus bare-verb cases.
+- `UPDATE: packages/server/src/main.ts:155-176` - the hint for a group with no known sub-command.
+- `UPDATE: packages/server/test/server-cli.test.ts:565-572, 613-626` - the two "refuses a sub-command it does not have" cases, plus bare-verb cases.
 
 ## Steps
 

@@ -6,7 +6,7 @@ layer: "server"
 refs:
   - "[code://packages/server/test/server-http.test.ts#L366-L382](../../../../packages/server/test/server-http.test.ts#L366-L382) - the `http.host` case, which checks the bind as well as the announcement"
   - "[code://packages/server/test/server-http.test.ts#L330-L349](../../../../packages/server/test/server-http.test.ts#L330-L349) - the unconfigured-daemon cases; the `--without-connection-token` one asserts the sentence"
-  - "[code://packages/server/test/server-http.test.ts#L565-L658](../../../../packages/server/test/server-http.test.ts#L565-L658) - the served-options cases; the hostile plugin list names the daemon's own plugin and neither query name"
+  - "[code://packages/server/test/server-http.test.ts#L606-L716](../../../../packages/server/test/server-http.test.ts#L606-L716) - the served-options cases; the hostile plugin list names the daemon's own plugin and neither query name"
   - "[code://packages/server/src/commands/registry.ts#L67-L75](../../../../packages/server/src/commands/registry.ts#L67-L75) - `remoteCache`, which chmods the directory it ensures"
 ---
 

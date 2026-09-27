@@ -6,10 +6,10 @@ layer: "server"
 refs:
   - "[code://packages/server/src/commands/scopes.ts#L34-L45](../../../../packages/server/src/commands/scopes.ts#L34-L45) - `checkScopes`, the hook both registries are built with"
   - "[code://packages/server/src/commands/registry.ts#L37-L57](../../../../packages/server/src/commands/registry.ts#L37-L57) - `cliRegistry` and `localRegistry`, built with `checkScopes`"
-  - "[code://packages/server/src/commands/authorize.ts#L29-L34](../../../../packages/server/src/commands/authorize.ts#L29-L34) and [#L62-L88](../../../../packages/server/src/commands/authorize.ts#L62-L88) - `ROOT` and `authorizeOverHttp`, which identifies the caller and answers the actor"
+  - "[code://packages/server/src/commands/authorize.ts#L28-L33](../../../../packages/server/src/commands/authorize.ts#L28-L33) and [#L61-L87](../../../../packages/server/src/commands/authorize.ts#L61-L87) - `ROOT` and `authorizeOverHttp`, which identifies the caller and answers the actor"
   - "[code://packages/server/src/http.ts#L81-L107](../../../../packages/server/src/http.ts#L81-L107) - `apiHandler`, where `serve()` is given `authorizeOverHttp`"
-  - "[code://packages/server/test/server-commands.test.ts#L69-L78](../../../../packages/server/test/server-commands.test.ts#L69-L78) and [#L90-L100](../../../../packages/server/test/server-commands.test.ts#L90-L100) - the registry-level cases, remote with and without the grant"
-  - "[code://packages/server/test/server-http.test.ts#L430-L436](../../../../packages/server/test/server-http.test.ts#L430-L436) - the 403 and the WebSocket sentence, which only the hook produces now"
+  - "[code://packages/server/test/server-commands.test.ts#L71-L80](../../../../packages/server/test/server-commands.test.ts#L71-L80) and [#L104-L114](../../../../packages/server/test/server-commands.test.ts#L104-L114) - the registry-level cases, remote with and without the grant"
+  - "[code://packages/server/test/server-http.test.ts#L443-L449](../../../../packages/server/test/server-http.test.ts#L443-L449) - the 403 and the WebSocket sentence, which only the hook produces now"
   - file:///github/cofold/packages/remote/src/serve.ts - `serve()` calls `authorize`, then `registry.execute` with what it answered as `request.actor`
   - file:///github/cofold/packages/commands/src/types/registry.ts - `AuthorizeRequest`, which carries `command`, `context` (with `context.request`) and `scopes`
   - "[plans/daemon/05-an-http-api/task-09-the-grants-each-command-needs.md](../05-an-http-api/task-09-the-grants-each-command-needs.md) - which grant each command needs"
@@ -23,10 +23,10 @@ Every surface that runs a command goes through the registry's `authorize` hook, 
 
 - `CREATE: packages/server/src/commands/scopes.ts` - `checkScopes`, the `authorize` hook `cliRegistry` and `localRegistry` are built with.
 - `UPDATE: packages/server/src/commands/registry.ts:37-57` - `cliRegistry` and `localRegistry`, both built with `checkScopes`; the header comment says so.
-- `UPDATE: packages/server/src/commands/authorize.ts:22-27, 62-88` - `authorizeOverHttp` identifies the caller (401) and answers the actor, and no longer checks scopes; `AuthorizeOptions` loses the registry.
+- `UPDATE: packages/server/src/commands/authorize.ts:21-26, 61-87` - `authorizeOverHttp` identifies the caller (401) and answers the actor, and no longer checks scopes; `AuthorizeOptions` loses the registry.
 - `UPDATE: packages/server/src/http.ts:81-107` - `apiHandler` hands `serve()` the identity hook alone.
-- `UPDATE: packages/server/test/server-http.test.ts:430-436` - the scope refusal, which now comes from the hook.
-- `UPDATE: packages/server/test/server-commands.test.ts:69-78, 90-100` - the registry-level cases.
+- `UPDATE: packages/server/test/server-http.test.ts:443-449` - the scope refusal, which now comes from the hook.
+- `UPDATE: packages/server/test/server-commands.test.ts:71-80, 104-114` - the registry-level cases.
 
 ## Steps
 

@@ -4,7 +4,7 @@ status: done
 depends: [task-09-the-grants-each-command-needs.md, task-10-an-unconfigured-daemon-refuses-http.md, task-11-origin-and-host-are-checked.md, task-12-http-host.md, task-13-remote-needs-a-token-and-proves-it-is-remote.md]
 layer: "docs"
 refs:
-  - "[code://docs/DAEMON.md#L357-L483](../../../../docs/DAEMON.md#L357-L483) - the HTTP API section"
+  - "[code://docs/DAEMON.md#L357-L485](../../../../docs/DAEMON.md#L357-L485) - the HTTP API section"
   - "[code://docs/USERS.md#L363-L372](../../../../docs/USERS.md#L363-L372) - the subjects table"
 ---
 
@@ -14,7 +14,7 @@ refs:
 
 ## Files
 
-- `UPDATE: docs/DAEMON.md:357-483` - the API needs a token or users to start; `http.host`; the grant per command; `config` without the token's value; commands act on the daemon's own options and take no path; Origin and Host are checked and bodies are JSON; the `curl` examples use refusals that exist; `--remote` needs a token from `--token`, `--token-file` or `AHPD_TOKEN`, warns when plain `http://` to a host that is not loopback carries it in cleartext, and caches under `~/.cache/ahpd/remote`.
+- `UPDATE: docs/DAEMON.md:357-485` - the API needs a token or users to start; `http.host`; the grant per command; `config` without the token's value; commands act on the daemon's own options and take no path; Origin and Host are checked and bodies are JSON; the `curl` examples use refusals that exist; `--remote` needs a token from `--token`, `--token-file` or `AHPD_TOKEN`, warns when plain `http://` to a host that is not loopback carries it in cleartext, and caches under `~/.cache/ahpd/remote`.
 - `UPDATE: docs/USERS.md:363-372` - `users` in the subjects table, and `config` with `read` beside `write`.
 
 ## Steps

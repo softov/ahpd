@@ -5,8 +5,8 @@ depends: [task-05-start-forwards-the-words-after-start.md]
 layer: "server"
 refs:
   - "[code://packages/server/src/commands/start.ts#L22-L36](../../../../packages/server/src/commands/start.ts#L22-L36) - `wordAt`, which answers where `start` is the word by wanting `['start']` as the only word up to and including a candidate"
-  - "[code://packages/server/src/commands/start.ts#L38-L74](../../../../packages/server/src/commands/start.ts#L38-L74) - `forwardedLine`, which gives the child the typed line without the word and without the parent's globals"
-  - "[code://packages/server/test/server-cli.test.ts#L350-L367](../../../../packages/server/test/server-cli.test.ts#L350-L367) - the task 05 case"
+  - "[code://packages/server/src/commands/start.ts#L38-L75](../../../../packages/server/src/commands/start.ts#L38-L75) - `forwardedLine`, which gives the child the typed line without the word and without the parent's globals"
+  - "[code://packages/server/test/server-cli.test.ts#L386-L403](../../../../packages/server/test/server-cli.test.ts#L386-L403) - the task 05 case"
 ---
 
 ## Objective
@@ -16,7 +16,7 @@ refs:
 ## Files
 
 - `UPDATE: packages/server/src/commands/start.ts:22-36` - `wordAt`.
-- `UPDATE: packages/server/src/commands/start.ts:38-74` - what the child is given.
+- `UPDATE: packages/server/src/commands/start.ts:38-75` - what the child is given.
 - `UPDATE: packages/server/test/server-cli.test.ts` - the cases below, beside the task 05 cases.
 
 ## Steps
@@ -37,7 +37,7 @@ refs:
 
 Seen to fail: with `--connection-token abc start --port 0 ...`, the daemon log carried `no token: loopback only` and the record's `connectUrl` carried no `tkn`; with `--port 0 start ...` the record's url was `ws://127.0.0.1:9187`. Both pass after the change, and the token in the record opens a WebSocket.
 
-`--path start start` did not fail as this task's third bullet predicted. Today the parent reads the first ws url written after it started, which the grandchild writes before the intermediate `start` process writes its own record, so the record ends up naming the process that is really serving and `status` and `stop` work; the double spawn is visible only in the log. The case now counts the daemon's own announcement lines (`ahpd on ws://`) and wants one, which is what one daemon writes. Breaking it back to the old `wordAt` made the case fail, and then the fix was put back.
+With the old slicing, `--path start start` started a `start` that started the daemon, and the parent records the pid of the `start` it spawned while that `start` writes `daemon.json` for the daemon; the two writers race, and about 3 runs of 8 left a daemon orphaned. The case counts the daemon log's announcement lines (`ahpd on ws://`) and wants one, which is what one daemon writes, so it catches the double start every time, orphan or not. Breaking it back to the old `wordAt` made the case fail, and then the fix was put back.
 
 Done: `wordAt` answers where `start` is the word by tokenizing up to and including the candidate and wanting `['start']`; `forwardedLine` walks the typed line with the union table, dropping the word and the parent's globals (`globalOptions` and `programGlobals`) with their values, and keeping every other option and value in the order typed, so a value spelled like a word or an option stays a value. `start` is spawned with that line, so the child runs the foreground daemon with the parent's options.
 

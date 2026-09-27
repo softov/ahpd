@@ -368,7 +368,7 @@ The subjects are the host's own and any plugin's URI scheme:
 | `terminal` | `read`, `write` | Read watches a shell's output; write opens one, types into it and closes it |
 | `diagnostics` | `read` | `diagnosticsFetch` |
 | `config` | `read`, `write` | Read describes the host, as `status` and `plugin list` do; write changes a host-wide root setting, or replaces the root config |
-| `users` | `read`, `write` | Write adds, removes and mints for people, and only for a role or a person whose grants the caller already holds. No command needs `read` yet |
+| `users` | `read`, `write` | Write adds, removes and mints for people, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. No command needs `read` yet |
 | a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is

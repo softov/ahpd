@@ -6,10 +6,10 @@ layer: "server"
 refs:
   - "[decisions/http-host-binds-the-apis-own-listener.md](../../../decisions/http-host-binds-the-apis-own-listener.md) - what this task applies"
   - "[code://packages/server/src/config.ts#L8-L24](../../../../packages/server/src/config.ts#L8-L24) - `HttpSetting`, which now has `host`"
-  - "[code://packages/server/src/commands/options.ts#L280-L311](../../../../packages/server/src/commands/options.ts#L280-L311) - `httpOf`, which reads and validates it"
-  - "[code://packages/server/src/commands/run.ts#L193-L195](../../../../packages/server/src/commands/run.ts#L193-L195) and [#L236-L238](../../../../packages/server/src/commands/run.ts#L236-L238) - `apiHost`, and `listenApi` bound to it"
-  - "[code://packages/server/src/commands/run.ts#L521](../../../../packages/server/src/commands/run.ts#L521) - the `http on` line, which names the bound host"
-  - "[code://packages/server/test/server-http.test.ts#L365-L404](../../../../packages/server/test/server-http.test.ts#L365-L404) - the four cases"
+  - "[code://packages/server/src/commands/options.ts#L272-L303](../../../../packages/server/src/commands/options.ts#L272-L303) - `httpOf`, which reads and validates it"
+  - "[code://packages/server/src/commands/run.ts#L197-L199](../../../../packages/server/src/commands/run.ts#L197-L199) and [#L240-L242](../../../../packages/server/src/commands/run.ts#L240-L242) - `apiHost`, and `listenApi` bound to it"
+  - "[code://packages/server/src/commands/run.ts#L525](../../../../packages/server/src/commands/run.ts#L525) - the `http on` line, which names the bound host"
+  - "[code://packages/server/test/server-http.test.ts#L365-L411](../../../../packages/server/test/server-http.test.ts#L365-L411) - the four cases"
 ---
 
 ## Objective
@@ -19,9 +19,9 @@ refs:
 ## Files
 
 - `UPDATE: packages/server/src/config.ts:8-24` - `HttpSetting` gains `host`.
-- `UPDATE: packages/server/src/commands/options.ts:280-311` - `httpOf` reads `host`; a non-string, or a `host` without a `port`, refuses the start (decision `http-host-binds-the-apis-own-listener`).
-- `UPDATE: packages/server/src/commands/run.ts:193-195, 236-238, 521` - `apiHost` is what `listenApi` binds and what the `http on` line names.
-- `UPDATE: packages/server/test/server-http.test.ts:46-49, 115-126, 365-404` - the daemon fixture reads the announced hosts, and the four cases.
+- `UPDATE: packages/server/src/commands/options.ts:272-303` - `httpOf` reads `host`; a non-string, or a `host` without a `port`, refuses the start (decision `http-host-binds-the-apis-own-listener`).
+- `UPDATE: packages/server/src/commands/run.ts:197-199, 240-242, 525` - `apiHost` is what `listenApi` binds and what the `http on` line names.
+- `UPDATE: packages/server/test/server-http.test.ts:46-49, 115-126, 365-411` - the daemon fixture reads the announced hosts, and the four cases.
 
 ## Steps
 

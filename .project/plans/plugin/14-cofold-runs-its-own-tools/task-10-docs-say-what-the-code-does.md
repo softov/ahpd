@@ -4,7 +4,7 @@ status: done
 depends: [task-07-ahpd-inside-follows-symlinks.md, task-08-ahpd-takes-the-cofold-releases.md, task-12-search-providers-in-configured-order.md, task-13-no-model-says-what-to-add.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L407-L443](../../../../docs/PLUGINS.md#L407-L443) - the section on the tools a session runs, one sentence per line"
+  - "[code://docs/PLUGINS.md#L407-L439](../../../../docs/PLUGINS.md#L407-L439) - the section on the tools a session runs, one paragraph per line"
   - "[code://packages/agent-cofold/src/capabilities.ts#L63-L73](../../../../packages/agent-cofold/src/capabilities.ts#L63-L73) - `searchProviders`, which follows the configured order"
   - "[code://packages/agent-cofold/package.json#L46-L50](../../../../packages/agent-cofold/package.json#L46-L50) - `files`, which lists the `README.md` beside it"
   - "[code://packages/agent-pi/README.md](../../../../packages/agent-pi/README.md) - the layout a backend's README follows"
@@ -34,3 +34,5 @@ refs:
 - `pnpm boundary` green, and `npm pack --dry-run` in `packages/agent-cofold` lists `README.md`.
 
 ## Resume
+
+Verified 2026-09-26: the search-order sentence in `docs/PLUGINS.md` and the comment on `searchProviders` both say the configured order; `pnpm boundary` green and `npm pack --dry-run` in `packages/agent-cofold` lists `README.md`. The tool section and the README's tool section were still one sentence per line, which task 19 turned into one paragraph per line.

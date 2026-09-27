@@ -10,8 +10,7 @@
  *
  * `HttpError` is what `serve()` maps to a status: 401 for no credentials or a
  * credential this host does not know. A missing grant is the registry hook's
- * 403, carrying the sentence the WebSocket gives - decision
- * `the-http-api-is-on-the-daemon-port-under-api`.
+ * 403, carrying the sentence the WebSocket gives.
  */
 
 import { timingSafeEqual } from 'node:crypto';

@@ -50,13 +50,11 @@ With no model named anywhere, the cofold configuration file at `$XDG_CONFIG_HOME
 
 ## The tools a session runs
 
-A session gets `@cofold/tools`' four capabilities by default, so it can read, search, edit and write files, run one command, fetch a page and search the web when a provider is configured, and keep memory.
-The permission mode is what confines them rather than the workspace, and `default` asks before a write, a command, a web fetch and a read outside the workspace.
-A session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and only a write or a command asks.
-The workspace check resolves symlinks with cofold's own resolver, including a link whose target does not exist yet, and `web_fetch` refuses loopback, private and link-local addresses on every hop, though a name that answers with a different address at the connection is not caught.
-Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`.
-A session opened with no working directory keeps its tools and works in the daemon's current directory.
-A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
+A session gets `@cofold/tools`' four capabilities by default, so it can read, search, edit and write files, run one command, fetch a page and search the web when a provider is configured, and keep memory. The permission mode is what confines them rather than the workspace, and `default` asks before a write, a command, a web fetch and a read outside the workspace. A session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and only a write or a command asks.
+
+The workspace check resolves symlinks with cofold's own resolver, including a link whose target does not exist yet, except a dangling link whose target reads `dir/../name` with `dir` a symlink out of the workspace, which can still pass as inside. `web_fetch` refuses loopback, private and link-local addresses on every hop, though not the machine's public address, and a name that answers with a different address at the connection is not caught.
+
+Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in the daemon's current directory. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
 
 `tools` turns one off by naming it `false`, and gives `web_search` its providers:
 

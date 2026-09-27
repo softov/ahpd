@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import {
@@ -28,13 +28,17 @@ import type { CofoldOptions, ToolsConfig } from '../src/index.js';
 
 type Script = Parameters<typeof createFakeModel>[0]['script'];
 
-/** Let the run's zero-delay work finish, up to a point. */
-const when = async (check: () => boolean, times = 800): Promise<void> => {
-  for (let i = 0; i < times; i++) {
-    if (check()) return;
+/** Waits for `check` to hold, turning the event loop, and throws once `ms` of wall-clock time has passed. */
+const when = async (check: () => boolean, ms = 5000): Promise<void> => {
+  const until = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > until) throw new Error('timed out waiting');
     await new Promise((r) => { setTimeout(r, 0); });
   }
 };
+
+/** A case's own limit, above `when`'s budget so a wait that runs out fails on its own message. */
+vi.setConfig({ testTimeout: 30_000 });
 
 /** A fixed number of turns of the event loop, so a run can settle into its pause. */
 const settle = async (times = 20): Promise<void> => {
@@ -353,6 +357,7 @@ it('sends a declined edit its after before the next ask', async () => {
    * paused run never reaches, is not what sent it.
    */
   await when(() => v.of('session', 'session/inputNeededSet').length >= 2);
+  expect(v.of('session', 'session/inputNeededSet')).toHaveLength(2);
   expect(edits.filter((one) => one.path === join(dir, 'b.txt')).map((one) => one.phase)).toEqual(['before', 'after']);
   expect(ended(v)).toBe(false);
 
@@ -621,11 +626,9 @@ async function outcomeOf(mode: Mode, row: Row): Promise<Outcome> {
   return outcome;
 }
 
-it('covers every mode and every class of tool with the table', async () => {
-  for (const row of ROWS) {
-    for (const mode of PERMISSION_MODES) {
-      const got = await outcomeOf(mode, row);
-      expect(got, `${row.what} under ${mode}`).toBe(row.expect[mode]);
-    }
+it.each(ROWS.map((row) => [row.what, row] as const))('%s: every mode answers as the table says', async (_what, row) => {
+  for (const mode of PERMISSION_MODES) {
+    const got = await outcomeOf(mode, row);
+    expect(got, `${row.what} under ${mode}`).toBe(row.expect[mode]);
   }
 });

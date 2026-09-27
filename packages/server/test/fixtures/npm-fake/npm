@@ -1,7 +1,10 @@
 #!/bin/sh
 # A stand-in for npm: waits when the caller says to, says one line, and leaves
-# the code the caller named.
+# the code the caller named. With FAKE_NPM_LOG set it appends a line to that
+# file as it starts and as it ends, so a case can see whether two runs overlapped.
 
+[ -n "$FAKE_NPM_LOG" ] && echo "start $*" >> "$FAKE_NPM_LOG"
 [ -n "$FAKE_NPM_SLEEP" ] && sleep "$FAKE_NPM_SLEEP"
 echo "npm noise"
+[ -n "$FAKE_NPM_LOG" ] && echo "end $*" >> "$FAKE_NPM_LOG"
 exit "${FAKE_NPM_EXIT:-0}"

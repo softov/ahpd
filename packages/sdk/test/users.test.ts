@@ -239,6 +239,13 @@ it('refuses a role nothing defines, rather than adding somebody who may do nothi
   expect(await users.list()).toEqual([]);
 });
 
+it('refuses a role named like an object key, and resolves none to anything', async () => {
+  const users = open();
+  await expect(users.add('x', ['constructor'])).rejects.toThrow(/no role called constructor/);
+  expect(await users.grantsOfRoles(['__proto__'])).toEqual([]);
+  expect(await users.grantsOfRoles(['constructor', 'toString'])).toEqual([]);
+});
+
 it('mints a new secret each time, and only the last one verifies', async () => {
   const users = open();
   await users.add('a', ['member']);

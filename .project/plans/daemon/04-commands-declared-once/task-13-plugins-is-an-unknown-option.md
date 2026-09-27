@@ -4,9 +4,9 @@ status: done
 depends: [task-12-cofold-fields-say-whether-they-negate.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L203-L207](../../../../packages/server/src/commands/options.ts#L203-L207) - `noPlugins`, spelled `--no-plugins`, with no positive spelling"
-  - "[code://packages/server/test/server-cli.test.ts#L286-L290](../../../../packages/server/test/server-cli.test.ts#L286-L290) - the refusal case"
-  - "[code://packages/server/test/server-cli.test.ts#L213-L218](../../../../packages/server/test/server-cli.test.ts#L213-L218) - the completion case"
+  - "[code://packages/server/src/commands/options.ts#L195-L199](../../../../packages/server/src/commands/options.ts#L195-L199) - `noPlugins`, spelled `--no-plugins`, with no positive spelling"
+  - "[code://packages/server/test/server-cli.test.ts#L301-L305](../../../../packages/server/test/server-cli.test.ts#L301-L305) - the refusal case"
+  - "[code://packages/server/test/server-cli.test.ts#L228-L233](../../../../packages/server/test/server-cli.test.ts#L228-L233) - the completion case"
 ---
 
 ## Objective
@@ -15,8 +15,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/options.ts:203-207` - `noPlugins`' `cli` gains `negatable: false`.
-- `UPDATE: packages/server/test/server-cli.test.ts:213-218, 286-290` - the completion and refusal cases.
+- `UPDATE: packages/server/src/commands/options.ts:195-199` - `noPlugins`' `cli` gains `negatable: false`.
+- `UPDATE: packages/server/test/server-cli.test.ts:228-233, 301-305` - the completion and refusal cases.
 
 ## Steps
 

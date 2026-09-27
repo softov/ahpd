@@ -37,10 +37,10 @@ import type { ClientToolRelay } from './tools.js';
 /**
  * Whether a path a tool names stays inside the directory the session works in.
  *
- * `resolveWithin` is the check `@cofold/tools` runs before its own file tools
- * touch a path, so what this host calls outside is what cofold also refuses: a
- * symlink that leaves the workspace is outside, and a link whose target does
- * not exist yet is judged by the target it names rather than by the link.
+ * `resolveWithin` is `@cofold/tools`' own resolver, which its file tools resolve
+ * every path with and refuse nothing by, so this host judges a path where they
+ * will touch it: a symlink out of the workspace is outside, and a link whose
+ * target does not exist yet is judged by the target it names, not the link.
  *
  * The workspace boundary is a host fact, which is why the harness takes it as
  * a predicate rather than a directory: this host's tools are the daemon's and

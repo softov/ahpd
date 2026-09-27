@@ -4,9 +4,9 @@ status: implemented
 depends: [task-14-inside-follows-a-dangling-link.md, task-15-a-declined-edit-sends-its-after-when-declined.md]
 layer: "docs, agent-cofold"
 refs:
-  - "[code://docs/PLUGINS.md#L409-L414](../../../../docs/PLUGINS.md#L409-L414) - the tool section: the symlink claim, `web_fetch` said to stop every reach of the machine, `default` read as the mode a session gets"
-  - "[code://packages/agent-cofold/package.json#L64-L69](../../../../packages/agent-cofold/package.json#L64-L69) - `@cofold/agents` `^0.1.0`, which does not require 0.1.1"
-  - "[code://pnpm-workspace.yaml#L17-L27](../../../../pnpm-workspace.yaml#L17-L27) - `minimumReleaseAgeExclude`, with versions the lockfile no longer holds and two styles"
+  - "[code://docs/PLUGINS.md#L409-L413](../../../../docs/PLUGINS.md#L409-L413) - the tool section, where a session naming no mode gets `auto` and `web_fetch` names what it does not catch"
+  - "[code://packages/agent-cofold/package.json#L64-L69](../../../../packages/agent-cofold/package.json#L64-L69) - the cofold dependencies, `@cofold/agents` and its siblings at `^0.1.1`"
+  - "[code://pnpm-workspace.yaml#L17-L24](../../../../pnpm-workspace.yaml#L17-L24) - `minimumReleaseAgeExclude`, one version the lockfile holds per line"
 ---
 
 ## Objective

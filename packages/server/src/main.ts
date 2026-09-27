@@ -17,7 +17,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { fullyNamed, isFlag, literalPrefix, matchCommand, optionNotes, optionTable, optionsOf, tokenize, visible } from '@cofold/commands';
+import { ArgumentError, exitCodeFor, fullyNamed, isFlag, literalPrefix, matchCommand, optionNotes, optionTable, optionsOf, tokenize, visible } from '@cofold/commands';
 import type { Command, OptionSpec, Runner } from '@cofold/commands';
 import { Program, renderDefinitions, runEntry, styleFor } from '@cofold/terminal';
 import { cliRegistry, remoteRegistry } from './commands/registry.js';
@@ -69,10 +69,11 @@ function readGlobal(argv: readonly string[], name: string): string | undefined {
  *
  * `--token` and `--token-file` are two spellings of the one secret and are
  * refused together; `AHPD_TOKEN` is read only when neither flag is given, so a
- * file wins over an environment a child process inherited, and a missing or
- * empty file is refused rather than tried. A remote call with no credential at
- * all is refused here, before anything is fetched, because every daemon that
- * serves the API requires one - decision `remote-needs-a-token`.
+ * file wins over an environment a child process inherited, and a missing file
+ * is refused rather than tried. A token that is empty or only spaces, from any
+ * of the three, is no token. A remote call with no credential at all is refused
+ * here, before anything is fetched, because every daemon that serves the API
+ * requires one - decision `remote-needs-a-token`.
  */
 function tokenFor(argv: readonly string[], url: string): string {
   const inline = readGlobal(argv, '--token');
@@ -81,22 +82,16 @@ function tokenFor(argv: readonly string[], url: string): string {
     process.stderr.write('ahpd: pass --token or --token-file, not both.\n');
     process.exit(2);
   }
+  let held: string | undefined;
   if (file !== undefined) {
-    let held = '';
     try { held = readFileSync(file, 'utf8').trim(); }
     catch {
       process.stderr.write(`ahpd: no token file at ${file}.\n`);
       process.exit(2);
     }
-    if (held === '') {
-      process.stderr.write(`ahpd: ${file} is empty.\n`);
-      process.exit(2);
-    }
-    return held;
   }
-  if (inline !== undefined) return inline;
-  const fromEnv = process.env['AHPD_TOKEN'];
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
+  else held = inline ?? process.env['AHPD_TOKEN'];
+  if (held !== undefined && held.trim() !== '') return held;
   process.stderr.write(`ahpd: ${url} needs a token: pass --token, --token-file or AHPD_TOKEN.\n`);
   process.exit(2);
 }
@@ -163,7 +158,9 @@ const asked = tokens.options['--help'] === true || tokens.options['--version'] =
  * `ahpd plugin` is a person asking what `plugin` does, and the program would
  * answer `unknown command "plugin"`, naming the word they already typed. The
  * list is read off the visible commands under that word, so it says what exists
- * rather than repeating a sentence kept by hand.
+ * rather than repeating a sentence kept by hand. It is refused as any usage
+ * failure is: the program's name before the sentence on stderr, and the exit
+ * code an `ArgumentError` has, whatever the output mode.
  */
 const first = tokens.words[0];
 if (!asked && first !== undefined && matchCommand(program.commands, tokens.words) === null) {
@@ -172,8 +169,9 @@ if (!asked && first !== undefined && matchCommand(program.commands, tokens.words
     .map((command) => literalPrefix(command)[1])
     .filter((word): word is string => word !== undefined);
   if (subs.length > 0 && !subs.includes(tokens.words[1] ?? '')) {
-    process.stderr.write(`${first} takes ${subs.slice(0, -1).join(', ')}${subs.length > 1 ? ' or ' : ''}${subs.at(-1) ?? ''}.\n`);
-    process.exit(2);
+    const refused = new ArgumentError(`${first} takes ${subs.slice(0, -1).join(', ')}${subs.length > 1 ? ' or ' : ''}${subs.at(-1) ?? ''}.`);
+    process.stderr.write(`${program.name}: ${refused.message}\n`);
+    process.exit(exitCodeFor(refused));
   }
 }
 /*

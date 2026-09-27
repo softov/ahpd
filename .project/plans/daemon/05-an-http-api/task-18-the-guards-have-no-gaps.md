@@ -5,10 +5,10 @@ depends: [task-11-origin-and-host-are-checked.md, task-12-http-host.md, task-13-
 layer: "server"
 refs:
   - "[code://packages/server/src/http.ts#L72-L79](../../../../packages/server/src/http.ts#L72-L79) - `foreign`, which refuses a request with no `Host` as it refuses a foreign one"
-  - "[code://packages/server/src/commands/run.ts#L60-L71](../../../../packages/server/src/commands/run.ts#L60-L71) - `apiOrigins`, which brackets an IPv6 host in the authorities and origins"
-  - "[code://packages/server/src/commands/options.ts#L297-L305](../../../../packages/server/src/commands/options.ts#L297-L305) - `http.host`, refused unless it is a non-empty string and a port is named"
+  - "[code://packages/server/src/commands/run.ts#L64-L75](../../../../packages/server/src/commands/run.ts#L64-L75) - `apiOrigins`, which brackets an IPv6 host in the authorities and origins"
+  - "[code://packages/server/src/commands/options.ts#L289-L297](../../../../packages/server/src/commands/options.ts#L289-L297) - `http.host`, refused unless it is a non-empty string and a port is named"
   - "[code://packages/server/src/commands/scopes.ts#L34-L45](../../../../packages/server/src/commands/scopes.ts#L34-L45) - `checkScopes`, which answers 401 when a request has no actor"
-  - "[code://packages/server/src/main.ts#L112-L115](../../../../packages/server/src/main.ts#L112-L115) - `warnCleartext`, which compares the scheme without regard to case"
+  - "[code://packages/server/src/main.ts#L107-L110](../../../../packages/server/src/main.ts#L107-L110) - `warnCleartext`, which compares the scheme without regard to case"
 ---
 
 ## Objective
@@ -18,10 +18,10 @@ A request with no `Host` is refused like a foreign one; a daemon bound to an IPv
 ## Files
 
 - `UPDATE: packages/server/src/http.ts:72-79` - no `Host` is refused.
-- `UPDATE: packages/server/src/commands/run.ts:60-71` - an IPv6 host is bracketed in the authorities and origins.
-- `UPDATE: packages/server/src/commands/options.ts:297-305` - an empty `http.host` is refused.
+- `UPDATE: packages/server/src/commands/run.ts:64-75` - an IPv6 host is bracketed in the authorities and origins.
+- `UPDATE: packages/server/src/commands/options.ts:289-297` - an empty `http.host` is refused.
 - `UPDATE: packages/server/src/commands/scopes.ts:34-45` - no actor off the `cli` surface throws 401.
-- `UPDATE: packages/server/src/main.ts:112-115` - the scheme compared without case.
+- `UPDATE: packages/server/src/main.ts:107-110` - the scheme compared without case.
 - `UPDATE: packages/server/test/server-http.test.ts`, `packages/server/test/server-commands.test.ts`, `packages/server/test/server-cli.test.ts` - the cases below.
 
 ## Steps

@@ -31,6 +31,10 @@ const BUILT_IN: Record<string, Grant[]> = {
   guest: ['session:read', 'automation:read'],
 };
 
+/** A role by name from a table of roles, reading only the table's own keys, so `constructor` names no role. */
+const roleIn = (table: Record<string, Grant[]> | undefined, name: string): Grant[] | undefined =>
+  table !== undefined && Object.hasOwn(table, name) ? table[name] : undefined;
+
 /** The subjects the host itself answers to, beside any plugin's scheme. */
 export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config', 'users'] as const;
 
@@ -313,12 +317,12 @@ export function fileUsers(options: FileUserOptions): Users {
   const grantsOf = (roles: readonly string[], file: UserFile, complainFor?: string): Set<string> => {
     const held = new Set<string>();
     for (const role of roles) {
-      const defined = file.roles?.[role];
+      const defined = roleIn(file.roles, role);
       if (defined !== undefined) {
         for (const one of defined) held.add(one);
         continue;
       }
-      const built = BUILT_IN[role];
+      const built = roleIn(BUILT_IN, role);
       if (built !== undefined) {
         for (const one of built) held.add(one);
         continue;
@@ -490,7 +494,7 @@ export function fileUsers(options: FileUserOptions): Users {
        * write below, which is the more useful thing to say about it.
        */
       if (!broken) {
-        const unknown = roles.find((role) => file.roles?.[role] === undefined && BUILT_IN[role] === undefined);
+        const unknown = roles.find((role) => roleIn(file.roles, role) === undefined && roleIn(BUILT_IN, role) === undefined);
         if (unknown !== undefined) {
           const has = [...new Set([...Object.keys(file.roles ?? {}), ...Object.keys(BUILT_IN)])].sort();
           throw new Error(`no role called ${unknown}; this host has ${has.join(', ')}`);

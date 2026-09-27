@@ -5,9 +5,9 @@ depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
   - "[code://packages/server/src/main.ts#L39](../../../../packages/server/src/main.ts#L39) - `argv0`, the words as typed rather than rewritten"
-  - "[code://packages/server/src/main.ts#L157-L159](../../../../packages/server/src/main.ts#L157-L159) and [#L187-L188](../../../../packages/server/src/main.ts#L187-L188) - the union table once, `asked` from the tokens that are options, and the `run` word"
-  - "[code://packages/server/src/main.ts#L192-L211](../../../../packages/server/src/main.ts#L192-L211) - `completionLine`, which names `run` before a word that starts with `-`"
-  - "[code://packages/server/test/server-cli.test.ts#L207-L224](../../../../packages/server/test/server-cli.test.ts#L207-L224) - the completion and value-position cases"
+  - "[code://packages/server/src/main.ts#L152-L154](../../../../packages/server/src/main.ts#L152-L154) and [#L185-L186](../../../../packages/server/src/main.ts#L185-L186) - the union table once, `asked` from the tokens that are options, and the `run` word"
+  - "[code://packages/server/src/main.ts#L190-L209](../../../../packages/server/src/main.ts#L190-L209) - `completionLine`, which names `run` before a word that starts with `-`"
+  - "[code://packages/server/test/server-cli.test.ts#L222-L239](../../../../packages/server/test/server-cli.test.ts#L222-L239) - the completion and value-position cases"
   - file:///github/cofold/packages/terminal/src/completion.ts - `__complete`, which completes against the command its words name
 ---
 
@@ -18,13 +18,13 @@ refs:
 ## Files
 
 - `UPDATE: packages/server/src/main.ts:39` - the words are left as typed, so a `-v` that a flag consumed stays that flag's value.
-- `UPDATE: packages/server/src/main.ts:157-159, 187-188` - the union table read once, `asked` from the tokens that are options, and the `run` word.
-- `UPDATE: packages/server/src/main.ts:192-211` - `completionLine`, which names `run` before a word that starts with `-` and no command.
-- `UPDATE: packages/server/test/server-cli.test.ts:207-224` - completion and value-position cases.
+- `UPDATE: packages/server/src/main.ts:152-154, 185-186` - the union table read once, `asked` from the tokens that are options, and the `run` word.
+- `UPDATE: packages/server/src/main.ts:190-209` - `completionLine`, which names `run` before a word that starts with `-` and no command.
+- `UPDATE: packages/server/test/server-cli.test.ts:222-239` - completion and value-position cases.
 
 ## Steps
 
-1. Tokenize `argv` once with the program's permissive option table (as `main.ts:157-159` already does) and read `-v`, `-h`, `--help` and `--version` from the tokens that are options, never from a word consumed as a flag's value; map `-v` to `--version` only there.
+1. Tokenize `argv` once with the program's permissive option table (as `main.ts:152-154` already does) and read `-v`, `-h`, `--help` and `--version` from the tokens that are options, never from a word consumed as a flag's value; map `-v` to `--version` only there.
 2. For `__complete`: when the words after `--` hold no command word and the word being completed starts with `-`, complete against the hidden `run` command, so the foreground run's flags are offered with no word typed; an empty word keeps offering the command words.
 3. Keep `run` hidden from the command list that completion offers.
 
@@ -32,7 +32,7 @@ refs:
 
 - Case "completes the foreground run's flags": `['__complete', '--', '--po']` prints `--port`. Today it prints nothing.
 - Case "a value spelled -v is a value": `['--stdio', '--connection-token', '-v', '--plugin', BACKEND, '--config-file', config, '--no-update-check']` exits 0 and stderr contains `token: from --connection-token`. Today it prints the version and exits 0 without starting.
-- The `--version`/`-v` and `--help`/`-h` cases in `packages/server/test/server-cli.test.ts:169-191` stay green.
+- The `--version`/`-v` and `--help`/`-h` cases in `packages/server/test/server-cli.test.ts:184-206` stay green.
 - `node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green.
 
 ## Resume

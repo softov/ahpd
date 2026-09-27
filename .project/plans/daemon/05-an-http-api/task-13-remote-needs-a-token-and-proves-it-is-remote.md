@@ -7,11 +7,11 @@ refs:
   - "[decisions/remote-needs-a-token.md](../../../decisions/remote-needs-a-token.md) - the refusal"
   - "[decisions/remote-reads-its-token-from-a-file-too.md](../../../decisions/remote-reads-its-token-from-a-file-too.md) - `--token-file`"
   - "[decisions/remote-warns-when-its-token-travels-in-cleartext.md](../../../decisions/remote-warns-when-its-token-travels-in-cleartext.md) - the cleartext warning"
-  - "[code://packages/server/src/main.ts#L37-L115](../../../../packages/server/src/main.ts#L37-L115) - `ON_MACHINE`, `tokenFor` and `warnCleartext`, read before the program exists"
-  - "[code://packages/server/src/commands/options.ts#L114](../../../../packages/server/src/commands/options.ts#L114) - the `--token-file` global"
+  - "[code://packages/server/src/main.ts#L37-L110](../../../../packages/server/src/main.ts#L37-L110) - `ON_MACHINE`, `tokenFor` and `warnCleartext`, read before the program exists"
+  - "[code://packages/server/src/commands/options.ts#L106](../../../../packages/server/src/commands/options.ts#L106) - the `--token-file` global"
   - "[code://packages/server/src/commands/registry.ts#L59-L75](../../../../packages/server/src/commands/registry.ts#L59-L75) - `remoteCache`, per user and owner-only"
   - "[code://packages/server/test/server-http.test.ts#L141-L169](../../../../packages/server/test/server-http.test.ts#L141-L169) - the client with its own directories"
-  - "[code://packages/server/test/server-http.test.ts#L660-L758](../../../../packages/server/test/server-http.test.ts#L660-L758) - the seven cases"
+  - "[code://packages/server/test/server-http.test.ts#L718-L816](../../../../packages/server/test/server-http.test.ts#L718-L816) - the seven cases"
 ---
 
 ## Objective
@@ -24,10 +24,10 @@ The `--remote` tests pass only when the daemon answered.
 
 ## Files
 
-- `UPDATE: packages/server/src/main.ts:37-115` - `--token-file` read beside `--token`, refused together, a missing or empty file refused, `AHPD_TOKEN` only when neither flag is given (decision `remote-reads-its-token-from-a-file-too`); a `--remote` with no token refused with a sentence naming all three (decision `remote-needs-a-token`); the cleartext warning.
-- `UPDATE: packages/server/src/commands/options.ts:114` - the `--token-file` global beside `--token`, so help and completion show it.
+- `UPDATE: packages/server/src/main.ts:37-110` - `--token-file` read beside `--token`, refused together, a missing or empty file refused, `AHPD_TOKEN` only when neither flag is given (decision `remote-reads-its-token-from-a-file-too`); a `--remote` with no token refused with a sentence naming all three (decision `remote-needs-a-token`); the cleartext warning.
+- `UPDATE: packages/server/src/commands/options.ts:106` - the `--token-file` global beside `--token`, so help and completion show it.
 - `UPDATE: packages/server/src/commands/registry.ts:59-75` - `remoteCache` moves to `$XDG_CACHE_HOME/ahpd/remote` (default `~/.cache/ahpd/remote`), created with mode 0700 before `loadManifest` writes to it.
-- `UPDATE: packages/server/test/server-http.test.ts:141-169, 660-758` - the client gets its own `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`, and the seven cases.
+- `UPDATE: packages/server/test/server-http.test.ts:141-169, 718-816` - the client gets its own `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`, and the seven cases.
 
 ## Steps
 

@@ -34,3 +34,6 @@ refs:
 - `node_modules/.bin/vitest run packages/agent-cofold/test/agent-cofold-tools.test.ts` green.
 
 ## Resume
+
+Verified 2026-09-26: the second review reverted this task's fix and the test named in the Validation failed, then passed with the fix back.
+`toolsOf` keeps `duckduckgo` before `brave` and the scripted `web_search` turn returns DuckDuckGo's results.

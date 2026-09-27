@@ -4,10 +4,10 @@ status: done
 depends: [task-17-a-caller-gives-only-what-it-holds.md, task-18-the-guards-have-no-gaps.md, task-19-the-tests-prove-their-validation.md, task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md, task-21-npm-runs-without-holding-the-daemon.md]
 layer: "docs"
 refs:
-  - "[code://docs/DAEMON.md#L471-L476](../../../../docs/DAEMON.md#L471-L476) - served commands said to have \"the same flags, help, completion and `--json`\""
+  - "[code://docs/DAEMON.md#L449-L453](../../../../docs/DAEMON.md#L449-L453) - the served-commands paragraph: the daemon's own options, and the fields absent from the manifest"
   - "[code://docs/USERS.md#L371](../../../../docs/USERS.md#L371) - `users` listed with a `read` verb no command uses"
   - "[code://packages/server/src/commands/registry.ts#L62-L65](../../../../packages/server/src/commands/registry.ts#L62-L65) - the cache comment, citing `remote-reads-its-token-from-a-file-too`"
-  - "[code://packages/server/src/commands/options.ts#L254-L258](../../../../packages/server/src/commands/options.ts#L254-L258) - `servedUserFields`, citing `the-user-commands-need-users-write` for why paths are absent"
+  - "[code://packages/server/src/commands/options.ts#L246-L250](../../../../packages/server/src/commands/options.ts#L246-L250) - `servedUserFields`, citing `the-user-commands-need-users-write` for why paths are absent"
 ---
 
 ## Objective
@@ -16,11 +16,11 @@ refs:
 
 ## Files
 
-- `UPDATE: docs/DAEMON.md:471-476` - the served commands' fields.
+- `UPDATE: docs/DAEMON.md:449-453` - the served commands' fields.
 - `UPDATE: docs/DAEMON.md` - the scope table: `users:write` gives and removes only what the caller holds.
 - `UPDATE: docs/DAEMON.md:409-410` - served `config` masks each plugin option value as well as `connectionToken`.
 - `UPDATE: docs/USERS.md:371` - the `users` row.
-- `UPDATE: packages/server/src/commands/registry.ts:62-65`, `packages/server/src/commands/options.ts:254-258` - the cited decisions.
+- `UPDATE: packages/server/src/commands/registry.ts:62-65`, `packages/server/src/commands/options.ts:246-250` - the cited decisions.
 - `UPDATE: task-07` to `task-21` in this folder - refs.
 
 ## Steps

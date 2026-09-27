@@ -11,8 +11,8 @@ refs:
   - "[code://packages/sdk/src/listen.ts#L196-L204](../../../../packages/sdk/src/listen.ts#L196-L204) - Deno's handler, the same"
   - "[code://packages/sdk/src/listen.ts#L284-L293](../../../../packages/sdk/src/listen.ts#L284-L293) - Node's plain server beside `ws`"
   - "[code://packages/server/src/http.ts#L81-L192](../../../../packages/server/src/http.ts#L81-L192) - `apiHandler`, `withoutApi`, `listenApi` and `pathOf`"
-  - "[code://packages/server/src/commands/run.ts#L178-L180](../../../../packages/server/src/commands/run.ts#L178-L180) - the refusal to start with `http` off Node"
-  - "[code://packages/server/src/commands/run.ts#L470-L472](../../../../packages/server/src/commands/run.ts#L470-L472) - the handler passed on Node only"
+  - "[code://packages/server/src/commands/run.ts#L182-L184](../../../../packages/server/src/commands/run.ts#L182-L184) - the refusal to start with `http` off Node"
+  - "[code://packages/server/src/commands/run.ts#L474-L476](../../../../packages/server/src/commands/run.ts#L474-L476) - the handler passed on Node only"
   - "[code://docs/DAEMON.md#L389-L391](../../../../docs/DAEMON.md#L389-L391) - the docs that say the API is Node-only"
 ---
 
@@ -28,7 +28,7 @@ A daemon with `http` on starts and serves `/api` on Node, Bun and Deno, on its o
 - `UPDATE: packages/sdk/src/listen.ts:145-156, 196-204` - on Bun and Deno a request that is not an upgrade goes to `options.request` when there is one, before the 401 and 426 the upgrade path answers.
 - `UPDATE: packages/sdk/src/listen.ts:284-293` - on Node the plain server carries the handler through `toNodeListener`.
 - `UPDATE: packages/server/src/http.ts` - `apiHandler` and `withoutApi` are `Request` handlers; `pathOf` reads `new URL(request.url).pathname`; `listenApi` serves the handler on its own port through `listen`'s runtime paths, not `node:http` directly.
-- `UPDATE: packages/server/src/commands/run.ts:178-180, 470-472` - no refusal, and the handler is passed on every runtime.
+- `UPDATE: packages/server/src/commands/run.ts:182-184, 474-476` - no refusal, and the handler is passed on every runtime.
 - `UPDATE: docs/DAEMON.md:389-391` - the API is served on all three.
 - `UPDATE: packages/server/test/server-http.test.ts` - the cases call the handlers with a `Request` where no socket is needed.
 

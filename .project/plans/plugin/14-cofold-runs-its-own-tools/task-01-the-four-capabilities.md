@@ -36,8 +36,10 @@ refs:
 Done.
 `packages/agent-cofold/src/capabilities.ts` builds the four `@cofold/tools` capabilities from `CofoldOptions.tools`.
 `plugin.ts` reads the option out of a configuration with `toolsOf`, and `agent.ts` carries it as `tools?: ToolsConfig`, all four on when it is absent.
-`agentOf` passes the capabilities, in papo's order, with memory under `<store root>/memory/<workspace slug>/` and `web_search` only when `tools.web.search` names a provider.
+`agentOf` passes the capabilities, in the order files, shell, web, memory, with memory under `<store root>/memory/<workspace slug>/` and `web_search` only when `tools.web.search` names a provider.
 What the plan did not know: with no provider the default is nine tools, because `web_search` needs one and `web_fetch` is the ninth.
 The host's offered tool names go into `capabilitiesOf`, so a host tool that shares a capability tool's name keeps it, since cofold fails a run whose capabilities contribute a duplicate name.
 A session whose store is in memory gets no memory capability, because there is no directory to keep memory files in.
 `capabilitiesOf` and the `ToolsConfig`/`SearchConfig` types are exported from `index.ts`.
+
+Re-run 2026-09-26: the second review ran this Validation against the tree and it passed; it was run again with `node_modules/.bin/vitest run packages/agent-cofold` green (11 files, 107 tests), five times beside a full `pnpm test`.

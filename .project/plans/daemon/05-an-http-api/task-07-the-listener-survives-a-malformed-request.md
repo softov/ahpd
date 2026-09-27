@@ -8,7 +8,7 @@ refs:
   - "[code://packages/server/src/http.ts#L81-L125](../../../../packages/server/src/http.ts#L81-L125) - `apiHandler` and `withoutApi`, both wrapped"
   - "[code://packages/server/src/http.ts#L190-L192](../../../../packages/server/src/http.ts#L190-L192) - `pathOf`, which is what can throw on a malformed `Host`"
   - "[code://packages/sdk/src/listen.ts#L274-L293](../../../../packages/sdk/src/listen.ts#L274-L293) - where the handler is attached, and the two shapes as they are"
-  - "[code://packages/server/src/commands/run.ts#L233-L235](../../../../packages/server/src/commands/run.ts#L233-L235) - `daemonRequest`, passed on Node whether `http` is on or not"
+  - "[code://packages/server/src/commands/run.ts#L237-L239](../../../../packages/server/src/commands/run.ts#L237-L239) - `daemonRequest`, passed on Node whether `http` is on or not"
   - "[code://packages/server/test/server-http.test.ts#L194-L238](../../../../packages/server/test/server-http.test.ts#L194-L238) - `raw` and the three cases"
 ---
 

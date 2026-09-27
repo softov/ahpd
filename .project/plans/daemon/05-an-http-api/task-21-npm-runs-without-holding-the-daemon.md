@@ -5,7 +5,7 @@ depends: [task-08-served-commands-act-on-the-daemons-own-options.md]
 layer: "server"
 refs:
   - "[code://packages/server/src/install.ts#L35-L68](../../../../packages/server/src/install.ts#L35-L68) - `Runner` and `run`: `spawn` with stderr written through as it arrives"
-  - "[code://packages/server/src/commands/plugin.ts#L88-L94](../../../../packages/server/src/commands/plugin.ts#L88-L94) - the restart hint, from `running()`, the detached daemon's record"
+  - "[code://packages/server/src/commands/plugin.ts#L106-L112](../../../../packages/server/src/commands/plugin.ts#L106-L112) - the restart hint, from `running()`, the detached daemon's record"
   - "[code://packages/server/src/commands/served.ts](../../../../packages/server/src/commands/served.ts) - `ServedFacts`, what a served command knows of the daemon answering"
 ---
 
@@ -17,7 +17,7 @@ A `plugin install` or `plugin remove` over HTTP does not stop the daemon answeri
 
 - `UPDATE: packages/server/src/install.ts:35-68` - `Runner` returns a promise; `run` spawns without waiting synchronously.
 - `UPDATE: packages/server/src/install.ts` - `installPlugins` and `removePlugins` await the runner.
-- `UPDATE: packages/server/src/commands/plugin.ts:88-94` - the restart hint.
+- `UPDATE: packages/server/src/commands/plugin.ts:106-112` - the restart hint.
 - `UPDATE: packages/server/test/plugin-install.test.ts` and the `server-cli` and `server-http` plugin cases - the runner replaced as a promise.
 
 ## Steps

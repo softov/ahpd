@@ -1,11 +1,11 @@
 ---
 title: A served plugin list hides every plugin option value
-status: todo
+status: implemented
 depends: [task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/plugin.ts#L21-L41](../../../../packages/server/src/commands/plugin.ts#L21-L41) - `plugin list`, whose rows carry each spec with its `options`"
-  - "[code://packages/server/src/commands/config.ts#L26-L36](../../../../packages/server/src/commands/config.ts#L26-L36) - `withoutSecrets`, the mask `config` uses"
+  - "[code://packages/server/src/commands/plugin.ts#L22-L46](../../../../packages/server/src/commands/plugin.ts#L22-L46) - `plugin list`, whose rows carry each spec with its `options`"
+  - "[code://packages/server/src/commands/config.ts#L40-L44](../../../../packages/server/src/commands/config.ts#L40-L44) - `withoutSecrets`, the mask `config` uses"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/config.ts:26-36` - the options mask is a function both commands use.
-- `UPDATE: packages/server/src/commands/plugin.ts:21-41` - served rows are masked.
+- `UPDATE: packages/server/src/commands/config.ts:40-44` - the options mask is a function both commands use.
+- `UPDATE: packages/server/src/commands/plugin.ts:22-46` - served rows are masked.
 - `UPDATE: packages/server/test/server-http.test.ts` - the case below.
 
 ## Steps
@@ -29,3 +29,5 @@ refs:
 - `node_modules/.bin/vitest run packages/server/test/server-http.test.ts` green.
 
 ## Resume
+
+Implemented 2026-09-27. The case was written first: a person holding only `config:read` asked `GET /api/plugin/list` of a daemon whose file names a plugin with `options: { apiKey: 'SECRETKEY1' }`, and the body carried `SECRETKEY1`. `config.ts` exports `withoutOptionValues`, which `withoutSecrets` now maps over the plugins, and a served `plugin list` puts each row's `spec` through it; the terminal's listing is unchanged. The case passes with `apiKey: '<set>'`, and `server-http.test.ts` is green (50). `docs/DAEMON.md` says `GET /api/plugin/list` masks the options as `config` does.

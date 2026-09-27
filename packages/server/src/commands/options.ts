@@ -79,14 +79,6 @@ export const stop: (message: string) => never = (message) => {
 };
 
 /**
- * A refusal, on whichever surface asked.
- *
- * A handler fails by throwing, so the same sentence reaches a terminal through
- * `runEntry` and a request through `serve()`; nothing here decides by surface.
- */
-export const refuse: (surface: string | undefined, message: string) => never = (_surface, message) => stop(message);
-
-/**
  * A failure of the machine's state rather than of the words typed.
  *
  * The kind keeps the exit code a script sees, which is 1; the status is what a
@@ -297,7 +289,7 @@ const httpOf = (value: unknown): HttpSetting | undefined => {
   if (held.host !== undefined && typeof held.host !== 'string') {
     return stop(`http.host must be a string, not ${JSON.stringify(held.host)}.`);
   }
-  if (typeof held.host === 'string' && held.host.trim() === '') {
+  if (typeof held.host === 'string' && (held.host === '' || held.host.trim() !== held.host)) {
     return stop(`http.host must name an address, not ${JSON.stringify(held.host)}.`);
   }
   if (held.host !== undefined && held.port === undefined) {

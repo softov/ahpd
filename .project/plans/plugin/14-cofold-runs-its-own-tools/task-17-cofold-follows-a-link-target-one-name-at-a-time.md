@@ -5,8 +5,8 @@ depends: [task-14-inside-follows-a-dangling-link.md]
 layer: "cofold tools"
 refs:
   - file:///github/cofold/packages/tools/src/paths.ts - `realPath`, which follows a link with `resolve(dirname(path), target)` and so collapses `..` before the kernel would
-  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L517-L570](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L517-L570) - `ROWS`, the mode table"
-  - "[code://docs/PLUGINS.md#L409-L417](../../../../docs/PLUGINS.md#L409-L417) - the symlink sentence"
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L552-L602](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L552-L602) - `ROWS`, the mode table"
+  - "[code://docs/PLUGINS.md#L411](../../../../docs/PLUGINS.md#L411) - the symlink sentences, which name the shape this task catches"
 ---
 
 ## Objective
@@ -34,3 +34,9 @@ In `@cofold/tools`, `resolveWithin` judges a link whose relative target has `..`
 - In ahpd after the release: the `trick` row answers `ask`; `node_modules/.bin/vitest run packages/agent-cofold` green.
 
 ## Resume
+
+- 2026-09-26: steps 1 to 3 are in place in `/github/cofold/packages/tools`, uncommitted, with nothing else in cofold touched. `realPath` in `src/paths.ts` follows a dangling link through `follow`, which reads the target one name at a time from the link's real directory: `..` is the real parent of what is resolved so far and every other name is resolved by `realPath` again. The hop limit is one budget of 40 shared by every link met on the way, so a target that names a link twice cannot grow the walk.
+- `src/paths.test.ts` is new, since the package had no such file: `trick -> sublink/../esc2.txt` with `sublink -> <away>/sub` is outside, as are `through -> sublink/in.txt` and a chain of two dangling links; `back -> ../ws/kept.txt` stays inside and a link to itself stops at the limit.
+- Seen failing first: against the committed `paths.ts`, `resolveWithin(ws, 'trick').inside` was `true` (the `expect(...).toBe(false)` on `trick`), because `resolve(dirname(path), target)` collapsed `sublink/..` to the workspace before any name was read.
+- `vitest run --project @cofold/tools` green (29 tests, no type errors) and `tsc -p tsconfig.test.json --noEmit` clean in `packages/tools`.
+- Waiting on: Softov to commit the cofold change and publish `@cofold/tools` through `release.yml`. Step 4 (the version bump in ahpd and the `trick` row in `ROWS`) is not done.

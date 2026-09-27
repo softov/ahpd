@@ -386,7 +386,14 @@ describe('http.host', () => {
     expect(one.apiPort).toBeGreaterThan(0);
     const said = await rawAt('::1', one.apiPort, `GET /api/cli-manifest HTTP/1.1\r\nHost: [::1]:${String(one.apiPort)}\r\nAuthorization: Bearer root-secret\r\nConnection: close\r\n\r\n`);
     expect(status(said)).toBe(200);
-  }, 30000);
+    // The `http on` line names a URL a parser reads back, and `--remote` takes
+    // its origin as printed.
+    expect(one.apiHost).toBe('[::1]');
+    const origin = `http://${one.apiHost}:${String(one.apiPort)}`;
+    const remote = await cli(['--remote', origin, '--token', 'root-secret', 'status']);
+    expect(remote.code).toBe(0);
+    expect(remote.stdout).toContain(String(one.child.pid));
+  }, 40000);
 
   it('refuses http.host without an http.port', async () => {
     writeFileSync(config, JSON.stringify({ http: { host: '127.0.0.1' }, plugins: [BACKEND] }));
@@ -408,6 +415,12 @@ describe('the names the API answers to', () => {
     const names = apiOrigins('2001:db8::5', undefined, 9187);
     expect(names.authorities).toContain('[2001:db8::5]:9187');
     expect(names.origins).toContain('http://[2001:db8::5]:9187');
+  });
+
+  it('answers to a resource by its host with the port it names', () => {
+    const names = apiOrigins('127.0.0.1', 'https://ahpd.example.com:8443/', 9187);
+    expect(names.authorities).toContain('ahpd.example.com:8443');
+    expect(names.origins).toContain('https://ahpd.example.com:8443');
   });
 
   it('keeps an IPv4 bind as it was written', () => {
@@ -496,6 +509,13 @@ describe('a request signs in', () => {
     expect((await post(`${base}/user/rm/ada`, pat, {})).status).toBe(403);
     expect(readFileSync(usersFile, 'utf8')).toContain('ada');
 
+    // Re-adding a person replaces their roles, so it is bounded by the roles
+    // they hold as well as by the ones being given.
+    const demoted = await post(`${base}/user/add/ada`, pat, { role: ['people'] });
+    expect(demoted.status).toBe(403);
+    expect((await demoted.json() as { message: string }).message).toBe('pat may not *:* here');
+    expect(await directory.grantsOfPerson('ada')).toEqual(['*:*']);
+
     // The deployment token holds every grant, so the same three answer it.
     expect((await post(`${base}/user/add/mallory`, 'root-secret', { role: ['admin'] })).status).toBe(200);
     expect((await post(`${base}/user/token/ada`, 'root-secret', {})).status).toBe(200);
@@ -514,6 +534,27 @@ describe('a request signs in', () => {
     expect(answered).toContain('"id":1');
 
     expect((await installing).status).toBe(200);
+  }, 30000);
+
+  it('runs two served installs one after the other, and names both', async () => {
+    const log = join(home, 'npm.log');
+    const one = await daemon(
+      { http: true, plugins: [BACKEND] },
+      ['--connection-token', 'root-secret'],
+      fakeNpm({ FAKE_NPM_SLEEP: '1', FAKE_NPM_LOG: log }),
+    );
+    const url = `http://127.0.0.1:${String(one.port)}/api/plugin/install`;
+    const answers = await Promise.all([
+      post(url, 'root-secret', { name: ['left-pad'] }),
+      post(url, 'root-secret', { name: ['is-odd'] }),
+    ]);
+    expect(answers.map((answer) => answer.status)).toEqual([200, 200]);
+    const plugins = (JSON.parse(readFileSync(config, 'utf8')) as { plugins: unknown[] }).plugins;
+    expect(plugins).toContain('left-pad');
+    expect(plugins).toContain('is-odd');
+    // Each npm ends before the next one starts.
+    const steps = readFileSync(log, 'utf8').trim().split('\n').map((line) => line.split(' ')[0]);
+    expect(steps).toEqual(['start', 'end', 'start', 'end']);
   }, 30000);
 
   it('tells a served install to restart the daemon that answered', async () => {
@@ -593,6 +634,23 @@ describe('what a served command reads', () => {
     expect(body).not.toContain('eu');
     const parsed = JSON.parse(body) as { config: { plugins: { options: Record<string, unknown> }[] } };
     expect(parsed.config.plugins[0]?.options).toEqual({ apiKey: '<set>', region: '<set>' });
+  }, 30000);
+
+  it('masks every plugin option value in a served plugin list', async () => {
+    writeFileSync(usersFile, JSON.stringify({ roles: { reader: ['config:read'] }, users: [] }));
+    const directory = fileUsers({ path: usersFile });
+    await directory.add('rea', ['reader']);
+    const reader = await directory.mint('rea');
+    const one = await daemon(
+      { http: true, plugins: [{ name: BACKEND, options: { apiKey: 'SECRETKEY1' } }] },
+      ['--connection-token', 'root-secret', '--users', usersFile],
+    );
+    const answered = await get(`http://127.0.0.1:${String(one.port)}/api/plugin/list`, reader);
+    expect(answered.status).toBe(200);
+    const body = await answered.text();
+    expect(body).not.toContain('SECRETKEY1');
+    const rows = JSON.parse(body) as { spec: { options: Record<string, unknown> } }[];
+    expect(rows[0]?.spec.options).toEqual({ apiKey: '<set>' });
   }, 30000);
 
   it('ignores the query on plugin list, and the daemon keeps running', async () => {

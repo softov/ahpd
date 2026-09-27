@@ -17,8 +17,8 @@ import { HttpError } from '@cofold/remote';
 import { fileUsers, refusalReason } from '@ahpd/sdk';
 import type { Grant, Principal } from '@ahpd/sdk';
 import { loadConfig, personalUrl } from '../config.js';
-import { isRoot } from './authorize.js';
-import { conflict, refuse, servedUserFields, userFields } from './options.js';
+import { isRoot, SIGN_IN } from './authorize.js';
+import { conflict, servedUserFields, stop, userFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /**
@@ -28,11 +28,14 @@ import type { ServedFacts } from './served.js';
  * what it holds, or granting a role it does not have is `admin` under another
  * name - decision `a-caller-gives-only-the-grants-it-holds`. The terminal's own
  * run has no caller to hold to anything, and the deployment token holds every
- * grant.
+ * grant. A served call with nobody behind it is refused here as the registry's
+ * hook refuses it, so the bound holds whatever hook the registry was built with.
  */
-const bounded = (context: Pick<CommandContext, 'request'>, grants: readonly Grant[]): void => {
+const bounded = (context: Pick<CommandContext, 'request' | 'surface'>, grants: readonly Grant[]): void => {
+  if (context.surface === 'cli') return;
   const actor = context.request?.actor as Principal | undefined;
-  if (actor === undefined || isRoot(actor)) return;
+  if (actor === undefined) throw new HttpError(401, SIGN_IN);
+  if (isRoot(actor)) return;
   const missing = grants.find((one) => !actor.can(one));
   if (missing !== undefined) throw new HttpError(403, refusalReason(actor.id, missing));
 };
@@ -54,7 +57,7 @@ function people(
   if (served !== undefined) {
     const path = served.options.users;
     if (path === undefined || served.users === undefined) {
-      refuse(context.surface, 'This daemon was started without a users file, so it has no people to manage.');
+      stop('This daemon was started without a users file, so it has no people to manage.');
     }
     const here = served.running();
     return { path, where: { host: here.host, port: here.port }, directory: served.users };
@@ -63,7 +66,7 @@ function people(
   const named = typeof input['users'] === 'string' ? input['users'] : undefined;
   const from = loadConfig(typeof input['configFile'] === 'string' ? input['configFile'] : undefined);
   const path = named ?? from.users;
-  if (path === undefined) refuse(context.surface, 'No user file. Pass --users <file> or set "users" in the configuration.');
+  if (path === undefined) stop('No user file. Pass --users <file> or set "users" in the configuration.');
   const where = {
     host: typeof input['host'] === 'string' ? input['host'] : typeof from.host === 'string' ? from.host : '127.0.0.1',
     port: typeof input['port'] === 'number' ? input['port'] : typeof from.port === 'number' ? from.port : 9187,
@@ -76,10 +79,10 @@ function people(
   return { path, where, directory };
 }
 
-/** The id a sub-command was given, refused the way the loop refused a flag. */
-const idOf = (context: { value<T = string>(name: string): T; surface?: string }, verb: string): string => {
+/** The id a sub-command was given; one spelled like an option is refused as an unknown flag would be. */
+const idOf = (context: { value<T = string>(name: string): T }, verb: string): string => {
   const id = context.value<string>('id');
-  if (id.startsWith('-')) refuse(context.surface, `user ${verb} takes an id: ahpd user ${verb} <id>`);
+  if (id.startsWith('-')) stop(`user ${verb} takes an id: ahpd user ${verb} <id>`);
   return id;
 };
 
@@ -126,13 +129,16 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
       const roles = context.list<string>('role');
       const held = roles.length > 0 ? roles : ['guest'];
       const issuer = context.optional<string>('issuer');
-      bounded(context, await directory.grantsOfRoles(held));
+      // Adding a person who is already in the file replaces their roles, so
+      // the roles they hold now are bounded as well as the ones being given.
+      const current = await directory.grantsOfPerson(id) ?? [];
+      bounded(context, [...await directory.grantsOfRoles(held), ...current]);
       // A role name or an issuer name that resolves to nothing is refused by
       // the directory; said here so it reads as the verb's own refusal rather
       // than a stack trace.
       await directory.add(id, held, issuer === undefined ? {} : { issuer })
         .catch((error: unknown) => {
-          refuse(context.surface, error instanceof Error ? error.message : String(error));
+          stop(error instanceof Error ? error.message : String(error));
         });
       return output({ id, roles: held, ...(issuer === undefined ? {} : { issuer }) },
         `Added ${id} (${held.join(', ')})${issuer === undefined ? '' : ` through ${issuer}`}. Give them a credential: ahpd user token ${id}\n`);

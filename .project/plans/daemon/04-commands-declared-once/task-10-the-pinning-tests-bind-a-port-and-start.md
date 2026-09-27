@@ -4,9 +4,9 @@ status: done
 depends: [task-05-start-forwards-the-words-after-start.md]
 layer: "server"
 refs:
-  - "[code://packages/server/test/server-cli.test.ts#L120-L156](../../../../packages/server/test/server-cli.test.ts#L120-L156) - `foreground`, which starts the daemon on a socket and reads the announcement"
-  - "[code://packages/server/test/server-cli.test.ts#L447-L478](../../../../packages/server/test/server-cli.test.ts#L447-L478) - the two bind cases and the `start`/`status`/`stop` round trip"
-  - "[code://packages/server/src/commands/run.ts#L516-L517](../../../../packages/server/src/commands/run.ts#L516-L517) - the announcement the cases read the host and port off"
+  - "[code://packages/server/test/server-cli.test.ts#L135-L171](../../../../packages/server/test/server-cli.test.ts#L135-L171) - `foreground`, which starts the daemon on a socket and reads the announcement"
+  - "[code://packages/server/test/server-cli.test.ts#L486-L517](../../../../packages/server/test/server-cli.test.ts#L486-L517) - the two bind cases and the `start`/`status`/`stop` round trip"
+  - "[code://packages/server/src/commands/run.ts#L520-L521](../../../../packages/server/src/commands/run.ts#L520-L521) - the announcement the cases read the host and port off"
 ---
 
 ## Objective

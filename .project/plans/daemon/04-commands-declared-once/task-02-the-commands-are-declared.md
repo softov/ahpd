@@ -33,4 +33,4 @@ Done: `packages/server/src/commands/` holds `options.ts` (the flag table and the
 `run` is a hidden command for the foreground daemon, because `ahpd` with no word is what people type; `start` keeps the daemon-flag input.
 `config`, the plugin writes and the user sub-commands declare `config:write`/`admin`, and `authorize` allows the local process owner.
 `packages/server/test/server-commands.test.ts` (3 cases) checks the registry, all nineteen daemon flags on `start`, and the scopes.
-The scopes each command needs are now owned by [daemon/05](../05-an-http-api/plan.md), which changes them and `packages/server/test/server-commands.test.ts:41-51` with them.
+The scopes each command needs are now owned by [daemon/05](../05-an-http-api/plan.md), which changes them and `packages/server/test/server-commands.test.ts:59-69` with them.

@@ -8,12 +8,12 @@ refs:
   - "[decisions/the-user-commands-need-users-write.md](../../../decisions/the-user-commands-need-users-write.md) - `users:write`"
   - "[decisions/installing-a-plugin-over-http-is-root-only.md](../../../decisions/installing-a-plugin-over-http-is-root-only.md) - the deployment token only"
   - "[decisions/the-config-command-hides-the-connection-token.md](../../../decisions/the-config-command-hides-the-connection-token.md) - no `connectionToken` value"
-  - "[code://packages/sdk/src/users.ts#L35](../../../../packages/sdk/src/users.ts#L35) - `SUBJECTS`, which now has `users`"
+  - "[code://packages/sdk/src/users.ts#L39](../../../../packages/sdk/src/users.ts#L39) - `SUBJECTS`, which now has `users`"
   - "[code://packages/server/src/commands/scopes.ts#L17-L45](../../../../packages/server/src/commands/scopes.ts#L17-L45) - the mark and the hook that reads it"
-  - "[code://packages/server/src/commands/plugin.ts#L26](../../../../packages/server/src/commands/plugin.ts#L26) and [#L54-L56](../../../../packages/server/src/commands/plugin.ts#L54-L56) - `config:read` on the list, and the deployment-token mark on install and remove"
-  - "[code://packages/server/src/commands/config.ts#L15-L36](../../../../packages/server/src/commands/config.ts#L15-L36) and [#L53-L56](../../../../packages/server/src/commands/config.ts#L53-L56) - `withoutSecrets`, and the served answer"
+  - "[code://packages/server/src/commands/plugin.ts#L27](../../../../packages/server/src/commands/plugin.ts#L27) and [#L72-L74](../../../../packages/server/src/commands/plugin.ts#L72-L74) - `config:read` on the list, and the deployment-token mark on install and remove"
+  - "[code://packages/server/src/commands/config.ts#L29-L44](../../../../packages/server/src/commands/config.ts#L29-L44) and [#L61-L64](../../../../packages/server/src/commands/config.ts#L61-L64) - `withoutSecrets`, and the served answer"
   - "[code://packages/sdk/test/users.test.ts#L186-L196](../../../../packages/sdk/test/users.test.ts#L186-L196) - `users:write` as a grant"
-  - "[code://packages/server/test/server-http.test.ts#L420-L563](../../../../packages/server/test/server-http.test.ts#L420-L563) - the cases under `a request signs in`"
+  - "[code://packages/server/test/server-http.test.ts#L433-L604](../../../../packages/server/test/server-http.test.ts#L433-L604) - the cases under `a request signs in`"
 ---
 
 ## Objective
@@ -24,15 +24,15 @@ This task starts after daemon/04's task that moves the scope check into the regi
 
 ## Files
 
-- `UPDATE: packages/sdk/src/users.ts:35` - `SUBJECTS` gains `users`.
-- `UPDATE: packages/server/src/commands/status.ts:23` and `plugin.ts:26` - `scopes: ['config:read']`; today none.
-- `UPDATE: packages/server/src/commands/plugin.ts:54-56` - install and remove carry `meta.deploymentTokenOnly`; today `config:write` alone.
+- `UPDATE: packages/sdk/src/users.ts:39` - `SUBJECTS` gains `users`.
+- `UPDATE: packages/server/src/commands/status.ts:23` and `plugin.ts:27` - `scopes: ['config:read']`; today none.
+- `UPDATE: packages/server/src/commands/plugin.ts:72-74` - install and remove carry `meta.deploymentTokenOnly`; today `config:write` alone.
 - `UPDATE: packages/server/src/commands/user.ts` - `scopes: ['users:write']` in place of `['admin']` on all four.
 - `UPDATE: packages/server/src/commands/scopes.ts:17-45` - the `CommandMeta` mark, and the hook reading it before the scopes.
 - `UPDATE: packages/server/src/commands/authorize.ts` - `ROOT` and `isRoot`, so the hook can tell the host from a person.
-- `UPDATE: packages/server/src/commands/config.ts:15-36, 53-56` - on the remote surface the answer carries `connectionToken` as present, without its value.
+- `UPDATE: packages/server/src/commands/config.ts:29-44, 61-64` - on the remote surface the answer carries `connectionToken` as present, without its value.
 - `UPDATE: packages/sdk/test/users.test.ts:186-196` - `users:write` is a grant a role may hold.
-- `UPDATE: packages/server/test/server-http.test.ts:420-563` - the cases below.
+- `UPDATE: packages/server/test/server-http.test.ts:433-604` - the cases below.
 - `UPDATE: packages/server/test/server-commands.test.ts` - the scopes the registry pins.
 
 ## Steps

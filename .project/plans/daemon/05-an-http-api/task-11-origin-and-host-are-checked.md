@@ -6,8 +6,8 @@ layer: "server"
 refs:
   - "[The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) - what this task applies, and the daemon's own origins"
   - "[code://packages/server/src/http.ts#L34-L107](../../../../packages/server/src/http.ts#L34-L107) - `ApiOrigins`, `foreign` and `apiHandler`, where every API request enters"
-  - "[code://packages/server/src/commands/run.ts#L48-L71](../../../../packages/server/src/commands/run.ts#L48-L71) - `apiOrigins`, the names and the resource host"
-  - "[code://packages/server/src/commands/run.ts#L225-L231](../../../../packages/server/src/commands/run.ts#L225-L231) and [#L477](../../../../packages/server/src/commands/run.ts#L477) - the lazily read bound port"
+  - "[code://packages/server/src/commands/run.ts#L51-L75](../../../../packages/server/src/commands/run.ts#L51-L75) - `apiOrigins`, the names and the resource host"
+  - "[code://packages/server/src/commands/run.ts#L229-L235](../../../../packages/server/src/commands/run.ts#L229-L235) and [#L481](../../../../packages/server/src/commands/run.ts#L481) - the lazily read bound port"
   - "[code://packages/server/test/server-http.test.ts#L241-L288](../../../../packages/server/test/server-http.test.ts#L241-L288) - the six cases"
 ---
 
@@ -19,7 +19,7 @@ A request with a body whose `content-type` is not `application/json` is answered
 ## Files
 
 - `UPDATE: packages/server/src/http.ts:34-107` - `ApiOrigins`, `foreign` and `apiHandler`; the check runs before `serve()`, the manifest included.
-- `UPDATE: packages/server/src/commands/run.ts:48-71, 225-231, 477` - `apiOrigins` builds the names, and `apiBoundPort` is read per request because it is known only after both listeners are bound.
+- `UPDATE: packages/server/src/commands/run.ts:51-75, 229-235, 481` - `apiOrigins` builds the names, and `apiBoundPort` is read per request because it is known only after both listeners are bound.
 - `UPDATE: packages/server/test/server-http.test.ts:241-288` - the cases below.
 
 ## Steps

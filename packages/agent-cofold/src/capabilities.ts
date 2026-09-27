@@ -91,7 +91,7 @@ const withoutTaken = (capability: Capability, taken: Set<string>): Capability =>
 };
 
 /**
- * The capabilities a session gets, in papo's fixed order.
+ * The capabilities a session gets, always in the order files, shell, web, memory.
  *
  * `storeRoot` is where the file store lives, so memory becomes
  * `<storeRoot>/memory/<workspace slug>/`; it is absent for a session whose

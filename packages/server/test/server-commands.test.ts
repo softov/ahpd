@@ -14,9 +14,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createRegistry } from '@cofold/commands';
 import type { AuthorizeRequest } from '@cofold/commands';
 import { cliRegistry } from '../src/commands/registry.js';
 import { checkScopes } from '../src/commands/scopes.js';
+import { declareUser } from '../src/commands/user.js';
 
 const registry = cliRegistry();
 
@@ -85,6 +87,18 @@ describe('the command registry', () => {
       scopes: ['config:read'],
       context: { surface: 'remote' },
     } as unknown as AuthorizeRequest)).toThrow('Sign in to use this host');
+  });
+
+  it('refuses a served user add with no actor, whatever the hook let through', async () => {
+    const bare = createRegistry({ authorize: () => undefined });
+    declareUser(bare);
+    const command = bare.find('user.add');
+    expect(command).toBeDefined();
+    const users = join(root, 'users.json');
+    await expect(bare.execute(command!, {
+      surface: 'remote',
+      input: { users, id: 'eve' },
+    })).rejects.toMatchObject({ status: 401 });
   });
 
   it('lets a remote caller holding the grant through the hook', async () => {

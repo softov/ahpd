@@ -53,12 +53,27 @@ beforeEach(() => {
   writeFileSync(config, '{}\n');
 });
 afterEach(() => {
-  for (const pid of spawned.splice(0)) {
+  for (const pid of [...spawned.splice(0), ...announced()]) {
     try { process.kill(pid, 'SIGKILL'); }
     catch { /* it was already gone, which is what was wanted */ }
   }
   rmSync(home, { recursive: true, force: true });
 });
+
+/**
+ * The pids the case's daemon log names in a `(pid N)` announcement.
+ *
+ * The log is the detached daemon's output, so a pid named there is one a
+ * `start` inside that daemon spawned, which `daemon.json` may not record.
+ */
+const announced = (): number[] => {
+  let log = '';
+  try { log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8'); }
+  catch { return []; }
+  return [...log.matchAll(/\(pid (\d+)\)/gu)]
+    .map((match) => Number(match[1]))
+    .filter((pid) => pid !== process.pid);
+};
 
 /** Whether the OS still holds that process. */
 const alive = (pid: number): boolean => {
@@ -322,6 +337,12 @@ describe('the flags of a run', () => {
     expect(said.code).toBe(2);
     expect(said.stderr).toContain('http.host must name an address, not ""');
   }, 20000);
+
+  it('refuses an http.host with space around the address', async () => {
+    const said = await cli(['--config-file', config, '--connection-token', 't'], { config: { http: { port: 0, host: ' 127.0.0.1 ' } } });
+    expect(said.code).toBe(2);
+    expect(said.stderr).toContain('http.host must name an address, not " 127.0.0.1 "');
+  }, 20000);
 });
 
 describe('reaching a daemon elsewhere', () => {
@@ -330,6 +351,21 @@ describe('reaching a daemon elsewhere', () => {
    * names `ON_MACHINE` knows, so the scheme is what the warning turns on and a
    * refused connection ends the case at once rather than after a timeout.
    */
+  it('refuses a blank token as no token, before anything is fetched', async () => {
+    const blankFile = join(home, 'blank-token');
+    writeFileSync(blankFile, '  \n');
+    for (const [args, env] of [
+      [['--token='], {}],
+      [['--token', '  '], {}],
+      [['--token-file', blankFile], {}],
+      [[], { AHPD_TOKEN: '  ' }],
+    ] as [string[], Record<string, string>][]) {
+      const said = await cli(['--remote', 'http://127.0.0.1:9', ...args, 'status'], { env });
+      expect(said.code).toBe(2);
+      expect(said.stderr).toBe('ahpd: http://127.0.0.1:9 needs a token: pass --token, --token-file or AHPD_TOKEN.\n');
+    }
+  }, 40000);
+
   it('warns about a cleartext token for a scheme in either case', async () => {
     const said = await cli(['--remote', 'HTTP://127.0.0.2:9', '--token', 'abc12345', 'status']);
     expect(said.code).toBe(2);
@@ -377,6 +413,9 @@ describe('start, stop and status', () => {
     expect(readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8')).not.toContain('no token: loopback only');
     expect(record.connectUrl).toContain('tkn=abc');
     expect(await knock(String(record.connectUrl))).toBe('open');
+    // A loopback daemon with no token opens to anyone, so only a refusal here
+    // shows the token reached the child.
+    expect(await knock(record.url)).not.toBe('open');
   }, 40000);
 
   it('forwards a value typed before start, port and all', async () => {
@@ -524,10 +563,11 @@ describe('user', () => {
   }, 20000);
 
   it('names the sub-commands of a bare verb and of one it does not have', async () => {
-    for (const args of [['user'], ['user', 'toy', '--users', users]]) {
+    for (const args of [['user'], ['user', 'toy', '--users', users], ['--json', 'user']]) {
       const said = await cli(args);
       expect(said.code).toBe(2);
-      expect(said.stderr).toContain('user takes list, add, rm or token.');
+      expect(said.stderr).toBe('ahpd: user takes list, add, rm or token.\n');
+      expect(said.stdout).toBe('');
     }
   });
 
@@ -571,10 +611,11 @@ describe('plugin', () => {
   });
 
   it('names the sub-commands of a bare verb and of one it does not have', async () => {
-    for (const args of [['plugin'], ['plugin', 'toy', '--config-file', config]]) {
+    for (const args of [['plugin'], ['plugin', 'toy', '--config-file', config], ['--json', 'plugin']]) {
       const said = await cli(args);
       expect(said.code).toBe(2);
-      expect(said.stderr).toContain('plugin takes list, install or remove.');
+      expect(said.stderr).toBe('ahpd: plugin takes list, install or remove.\n');
+      expect(said.stdout).toBe('');
     }
   });
 

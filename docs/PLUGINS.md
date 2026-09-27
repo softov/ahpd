@@ -406,14 +406,14 @@ every session it serves:
 
 ### The tools a session runs
 
-A cofold session gets `@cofold/tools`' four capabilities by default, so it can do what a Claude session can: read, search, edit and write files; run one command; fetch a page and, when a provider is configured, search the web; and keep memory.
-cofold runs them in its own process, on the machine the daemon runs on, and the permission mode is what confines them rather than the workspace.
-In `default` a write, a command, a web fetch and a read outside the workspace each ask first; a session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and a write or a command asks.
-The workspace check resolves symlinks with cofold's own resolver, so a write through a symlink that leaves the workspace, including one whose target does not exist yet, is outside it and `acceptEdits` asks for it too.
-`web_fetch` refuses loopback, private and link-local addresses on every hop, so a page cannot be used to reach the daemon's own machine; a name that answers with a different address at the connection than at the check is not caught.
-The daemon draws each call, asks through the approvals mode, and reports a file an edit changed to the changeset.
-A shell call is drawn as a terminal with its bare command, and a call that is declined or cut short never leaves a file held as changing.
-A session opened with no working directory keeps its tools and works in the daemon's current directory.
+A cofold session gets `@cofold/tools`' four capabilities by default, so it can do what a Claude session can: read, search, edit and write files; run one command; fetch a page and, when a provider is configured, search the web; and keep memory. cofold runs them in its own process, on the machine the daemon runs on, and the permission mode is what confines them rather than the workspace.
+
+In `default` a write, a command, a web fetch and a read outside the workspace each ask first; a session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and a write or a command asks. The workspace check resolves symlinks with cofold's own resolver, so a write through a symlink that leaves the workspace, including one whose target does not exist yet, is outside it and `acceptEdits` asks for it too. One shape is not caught yet: a link whose target does not exist and reads `dir/../name`, where `dir` is itself a symlink out of the workspace, is judged as if the `..` undid `dir`, so it can pass as inside.
+
+`web_fetch` refuses loopback, private and link-local addresses on every hop. The machine's public address is not among them, and a name that answers with a different address at the connection than at the check is not caught.
+
+The daemon draws each call, asks through the approvals mode, and reports a file an edit changed to the changeset. A shell call is drawn as a terminal with its bare command, and a call that is declined or cut short never leaves a file held as changing. A session opened with no working directory keeps its tools and works in the daemon's current directory.
+
 A turn with no model in the session settings, the plugin options or the cofold configuration file fails with a sentence that says to add `"model"`, as `"<provider>/<model>"`, to `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`.
 
 `tools` turns one off by naming it `false`, and gives `web_search` its providers:
@@ -434,13 +434,9 @@ A turn with no model in the session settings, the plugin options or the cofold c
 }
 ```
 
-`web_search` is offered only when `tools.web.search` names at least one of `brave` and `tavily`, each with an `apiKey`, or `duckduckgo`, which is `true` and needs no key.
-The named providers are tried in the order the configuration lists them, and a failing one is skipped.
-Name none of them and the session has `web_fetch` alone, with no `web_search` to offer.
+`web_search` is offered only when `tools.web.search` names at least one of `brave` and `tavily`, each with an `apiKey`, or `duckduckgo`, which is `true` and needs no key. The named providers are tried in the order the configuration lists them, and a failing one is skipped. Name none of them and the session has `web_fetch` alone, with no `web_search` to offer.
 
-Memory is files under `<store>/memory/<workspace slug>/`, where `<store>` is the plugin's own `store` when it named one and `$XDG_DATA_HOME/ahpd/cofold` otherwise, so a session's memory sits beside its sessions and can be read and edited by hand.
-Memory is per workspace and shared by the sessions in it, so what one session writes there reaches the next.
-A session whose store is held in memory (`memory: true`) has no directory for memory files, so it gets the other three.
+Memory is files under `<store>/memory/<workspace slug>/`, where `<store>` is the plugin's own `store` when it named one and `$XDG_DATA_HOME/ahpd/cofold` otherwise, so a session's memory sits beside its sessions and can be read and edited by hand. Memory is per workspace and shared by the sessions in it, so what one session writes there reaches the next. A session whose store is held in memory (`memory: true`) has no directory for memory files, so it gets the other three.
 
 A session still chooses for itself. The backend publishes the choices as
 config keys, and a `session/configChanged` on any of them changes what the next

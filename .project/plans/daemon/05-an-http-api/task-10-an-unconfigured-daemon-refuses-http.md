@@ -5,8 +5,8 @@ depends: []
 layer: "server"
 refs:
   - "[decisions/an-unconfigured-daemon-does-not-serve-the-http-api.md](../../../decisions/an-unconfigured-daemon-does-not-serve-the-http-api.md) - what this task applies"
-  - "[code://packages/server/src/commands/run.ts#L175-L191](../../../../packages/server/src/commands/run.ts#L175-L191) - the startup refusals `http` has, the credential one included"
-  - "[code://packages/server/src/commands/authorize.ts#L62-L88](../../../../packages/server/src/commands/authorize.ts#L62-L88) - the hook, which now always has a token or a directory behind it"
+  - "[code://packages/server/src/commands/run.ts#L179-L195](../../../../packages/server/src/commands/run.ts#L179-L195) - the startup refusals `http` has, the credential one included"
+  - "[code://packages/server/src/commands/authorize.ts#L61-L87](../../../../packages/server/src/commands/authorize.ts#L61-L87) - the hook, which now always has a token or a directory behind it"
   - "[code://packages/server/test/server-http.test.ts#L330-L349](../../../../packages/server/test/server-http.test.ts#L330-L349) - the three cases"
 ---
 
@@ -17,8 +17,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/run.ts:175-191` - after `secret(options)`, refuse `http` when `token` and `users` are both absent; this covers `--without-connection-token` too.
-- `UPDATE: packages/server/src/commands/authorize.ts:62-88` - the `options.token === undefined` admit goes; with no directory a request without the deployment token is 401.
+- `UPDATE: packages/server/src/commands/run.ts:179-195` - after `secret(options)`, refuse `http` when `token` and `users` are both absent; this covers `--without-connection-token` too.
+- `UPDATE: packages/server/src/commands/authorize.ts:61-87` - the `options.token === undefined` admit goes; with no directory a request without the deployment token is 401.
 - `UPDATE: packages/server/test/server-http.test.ts:303-350` - the three `http in the configuration` cases pass a token, and the three new cases cover the refusals and the directory that needs none.
 
 ## Steps

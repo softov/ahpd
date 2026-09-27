@@ -5,14 +5,14 @@ depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
   - "[code://packages/server/src/commands/run.ts#L1-L9](../../../../packages/server/src/commands/run.ts#L1-L9) - the header, which says what the command is rather than what it was"
-  - "[code://packages/server/src/commands/run.ts#L241-L248](../../../../packages/server/src/commands/run.ts#L241-L248) - the comment on `base`"
-  - "[code://packages/server/src/commands/run.ts#L297-L332](../../../../packages/server/src/commands/run.ts#L297-L332) - the `sessions` and `automations` comments, each above its own property"
-  - "[code://packages/server/src/commands/run.ts#L355-L382](../../../../packages/server/src/commands/run.ts#L355-L382) - the `said` comment and the plugins comment above the `loadPlugins` call"
-  - "[code://packages/server/src/commands/run.ts#L432-L449](../../../../packages/server/src/commands/run.ts#L432-L449) - the door and transport comment above `listener`"
-  - "[code://packages/server/src/commands/options.ts#L1-L13](../../../../packages/server/src/commands/options.ts#L1-L13) and [#L313-L319](../../../../packages/server/src/commands/options.ts#L313-L319) - the header and the fold's comment"
+  - "[code://packages/server/src/commands/run.ts#L245-L252](../../../../packages/server/src/commands/run.ts#L245-L252) - the comment on `base`"
+  - "[code://packages/server/src/commands/run.ts#L301-L336](../../../../packages/server/src/commands/run.ts#L301-L336) - the `sessions` and `automations` comments, each above its own property"
+  - "[code://packages/server/src/commands/run.ts#L359-L386](../../../../packages/server/src/commands/run.ts#L359-L386) - the `said` comment and the plugins comment above the `loadPlugins` call"
+  - "[code://packages/server/src/commands/run.ts#L436-L453](../../../../packages/server/src/commands/run.ts#L436-L453) - the door and transport comment above `listener`"
+  - "[code://packages/server/src/commands/options.ts#L1-L13](../../../../packages/server/src/commands/options.ts#L1-L13) and [#L305-L311](../../../../packages/server/src/commands/options.ts#L305-L311) - the header and the fold's comment"
   - "[code://packages/server/src/commands/user.ts#L7-L9](../../../../packages/server/src/commands/user.ts#L7-L9) - why every sub-command declares the same fields"
   - "[code://packages/server/src/commands/stop.ts#L4-L6](../../../../packages/server/src/commands/stop.ts#L4-L6) - what the flags on `stop` are for"
-  - "[code://packages/server/src/main.ts#L14-L16](../../../../packages/server/src/main.ts#L14-L16) and [#L147-L156](../../../../packages/server/src/main.ts#L147-L156) - what the entry is left with, and the run word"
+  - "[code://packages/server/src/main.ts#L14-L16](../../../../packages/server/src/main.ts#L14-L16) and [#L142-L151](../../../../packages/server/src/main.ts#L142-L151) - what the entry is left with, and the run word"
   - "[code://.project/decisions/ahpd-commands-are-declared-with-cofold-commands.md](../../../decisions/ahpd-commands-are-declared-with-cofold-commands.md) - the refs now name `git://7a7e9d1` and `options.ts`"
 ---
 
@@ -22,14 +22,14 @@ Every comment under `packages/server/src/commands/` and in `main.ts` says what t
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/run.ts:1-9, 241-248` - the header and the comment on `base`, neither narrating.
-- `UPDATE: packages/server/src/commands/run.ts:297-332` - the `automations` block moved from above `sessions` to above `automations`.
-- `UPDATE: packages/server/src/commands/run.ts:355-382` - the plugins block moved from above the `said` comment to the `loadPlugins` call.
-- `UPDATE: packages/server/src/commands/run.ts:432-449` - the runtime note dropped, and the door block merged into the comment on `listener`.
-- `UPDATE: packages/server/src/commands/options.ts:1-13, 313-319` - the header and the fold's comment.
+- `UPDATE: packages/server/src/commands/run.ts:1-9, 245-252` - the header and the comment on `base`, neither narrating.
+- `UPDATE: packages/server/src/commands/run.ts:301-336` - the `automations` block moved from above `sessions` to above `automations`.
+- `UPDATE: packages/server/src/commands/run.ts:359-386` - the plugins block moved from above the `said` comment to the `loadPlugins` call.
+- `UPDATE: packages/server/src/commands/run.ts:436-453` - the runtime note dropped, and the door block merged into the comment on `listener`.
+- `UPDATE: packages/server/src/commands/options.ts:1-13, 305-311` - the header and the fold's comment.
 - `UPDATE: packages/server/src/commands/user.ts:7-9` - the fields every sub-command declares.
 - `UPDATE: packages/server/src/commands/stop.ts:4-6` - what `stop` does with the flags a run takes.
-- `UPDATE: packages/server/src/main.ts:14-16, 147-156` - what the entry is left with, and the run word.
+- `UPDATE: packages/server/src/main.ts:14-16, 142-151` - what the entry is left with, and the run word.
 - `UPDATE: .project/decisions/ahpd-commands-are-declared-with-cofold-commands.md` - its two `refs` to the hand-written `main.ts` become `git://7a7e9d1` and `code://packages/server/src/commands/options.ts`.
 
 ## Steps
@@ -37,7 +37,7 @@ Every comment under `packages/server/src/commands/` and in `main.ts` says what t
 1. Rewrite each comment listed to say what the declaration, field or block is and why it has its shape now; history and the migration belong in commits and in this plan.
 2. Move each orphaned block to the property or call it describes, or delete it when the comment beside that property already says the same.
 3. In the decision's `refs`, replace the two main.ts line ranges with `git://7a7e9d1` (where the hand-written parser was) and `code://packages/server/src/commands/options.ts` (where the flags are declared), leaving its body untouched.
-4. The comment rewrites in `options.ts:118-119` belong to task 07; do not change them twice.
+4. The comment rewrites in `options.ts:110-111` belong to task 07; do not change them twice.
 
 ## Validation
 

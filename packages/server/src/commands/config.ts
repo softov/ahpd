@@ -8,9 +8,23 @@
 import { existsSync } from 'node:fs';
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
+import type { PluginSpec } from '@ahpd/sdk';
 import { configPath, loadConfig, type Config } from '../config.js';
 import { serverFields } from './options.js';
 import type { ServedFacts } from './served.js';
+
+/**
+ * A plugin entry as a served answer shows it: its option keys, each value `<set>`.
+ *
+ * A plugin's options are the secrets it was configured with, so a request that
+ * may read the settings is told which are there and never what they are -
+ * decision `the-config-command-hides-its-secrets`. An entry that is only a name,
+ * or has no options, is answered as it is.
+ */
+export const withoutOptionValues = (spec: PluginSpec): PluginSpec =>
+  typeof spec === 'object' && spec !== null && spec.options !== undefined
+    ? { ...spec, options: Object.fromEntries(Object.keys(spec.options).map((key) => [key, '<set>'])) }
+    : spec;
 
 /**
  * What a served answer says about the file.
@@ -26,13 +40,7 @@ import type { ServedFacts } from './served.js';
 const withoutSecrets = (found: Config): Config => {
   const at = 'connectionToken' in found ? { ...found, connectionToken: '<set>' } : found;
   if (!Array.isArray(at.plugins)) return at;
-  return {
-    ...at,
-    plugins: at.plugins.map((one) =>
-      typeof one === 'object' && one !== null && one.options !== undefined
-        ? { ...one, options: Object.fromEntries(Object.keys(one.options).map((key) => [key, '<set>'])) }
-        : one),
-  };
+  return { ...at, plugins: at.plugins.map(withoutOptionValues) };
 };
 
 export const declareConfig = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({

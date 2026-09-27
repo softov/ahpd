@@ -83,7 +83,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | The new section of `docs/PLUGINS.md` and the package README are not hard-wrapped | Softov's rule for docs | 10 |
 | A `shell_exec` call's `toolInput` is the bare command on every action and part that carries one; it still runs in cofold's own process. | Softov, 2026-09-26: "Bare command, like Claude". | 11 |
 | `searchOf` keeps the configured order and `searchProviders` builds the array in it. | Softov, 2026-09-26: "Configured order". | 12, 10 |
-| Both checks resolve symlinks with `realpath` before comparing, a path that does not exist yet judged by its nearest existing ancestor. | Softov, 2026-09-26: "yes, both". | 06, 07 |
+| Both checks resolve symlinks with `realpath` before comparing, a path that does not exist yet judged by its nearest existing ancestor; replaced for ahpd's check by the `resolveWithin` row below. | Softov, 2026-09-26: "yes, both". | 06, 07 |
 | ahpd's check is `@cofold/tools`' `resolveWithin`, so a dangling link is followed as cofold's own tools follow it. | the second review, 2026-09-26: the hand-written copy judged a dangling link by its own name | 14 |
 | ahpd depends on `@cofold/tools` `^0.1`. | Softov, 2026-09-26: "Release tools 0.1.x". | 06, 08 |
 
@@ -108,23 +108,23 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | [15 - A declined edit sends its after when the person declines](task-15-a-declined-edit-sends-its-after-when-declined.md) | done | 09 |
 | [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | implemented | 14, 15 |
 | [17 - cofold follows a link's target one name at a time, released by Softov](task-17-cofold-follows-a-link-target-one-name-at-a-time.md) | todo | 14 |
-| [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | todo | 15 |
-| [19 - The close is true](task-19-the-close-is-true.md) | todo | 16, 18 |
+| [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | implemented | 15 |
+| [19 - The close is true](task-19-the-close-is-true.md) | implemented | 16, 18 |
 
 ## Risks and tradeoffs
 
 - The tools run as the daemon's user on the daemon's machine; the permission mode is what confines them, not the workspace, so `default` asks before a write, a command, a web fetch and a read outside the workspace.
 - A client that also offers its own terminal tool sees two ways to run a command; the host's `ahp_terminals` stays, since it is a terminal a person can watch.
-- Tasks 05 and 06 change `/github/cofold`; ahpd sees them only once Softov publishes `@cofold/agents` and `@cofold/tools`, which task 08 waits for.
 - `web_fetch` checks an address before each request, so a name that resolves differently at the connection (DNS rebinding) is not caught.
 - The workspace check resolves a path with cofold's `resolveWithin` and cofold's own tools write it in a second step, so a symlink another actor swaps between the two is not seen.
+- Until ahpd takes the `@cofold/tools` release with task 17, a dangling link whose target reads `dir/../name`, with `dir` a symlink out of the workspace, is judged inside.
 - Memory is shared by every session in a workspace, and its `MEMORY.md` is in every run's instructions, so what one session writes there reaches the next.
 - cofold has no default model: a turn with none configured fails rather than running on one nobody chose, and task 13 makes its sentence say what to add and where.
 
 ## Resume state
 
-- **Done so far:** every task is done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the rewritten tool section in `docs/PLUGINS.md`, and the new `packages/agent-cofold/README.md`. ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0. Tasks 14 and 15 are done from the second review, and task 16 closed the plan.
-- **Next action:** reviewed twice on 2026-09-26; tasks 18 and 19 fix what did not pass (16); task 17 is in the cofold repository and waits for Softov's release.
+- **Done so far:** tasks 01 to 15 are done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the tool section in `docs/PLUGINS.md`, and `packages/agent-cofold/README.md`. ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0. Task 16 is implemented and was not passed by the second review; tasks 18 and 19 are implemented: `when` waits on wall-clock time and throws, the mode table is one case per row, and the checklist, docs, comments and Resumes say what is true. Task 17's fix is in `/github/cofold/packages/tools`, uncommitted, with cofold's `packages/tools` tests green.
+- **Next action:** Softov reviews 16, 18 and 19, and commits and releases `@cofold/tools` with task 17's change; then task 17 step 4 (the version bump and the `trick` row), and the close: `status: built`, `implemented.md` with tasks 14 to 19, the index row.
 - **Open questions:** none.
 - **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too. Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do. A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is the client's own row to move and not this plan's.
 
@@ -135,10 +135,11 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 - [ ] VS Code: in the default mode a read of a file outside the workspace asks first.
 - [x] In `acceptEdits`, a write through a symlink that leaves the workspace asks first (task 07).
 - [x] In `acceptEdits`, a write through a dangling symlink whose target is outside asks first (task 14).
+- [ ] In `acceptEdits`, a write through a dangling link whose target is `sublink/../name`, with `sublink` a symlink out of the workspace, asks first (task 17, after the `@cofold/tools` release).
 - [x] A declined edit's `after` is sent on the decline (task 15).
 - [x] `web_fetch` works; `web_search` appears only with a provider configured; `web_fetch` of `http://127.0.0.1/` or a redirect to `169.254.169.254` is refused (tasks 06, 08).
 - [x] Cancelling a turn while `shell_exec` runs kills the command and anything it started (task 09).
-- [x] VS Code: a `shell_exec` row shows the bare command, not JSON (task 11, the input the case pins; the row was not driven).
+- [ ] VS Code: a `shell_exec` row shows the bare command, not JSON (task 11 pins the input; the row was not driven, see [deferred.md](deferred.md)).
 - [x] With `duckduckgo` listed before `brave`, `web_search` asks DuckDuckGo first (task 12).
 - [x] With no model configured anywhere, a turn fails with a sentence that says to add `"model"` to the cofold configuration file and names its path (task 13).
 - [x] `@cofold/tools` is at 0.1.x with a `^0.1` peer range, and `@ahpd/agent-cofold` takes `^0.1` (tasks 06, 08).

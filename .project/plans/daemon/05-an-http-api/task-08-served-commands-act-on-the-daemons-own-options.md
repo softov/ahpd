@@ -5,14 +5,14 @@ depends: [task-07-the-listener-survives-a-malformed-request.md]
 layer: "server"
 refs:
   - "[code://packages/server/src/commands/served.ts#L38-L57](../../../../packages/server/src/commands/served.ts#L38-L57) - `ServedFacts` and `servedRegistry`, the declarations built against the daemon"
-  - "[code://packages/server/src/commands/options.ts#L251-L268](../../../../packages/server/src/commands/options.ts#L251-L268) - `servedUserFields` and `servedPluginWriteFields`, without the daemon's own paths"
+  - "[code://packages/server/src/commands/options.ts#L243-L260](../../../../packages/server/src/commands/options.ts#L243-L260) - `servedUserFields` and `servedPluginWriteFields`, without the daemon's own paths"
   - "[code://packages/server/src/commands/status.ts#L24-L27](../../../../packages/server/src/commands/status.ts#L24-L27) - served, the process answering is the one described"
-  - "[code://packages/server/src/commands/plugin.ts#L27-L32](../../../../packages/server/src/commands/plugin.ts#L27-L32) and [#L59-L60](../../../../packages/server/src/commands/plugin.ts#L59-L60) - served, the list and the file edited are the daemon's"
-  - "[code://packages/server/src/commands/user.ts#L54-L61](../../../../packages/server/src/commands/user.ts#L54-L61) - served, `people` opens the daemon's directory"
-  - "[code://packages/server/src/commands/config.ts#L53-L56](../../../../packages/server/src/commands/config.ts#L53-L56) - served, the daemon's own file is read"
-  - "[code://packages/server/src/commands/run.ts#L196-L219](../../../../packages/server/src/commands/run.ts#L196-L219) - the facts the daemon hands it, read per request"
+  - "[code://packages/server/src/commands/plugin.ts#L28-L33](../../../../packages/server/src/commands/plugin.ts#L28-L33) and [#L77-L78](../../../../packages/server/src/commands/plugin.ts#L77-L78) - served, the list and the file edited are the daemon's"
+  - "[code://packages/server/src/commands/user.ts#L57-L64](../../../../packages/server/src/commands/user.ts#L57-L64) - served, `people` opens the daemon's directory"
+  - "[code://packages/server/src/commands/config.ts#L61-L64](../../../../packages/server/src/commands/config.ts#L61-L64) - served, the daemon's own file is read"
+  - "[code://packages/server/src/commands/run.ts#L200-L223](../../../../packages/server/src/commands/run.ts#L200-L223) - the facts the daemon hands it, read per request"
   - "[code://packages/server/src/commands/scopes.ts#L34-L45](../../../../packages/server/src/commands/scopes.ts#L34-L45) - the hook both registries share"
-  - "[code://packages/server/test/server-http.test.ts#L290-L301](../../../../packages/server/test/server-http.test.ts#L290-L301) and [#L565-L658](../../../../packages/server/test/server-http.test.ts#L565-L658) - the fixture and the served-options cases"
+  - "[code://packages/server/test/server-http.test.ts#L290-L301](../../../../packages/server/test/server-http.test.ts#L290-L301) and [#L606-L716](../../../../packages/server/test/server-http.test.ts#L606-L716) - the fixture and the served-options cases"
 ---
 
 ## Objective
@@ -26,11 +26,11 @@ A served command reads the options the daemon was started with and never the req
 - `CREATE: packages/server/src/commands/served.ts` - `ServedFacts`, `ServedRunning` and `servedRegistry`, so the served declarations can be built without a cycle through `registry.ts`.
 - `CREATE: packages/server/src/commands/scopes.ts` - `checkScopes`, the hook both registries are built with.
 - `UPDATE: packages/server/src/commands/registry.ts` - imports the shared hook; its own `cliRegistry` and `localRegistry` are unchanged for the terminal.
-- `UPDATE: packages/server/src/commands/options.ts:251-268` - the served `user` and plugin-write fields.
+- `UPDATE: packages/server/src/commands/options.ts:243-260` - the served `user` and plugin-write fields.
 - `UPDATE: packages/server/src/commands/status.ts, config.ts, user.ts, plugin.ts` - an optional `ServedFacts`; served, each reads the daemon and declares no path field.
-- `UPDATE: packages/server/src/commands/run.ts:196-219, 227` - builds the facts and mounts `servedRegistry(facts)`.
+- `UPDATE: packages/server/src/commands/run.ts:200-223, 231` - builds the facts and mounts `servedRegistry(facts)`.
 - `UPDATE: packages/server/src/daemon.ts` - `statusLine` takes the three fields it prints.
-- `UPDATE: packages/server/test/server-http.test.ts:53-72, 290-301, 565-658` - the fixture and the cases.
+- `UPDATE: packages/server/test/server-http.test.ts:53-72, 290-301, 606-716` - the fixture and the cases.
 
 ## Steps
 

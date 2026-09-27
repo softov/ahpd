@@ -34,3 +34,6 @@ refs:
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Verified 2026-09-26: the second review reverted this task's fix and the test named in the Validation failed, then passed with the fix back.
+Both the row "a read outside the workspace" and the internal-address case pass; `@cofold/agents` is `^0.1.1` and `@cofold/tools` `^0.1` in `packages/agent-cofold/package.json`; `pnpm typecheck` and `pnpm boundary` green.

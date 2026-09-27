@@ -35,3 +35,6 @@ A `shell_exec` call's `toolInput` is the command itself, as Claude's Bash sends 
 - `node_modules/.bin/vitest run packages/agent-cofold/test` green.
 
 ## Resume
+
+Verified 2026-09-26: the second review reverted this task's fix and the test named in the Validation failed, then passed with the fix back.
+The terminal case, the approval case and the `!` command case pass.

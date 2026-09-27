@@ -31,3 +31,5 @@ Done, with no change under `src/`: the tests were written first, and every row a
 `packages/agent-cofold/test/agent-cofold-tools.test.ts` runs the table, one row per mode (`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`, `dontAsk`) and class (a read, an edit inside the workspace, an edit outside it, a shell command, a web fetch), each asserting run, ask or refuse.
 `isEdit` is `effects.writes`, which the capability's `write_file` and `edit_file` declare, and `inside` resolves the path against the workspace, so `acceptEdits` lets an inside edit through and asks for an outside one.
 cofold's `policyOf` does the rest, and `plan` refuses anything that writes.
+
+Re-run 2026-09-26: the second review ran this Validation against the tree and it passed; it was run again with `node_modules/.bin/vitest run packages/agent-cofold` green (11 files, 107 tests), five times beside a full `pnpm test`.

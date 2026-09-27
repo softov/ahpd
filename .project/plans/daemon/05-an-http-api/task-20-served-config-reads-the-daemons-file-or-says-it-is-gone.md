@@ -4,8 +4,8 @@ status: implemented
 depends: [task-08-served-commands-act-on-the-daemons-own-options.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/config.ts#L15-L36](../../../../packages/server/src/commands/config.ts#L15-L36) - `withoutSecrets`, which masks the token and every plugin option value"
-  - "[code://packages/server/src/commands/config.ts#L46-L62](../../../../packages/server/src/commands/config.ts#L46-L62) - the handler: a served request reads `served.configFile`, and a file that is gone answers under that path"
+  - "[code://packages/server/src/commands/config.ts#L29-L44](../../../../packages/server/src/commands/config.ts#L29-L44) - `withoutSecrets`, which masks the token and every plugin option value"
+  - "[code://packages/server/src/commands/config.ts#L54-L70](../../../../packages/server/src/commands/config.ts#L54-L70) - the handler: a served request reads `served.configFile`, and a file that is gone answers under that path"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/config.ts:15-36` - `withoutToken` becomes the mask for the token and each plugin entry's `options` values, with its comment naming the new decision.
-- `UPDATE: packages/server/src/commands/config.ts:46-62` - the served branch.
+- `UPDATE: packages/server/src/commands/config.ts:29-44` - `withoutToken` becomes the mask for the token and each plugin entry's `options` values, with its comment naming the new decision.
+- `UPDATE: packages/server/src/commands/config.ts:54-70` - the served branch.
 - `UPDATE: packages/server/test/server-http.test.ts` - the case below.
 
 ## Steps

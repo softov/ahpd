@@ -45,6 +45,9 @@ import { manifest, version } from '../version.js';
 import { optionsFrom, secret, serverFields, stop } from './options.js';
 import type { Options } from './options.js';
 
+/** A host as a URL writes it: an IPv6 address in brackets, any other host as it is. */
+export const urlHost = (host: string): string => (isIPv6(host) ? `[${host}]` : host);
+
 /**
  * The names the API answers to.
  *
@@ -54,17 +57,18 @@ import type { Options } from './options.js';
  * are ones a URL parser reads back, and a wildcard bind adds nothing: every
  * address is the daemon's to answer on but none of them is a name it can tell
  * its own from. `resource` is the public identifier a deployment behind a proxy
- * names, so its host is one of them too - decision
+ * names, so its hostname is one of them too, alone, at the bound port, and with
+ * the port the resource names when it names one - decision
  * `the-http-api-checks-origin-and-host-and-takes-only-json`.
  */
 export function apiOrigins(host: string, resource: string | undefined, port: number): ApiOrigins {
   const names = ['127.0.0.1', 'localhost', '[::1]'];
-  if (host !== '0.0.0.0' && host !== '::') names.push(isIPv6(host) ? `[${host}]` : host);
+  if (host !== '0.0.0.0' && host !== '::') names.push(urlHost(host));
   const authorities = names.map((one) => `${one}:${port}`);
   const origins = names.map((one) => `http://${one}:${port}`);
   if (resource !== undefined) {
     const at = new URL(resource);
-    authorities.push(at.hostname, `${at.hostname}:${port}`);
+    authorities.push(at.hostname, `${at.hostname}:${port}`, ...(at.port === '' ? [] : [at.host]));
     origins.push(at.origin);
   }
   return { authorities, origins };
@@ -209,7 +213,7 @@ export async function runForeground(options: Options): Promise<void> {
     ...(users === undefined ? {} : { users }),
     running: () => ({
       pid: process.pid,
-      url: `ws://${boundHost}:${boundPort}`,
+      url: `ws://${urlHost(boundHost)}:${boundPort}`,
       host: boundHost,
       port: boundPort,
       paths: options.paths,
@@ -514,11 +518,11 @@ export async function runForeground(options: Options): Promise<void> {
    */
   const say = options.stdio ? process.stderr : process.stdout;
   say.write(
-    `${options.stdio ? 'ahpd over stdio' : `ahpd on ws://${listener.host}:${listener.port}`} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
+    `${options.stdio ? 'ahpd over stdio' : `ahpd on ws://${urlHost(listener.host)}:${listener.port}`} (${listener.runtime}), sessions in ${options.paths.join(', ')}\n`
     // Where the API is, when there is one: on this port, or on the one
     // `http.port` bound. Its own line, and `http://` rather than `ws://`, so
     // `daemon.ts` keeps reading the origin off the line above.
-    + (api === undefined ? '' : `http on http://${apiHost}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
+    + (api === undefined ? '' : `http on http://${urlHost(apiHost)}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
     // Its own line rather than the end of the one above, which `daemon.ts`
     // reads the session directories off with a regular expression.
     + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`

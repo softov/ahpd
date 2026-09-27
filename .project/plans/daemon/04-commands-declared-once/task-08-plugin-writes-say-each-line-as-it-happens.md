@@ -4,11 +4,11 @@ status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/plugin.ts#L61-L70](../../../../packages/server/src/commands/plugin.ts#L61-L70) and [#L95](../../../../packages/server/src/commands/plugin.ts#L95) - `say` writes each line when it is said, and the result carries no prose"
+  - "[code://packages/server/src/commands/plugin.ts#L79-L88](../../../../packages/server/src/commands/plugin.ts#L79-L88) and [#L113](../../../../packages/server/src/commands/plugin.ts#L113) - `say` writes each line when it is said, and the result carries no prose"
   - "[code://packages/server/src/install.ts#L49-L68](../../../../packages/server/src/install.ts#L49-L68) - `run` puts npm's stdout on this process's stderr and keeps its stderr as the reason"
   - "[code://packages/server/src/install.ts#L272-L293](../../../../packages/server/src/install.ts#L272-L293) - `removePlugins` edits the configuration, says so, then runs npm"
   - "[code://packages/server/test/fixtures/npm-fake/npm](../../../../packages/server/test/fixtures/npm-fake/npm) - the stand-in npm the two cases put first on `PATH`"
-  - "[code://packages/server/test/server-cli.test.ts#L587-L604](../../../../packages/server/test/server-cli.test.ts#L587-L604) - the two cases"
+  - "[code://packages/server/test/server-cli.test.ts#L628-L645](../../../../packages/server/test/server-cli.test.ts#L628-L645) - the two cases"
 ---
 
 ## Objective
@@ -17,10 +17,10 @@ A `plugin remove` whose npm step fails still shows `plugins -= <name> in <file>`
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/plugin.ts:61-70, 95` - `say` writes each line when it is said.
+- `UPDATE: packages/server/src/commands/plugin.ts:79-88, 113` - `say` writes each line when it is said.
 - `UPDATE: packages/server/src/install.ts:49-68` - npm's stdout goes to this process's stderr.
 - `CREATE: packages/server/test/fixtures/npm-fake/npm` - the stand-in npm.
-- `UPDATE: packages/server/test/server-cli.test.ts:587-604` - two cases with a fake `npm` on `PATH`.
+- `UPDATE: packages/server/test/server-cli.test.ts:628-645` - two cases with a fake `npm` on `PATH`.
 
 ## Steps
 

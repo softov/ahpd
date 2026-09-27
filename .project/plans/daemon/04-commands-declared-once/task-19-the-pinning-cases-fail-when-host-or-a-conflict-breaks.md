@@ -4,10 +4,10 @@ status: done
 depends: [task-10-the-pinning-tests-bind-a-port-and-start.md, task-16-handlers-fail-by-throwing.md]
 layer: "server"
 refs:
-  - "[code://packages/server/test/server-cli.test.ts#L447-L458](../../../../packages/server/test/server-cli.test.ts#L447-L458) - the two bind cases, both on `localhost`"
-  - "[code://packages/server/test/server-http.test.ts#L555-L562](../../../../packages/server/test/server-http.test.ts#L555-L562) - the missing-person case, asserting `409`"
-  - "[code://packages/server/src/commands/options.ts#L97-L99](../../../../packages/server/src/commands/options.ts#L97-L99) - `conflict`, `status: 409`"
-  - "[code://packages/server/test/server-commands.test.ts#L69-L78](../../../../packages/server/test/server-commands.test.ts#L69-L78) and [#L90-L100](../../../../packages/server/test/server-commands.test.ts#L90-L100) - the two `daemon.config` cases, each given a `configFile` in a temporary directory"
+  - "[code://packages/server/test/server-cli.test.ts#L486-L497](../../../../packages/server/test/server-cli.test.ts#L486-L497) - the two bind cases, both on `localhost`"
+  - "[code://packages/server/test/server-http.test.ts#L596-L603](../../../../packages/server/test/server-http.test.ts#L596-L603) - the missing-person case, asserting `409`"
+  - "[code://packages/server/src/commands/options.ts#L89-L91](../../../../packages/server/src/commands/options.ts#L89-L91) - `conflict`, `status: 409`"
+  - "[code://packages/server/test/server-commands.test.ts#L71-L80](../../../../packages/server/test/server-commands.test.ts#L71-L80) and [#L104-L114](../../../../packages/server/test/server-commands.test.ts#L104-L114) - the two `daemon.config` cases, each given a `configFile` in a temporary directory"
 ---
 
 ## Objective
@@ -16,9 +16,9 @@ Each pinning case named here fails when the behaviour it names breaks: `--host` 
 
 ## Files
 
-- `UPDATE: packages/server/test/server-cli.test.ts:447-458` - the bind cases.
-- `UPDATE: packages/server/test/server-http.test.ts:555-562` - the status assertion.
-- `UPDATE: packages/server/test/server-commands.test.ts:69-78, 90-100` - the two cases that run `daemon.config`.
+- `UPDATE: packages/server/test/server-cli.test.ts:486-497` - the bind cases.
+- `UPDATE: packages/server/test/server-http.test.ts:596-603` - the status assertion.
+- `UPDATE: packages/server/test/server-commands.test.ts:71-80, 104-114` - the two cases that run `daemon.config`.
 
 ## Steps
 
