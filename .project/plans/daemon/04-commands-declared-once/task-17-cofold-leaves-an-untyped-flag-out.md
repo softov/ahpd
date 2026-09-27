@@ -1,6 +1,6 @@
 ---
 title: cofold leaves a boolean flag nobody typed out of the canonical input, released by Softov
-status: blocked
+status: implemented
 depends: [task-12-cofold-fields-say-whether-they-negate.md]
 layer: "cofold commands"
 refs:
@@ -50,3 +50,5 @@ Steps 1 to 4 are done in `/github/cofold`, uncommitted, on `main`, in `packages/
 Stopped at step 5, waiting on Softov: `packages/commands` is still 0.2.1 and nothing is tagged or published. It is a minor release, 0.3.0, because a consumer reading `false` for an untyped flag now reads `undefined`. Softov publishes it; steps 6 and 7 then move ahpd's `@cofold/commands` to it and check every boolean `optionsFrom` folds.
 
 Committed in cofold on 2026-09-27 as `db8f7af` ("commands: a flag nobody typed stays out of the input; 0.2.2"), at 0.2.2 as Softov chose rather than 0.3.0. Waiting on Softov to tag and publish it; steps 6 and 7 follow the release.
+
+- 2026-09-27: `@cofold/commands` 0.2.2 is on npm (published 15:37 UTC). Step 6: `packages/server` takes `^0.2.2`, the lockfile holds one `@cofold/commands@0.2.2` that `@cofold/terminal` and `@cofold/remote` share through `^0.2`, and `minimumReleaseAgeExclude` names 0.2.2 in place of 0.2.1. Step 7: every flag `optionsFrom` folds keeps its options for a flag nobody typed, checked by the pinning cases in `server-cli.test.ts` and `server-commands.test.ts`, which pass unchanged. `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm boundary` and `pnpm test` (102 files, 1348 tests) green. Task 06 can start.

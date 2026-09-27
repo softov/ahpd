@@ -92,8 +92,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(@cofold/agents@0.1.1)
       '@cofold/tools':
-        specifier: ^0.1
-        version: 0.1.0(@cofold/agents@0.1.1)
+        specifier: ^0.1.1
+        version: 0.1.1(@cofold/agents@0.1.1)
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
@@ -137,8 +137,8 @@ importers:
         specifier: workspace:^
         version: link:../sdk
       '@cofold/commands':
-        specifier: ^0.2.1
-        version: 0.2.1
+        specifier: ^0.2.2
+        version: 0.2.2
       '@cofold/remote':
         specifier: ^0.3.1
         version: 0.3.1
@@ -311,8 +311,8 @@ packages:
     resolution: {integrity: sha512-ltSZ18bXCEZiM82Eklj07WWJE4HRwqWSoTbHegb9Ez1xF8g9333dpTzvMyoQvyr9LKS7K6gLNrj7YEtqAEncAw==}
     engines: {node: '>=22'}
 
-  '@cofold/commands@0.2.1':
-    resolution: {integrity: sha512-0NToZ7UA1VATnJujJlUjNmlRWntbVB2ylum4b2sEwfeTPNIy5MofNaiX1VDqoioXm1H8wnPycslmPipa5m8Okw==}
+  '@cofold/commands@0.2.2':
+    resolution: {integrity: sha512-dmZp+tRQsB+59MkkfB1+lu+6r2a5VEUC4KxqkS3wL0wdUyXhaOwzhLzZZjR/tKjuPkkJnA9qjOgcP7iiDqh1yw==}
     engines: {node: '>=22'}
 
   '@cofold/model-openai-compat@0.1.1':
@@ -339,8 +339,8 @@ packages:
     resolution: {integrity: sha512-tjfUc0GZ4VTCf46kjxfL8HRbkBuR1GG3wC0jrQWbfK+IvCO+avbJnBgouaq9Z99n+ecT5Eeg75rVUFlpc1YI8w==}
     engines: {node: '>=22'}
 
-  '@cofold/tools@0.1.0':
-    resolution: {integrity: sha512-ZR/emiA6Ho2wPic3CbUGn9HuDpjqJZYwt06PMyQKE8IgARvhsW8Q9t6gI68125dN31ocH25jx9t9WFU55Iwb8w==}
+  '@cofold/tools@0.1.1':
+    resolution: {integrity: sha512-M9HQhAIXLpjtC3T7T/kkeNtLOtN72Zmn1d8/+4AvNATNdBYgm5dA2aT5dJqn/NOSmeHO3RZhZnsDU6f88yk80A==}
     engines: {node: '>=22'}
     peerDependencies:
       '@cofold/agents': ^0.1
@@ -1856,7 +1856,7 @@ snapshots:
     dependencies:
       '@cofold/sdk': 0.2.0
 
-  '@cofold/commands@0.2.1':
+  '@cofold/commands@0.2.2':
     dependencies:
       '@cofold/sdk': 0.2.0
 
@@ -1866,7 +1866,7 @@ snapshots:
 
   '@cofold/remote@0.3.1':
     dependencies:
-      '@cofold/commands': 0.2.1
+      '@cofold/commands': 0.2.2
 
   '@cofold/sdk@0.2.0': {}
 
@@ -1876,9 +1876,9 @@ snapshots:
 
   '@cofold/terminal@0.2.0':
     dependencies:
-      '@cofold/commands': 0.2.1
+      '@cofold/commands': 0.2.2
 
-  '@cofold/tools@0.1.0(@cofold/agents@0.1.1)':
+  '@cofold/tools@0.1.1(@cofold/agents@0.1.1)':
     dependencies:
       '@cofold/agents': 0.1.1
 

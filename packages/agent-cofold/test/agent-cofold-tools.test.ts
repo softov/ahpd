@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -586,6 +586,16 @@ const ROWS: Row[] = [
     call: (at) => {
       symlinkSync(join(at.away, 'new.txt'), join(at.workspace, 'dl'));
       return call('write_file', { path: 'dl', content: 'x' });
+    },
+    expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
+  },
+  {
+    what: 'an edit through a dangling link whose target has .. after a symlink out of the workspace',
+    call: (at) => {
+      mkdirSync(join(at.away, 'sub'));
+      symlinkSync(join(at.away, 'sub'), join(at.workspace, 'sublink'), 'dir');
+      symlinkSync('sublink/../esc2.txt', join(at.workspace, 'trick'));
+      return call('write_file', { path: 'trick', content: 'x' });
     },
     expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
   },

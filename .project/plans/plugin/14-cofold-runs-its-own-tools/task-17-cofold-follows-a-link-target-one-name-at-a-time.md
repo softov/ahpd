@@ -1,6 +1,6 @@
 ---
 title: cofold follows a link's target one name at a time, released by Softov
-status: todo
+status: implemented
 depends: [task-14-inside-follows-a-dangling-link.md]
 layer: "cofold tools"
 refs:
@@ -41,3 +41,5 @@ In `@cofold/tools`, `resolveWithin` judges a link whose relative target has `..`
 - `vitest run --project @cofold/tools` green (29 tests, no type errors) and `tsc -p tsconfig.test.json --noEmit` clean in `packages/tools`.
 - Waiting on: Softov to commit the cofold change and publish `@cofold/tools` through `release.yml`. Step 4 (the version bump in ahpd and the `trick` row in `ROWS`) is not done.
 - 2026-09-27: committed in cofold as `d9d229e` ("tools: follow a link's target one name at a time; 0.1.1"). Waiting on Softov to tag and publish `@cofold/tools` 0.1.1; step 4 follows the release.
+
+- 2026-09-27: `@cofold/tools` 0.1.1 is on npm (published 15:37 UTC). Step 4: `packages/agent-cofold` takes `^0.1.1`, the lockfile resolves 0.1.1, and `minimumReleaseAgeExclude` names 0.1.1 in place of 0.1.0 (both were named for the one install that moved the lockfile, since pnpm checks the old entry before it resolves the new one). The `ROWS` row "an edit through a dangling link whose target has .. after a symlink out of the workspace" builds `sublink -> <away>/sub` and `trick -> sublink/../esc2.txt` and answers `ask` under `acceptEdits`; the failure on 0.1.0 is the one cofold's `paths.test.ts` pins. `pnpm test` green (102 files, 1348 tests).
