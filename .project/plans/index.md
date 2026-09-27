@@ -18,8 +18,8 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [01 - Telling somebody the version is old](daemon/01-update-check/plan.md) | medium | built 2026-09-18 ([implemented.md](daemon/01-update-check/implemented.md)) | - | the same plan in ahpc, which copies its comparison |
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
-| [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-27, reviewed twice; fix tasks 17, 20, 22 and 23 implemented and awaiting review (`@cofold/commands` 0.2.2 taken); task 06 next | daemon 03 | daemon 05 |
-| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; fix tasks 23-27 implemented and awaiting review; 15 in the cofold repository, 16 waits for `@cofold/remote` 0.4.0 | daemon 04 | - |
+| [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-27, reviewed twice; tasks 01-04, 06, 11, 17, 18 and 20-23 implemented and awaiting review (`@cofold/commands` 0.2.2 taken) | daemon 03 | daemon 05 |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; tasks 01-05, 17, 20 and 23-27 implemented and awaiting review; tasks 28-31, found in review, todo; 15 in the cofold repository, 16 waits for `@cofold/remote` 0.4.0 | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 
 Next free number in `daemon`: `07`.
@@ -49,8 +49,9 @@ Reference: [00-host.md](host/00-host.md)
 | [17 - Host configuration has its own grant](host/17-host-configuration-has-its-own-grant/plan.md) | medium | built 2026-09-25 ([implemented.md](host/17-host-configuration-has-its-own-grant/implemented.md)) | host 11 | - |
 | [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | built 2026-09-26 ([implemented.md](host/18-a-provisional-session-takes-any-key/implemented.md)) | host 02 | - |
 | [19 - A fork copies the conversation through the chosen turn](host/19-a-fork-copies-through-the-turn/plan.md) | medium | planned 2026-09-26, tasks 01-03 todo | - | pi 05, and the ACP fork in plugin 18, which must cut at the turn's end |
+| [20 - A changes URI opens in a client that normalises it](host/20-a-changes-uri-survives-a-client/plan.md) | high | planned 2026-09-27; starts after the other session's `changes.ts` work is committed | - | - |
 
-Next free number in `host`: `20`.
+Next free number in `host`: `21`.
 
 ## claude
 
@@ -102,8 +103,10 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [19 - A docker machine may run under gVisor](plugin/19-a-docker-machine-may-run-under-gvisor/plan.md) | low | planned 2026-09-26, after plugin 18 | plugin 10 | - |
 | [20 - A plugin is a client of its own host, as a principal of its own](plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md) | high | planned 2026-09-26, after plugin 17 | plugin 01, host 11 | plugin 21, and every gateway, trigger and facade plugin |
 | [21 - A plugin serves an HTTP route on the daemon's listener](plugin/21-a-plugin-serves-an-http-route/plan.md) | medium | planned 2026-09-26, after plugin 20; task 02 after daemon 05 tasks 15 and 16 | daemon 05, plugin 20 | webhook, callback and facade plugins |
+| [22 - A cofold write lands on the file its check allowed, and not on one that changed since it was read](plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) | medium | draft 2026-09-27; task 01 chooses the approach with Softov | plugin 14 | - |
+| [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | planned 2026-09-27; task 01 is a cofold release, task 02 needs none | plugin 14 | - |
 
-Next free number in `plugin`: `22`.
+Next free number in `plugin`: `24`.
 
 ## container
 

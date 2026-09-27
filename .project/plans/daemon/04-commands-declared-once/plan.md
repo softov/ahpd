@@ -73,7 +73,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [03 - main.ts runs through the terminal program](task-03-main-runs-through-the-program.md) | implemented | 02 |
 | [04 - Docs, dependencies and the lockfile](task-04-docs-and-dependencies.md) | implemented | 03 |
 | [05 - start forwards the words after start, wherever it appears](task-05-start-forwards-the-words-after-start.md) | done | 04 |
-| [06 - The update check is declared by what it turns on, and its test can fail](task-06-the-update-check-is-declared-by-what-it-turns-on.md) | todo | 17 |
+| [06 - The update check is declared by what it turns on, and its test can fail](task-06-the-update-check-is-declared-by-what-it-turns-on.md) | implemented | 12, 17 |
 | [07 - ahpd --help keeps the sentences a person acts on](task-07-help-keeps-the-sentences-a-person-acts-on.md) | done | 04 |
 | [08 - plugin install and remove say each line as it happens, and npm writes to stderr](task-08-plugin-writes-say-each-line-as-it-happens.md) | done | 04 |
 | [09 - The bare run completes its flags, and -v and --help are read only where they are flags](task-09-the-bare-run-completes-and-reads-flags-only-as-flags.md) | done | 04 |
@@ -99,9 +99,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** tasks 05, 07 to 10, 12 to 16 and 19 are done. Tasks 01 to 04, 11, 18 and 20 to 23 are implemented and wait for review: the pinning cases, the declarations with their scopes, `main.ts` through `@cofold/terminal`'s `Program`, `docs/DAEMON.md`, the comments under `commands/`, `start` forwarding every option wherever it is typed, the refs following the code, `refuse` removed and the group hint failing as `ahpd: <sentence>` with exit 2 in every mode, the `start` cases killing every daemon the log names and the token case knocking without the token, and the comments and records corrected. Task 06 is todo and task 17 is blocked.
-- **Next action:** task 06, now that `@cofold/commands` 0.2.2 is taken (task 17 implemented). Tasks 17, 18, 20 to 23 and 11 wait for Softov's review.
-- **Open questions:** none. Task 06's fold is decided: [an-untyped-flag-stays-absent-in-cofold-input](../../../decisions/an-untyped-flag-stays-absent-in-cofold-input.md). A JSON shape for failures is [an idea](../../../ideas/failures-have-a-json-shape.md). Task 17 needs `packages/commands` published: its change is in cofold, its release is Softov's, and it is written in [task 17](task-17-cofold-leaves-an-untyped-flag-out.md)'s Resume.
+- **Done so far:** tasks 05, 07 to 10, 12 to 16 and 19 are done.
+  Tasks 01 to 04, 06, 11, 17, 18 and 20 to 23 are implemented and wait for review: the pinning cases, the declarations with their scopes, `main.ts` through `@cofold/terminal`'s `Program`, `docs/DAEMON.md`, the comments under `commands/`, `start` forwarding every option wherever it is typed, the refs following the code, `refuse` removed and the group hint failing as `ahpd: <sentence>` with exit 2 in every mode, the `start` cases killing every daemon the log names and the token case knocking without the token, the comments and records corrected, and `updateCheck` declared as `--update-check`, negatable, with the fold the decision names.
+- **Next action:** Softov's review of tasks 01 to 04, 06, 11, 17, 18 and 20 to 23.
+- **Open questions:** none.
+  A JSON shape for failures is [an idea](../../../ideas/failures-have-a-json-shape.md).
 - **Watch out for:** task 16 landed before [daemon/05 task 08](../05-an-http-api/task-08-served-commands-act-on-the-daemons-own-options.md), so that task rebases on the throwing handlers; task 14 landed before [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md), so task 09 applies the grants in the registry's `authorize` hook and `authorizeOverHttp` only identifies; `run` is a hidden command given its word when a line has no command, so the foreground daemon keeps matching `ahpd [options]`; this environment's global pnpm store is read-only, so installs need `--store-dir /tmp/pnpm-store`; the pinning cases set `CI=1`, which silences the update line in every case that does not remove it; [daemon/05](../05-an-http-api/plan.md) changes the scopes `packages/server/test/server-commands.test.ts:59-69` pins, so a scope failure there is daemon/05's to fix.
 
 ## Final verification checklist

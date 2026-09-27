@@ -1,6 +1,7 @@
 ---
 title: The config command hides the connection token and every plugin option value over HTTP
-status: accepted
+status: superseded
+superseded-by: decisions/served-answers-hide-plugin-option-values-and-url-credentials.md
 date: 2026-09-26
 supersedes: decisions/the-config-command-hides-the-connection-token.md
 refs:

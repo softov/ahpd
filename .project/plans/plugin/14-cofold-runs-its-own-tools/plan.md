@@ -117,16 +117,25 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 - A client that also offers its own terminal tool sees two ways to run a command; the host's `ahp_terminals` stays, since it is a terminal a person can watch.
 - `web_fetch` checks an address before each request, so a name that resolves differently at the connection (DNS rebinding) is not caught.
 - The workspace check resolves a path with cofold's `resolveWithin` and cofold's own tools write it in a second step, so a symlink another actor swaps between the two is not seen.
-- Until ahpd takes the `@cofold/tools` release with task 17, a dangling link whose target reads `dir/../name`, with `dir` a symlink out of the workspace, is judged inside.
+  [Plugin/22](../22-a-cofold-write-lands-where-it-was-allowed/plan.md) plans the fix.
+- `@cofold/tools` 0.1.1, committed in cofold as `d9d229e` and published, judges a dangling link whose target reads `dir/../name`, with `dir` a symlink out of the workspace, as outside, and ahpd takes it as `^0.1.1`.
+  The caveat that such a link is judged inside stays in `docs/PLUGINS.md` and `packages/agent-cofold/README.md` until task 19 step 6, which waits for Softov's review of tasks 16 to 19.
 - Memory is shared by every session in a workspace, and its `MEMORY.md` is in every run's instructions, so what one session writes there reaches the next.
 - cofold has no default model: a turn with none configured fails rather than running on one nobody chose, and task 13 makes its sentence say what to add and where.
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 15 are done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the tool section in `docs/PLUGINS.md`, and `packages/agent-cofold/README.md`. ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0. Task 16 is implemented and was not passed by the second review; tasks 18 and 19 are implemented: `when` waits on wall-clock time and throws, the mode table is one case per row, and the checklist, docs, comments and Resumes say what is true. Task 17's fix is in `/github/cofold/packages/tools`, uncommitted, with cofold's `packages/tools` tests green.
+- **Done so far:** tasks 01 to 15 are done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the tool section in `docs/PLUGINS.md`, and `packages/agent-cofold/README.md`.
+  ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path.
+  Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0.
+  Task 16 is implemented and was not passed by the second review.
+  Tasks 18 and 19 are implemented: `when` waits on wall-clock time and throws, the mode table is one case per row, and the checklist, docs, comments and Resumes say what is true.
+  Task 17 is implemented: its fix is committed in cofold as `d9d229e` and published as `@cofold/tools` 0.1.1, which `packages/agent-cofold/package.json` takes as `^0.1.1`.
 - **Next action:** Softov's review of tasks 16 to 19; after it, task 19 step 6 closes the plan (the `..`-after-a-symlink caveats come out of the docs, the Risks and the checklist, since `@cofold/tools` 0.1.1 catches it).
 - **Open questions:** none.
-- **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too. Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do. A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is the client's own row to move and not this plan's.
+- **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too.
+  Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do.
+  A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is the client's own row to move and not this plan's.
 
 ## Final verification checklist
 

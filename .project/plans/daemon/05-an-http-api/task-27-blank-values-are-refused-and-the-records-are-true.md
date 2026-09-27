@@ -6,7 +6,7 @@ layer: "server, docs"
 refs:
   - "[code://packages/server/src/main.ts#L67-L97](../../../../packages/server/src/main.ts#L67-L97) - `tokenFor`, where a blank token from any of the three is no token"
   - "[code://packages/server/src/commands/options.ts#L289-L297](../../../../packages/server/src/commands/options.ts#L289-L297) - `http.host`, refused when empty or when it has space around it"
-  - "[code://packages/server/src/commands/authorize.ts#L12-L13](../../../../packages/server/src/commands/authorize.ts#L10-L13) - the 401 and 403 comment, which cites nothing"
+  - "[code://packages/server/src/commands/authorize.ts#L11-L13](../../../../packages/server/src/commands/authorize.ts#L11-L13) - the 401 and 403 comment, which cites nothing"
 ---
 
 ## Objective
@@ -17,7 +17,7 @@ refs:
 
 - `UPDATE: packages/server/src/main.ts:67-97` - an empty or blank token is no token.
 - `UPDATE: packages/server/src/commands/options.ts:289-297` - the host is refused unless it equals its trimmed self and is not empty.
-- `UPDATE: packages/server/src/commands/authorize.ts:10-13` - the citation.
+- `UPDATE: packages/server/src/commands/authorize.ts:11-13` - the citation.
 - `UPDATE: task-22-the-docs-comments-and-refs-say-what-the-code-does.md` - its `docs/DAEMON.md` ref.
 - `UPDATE: packages/server/test/server-cli.test.ts` - the cases below.
 
