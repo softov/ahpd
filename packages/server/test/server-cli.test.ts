@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
 import { version } from '../src/version.js';
 
 const REPO = join(import.meta.dirname, '../../..');
@@ -154,6 +155,16 @@ const foreground = (args: string[]): Promise<string> => new Promise((resolve, re
   child.once('exit', () => { finish(); });
 });
 
+/** Whether a socket opens, or the message it was turned away with. */
+const knock = (url: string): Promise<string> => new Promise((resolve) => {
+  const socket = new WebSocket(url);
+  socket.on('open', () => { socket.close(); resolve('open'); });
+  socket.on('error', (error: Error) => { resolve(error.message); });
+});
+
+const recordOf = (): { pid: number; url: string; connectUrl?: string } =>
+  JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; url: string };
+
 describe('what a person types first', () => {
   it('answers --help and -h with the usage and a zero', async () => {
     for (const flag of ['--help', '-h']) {
@@ -197,6 +208,13 @@ describe('completion and values', () => {
     const said = await cli(['__complete', '--', '--po']);
     expect(said.code).toBe(0);
     expect(said.stdout).toContain('--port');
+  });
+
+  it('offers --plugin and never --plugins', async () => {
+    const said = await cli(['__complete', '--', 'start', '--plu']);
+    expect(said.code).toBe(0);
+    expect(said.stdout).toContain('--plugin');
+    expect(said.stdout).not.toContain('--plugins');
   });
 
   it('a value spelled -v is a value', async () => {
@@ -265,6 +283,12 @@ describe('the flags of a run', () => {
     expect(said.stderr).toContain('--no-plugins contradicts');
   });
 
+  it('refuses --plugins, which is not another spelling of --no-plugins', async () => {
+    const said = await cli(['--plugins', '--stdio', '--config-file', config]);
+    expect(said.code).toBe(2);
+    expect(said.stderr).toContain('Unknown option --plugins');
+  });
+
   it('refuses an --automations it does not have', async () => {
     const said = await cli(['--stdio', '--automations', 'potato', '--config-file', config]);
     expect(said.code).toBe(2);
@@ -292,6 +316,25 @@ describe('the flags of a run', () => {
     expect(said.code).toBe(2);
     expect(said.stderr).toContain('--resource must be an https URL');
   }, 20000);
+
+  it('refuses an http.host that names no address', async () => {
+    const said = await cli(['--config-file', config, '--connection-token', 't'], { config: { http: { port: 0, host: '' } } });
+    expect(said.code).toBe(2);
+    expect(said.stderr).toContain('http.host must name an address, not ""');
+  }, 20000);
+});
+
+describe('reaching a daemon elsewhere', () => {
+  /*
+   * The address is one this machine keeps to itself but is not one of the three
+   * names `ON_MACHINE` knows, so the scheme is what the warning turns on and a
+   * refused connection ends the case at once rather than after a timeout.
+   */
+  it('warns about a cleartext token for a scheme in either case', async () => {
+    const said = await cli(['--remote', 'HTTP://127.0.0.2:9', '--token', 'abc12345', 'status']);
+    expect(said.code).toBe(2);
+    expect(said.stderr).toContain('the token travels in cleartext');
+  }, 20000);
 });
 
 describe('start, stop and status', () => {
@@ -312,6 +355,51 @@ describe('start, stop and status', () => {
     expect(began.code).toBe(0);
     const record = JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number };
     spawned.push(record.pid);
+
+    const status = await cli(['status']);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain(`(pid ${String(record.pid)})`);
+
+    const stopped = await cli(['stop']);
+    expect(stopped.code).toBe(0);
+    await gone(record.pid);
+    expect(alive(record.pid)).toBe(false);
+  }, 40000);
+
+  it('forwards an option typed before start, token and all', async () => {
+    const began = await cli([
+      '--connection-token', 'abc', 'start', '--port', '0', '--plugin', BACKEND, '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = recordOf();
+    spawned.push(record.pid);
+
+    expect(readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8')).not.toContain('no token: loopback only');
+    expect(record.connectUrl).toContain('tkn=abc');
+    expect(await knock(String(record.connectUrl))).toBe('open');
+  }, 40000);
+
+  it('forwards a value typed before start, port and all', async () => {
+    const began = await cli(['--port', '0', 'start', '--plugin', BACKEND, '--no-update-check']);
+    expect(began.code).toBe(0);
+    const record = recordOf();
+    spawned.push(record.pid);
+
+    expect(record.url.startsWith('ws://127.0.0.1:')).toBe(true);
+    expect(record.url).not.toBe('ws://127.0.0.1:9187');
+  }, 40000);
+
+  it('takes the start that is the word, not one that is a value', async () => {
+    const began = await cli([
+      '--path', 'start', 'start', '--port', '0', '--plugin', BACKEND, '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = recordOf();
+    spawned.push(record.pid);
+
+    // A daemon announces itself once, so one line is one daemon.
+    const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
+    expect(log.match(/ahpd on ws:\/\//gu)).toHaveLength(1);
 
     const status = await cli(['status']);
     expect(status.code).toBe(0);
@@ -357,16 +445,16 @@ describe('start, stop and status', () => {
 
 describe('a daemon that binds a port', () => {
   it('binds the port and host a person passed', async () => {
-    const url = await foreground(['--port', '0', '--host', '127.0.0.1', '--plugin', BACKEND, '--no-update-check']);
-    expect(url.startsWith('ws://127.0.0.1:')).toBe(true);
-    expect(url).not.toBe('ws://127.0.0.1:9187');
+    const url = await foreground(['--port', '0', '--host', 'localhost', '--plugin', BACKEND, '--no-update-check']);
+    expect(url.startsWith('ws://localhost:')).toBe(true);
+    expect(url).not.toBe('ws://localhost:9187');
   }, 30000);
 
   it('binds the port and host the configuration names', async () => {
-    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ port: 0, host: '127.0.0.1', plugins: [BACKEND] }));
+    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ port: 0, host: 'localhost', plugins: [BACKEND] }));
     const url = await foreground([]);
-    expect(url.startsWith('ws://127.0.0.1:')).toBe(true);
-    expect(url).not.toBe('ws://127.0.0.1:9187');
+    expect(url.startsWith('ws://localhost:')).toBe(true);
+    expect(url).not.toBe('ws://localhost:9187');
   }, 30000);
 
   it('starts, reports and stops the daemon the record names', async () => {

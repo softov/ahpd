@@ -1,12 +1,18 @@
 ---
 title: Served commands act on the daemon's own options, and no request ends the daemon
-status: todo
+status: done
 depends: [task-07-the-listener-survives-a-malformed-request.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L78-L93](../../../../packages/server/src/commands/options.ts#L78-L93) - `stop` and `refuse`"
-  - "[code://packages/server/src/commands/options.ts#L272-L343](../../../../packages/server/src/commands/options.ts#L272-L343) - `optionsFrom`, which calls `stop` at lines 281, 295 and 301"
-  - "[code://packages/server/src/commands/run.ts#L122-L159](../../../../packages/server/src/commands/run.ts#L122-L159) - the daemon's `users` directory and the `apiHandler` it is mounted with"
+  - "[code://packages/server/src/commands/served.ts#L38-L57](../../../../packages/server/src/commands/served.ts#L38-L57) - `ServedFacts` and `servedRegistry`, the declarations built against the daemon"
+  - "[code://packages/server/src/commands/options.ts#L251-L268](../../../../packages/server/src/commands/options.ts#L251-L268) - `servedUserFields` and `servedPluginWriteFields`, without the daemon's own paths"
+  - "[code://packages/server/src/commands/status.ts#L24-L27](../../../../packages/server/src/commands/status.ts#L24-L27) - served, the process answering is the one described"
+  - "[code://packages/server/src/commands/plugin.ts#L27-L32](../../../../packages/server/src/commands/plugin.ts#L27-L32) and [#L59-L60](../../../../packages/server/src/commands/plugin.ts#L59-L60) - served, the list and the file edited are the daemon's"
+  - "[code://packages/server/src/commands/user.ts#L54-L61](../../../../packages/server/src/commands/user.ts#L54-L61) - served, `people` opens the daemon's directory"
+  - "[code://packages/server/src/commands/config.ts#L53-L56](../../../../packages/server/src/commands/config.ts#L53-L56) - served, the daemon's own file is read"
+  - "[code://packages/server/src/commands/run.ts#L196-L219](../../../../packages/server/src/commands/run.ts#L196-L219) - the facts the daemon hands it, read per request"
+  - "[code://packages/server/src/commands/scopes.ts#L34-L45](../../../../packages/server/src/commands/scopes.ts#L34-L45) - the hook both registries share"
+  - "[code://packages/server/test/server-http.test.ts#L290-L301](../../../../packages/server/test/server-http.test.ts#L290-L301) and [#L565-L658](../../../../packages/server/test/server-http.test.ts#L565-L658) - the fixture and the served-options cases"
 ---
 
 ## Objective
@@ -17,15 +23,14 @@ A served command reads the options the daemon was started with and never the req
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/registry.ts:129-142` - `cliRegistry` is what is served today; the served registry is built with the daemon's options instead.
-- `UPDATE: packages/server/src/http.ts:34-62` - `ApiOptions` and `apiHandler` take what the served commands need from the running daemon.
-- `UPDATE: packages/server/src/commands/run.ts:154-159` - passes the daemon's `Options`, its configuration path, the `users` directory built at line 122, and the listener's facts once it is bound (the registry is built before `listen`, so they are read lazily).
-- `UPDATE: packages/server/src/commands/status.ts:16-55` - over HTTP answers from the running daemon (pid, URL, paths, automations, start time) with no `daemon.json`; today it answers 500 for a daemon run in the foreground.
-- `UPDATE: packages/server/src/commands/plugin.ts:20-36` - `plugin list` calls `optionsFrom(context.input)`, whose `stop` exits the daemon on `?noPlugins=true&plugins=x&plugins=y` (verified: exit 2), and reads any `configFile` it is given.
-- `UPDATE: packages/server/src/commands/config.ts:68-85` - reads the daemon's own configuration file.
-- `UPDATE: packages/server/src/commands/user.ts:28-44` - `people` opens the users file the input names; over HTTP it uses the daemon's directory, and a daemon with none answers 400.
-- `UPDATE: packages/server/src/commands/user.ts:115-121` and `status.ts:25-34` - the comments explain the branch by telling what used to happen; they document what the branch is.
-- `UPDATE: test/server-http.test.ts:45-54, 68-113, 131-140` - the fixture writes the daemon's configuration to the default XDG path and writes a fake `daemon.json` with `recordFor`, which is what let a daemon on another file and a foreground daemon pass.
+- `CREATE: packages/server/src/commands/served.ts` - `ServedFacts`, `ServedRunning` and `servedRegistry`, so the served declarations can be built without a cycle through `registry.ts`.
+- `CREATE: packages/server/src/commands/scopes.ts` - `checkScopes`, the hook both registries are built with.
+- `UPDATE: packages/server/src/commands/registry.ts` - imports the shared hook; its own `cliRegistry` and `localRegistry` are unchanged for the terminal.
+- `UPDATE: packages/server/src/commands/options.ts:251-268` - the served `user` and plugin-write fields.
+- `UPDATE: packages/server/src/commands/status.ts, config.ts, user.ts, plugin.ts` - an optional `ServedFacts`; served, each reads the daemon and declares no path field.
+- `UPDATE: packages/server/src/commands/run.ts:196-219, 227` - builds the facts and mounts `servedRegistry(facts)`.
+- `UPDATE: packages/server/src/daemon.ts` - `statusLine` takes the three fields it prints.
+- `UPDATE: packages/server/test/server-http.test.ts:53-72, 290-301, 565-658` - the fixture and the cases.
 
 ## Steps
 
@@ -36,7 +41,7 @@ A served command reads the options the daemon was started with and never the req
 
 ## Validation
 
-- `test/server-http.test.ts`, the fixture: the daemon runs on a `--config-file` outside the XDG default and with `--users <file>` that the file does not name, and no case writes `daemon.json`.
+- `packages/server/test/server-http.test.ts`, the fixture: the daemon runs on a `--config-file` outside the XDG default and with `--users <file>` that the file does not name, and no case writes `daemon.json`.
 - `GET /api/status` with the deployment token answers 200 with the daemon's own pid; today 500.
 - `GET /api/plugin/list?noPlugins=true&plugins=x&plugins=y` with the deployment token answers and the daemon keeps running; today it exits 2.
 - `GET /api/plugin/list?configFile=<a file holding TOPSECRET>` answers without `TOPSECRET` in the body; today the 500 quotes it.
@@ -46,3 +51,10 @@ A served command reads the options the daemon was started with and never the req
 - `GET /api/cli-manifest` lists no `configFile`, `users`, `plugins` or `paths` field on any command.
 
 ## Resume
+
+Done.
+The facts are passed by closure, not through cofold's `provide`: the same `declare*` functions take an optional `ServedFacts`, and `servedRegistry` passes the daemon's own `Options`, configuration path, `users` directory and a `running()` read at request time, because the listener is bound after the registry is built.
+The four path fields are absent from the served declarations, so they are absent from the manifest: a served `status` and `config` declare no field at all, and the served `user` and plugin-write declarations keep only what is the command's own.
+`checkScopes` moved to `scopes.ts` so `served.ts` can build a registry without importing `registry.ts` back.
+The fixture now runs the daemon on `--config-file home/config.json` and `--users` as a flag, and writes no `daemon.json`; the `--remote` cases lost `--no-update-check`, which the served declarations no longer take.
+`pnpm typecheck` green; `packages/server/test/server-http.test.ts` green, 31 cases; `server-cli` and `server-commands` green.

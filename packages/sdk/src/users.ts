@@ -32,7 +32,7 @@ const BUILT_IN: Record<string, Grant[]> = {
 };
 
 /** The subjects the host itself answers to, beside any plugin's scheme. */
-export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config'] as const;
+export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config', 'users'] as const;
 
 /** `<subject>:<verb>`, with `*` in either position. */
 const GRANT = /^[^:\s]+:(?:read|write|\*)$/;
@@ -309,10 +309,10 @@ export function fileUsers(options: FileUserOptions): Users {
     renameSync(loose, options.path);
   };
 
-  /** The grants one record holds, saying so when a role answered nothing. */
-  const grantsOf = (record: UserRecord, file: UserFile, complain = true): Set<string> => {
+  /** What a set of role names holds, saying so once per name that answered nothing. */
+  const grantsOf = (roles: readonly string[], file: UserFile, complainFor?: string): Set<string> => {
     const held = new Set<string>();
-    for (const role of record.roles) {
+    for (const role of roles) {
       const defined = file.roles?.[role];
       if (defined !== undefined) {
         for (const one of defined) held.add(one);
@@ -324,8 +324,8 @@ export function fileUsers(options: FileUserOptions): Users {
         continue;
       }
       // Said once per record as it is added or read, and not again on every
-      // command, which is why the live resolution below passes `false`.
-      if (complain) once(`user ${record.id} names role ${role}, which the file does not define and no built-in has`);
+      // command, which is why the live resolution below passes no id.
+      if (complainFor !== undefined) once(`user ${complainFor} names role ${role}, which the file does not define and no built-in has`);
     }
     return held;
   };
@@ -345,7 +345,7 @@ export function fileUsers(options: FileUserOptions): Users {
     // in the log even though every command resolves the roles again below -
     // and said only here, because a complaint per command is a log nobody
     // reads.
-    grantsOf(record, read().file);
+    grantsOf(record.roles, read().file, record.id);
     /*
      * The claim's roles, resolved once.
      *
@@ -354,7 +354,7 @@ export function fileUsers(options: FileUserOptions): Users {
      * the issuer lands on the next sign-in, and a change in this file lands on
      * the next command.
      */
-    const stamped = grantsOf({ id: record.id, roles: fromIssuer, token: '' }, read().file, false);
+    const stamped = grantsOf(fromIssuer, read().file);
     return {
       id: record.id,
       roles: [...record.roles, ...fromIssuer],
@@ -367,7 +367,7 @@ export function fileUsers(options: FileUserOptions): Users {
         const { file } = read();
         const now = (file.users ?? []).find((one) => one.id === record.id);
         if (now === undefined) return false;
-        return holds(grantsOf(now, file, false), grant) || holds(stamped, grant);
+        return holds(grantsOf(now.roles, file), grant) || holds(stamped, grant);
       },
     };
   };
@@ -456,7 +456,7 @@ export function fileUsers(options: FileUserOptions): Users {
         return {
           id: one.id,
           roles: [...one.roles],
-          grants: [...grantsOf(one, file, false)] as Grant[],
+          grants: [...grantsOf(one.roles, file)] as Grant[],
           // What the record resolved to, so `ahpd user list` can say who the
           // door identifies, who still has to sign in, and where their
           // credential comes from.
@@ -465,6 +465,17 @@ export function fileUsers(options: FileUserOptions): Users {
           ...(one.rolesFrom === undefined ? {} : { rolesFrom: one.rolesFrom }),
         };
       });
+    },
+
+    grantsOfRoles: async (roles) => {
+      const { file } = read();
+      return [...grantsOf(roles, file)] as Grant[];
+    },
+
+    grantsOfPerson: async (id) => {
+      const { file } = read();
+      const held = (file.users ?? []).find((one) => one.id === id);
+      return held === undefined ? undefined : [...grantsOf(held.roles, file)] as Grant[];
     },
 
     add: async (id, roles, options) => {

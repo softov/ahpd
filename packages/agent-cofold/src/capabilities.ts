@@ -20,12 +20,12 @@ import type { SearchProvider } from '@cofold/tools';
 import { brave, duckduckgo, files, memory, shell, tavily, web } from '@cofold/tools';
 
 /**
- * The search backends `web_search` may ask, in the order they are tried.
+ * The search backends `web_search` may ask, in the order the configuration
+ * lists them.
  *
- * The same three papo offers and in the same order: Brave and Tavily are
- * keyed services, DuckDuckGo is its results page scraped. A backend `web()`
- * was not given is simply not offered, which is why `web_search` exists only
- * when at least one of these is configured.
+ * Brave and Tavily are keyed services, DuckDuckGo is its results page scraped.
+ * A backend `web()` was not given is simply not offered, which is why
+ * `web_search` exists only when at least one of these is configured.
  */
 export interface SearchConfig {
   /** Brave Search, with a subscription token. */
@@ -60,12 +60,15 @@ export interface ToolsConfig {
 /** All four on, which is what a session whose options name no `tools` gets. */
 export const DEFAULT_TOOLS: ToolsConfig = { files: true, shell: true, web: true, memory: true };
 
-/** The providers `web_search` is offered over, in the configuration's order. */
+/** The providers `web_search` is offered over, in the order the configuration lists them. */
 const searchProviders = (search: SearchConfig | undefined): SearchProvider[] => {
   const providers: SearchProvider[] = [];
-  if (search?.brave !== undefined) providers.push(brave({ apiKey: search.brave.apiKey }));
-  if (search?.tavily !== undefined) providers.push(tavily({ apiKey: search.tavily.apiKey }));
-  if (search?.duckduckgo === true) providers.push(duckduckgo());
+  if (search === undefined) return providers;
+  for (const name of Object.keys(search) as (keyof SearchConfig)[]) {
+    if (name === 'brave' && search.brave !== undefined) providers.push(brave({ apiKey: search.brave.apiKey }));
+    else if (name === 'tavily' && search.tavily !== undefined) providers.push(tavily({ apiKey: search.tavily.apiKey }));
+    else if (name === 'duckduckgo' && search.duckduckgo === true) providers.push(duckduckgo());
+  }
   return providers;
 };
 
@@ -122,16 +125,24 @@ const bag = (value: unknown): Record<string, unknown> | undefined =>
 const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
-/** The providers a `web.search` value names, or nothing for one that names none. */
+/** The providers a `web.search` value names, in the order it lists them, or nothing for one that names none. */
 const searchOf = (value: unknown): SearchConfig | undefined => {
   const held = bag(value);
   if (held === undefined) return undefined;
   const search: SearchConfig = {};
-  const braveKey = text(bag(held.brave)?.apiKey);
-  if (braveKey !== undefined) search.brave = { apiKey: braveKey };
-  const tavilyKey = text(bag(held.tavily)?.apiKey);
-  if (tavilyKey !== undefined) search.tavily = { apiKey: tavilyKey };
-  if (typeof held.duckduckgo === 'boolean') search.duckduckgo = held.duckduckgo;
+  for (const name of Object.keys(held)) {
+    if (name === 'brave') {
+      const apiKey = text(bag(held.brave)?.apiKey);
+      if (apiKey !== undefined) search.brave = { apiKey };
+    }
+    else if (name === 'tavily') {
+      const apiKey = text(bag(held.tavily)?.apiKey);
+      if (apiKey !== undefined) search.tavily = { apiKey };
+    }
+    else if (name === 'duckduckgo' && typeof held.duckduckgo === 'boolean') {
+      search.duckduckgo = held.duckduckgo;
+    }
+  }
   return Object.keys(search).length > 0 ? search : undefined;
 };
 

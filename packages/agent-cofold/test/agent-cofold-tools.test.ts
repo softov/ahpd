@@ -330,6 +330,36 @@ it('still sends the after when the person declines the edit', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('sends a declined edit its after before the next ask', async () => {
+  const dir = place();
+  const { session, v, edits } = await open({
+    script: [
+      { toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] },
+      { toolCalls: [{ name: 'write_file', input: { path: 'c.txt', content: 'newer' }, callId: 'c2' }] },
+      { text: 'done' },
+    ],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+  });
+  session.begin('t1', 'write it');
+  await when(() => asked(v));
+  await settle();
+
+  session.confirm('c1', false);
+  /*
+   * The run goes on to the second call, which asks. The declined file's `after`
+   * is out by then and the run has not ended, so the end-of-run sweep, which a
+   * paused run never reaches, is not what sent it.
+   */
+  await when(() => v.of('session', 'session/inputNeededSet').length >= 2);
+  expect(edits.filter((one) => one.path === join(dir, 'b.txt')).map((one) => one.phase)).toEqual(['before', 'after']);
+  expect(ended(v)).toBe(false);
+
+  session.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('draws a shell call as a terminal, with its command as the intention', async () => {
   const dir = place();
   const { session, v } = await open({
@@ -543,6 +573,14 @@ const ROWS: Row[] = [
     call: (at) => {
       symlinkSync(at.away, join(at.workspace, 'link'), 'dir');
       return call('write_file', { path: 'link/x.txt', content: 'x' });
+    },
+    expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
+  },
+  {
+    what: 'an edit through a dangling symlink whose target is outside',
+    call: (at) => {
+      symlinkSync(join(at.away, 'new.txt'), join(at.workspace, 'dl'));
+      return call('write_file', { path: 'dl', content: 'x' });
     },
     expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
   },

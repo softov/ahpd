@@ -16,7 +16,7 @@
 
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { contributorOf, intentionOf, toolCallPart, toolCompleteAction, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
+import { contributorOf, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -401,7 +401,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           call.confirmationTitle = prompt;
           call.invocationMessage = prompt;
           delete call.confirmed;
-          const written = event.input === undefined ? undefined : JSON.stringify(event.input);
+          const written = toolInputOf(event.name, event.input);
           if (written !== undefined) call.toolInput = written;
 
           const actions: Bag[] = [];
@@ -488,7 +488,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           call.status = 'running';
           call.invocationMessage = held.invocation ?? held.name;
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
-          const written = held.input === undefined ? undefined : JSON.stringify(held.input);
+          const written = toolInputOf(held.name, held.input);
           if (written !== undefined) call.toolInput = written;
           /*
            * Built here rather than through `toolReadyAction`, because an

@@ -32,6 +32,8 @@ const directory = (good = 'good-token', resource: Users['resource'] = RECORD): U
   resource,
   verify: async (token) => (token === good ? { id: 'ana', roles: ['admin'], can: () => true } : undefined),
   list: async () => [{ id: 'ana', roles: ['admin'], grants: ['*:*'] as const, trusted: false }],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
   add: async () => {},
   remove: async () => false,
   mint: async () => good,

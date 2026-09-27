@@ -1,10 +1,12 @@
 ---
 title: A bare plugin or user names its sub-commands
-status: todo
+status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/main.ts#L117-L125](../../../../packages/server/src/main.ts#L117-L125) - where the line's words are counted before the program runs"
+  - "[code://packages/server/src/main.ts#L160-L178](../../../../packages/server/src/main.ts#L160-L178) - the hint for a group with no known sub-command"
+  - "[code://packages/server/test/server-cli.test.ts#L526-L532](../../../../packages/server/test/server-cli.test.ts#L526-L532) - the `user` cases, bare and unknown"
+  - "[code://packages/server/test/server-cli.test.ts#L573-L585](../../../../packages/server/test/server-cli.test.ts#L573-L585) - the `plugin` cases, bare, unknown and `--help`"
   - file:///github/cofold/packages/terminal/src/program.ts - line 140, `unknown command "<words>"`
   - "git://7a7e9d1 - packages/server/src/main.ts before the migration: \"plugin takes list, install or remove.\" and \"user takes add, rm, list or token.\""
 ---
@@ -15,8 +17,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/main.ts:117-125` - the hint for a group with no known sub-command.
-- `UPDATE: test/server-cli.test.ts:283-286` and `:327-330` - the two "refuses a sub-command it does not have" cases, plus bare-verb cases.
+- `UPDATE: packages/server/src/main.ts:160-178` - the hint for a group with no known sub-command.
+- `UPDATE: packages/server/test/server-cli.test.ts:526-532, 573-585` - the two "refuses a sub-command it does not have" cases, plus bare-verb cases.
 
 ## Steps
 
@@ -30,6 +32,11 @@ refs:
 - `['plugin']` and `['plugin', 'toy', '--config-file', config]` exit 2 with stderr `plugin takes list, install or remove.`; today stderr is `ahpd: unknown command "plugin"...`.
 - `['user']` and `['user', 'toy', '--users', users]` exit 2 with stderr naming `list`, `add`, `rm` and `token`.
 - `['plugin', '--help']` still exits 0 with the group's help.
-- `node_modules/.bin/vitest run test/server-cli.test.ts` green.
+- `node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green.
 
 ## Resume
+
+Done.
+The line's words are tokenized once; when the first word heads a group and no command matches, and the second word is not a known sub-command, the hint names the second pattern words of the visible commands under it in registry order and exits 2.
+`--help` is skipped, so `ahpd plugin --help` is still the program's group help.
+`node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green, 35 cases.

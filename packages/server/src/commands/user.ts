@@ -4,17 +4,38 @@
  * The path comes from `--users` or the configuration key and from nowhere else:
  * a verb that invented a file because neither was set would write a directory
  * nobody asked for, and the next daemon to start would not be the one that
- * reads it. Every sub-command declares the same fields, because the flags were
- * read out of the whole line before this and refusing one on `list` that `add`
- * takes would be a smaller surface than the one people have.
+ * reads it. Every sub-command declares the same fields, so a flag is accepted
+ * wherever on the line it is typed and no sub-command has a smaller surface
+ * than the others. Served over HTTP, the file and the address are the daemon's
+ * own and the request cannot name either.
  */
 
 import { hostname } from 'node:os';
-import { ArgumentError, output } from '@cofold/commands';
-import type { Command, Registry } from '@cofold/commands';
-import { fileUsers } from '@ahpd/sdk';
+import { output } from '@cofold/commands';
+import type { Command, CommandContext, Registry } from '@cofold/commands';
+import { HttpError } from '@cofold/remote';
+import { fileUsers, refusalReason } from '@ahpd/sdk';
+import type { Grant, Principal } from '@ahpd/sdk';
 import { loadConfig, personalUrl } from '../config.js';
-import { refuse, userFields } from './options.js';
+import { isRoot } from './authorize.js';
+import { conflict, refuse, servedUserFields, userFields } from './options.js';
+import type { ServedFacts } from './served.js';
+
+/**
+ * Whether a caller may give a role, or write for a person, at all.
+ *
+ * `users:write` says a caller manages people; what it may hand out is bounded by
+ * what it holds, or granting a role it does not have is `admin` under another
+ * name - decision `a-caller-gives-only-the-grants-it-holds`. The terminal's own
+ * run has no caller to hold to anything, and the deployment token holds every
+ * grant.
+ */
+const bounded = (context: Pick<CommandContext, 'request'>, grants: readonly Grant[]): void => {
+  const actor = context.request?.actor as Principal | undefined;
+  if (actor === undefined || isRoot(actor)) return;
+  const missing = grants.find((one) => !actor.can(one));
+  if (missing !== undefined) throw new HttpError(403, refusalReason(actor.id, missing));
+};
 
 /**
  * The directory, its path and the address a URL would name.
@@ -23,9 +44,21 @@ import { refuse, userFields } from './options.js';
  * flags rather than with a configuration file, so `user token --url` names
  * where it actually is. The configuration's issuer is passed too, so
  * `user list` says where a record that names none signs in; nothing here asks
- * a network.
+ * a network. Served, the daemon's own directory and bound address are used, and
+ * a daemon with no directory refuses.
  */
-function people(context: { input: Readonly<Record<string, unknown>>; surface?: string }) {
+function people(
+  context: { input: Readonly<Record<string, unknown>>; surface?: string; error(text: string): void },
+  served?: ServedFacts,
+) {
+  if (served !== undefined) {
+    const path = served.options.users;
+    if (path === undefined || served.users === undefined) {
+      refuse(context.surface, 'This daemon was started without a users file, so it has no people to manage.');
+    }
+    const here = served.running();
+    return { path, where: { host: here.host, port: here.port }, directory: served.users };
+  }
   const input = context.input;
   const named = typeof input['users'] === 'string' ? input['users'] : undefined;
   const from = loadConfig(typeof input['configFile'] === 'string' ? input['configFile'] : undefined);
@@ -38,7 +71,7 @@ function people(context: { input: Readonly<Record<string, unknown>>; surface?: s
   const directory = fileUsers({
     path,
     ...(typeof from.issuer === 'string' ? { issuer: from.issuer } : {}),
-    onProblem: (line) => process.stderr.write(`${line}\n`),
+    onProblem: (line) => { context.error(line); },
   });
   return { path, where, directory };
 }
@@ -50,15 +83,18 @@ const idOf = (context: { value<T = string>(name: string): T; surface?: string },
   return id;
 };
 
-export const declareUser = (registry: Registry<object>): Command[] => {
+export const declareUser = (registry: Registry<object>, served?: ServedFacts): Command[] => {
+  /** The fields the surface accepts: served, the daemon's own file and address are absent. */
+  const fields = served === undefined ? userFields : servedUserFields;
+
   const list = registry.action({
     id: 'user.list',
     summary: 'Who is in the file',
     surfaces: { cli: { pattern: ['user', 'list'] }, http: { method: 'GET', path: '/user/list' } },
-    input: userFields,
-    scopes: ['admin'],
+    input: fields,
+    scopes: ['users:write'],
     run: async (context) => {
-      const { path, directory } = people(context);
+      const { path, directory } = people(context, served);
       const rows = await directory.list();
       // The roles they hold, what those roles resolve to, whether the door
       // already identifies them or they still have to sign in, and through
@@ -82,14 +118,15 @@ export const declareUser = (registry: Registry<object>): Command[] => {
     summary: 'Add a person',
     description: 'With --role <name> once per role and --issuer <name> for a provider of their own.',
     surfaces: { cli: { pattern: ['user', 'add', ':id'] }, http: { method: 'POST', path: '/user/add/{id}' } },
-    input: { ...userFields, id: { type: 'string', description: 'The identifier their credential answers with.' } },
-    scopes: ['admin'],
+    input: { ...fields, id: { type: 'string', description: 'The identifier their credential answers with.' } },
+    scopes: ['users:write'],
     run: async (context) => {
-      const { directory } = people(context);
+      const { directory } = people(context, served);
       const id = idOf(context, 'add');
       const roles = context.list<string>('role');
       const held = roles.length > 0 ? roles : ['guest'];
       const issuer = context.optional<string>('issuer');
+      bounded(context, await directory.grantsOfRoles(held));
       // A role name or an issuer name that resolves to nothing is refused by
       // the directory; said here so it reads as the verb's own refusal rather
       // than a stack trace.
@@ -106,19 +143,15 @@ export const declareUser = (registry: Registry<object>): Command[] => {
     id: 'user.rm',
     summary: 'Take a person out of the file',
     surfaces: { cli: { pattern: ['user', 'rm', ':id'] }, http: { method: 'POST', path: '/user/rm/{id}' } },
-    input: { ...userFields, id: { type: 'string', description: 'The identifier to take out.' } },
-    scopes: ['admin'],
+    input: { ...fields, id: { type: 'string', description: 'The identifier to take out.' } },
+    scopes: ['users:write'],
     run: async (context) => {
-      const { directory } = people(context);
+      const { directory } = people(context, served);
       const id = idOf(context, 'rm');
+      const target = await directory.grantsOfPerson(id);
+      if (target !== undefined) bounded(context, target);
       const gone = await directory.remove(id);
-      if (!gone) {
-        // Thrown rather than exited over HTTP: the process is the daemon, and
-        // ending it would take every other client with it.
-        if (context.surface === 'remote') throw new ArgumentError(`No user called ${id}.`);
-        context.write(`No user called ${id}.\n`);
-        process.exit(1);
-      }
+      if (!gone) conflict(`No user called ${id}.`);
       return output({ id }, `Removed ${id}. Their socket stays open; their next connection is refused.\n`);
     },
   });
@@ -128,11 +161,13 @@ export const declareUser = (registry: Registry<object>): Command[] => {
     summary: 'Mint a credential, shown once',
     description: 'The bare secret by default, so it can be piped; --url prints the whole ws:// URL a client can be given.',
     surfaces: { cli: { pattern: ['user', 'token', ':id'] }, http: { method: 'POST', path: '/user/token/{id}' } },
-    input: { ...userFields, id: { type: 'string', description: 'Whose credential to mint.' } },
-    scopes: ['admin'],
+    input: { ...fields, id: { type: 'string', description: 'Whose credential to mint.' } },
+    scopes: ['users:write'],
     run: async (context) => {
-      const { where, directory } = people(context);
+      const { where, directory } = people(context, served);
       const id = idOf(context, 'token');
+      const target = await directory.grantsOfPerson(id);
+      if (target !== undefined) bounded(context, target);
       const secret = await directory.mint(id);
       /*
        * The bare secret by default, so it can be piped, and the whole URL when

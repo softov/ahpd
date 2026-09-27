@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { installPlugins, isPackageName, pinned, removePlugins } from '../src/install.js';
+import { installPlugins, isPackageName, pinned, removePlugins, run as realRun } from '../src/install.js';
 import type { Ran, Runner } from '../src/install.js';
 
 /*
@@ -27,7 +27,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 /** A runner that records every call and lets a verb fail. */
 const fake = (answers: Record<string, Ran> = {}) => {
   const calls: { program: string; argv: string[] }[] = [];
-  const runner: Runner = (program, argv) => {
+  const runner: Runner = async (program, argv) => {
     calls.push({ program, argv: [...argv] });
     return answers[argv[0] ?? ''] ?? { code: 0, stdout: '', stderr: '' };
   };
@@ -64,9 +64,9 @@ it('recognises the specs it can install and refuses the rest', () => {
   expect(isPackageName('https://example.test/plugin.js')).toBe(false);
 });
 
-it('installs into the configuration directory and names the packages there', () => {
+it('installs into the configuration directory and names the packages there', async () => {
   const { runner, calls } = fake();
-  installPlugins(['@ahpd/agent-claude', 'left-pad@1'], {
+  await installPlugins(['@ahpd/agent-claude', 'left-pad@1'], {
     configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
   });
 
@@ -85,33 +85,33 @@ it('installs into the configuration directory and names the packages there', () 
   expect(said.join('\n')).toContain(configDir);
 });
 
-it('names a scoped package without the version it was installed at', () => {
+it('names a scoped package without the version it was installed at', async () => {
   const { runner, calls } = fake();
-  installPlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
+  await installPlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
   expect(calls.find((one) => one.argv[0] === 'install')?.argv.at(-1)).toBe('@ahpd/agent-acp@0.7.0');
   expect(read().plugins).toEqual(['@ahpd/agent-acp']);
 });
 
-it('removes a name given with a version', () => {
+it('removes a name given with a version', async () => {
   write({ plugins: ['@ahpd/agent-acp'] });
   const { runner, calls } = fake();
-  removePlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, uninstall: true, run: runner, say });
+  await removePlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, uninstall: true, run: runner, say });
   expect(read().plugins).toEqual([]);
   expect(calls.find((one) => one.argv[0] === 'uninstall')?.argv.at(-1)).toBe('@ahpd/agent-acp');
 });
 
-it('refuses a path and a scheme before npm runs', () => {
+it('refuses a path and a scheme before npm runs', async () => {
   const { runner, calls } = fake();
   const options = { configDir, configFile, version: '9.9.9', enable: true, run: runner, say };
-  expect(() => installPlugins(['./my-plugin'], options)).toThrow(/not a package name/);
-  expect(() => installPlugins(['npm:@ahpd/agent-claude'], options)).toThrow(/not a package name/);
+  await expect(installPlugins(['./my-plugin'], options)).rejects.toThrow(/not a package name/);
+  await expect(installPlugins(['npm:@ahpd/agent-claude'], options)).rejects.toThrow(/not a package name/);
   expect(calls).toEqual([]);
 });
 
-it('adds a name once, and keeps every other key and entry', () => {
+it('adds a name once, and keeps every other key and entry', async () => {
   write({ port: 1234, plugins: ['@ahpd/existing', { name: '@ahpd/configured', options: { token: 'shh' } }] });
   const { runner } = fake();
-  installPlugins(['@ahpd/existing', '@ahpd/agent-claude'], {
+  await installPlugins(['@ahpd/existing', '@ahpd/agent-claude'], {
     configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
   });
 
@@ -130,31 +130,31 @@ it('adds a name once, and keeps every other key and entry', () => {
   expect(text.endsWith('\n')).toBe(true);
 
   // A second install of the same name changes nothing, file included.
-  installPlugins(['@ahpd/agent-claude'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
+  await installPlugins(['@ahpd/agent-claude'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
   expect(readFileSync(configFile, 'utf8')).toBe(text);
 });
 
-it('leaves the configuration alone with --no-enable', () => {
+it('leaves the configuration alone with --no-enable', async () => {
   write({ plugins: ['@ahpd/other'] });
   const before = readFileSync(configFile, 'utf8');
   const { runner } = fake();
-  installPlugins(['@ahpd/agent-claude'], {
+  await installPlugins(['@ahpd/agent-claude'], {
     configDir, configFile, version: '9.9.9', enable: false, run: runner, say,
   });
   expect(readFileSync(configFile, 'utf8')).toBe(before);
   // And one that is not there is not created, which is what the container
   // install relies on.
   rmSync(configFile);
-  installPlugins(['@ahpd/agent-claude'], {
+  await installPlugins(['@ahpd/agent-claude'], {
     configDir, configFile, version: '9.9.9', enable: false, run: runner, say,
   });
   expect(existsSync(configFile)).toBe(false);
 });
 
-it('removes a string entry and an object entry, then uninstalls them', () => {
+it('removes a string entry and an object entry, then uninstalls them', async () => {
   write({ port: 1234, plugins: ['@ahpd/a', { name: '@ahpd/b', options: { x: 1 } }, '@ahpd/c'] });
   const { runner, calls } = fake();
-  removePlugins(['@ahpd/a', '@ahpd/b'], { configDir, configFile, uninstall: true, run: runner, say });
+  await removePlugins(['@ahpd/a', '@ahpd/b'], { configDir, configFile, uninstall: true, run: runner, say });
 
   expect(read().plugins).toEqual(['@ahpd/c']);
   expect(read().port).toBe(1234);
@@ -162,19 +162,38 @@ it('removes a string entry and an object entry, then uninstalls them', () => {
     .toEqual(['uninstall', '--prefix', configDir, '@ahpd/a', '@ahpd/b']);
 });
 
-it('drops the name with --keep but leaves the package installed', () => {
+it('drops the name with --keep but leaves the package installed', async () => {
   write({ plugins: ['@ahpd/a'] });
   const { runner, calls } = fake();
-  removePlugins(['@ahpd/a'], { configDir, configFile, uninstall: false, run: runner, say });
+  await removePlugins(['@ahpd/a'], { configDir, configFile, uninstall: false, run: runner, say });
   expect(read().plugins).toEqual([]);
   expect(calls).toEqual([]);
 });
 
-it('refuses with npm\'s own words when the install fails', () => {
+it('refuses with npm\'s own words when the install fails', async () => {
   const { runner } = fake({ install: { code: 1, stdout: '', stderr: 'E404 no such package' } });
-  expect(() => installPlugins(['@ahpd/agent-claude'], {
+  await expect(installPlugins(['@ahpd/agent-claude'], {
     configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
-  })).toThrow(/@ahpd\/agent-claude: E404 no such package/);
+  })).rejects.toThrow(/@ahpd\/agent-claude: E404 no such package/);
   // Nothing was named, because nothing was installed.
   expect(existsSync(configFile)).toBe(false);
 });
+
+/*
+ * npm can be loud, and what it says is the reason a person is reading the line
+ * it is on. The copy the caller gets is the whole of it, whatever its size.
+ */
+it('streams more from npm than one buffer holds', async () => {
+  const real = process.stderr.write;
+  let heard = '';
+  process.stderr.write = ((chunk: string | Uint8Array) => { heard += String(chunk); return true; }) as typeof process.stderr.write;
+  try {
+    const done = await realRun('node', ['-e', 'process.stderr.write("x".repeat(2 * 1024 * 1024))']);
+    expect(done.code).toBe(0);
+    expect(done.stderr.length).toBe(2 * 1024 * 1024);
+    expect(heard.length).toBe(2 * 1024 * 1024);
+  }
+  finally {
+    process.stderr.write = real;
+  }
+}, 30000);

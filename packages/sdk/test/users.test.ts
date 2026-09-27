@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { fileUsers, signInRecord } from '../src/users.js';
+import { fileUsers, isGrant, signInRecord } from '../src/users.js';
 import type { Grant } from '../src/types/users.js';
 
 /*
@@ -183,6 +183,18 @@ it('reports a grant that is not a subject and a verb, and drops it', async () =>
   expect(said.some((one) => one.includes('session:edit'))).toBe(true);
 });
 
+it('takes users:write as a grant, and answers it from a role', async () => {
+  expect(isGrant('users:write')).toBe(true);
+  writeFileSync(path, JSON.stringify({
+    roles: { keeper: ['users:write'] },
+    users: [{ id: 'k', roles: ['keeper'], token: '' }],
+  }));
+  const held = await open().verify(await open().mint('k'));
+  expect(held?.can('users:write')).toBe(true);
+  // The management of people is its own subject, not a wider settings grant.
+  expect(held?.can('config:write')).toBe(false);
+});
+
 it('answers the grants a role resolves to, without repeating the resolution', async () => {
   const users = open();
   await users.add('g', ['guest']);
@@ -257,6 +269,21 @@ it('lists people without their credentials', async () => {
   expect(await users.list()).toEqual([{ id: 'a', roles: ['admin'], grants: ['*:*'], trusted: false }]);
   const text = JSON.stringify(await users.list());
   expect(text).not.toContain('sha256');
+});
+
+it('resolves role names to grants, and a person to the grants its roles hold', async () => {
+  writeFileSync(path, JSON.stringify({ roles: { people: ['users:write'] }, users: [] }));
+  const users = open();
+  await users.add('pat', ['people']);
+  await users.add('ada', ['admin']);
+
+  expect((await users.grantsOfRoles(['admin'])).sort()).toEqual(['*:*']);
+  expect((await users.grantsOfRoles(['people'])).sort()).toEqual(['users:write']);
+  expect(await users.grantsOfRoles(['nobody'])).toEqual([]);
+
+  expect((await users.grantsOfPerson('ada'))?.sort()).toEqual(['*:*']);
+  expect((await users.grantsOfPerson('pat'))?.sort()).toEqual(['users:write']);
+  expect(await users.grantsOfPerson('nobody')).toBeUndefined();
 });
 
 it('fails closed on a file that is absent, empty or malformed', async () => {

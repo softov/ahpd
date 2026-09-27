@@ -4,10 +4,10 @@ status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "cofold commands"
 refs:
-  - file:///github/cofold/packages/commands/src/types/field.ts - `CliField` at lines 59-65, which has no `negatable`
+  - file:///github/cofold/packages/commands/src/types/field.ts - `CliField` at lines 62-75, whose `negatable` is what a flag's opposite is built from
   - file:///github/cofold/packages/commands/src/command.ts - lines 79-96, where an option is built from a field's `cli`
   - file:///github/cofold/packages/commands/src/argv.ts - line 29, the negation registered for `negatable: true` or any flag spelled `--no-X`
-  - "[code://packages/server/package.json](../../../../packages/server/package.json) - `@cofold/commands` `^0.2.0`"
+  - "[code://packages/server/package.json](../../../../packages/server/package.json) - `@cofold/commands` `^0.2.1`"
 ---
 
 ## Objective

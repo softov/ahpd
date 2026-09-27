@@ -17,7 +17,7 @@
  * directory, the file and the version to pin to.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { PluginSpec } from '@ahpd/sdk';
@@ -35,18 +35,37 @@ export interface Ran {
 /**
  * How one program is run.
  *
- * The child inherits this process's streams, so npm's progress bar and its
- * prompts are the person's to watch. Replaced in tests, which is the only
- * reason this is a value at all.
+ * Standard input is this process's, so a prompt is the person's to answer.
+ * Standard output is this process's standard error, so the command's own stdout
+ * stays its payload: `plugin install --json` writes nothing there but its JSON.
+ * Standard error is written through as it arrives and kept in full for the
+ * caller's reason, because that is where npm explains a failure and a reason
+ * read only at the end is one nobody saw while it was happening. The promise
+ * settles when the program is gone, so a caller answers whoever it serves
+ * meanwhile. Replaced in tests, which is the only reason this is a value at all.
  */
-export type Runner = (program: string, argv: readonly string[]) => Ran;
+export type Runner = (program: string, argv: readonly string[]) => Promise<Ran>;
 
-/** The default runner: the program on PATH, waited for. */
-export const run: Runner = (program, argv) => {
-  const done = spawnSync(program, [...argv], { stdio: 'inherit', encoding: 'utf8' });
-  if (done.error !== undefined) return { code: -1, stdout: '', stderr: done.error.message };
-  return { code: done.status ?? -1, stdout: done.stdout ?? '', stderr: done.stderr ?? '' };
-};
+/** The default runner: the program on PATH, its standard error passed through as it comes. */
+export const run: Runner = (program, argv) => new Promise((done) => {
+  const child = spawn(program, [...argv], { stdio: ['inherit', 2, 'pipe'] });
+  let stderr = '';
+  let settled = false;
+  const finish = (answer: Ran): void => {
+    if (settled) return;
+    settled = true;
+    done(answer);
+  };
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = String(chunk);
+    stderr += text;
+    process.stderr.write(text);
+  });
+  // A program that cannot be started has no words of its own, so the failure
+  // to start is what the caller is told.
+  child.once('error', (error: Error) => { finish({ code: -1, stdout: '', stderr: error.message }); });
+  child.once('close', (code: number | null) => { finish({ code: code ?? -1, stdout: '', stderr }); });
+});
 
 /**
  * Whether a spec is a package name npm can install.
@@ -211,7 +230,7 @@ export interface InstallOptions {
  * script of its own therefore installs its files and skips that script, which
  * npm reports and carries on from.
  */
-export function installPlugins(names: readonly string[], options: InstallOptions): void {
+export async function installPlugins(names: readonly string[], options: InstallOptions): Promise<void> {
   for (const name of names) {
     if (!isPackageName(name)) {
       throw new Error(`${name} is not a package name. install takes package names only; a path or a URL is used as written where it is named.`);
@@ -219,7 +238,7 @@ export function installPlugins(names: readonly string[], options: InstallOptions
   }
   const wanted = names.map((name) => pinned(name, options.version));
   mkdirSync(options.configDir, { recursive: true });
-  const done = options.run('npm', ['install', '--prefix', options.configDir, ...wanted]);
+  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...wanted]);
   if (done.code !== 0) {
     const why = done.stderr.trim();
     throw new Error(`npm could not install ${names.join(', ')}: ${why === '' ? `exit ${String(done.code)}` : why}`);
@@ -258,14 +277,14 @@ export interface RemoveOptions {
  * that fails is reported after the list has already changed, which is the
  * order a person can act on: the plugin is off, and npm's reason is on screen.
  */
-export function removePlugins(names: readonly string[], options: RemoveOptions): void {
+export async function removePlugins(names: readonly string[], options: RemoveOptions): Promise<void> {
   const packages = names.map(packageOf);
   const dropped = disableNames(options.configFile, packages);
   options.say(dropped.length === 0
     ? `${options.configFile} did not name ${packages.join(', ')}.`
     : `plugins -= ${dropped.join(', ')} in ${options.configFile}.`);
   if (!options.uninstall) return;
-  const done = options.run('npm', ['uninstall', '--prefix', options.configDir, ...packages]);
+  const done = await options.run('npm', ['uninstall', '--prefix', options.configDir, ...packages]);
   if (done.code !== 0) {
     const why = done.stderr.trim();
     throw new Error(`npm could not uninstall ${packages.join(', ')}: ${why === '' ? `exit ${String(done.code)}` : why}`);

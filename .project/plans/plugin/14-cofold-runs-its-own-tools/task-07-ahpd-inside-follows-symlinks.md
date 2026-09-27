@@ -1,12 +1,12 @@
 ---
 title: ahpd's workspace check follows symlinks
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/src/session.ts#L43-L46](../../../../packages/agent-cofold/src/session.ts#L43-L46) - `insideDirectory`, a string comparison of `path.resolve` results"
-  - "[code://packages/agent-cofold/src/session.ts#L440-L445](../../../../packages/agent-cofold/src/session.ts#L440-L445) - the policy that hands it to `policyOf` as `inside`"
-  - "[code://test/agent-cofold-tools.test.ts#L328-L354](../../../../test/agent-cofold-tools.test.ts#L328-L354) - `ROWS`, the mode table"
+  - "[code://packages/agent-cofold/src/session.ts#L50-L51](../../../../packages/agent-cofold/src/session.ts#L50-L51) - `insideDirectory`, which judges a path by where it really is"
+  - "[code://packages/agent-cofold/src/session.ts#L444-L449](../../../../packages/agent-cofold/src/session.ts#L444-L449) - the policy that hands it to `policyOf` as `inside`"
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L547-L597](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L547-L597) - `ROWS`, the mode table"
 ---
 
 ## Objective
@@ -15,8 +15,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/agent-cofold/src/session.ts:43-46` - `insideDirectory` compares real paths.
-- `UPDATE: test/agent-cofold-tools.test.ts:328-354` - a row for the symlink case.
+- `UPDATE: packages/agent-cofold/src/session.ts:50-51` - `insideDirectory` judges real paths.
+- `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts:571-578` - a row for the symlink case.
 
 ## Steps
 
@@ -26,7 +26,7 @@ refs:
 
 ## Validation
 
-- `test/agent-cofold-tools.test.ts`: a row "an edit through a symlink out of the workspace" (`write_file` to `link/x.txt`, with `link` a symlink to the `away` folder) expects `acceptEdits: 'ask'`, `bypassPermissions: 'run'`, `plan: 'deny'`, `dontAsk: 'deny'`, `default: 'ask'`, `auto: 'ask'`; under `acceptEdits` it runs today and writes `away/x.txt`, so the row fails before the fix.
-- `node_modules/.bin/vitest run test/agent-cofold-tools.test.ts` green.
+- `packages/agent-cofold/test/agent-cofold-tools.test.ts`: a row "an edit through a symlink out of the workspace" (`write_file` to `link/x.txt`, with `link` a symlink to the `away` folder) expects `acceptEdits: 'ask'`, `bypassPermissions: 'run'`, `plan: 'deny'`, `dontAsk: 'deny'`, `default: 'ask'`, `auto: 'ask'`; under `acceptEdits` it runs today and writes `away/x.txt`, so the row fails before the fix.
+- `node_modules/.bin/vitest run packages/agent-cofold/test/agent-cofold-tools.test.ts` green.
 
 ## Resume

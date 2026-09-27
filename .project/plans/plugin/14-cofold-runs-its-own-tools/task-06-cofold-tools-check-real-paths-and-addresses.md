@@ -4,11 +4,11 @@ status: done
 depends: []
 layer: "cofold tools (/github/cofold)"
 refs:
-  - "file:///github/cofold/packages/tools/src/paths.ts - `resolveWithin` (lines 5-11), a string comparison that follows no symlink"
-  - "file:///github/cofold/packages/tools/src/web.ts - `fetchTool` (line 45 onward) with `redirect: 'follow'` at line 47, and `parseUrl` (line 93), which checks only the scheme"
+  - "file:///github/cofold/packages/tools/src/paths.ts - `resolveWithin` (lines 12-18), which compares real paths so a symlink out of the workspace is outside"
+  - "file:///github/cofold/packages/tools/src/web.ts - `fetchTool` (line 34 onward), whose `redirect: 'manual'` at line 55 sends every hop through the address check, and `parseUrl` (line 107), which checks the scheme"
   - "file:///github/cofold/packages/tools/src/types/web.ts - `WebOptions.fetch` (line 21), the injection the tests use"
   - "file:///github/cofold/packages/tools/src/files.test.ts - `resolveWithin` tests at line 105"
-  - "file:///github/cofold/packages/tools/src/web.test.ts - the fake `fetch` at line 20, which answers from a table and never resolves a name"
+  - "file:///github/cofold/packages/tools/src/web.test.ts - the fake `fetch` at line 21, which answers from a table and never resolves a name"
 ---
 
 ## Objective
@@ -17,8 +17,8 @@ In `/github/cofold`, `resolveWithin` judges inside or outside on real paths, and
 
 ## Files
 
-- `UPDATE: /github/cofold/packages/tools/src/paths.ts:5-11` - `inside` is computed from `realpath` of the workspace and of the target's nearest existing ancestor.
-- `UPDATE: /github/cofold/packages/tools/src/web.ts:45-60` - `redirect: 'manual'`, a loop over hops with a limit, and an address check before each fetch.
+- `UPDATE: /github/cofold/packages/tools/src/paths.ts:12-18` - `inside` is computed from `realpath` of the workspace and of the target's nearest existing ancestor.
+- `UPDATE: /github/cofold/packages/tools/src/web.ts:52-62` - `redirect: 'manual'`, a loop over hops with a limit, and an address check before each fetch.
 - `UPDATE: /github/cofold/packages/tools/src/types/web.ts` - `WebOptions.lookup`, the resolver the check uses, `node:dns/promises` `lookup` with `all: true` by default.
 - `UPDATE: /github/cofold/packages/tools/src/files.test.ts`, `web.test.ts` - the new cases and the fakes below.
 - `UPDATE: /github/cofold/packages/tools/package.json` - version `0.0.1` becomes `0.1.0`, and the peer requirement of exactly `0.1.0` on `@cofold/agents` becomes `^0.1`.
@@ -47,7 +47,7 @@ In `/github/cofold`, `resolveWithin` judges inside or outside on real paths, and
 Done. Released 2026-09-26 from `/github/cofold` by its `release.yml` as `@cofold/tools@0.1.0`; task 08 takes it into ahpd.
 
 - `src/paths.ts:12` `resolveWithin` keeps `absolute` lexical and computes `inside` from `realPath` (`src/paths.ts:24`) of the workspace and of the target: `realpathSync.native` when the path exists, the target of a dangling symlink (followed by hand, at most 40 links), otherwise the real path of the nearest existing ancestor with the rest appended. A dangling symlink pointing out of the workspace is outside too, which the plan did not name.
-- `src/web.ts:49-63` follows redirects by hand (`redirect: 'manual'`, at most 10, `MAX_REDIRECTS` at line 11); `refuseInternal` (line 118) runs before every request: an IP-literal host is checked as is, a name through `lookup`, every address it returns. `isInternal` (line 128) covers 127/8, 0/8, 10/8, 172.16/12, 192.168/16, 169.254/16, `::`, `::1`, fc00::/7, fe80::/10 and the IPv4-mapped form of the IPv4 ranges. A lookup failure reads `cannot fetch <url>: <code>`. The page header is the last URL fetched.
+- `src/web.ts:52-62` follows redirects by hand (`redirect: 'manual'`, at most 10, `MAX_REDIRECTS` at line 11); `refuseInternal` (line 118) runs before every request: an IP-literal host is checked as is, a name through `lookup`, every address it returns. `isInternal` (line 128) covers 127/8, 0/8, 10/8, 172.16/12, 192.168/16, 169.254/16, `::`, `::1`, fc00::/7, fe80::/10 and the IPv4-mapped form of the IPv4 ranges. A lookup failure reads `cannot fetch <url>: <code>`. The page header is the last URL fetched.
 - `src/types/web.ts:23,27` `WebOptions.lookup` and the `Lookup` type; the default is `node:dns/promises` `lookup` with `all: true` (`src/web.ts:26`).
 - `RULES` (`src/web.ts:14`) and the `web_fetch` description say internal addresses are refused, redirects included, and not to retry them. `README.md` says the same and documents `lookup` and the real-path check.
 - DNS rebinding is not caught: a name that resolves to a public address at the check and an internal one at the connection gets through, as the decision says. NAT64 (64:ff9b::/96) and other embeddings of IPv4 in IPv6 besides `::ffff:` are not checked.

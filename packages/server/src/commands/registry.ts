@@ -6,18 +6,20 @@
  * argv and exit codes; the same list, with an `http` binding on the commands
  * that have one, is what the daemon serves under `/api`.
  *
- * The `authorize` hook is where the grants a command declares are checked.
- * Locally the process owner holds everything, because the person who can type
- * the command already holds the files and the process. Over HTTP the caller is
- * on the other end of a request, so `authorizeOverHttp` is passed to `serve()`
- * instead and the hook here stays inert.
+ * The `authorize` hook is where the grants a command declares are checked, on
+ * every surface. Locally the caller is the process owner, who already holds the
+ * files and the process, so there is nothing to check. Over HTTP the caller is
+ * what `authorizeOverHttp` resolved and `serve()` passed on as
+ * `context.request.actor`: the deployment's token, which is root, or a person
+ * whose grants are then held to the command's scopes.
  *
  * `--remote` is the third shape: the commands a daemon already declares arrive
  * as a manifest and are registered instead of the local ones, with a transport
  * capability in place of the work they would have done here.
  */
 
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createRegistry } from '@cofold/commands';
 import type { Registry, Runner } from '@cofold/commands';
@@ -30,12 +32,11 @@ import { declareStart } from './start.js';
 import { declareStatus } from './status.js';
 import { declareStop } from './stop.js';
 import { declareUser } from './user.js';
+import { checkScopes } from './scopes.js';
 
 /** The commands a process runs about itself, and the only ones `--remote` keeps locally. */
 export const localRegistry = (): Registry<object> => {
-  const registry = createRegistry({
-    authorize: () => { /* the local caller is the process owner, who may do anything */ },
-  });
+  const registry = createRegistry({ authorize: checkScopes });
   declareRun(registry);
   declareStart(registry);
   declareStop(registry);
@@ -44,9 +45,7 @@ export const localRegistry = (): Registry<object> => {
 
 /** The whole local surface: the process's own commands and the administration ones. */
 export const cliRegistry = (): Registry<object> => {
-  const registry = createRegistry({
-    authorize: () => { /* the local caller is the process owner, who may do anything */ },
-  });
+  const registry = createRegistry({ authorize: checkScopes });
   declareRun(registry);
   declareStart(registry);
   declareStop(registry);
@@ -57,8 +56,23 @@ export const cliRegistry = (): Registry<object> => {
   return registry;
 };
 
-/** Where a fetched command surface is kept, so `--help` is not a round trip. */
-const remoteCache = (): string => join(tmpdir(), 'ahpd-remote');
+/**
+ * Where a fetched command surface is kept, so `--help` is not a round trip.
+ *
+ * Per user, under the cache directory, and owner-only before anything writes
+ * into it: a manifest is a set of commands this binary will run, so a shared
+ * path under `/tmp` with a name anybody can guess is a way for another local
+ * user to answer for the daemon.
+ */
+const remoteCache = (): string => {
+  const home = process.env['XDG_CACHE_HOME'] || join(homedir(), '.cache');
+  const at = join(home, 'ahpd', 'remote');
+  mkdirSync(at, { recursive: true, mode: 0o700 });
+  // The mode is a request to `mkdir`, so a directory that was already there
+  // keeps whatever it had until it is set again.
+  chmodSync(at, 0o700);
+  return at;
+};
 
 /**
  * The commands a daemon declares, arriving over HTTP.

@@ -1,6 +1,6 @@
 ---
 title: Docs and the package
-status: implemented
+status: done
 depends: [task-02-calls-drawn-and-edits-reported.md, task-03-permission-modes-cover-them.md]
 layer: "docs"
 refs:

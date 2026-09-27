@@ -1,11 +1,15 @@
 ---
 title: ahpd --help keeps the sentences a person acts on
-status: todo
+status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L95-L194](../../../../packages/server/src/commands/options.ts#L95-L194) - `serverFields` and the false claim above it"
-  - "[code://packages/server/src/main.ts#L81-L92](../../../../packages/server/src/main.ts#L81-L92) - `liveHelp`, which appends `helpForCommand(run)`"
+  - "[code://packages/server/src/commands/options.ts#L118-L119](../../../../packages/server/src/commands/options.ts#L118-L119) - `serverFields`, and the comment that now says what it is"
+  - "[code://packages/server/src/commands/options.ts#L130-L133](../../../../packages/server/src/commands/options.ts#L130-L133) - `stdio`'s description, with the container explanation"
+  - "[code://packages/server/src/commands/options.ts#L197-L202](../../../../packages/server/src/commands/options.ts#L197-L202) - `plugins`' description, with the trust warning"
+  - "[code://packages/server/src/main.ts#L133-L138](../../../../packages/server/src/main.ts#L133-L138) - `liveHelp`, which renders the run's section itself"
+  - "[code://packages/server/src/main.ts#L213-L241](../../../../packages/server/src/main.ts#L213-L241) - `optionLine` and `runHelp`, the section and the epilogue"
+  - "[code://packages/server/test/server-cli.test.ts#L169-L183](../../../../packages/server/test/server-cli.test.ts#L169-L183) - the help case, pinning the restored sentences"
   - "git://7a7e9d1 - `USAGE` in packages/server/src/main.ts, where the restored sentences are worded"
   - file:///github/cofold/packages/terminal/src/help.ts - `helpForCommand` always writes a usage line and a global options section; `renderDefinitions` renders rows alone
 ---
@@ -16,11 +20,11 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/options.ts:95-100` - the comment on `serverFields`, which claims the descriptions are the old help and are not.
-- `UPDATE: packages/server/src/commands/options.ts:112-115` - `stdio`'s description gains the container explanation.
-- `UPDATE: packages/server/src/commands/options.ts:179-184` - `plugins`' description gains the trust warning.
-- `UPDATE: packages/server/src/main.ts:81-92` - `liveHelp` renders the run's options and the epilogue itself.
-- `UPDATE: test/server-cli.test.ts:79-86` - the help case pins the restored sentences.
+- `UPDATE: packages/server/src/commands/options.ts:118` - the comment on `serverFields`, which now says what the object is.
+- `UPDATE: packages/server/src/commands/options.ts:130-133` - `stdio`'s description gains the container explanation.
+- `UPDATE: packages/server/src/commands/options.ts:197-202` - `plugins`' description gains the trust warning.
+- `UPDATE: packages/server/src/main.ts:133-138, 213-241` - `liveHelp` renders the run's options and the epilogue itself.
+- `UPDATE: packages/server/test/server-cli.test.ts:169-183` - the help case pins the restored sentences.
 
 ## Steps
 
@@ -33,8 +37,13 @@ refs:
 
 ## Validation
 
-- `test/server-cli.test.ts`, the `--help` case: stdout contains `trust decision`, `container`, `without the dashes`, `?tkn=` and `Authorization: Bearer`; does not contain `ahpd run`; and contains `Global options:` exactly once.
+- `packages/server/test/server-cli.test.ts`, the `--help` case: stdout contains `trust decision`, `container`, `without the dashes`, `?tkn=` and `Authorization: Bearer`; does not contain `ahpd run`; and contains `Global options:` exactly once.
 - Today it fails on every one of those assertions (seen by hand on 2026-09-26: `Usage: ahpd run [options]` is printed and `Global options:` appears twice).
-- `node_modules/.bin/vitest run test/server-cli.test.ts` green.
+- `node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green.
 
 ## Resume
+
+Done.
+The run's flags are a section of their own, rendered from `optionsOf(run)` with `renderDefinitions` under `ahpd [options]:`, so no `Usage: ahpd run` line and one `Global options:` section.
+The container explanation is on `--stdio`, the trust warning on `--plugin`, and the configuration keys and the two token spellings follow the section as prose worded from `USAGE` at `git://7a7e9d1`.
+`node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green, 35 cases.

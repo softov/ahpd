@@ -187,6 +187,16 @@ export interface Users {
    * a person may do would otherwise have to repeat the resolution.
    */
   list(): Promise<(Omit<UserRecord, 'token'> & { grants: Grant[]; trusted: boolean })[]>;
+  /**
+   * What a set of role names resolves to, from the file's roles and the built-ins.
+   *
+   * A caller that gives a role or writes for a person has to know what the
+   * target holds before it writes, and only the directory knows both halves of
+   * that resolution.
+   */
+  grantsOfRoles(roles: readonly string[]): Promise<Grant[]>;
+  /** What a person's roles resolve to, or nothing when nobody has that id. */
+  grantsOfPerson(id: string): Promise<Grant[] | undefined>;
   /** Add a person, or set the roles of one who is already there. */
   add(id: string, roles: string[], options?: { issuer?: string }): Promise<void>;
   /** Remove a person. `true` when one was there. */

@@ -34,7 +34,7 @@ const sdk = vi.hoisted(() => {
 
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
-vi.mock('../packages/agent-claude/src/mcp.js', () => ({
+vi.mock('../../agent-claude/src/mcp.js', () => ({
   // One remote server, so there is a URL to discover a resource at.
   serversFor: () => ({ desk: { type: 'http', url: 'https://desk.example/mcp' } }),
   urlOf: (config: { url?: string }) => config.url,

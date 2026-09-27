@@ -3,10 +3,10 @@ title: ahpd's commands are declared once, with @cofold/commands
 status: accepted
 date: 2026-09-26
 refs:
-  - "[code://packages/server/src/main.ts#L255-L310](../../packages/server/src/main.ts#L255-L310) - the hand-written flag parser"
-  - "[code://packages/server/src/main.ts#L430-L660](../../packages/server/src/main.ts#L430-L660) - the verbs: start, stop, status, config, user, plugin"
+  - "git://7a7e9d1 - the hand-written flag parser and the verbs start, stop, status, config, user and plugin, before the migration"
+  - "[code://packages/server/src/commands/options.ts](../../packages/server/src/commands/options.ts) - where the flags are declared, one field per flag"
   - file:///github/cofold/packages/commands/src/registry.ts - `createRegistry`, and the `authorize` hook commands' `scopes` are checked against
-  - file:///github/cofold/packages/terminal/src/program.ts - `Program`, the terminal rendering: help, completion, output modes, exit codes
+  - "file:///github/cofold/packages/terminal/src/program.ts - `Program`, the terminal rendering: help, completion, output modes, exit codes"
   - file:///github/cofold/packages/remote/src/manifest.ts - the same declarations as a manifest and OpenAPI
 ---
 

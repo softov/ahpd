@@ -119,7 +119,8 @@ describe('the record on disk', () => {
   });
 
   it('prints the token-free origin through statusLine', () => {
-    const line = statusLine({ pid: 42, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/?tkn=secret', paths: [], startedAt: '2026-09-19T00:00:00.000Z' });
+    const record: Running = { pid: 42, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/?tkn=secret', paths: [], startedAt: '2026-09-19T00:00:00.000Z' };
+    const line = statusLine(record);
     expect(line).toBe('ahpd on ws://127.0.0.1:9187 (pid 42), started 2026-09-19T00:00:00.000Z');
     expect(line).not.toContain('secret');
     expect(line).not.toContain('connectUrl');

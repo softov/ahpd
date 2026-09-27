@@ -1,6 +1,6 @@
 ---
 title: Each served command needs its own grant, and config hides the token
-status: todo
+status: done
 depends: [task-08-served-commands-act-on-the-daemons-own-options.md]
 layer: "server | sdk"
 refs:
@@ -8,10 +8,12 @@ refs:
   - "[decisions/the-user-commands-need-users-write.md](../../../decisions/the-user-commands-need-users-write.md) - `users:write`"
   - "[decisions/installing-a-plugin-over-http-is-root-only.md](../../../decisions/installing-a-plugin-over-http-is-root-only.md) - the deployment token only"
   - "[decisions/the-config-command-hides-the-connection-token.md](../../../decisions/the-config-command-hides-the-connection-token.md) - no `connectionToken` value"
-  - "[plans/daemon/04-commands-declared-once/task-14-the-registry-hook-checks-every-surface.md](../04-commands-declared-once/task-14-the-registry-hook-checks-every-surface.md) - daemon/04 task 14 moves the scope check into the registry's `authorize` hook, which this task depends on"
-  - "[code://packages/server/src/commands/registry.ts#L118-L142](../../../../packages/server/src/commands/registry.ts#L118-L142) - the registries and their `authorize` hook, inert today"
-  - "[code://packages/server/src/commands/authorize.ts#L59-L84](../../../../packages/server/src/commands/authorize.ts#L59-L84) - `authorizeOverHttp`, which checks scopes today and will only turn a request into a principal"
-  - "[code://packages/sdk/src/host.ts#L321](../../../../packages/sdk/src/host.ts#L321) - `refusalReason`, the WebSocket's sentence"
+  - "[code://packages/sdk/src/users.ts#L35](../../../../packages/sdk/src/users.ts#L35) - `SUBJECTS`, which now has `users`"
+  - "[code://packages/server/src/commands/scopes.ts#L17-L45](../../../../packages/server/src/commands/scopes.ts#L17-L45) - the mark and the hook that reads it"
+  - "[code://packages/server/src/commands/plugin.ts#L26](../../../../packages/server/src/commands/plugin.ts#L26) and [#L54-L56](../../../../packages/server/src/commands/plugin.ts#L54-L56) - `config:read` on the list, and the deployment-token mark on install and remove"
+  - "[code://packages/server/src/commands/config.ts#L15-L36](../../../../packages/server/src/commands/config.ts#L15-L36) and [#L53-L56](../../../../packages/server/src/commands/config.ts#L53-L56) - `withoutSecrets`, and the served answer"
+  - "[code://packages/sdk/test/users.test.ts#L186-L196](../../../../packages/sdk/test/users.test.ts#L186-L196) - `users:write` as a grant"
+  - "[code://packages/server/test/server-http.test.ts#L420-L563](../../../../packages/server/test/server-http.test.ts#L420-L563) - the cases under `a request signs in`"
 ---
 
 ## Objective
@@ -23,15 +25,15 @@ This task starts after daemon/04's task that moves the scope check into the regi
 ## Files
 
 - `UPDATE: packages/sdk/src/users.ts:35` - `SUBJECTS` gains `users`.
-- `UPDATE: packages/server/src/commands/status.ts:16-22` - declares `scopes: ['config:read']`; today none.
-- `UPDATE: packages/server/src/commands/plugin.ts:20-26` - `plugin list` declares `config:read`; today none.
-- `UPDATE: packages/server/src/commands/plugin.ts:38-48` - `plugin install` and `plugin remove` are marked served to the deployment token only; today `config:write`.
-- `UPDATE: packages/server/src/commands/user.ts:59, 86, 110, 132` - `scopes: ['users:write']` in place of `['admin']`.
-- `UPDATE: packages/server/src/commands/registry.ts:118-142` - the served registry's `authorize` hook reads the principal and checks the command's scopes and its deployment-token-only mark.
-- `UPDATE: packages/server/src/commands/authorize.ts:59-84` - `authorizeOverHttp` resolves the Bearer token to the deployment's root or a person and hands that on; it checks no scope.
-- `UPDATE: packages/server/src/commands/config.ts:68-85` - on the remote surface the answer carries `connectionToken` as present, without its value.
-- `UPDATE: test/users.test.ts` - `users:write` is a grant a role may hold.
-- `UPDATE: test/server-http.test.ts` - the cases below.
+- `UPDATE: packages/server/src/commands/status.ts:23` and `plugin.ts:26` - `scopes: ['config:read']`; today none.
+- `UPDATE: packages/server/src/commands/plugin.ts:54-56` - install and remove carry `meta.deploymentTokenOnly`; today `config:write` alone.
+- `UPDATE: packages/server/src/commands/user.ts` - `scopes: ['users:write']` in place of `['admin']` on all four.
+- `UPDATE: packages/server/src/commands/scopes.ts:17-45` - the `CommandMeta` mark, and the hook reading it before the scopes.
+- `UPDATE: packages/server/src/commands/authorize.ts` - `ROOT` and `isRoot`, so the hook can tell the host from a person.
+- `UPDATE: packages/server/src/commands/config.ts:15-36, 53-56` - on the remote surface the answer carries `connectionToken` as present, without its value.
+- `UPDATE: packages/sdk/test/users.test.ts:186-196` - `users:write` is a grant a role may hold.
+- `UPDATE: packages/server/test/server-http.test.ts:420-563` - the cases below.
+- `UPDATE: packages/server/test/server-commands.test.ts` - the scopes the registry pins.
 
 ## Steps
 
@@ -44,11 +46,18 @@ This task starts after daemon/04's task that moves the scope check into the regi
 
 ## Validation
 
-- `test/server-http.test.ts`: a `member` is refused `GET /api/status` and `GET /api/plugin/list` with 403 and `ada may not config:read here`; today both answer 200.
+- `packages/server/test/server-http.test.ts`: a `member` is refused `GET /api/status` and `GET /api/plugin/list` with 403 and `ada may not config:read here`; today both answer 200.
 - A role holding only `users:write` gets 200 from `GET /api/user/list`; today 403, since only `*:*` matches `admin`.
 - An `admin` person is refused `POST /api/plugin/install` with 403 and the command does not run; today it runs `npm install`. The deployment token is not refused by the gate.
 - With `connectionToken` in the configuration file, `GET /api/config` for a person holding `config:write` does not contain the secret; today it does.
-- `test/users.test.ts`: `isGrant('users:write')` and a role naming it resolves.
+- `packages/sdk/test/users.test.ts`: `isGrant('users:write')` and a role naming it resolves.
 - `pnpm typecheck` green.
 
 ## Resume
+
+Done.
+`users` is in `SUBJECTS`, the four `user` verbs declare `users:write`, and `status` and `plugin list` declare `config:read`.
+`plugin.install` and `plugin.remove` carry `meta.deploymentTokenOnly`, a mark declared by augmenting cofold's `CommandMeta` in `scopes.ts`; the hook refuses a person with `${id} may not install or remove a plugin here; only the deployment token may`, and `ROOT`/`isRoot` in `authorize.ts` is how it tells the host from a person.
+`GET /api/config` answers `connectionToken: "<set>"` served, and the terminal still prints the file as it stands.
+The scopes `packages/server/test/server-commands.test.ts` pins were updated with them.
+`pnpm typecheck` green; `server-http`, `server-commands` and `users` green, 55 cases.

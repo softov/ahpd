@@ -1,11 +1,12 @@
 ---
 title: The pinning tests bind a port and start a daemon
-status: todo
+status: done
 depends: [task-05-start-forwards-the-words-after-start.md]
 layer: "server"
 refs:
-  - "[code://test/server-cli.test.ts#L115-L195](../../../../test/server-cli.test.ts#L115-L195) - every run case uses `--stdio`, so `--port` and `--host` are never observed"
-  - "[code://test/server-cli.test.ts#L197-L236](../../../../test/server-cli.test.ts#L197-L236) - `start` is never run; `status` reads a hand-written record"
+  - "[code://packages/server/test/server-cli.test.ts#L120-L156](../../../../packages/server/test/server-cli.test.ts#L120-L156) - `foreground`, which starts the daemon on a socket and reads the announcement"
+  - "[code://packages/server/test/server-cli.test.ts#L447-L478](../../../../packages/server/test/server-cli.test.ts#L447-L478) - the two bind cases and the `start`/`status`/`stop` round trip"
+  - "[code://packages/server/src/commands/run.ts#L516-L517](../../../../packages/server/src/commands/run.ts#L516-L517) - the announcement the cases read the host and port off"
 ---
 
 ## Objective
@@ -14,7 +15,7 @@ refs:
 
 ## Files
 
-- `UPDATE: test/server-cli.test.ts` - a foreground case on a socket, and a `start`/`status`/`stop` round trip.
+- `UPDATE: packages/server/test/server-cli.test.ts` - a foreground case on a socket, and a `start`/`status`/`stop` round trip.
 
 ## Steps
 
@@ -26,6 +27,11 @@ refs:
 ## Validation
 
 - Dropping `port` or `host` from `serverFields` fails steps 1 and 2; breaking `declareStart` fails step 3.
-- `node_modules/.bin/vitest run test/server-cli.test.ts` green.
+- `node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green.
 
 ## Resume
+
+Done.
+`foreground` starts the daemon without `--stdio` and reads the `ahpd on ws://` line off stdout, so `--port`, `--host` and the configuration fold each have a case that fails when they are dropped.
+`start`, `status` and `stop` are pinned as a round trip, and `afterEach` kills any pid a `start` case recorded.
+`node_modules/.bin/vitest run packages/server/test/server-cli.test.ts` green, 32 cases.

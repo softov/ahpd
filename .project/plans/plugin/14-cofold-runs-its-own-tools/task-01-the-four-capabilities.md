@@ -1,17 +1,17 @@
 ---
 title: A cofold session's agent has the four capabilities
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/src/session.ts#L353-L365](../../../../packages/agent-cofold/src/session.ts#L353-L365) - `agentOf`"
-  - "[code://packages/agent-cofold/src/plugin.ts#L98](../../../../packages/agent-cofold/src/plugin.ts#L98) - `apply`, the options"
+  - "[code://packages/agent-cofold/src/session.ts#L406-L450](../../../../packages/agent-cofold/src/session.ts#L406-L450) - `agentOf`"
+  - "[code://packages/agent-cofold/src/plugin.ts#L105-L107](../../../../packages/agent-cofold/src/plugin.ts#L105-L107) - `apply`, the options"
   - file:///github/cofold/packages/papo/src/agent.ts - `capabilitiesOf`, the pattern
 ---
 
 ## Objective
 
-`agentOf` passes `capabilities` built from `@cofold/tools` per the plugin's `tools` option, all four on by default, so a turn offers the model the ten tools.
+`agentOf` passes `capabilities` built from `@cofold/tools` per the plugin's `tools` option, all four on by default, so a turn offers the model the nine tools cofold ships without a search provider.
 
 ## Files
 
@@ -28,7 +28,7 @@ refs:
 
 ## Validation
 
-- `test/agent-cofold-tools.test.ts`: the default offers the ten tool names to a scripted model; `tools: { shell: false }` drops `shell_exec`; `web_search` appears only with a provider.
+- `packages/agent-cofold/test/agent-cofold-tools.test.ts`: the default offers the nine tool names `edit_file`, `list_files`, `memory_read`, `memory_write`, `read_file`, `search_files`, `shell_exec`, `web_fetch` and `write_file` to a scripted model; `tools: { shell: false }` drops `shell_exec`; `web_search` appears only with a provider.
 - A scripted turn calling `read_file` on a fixture returns its lines.
 
 ## Resume

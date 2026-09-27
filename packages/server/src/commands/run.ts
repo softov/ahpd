@@ -1,16 +1,17 @@
 /**
  * The foreground daemon, and the one command every flag is declared on.
  *
- * `ahpd [options]` has always meant "run it here, in this terminal", and a
- * program has no word for that. The declaration below is that command, and
- * `main.ts` gives it its word when a line has no command in it; the body keeps
- * every side effect it had - the announcement, the update check, the record a
- * detached daemon writes about itself - so nothing a person sees moves.
+ * `ahpd [options]` means "run it here, in this terminal", and a program has no
+ * word for that. The declaration below is that command, and `main.ts` gives it
+ * its word when a line has no command in it. The body is the whole daemon: the
+ * announcement, the update check, the record a detached daemon writes about
+ * itself, and the shutdown both signals reach.
  */
 
 import { appendFileSync, writeFileSync } from 'node:fs';
+import { isIPv6 } from 'node:net';
 import { hostname } from 'node:os';
-import type { Command, Registry, Runner } from '@cofold/commands';
+import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, Tap } from '@ahpd/sdk';
 import {
   AGENT_CLASH,
@@ -35,13 +36,39 @@ import {
   signInRecord,
 } from '@ahpd/sdk';
 import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier } from '../config.js';
-import { API_PREFIX, apiHandler, listenApi, withoutApi, type ApiListener } from '../http.js';
+import { API_PREFIX, apiHandler, listenApi, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
 import { pty } from '../pty.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
 import { optionsFrom, secret, serverFields, stop } from './options.js';
 import type { Options } from './options.js';
+
+/**
+ * The names the API answers to.
+ *
+ * The loopback names at the bound port are always the daemon's own, because a
+ * client on this machine reaches it by one of them. A specific bound address
+ * adds itself, bracketed when it is IPv6 so that the authority and the origin
+ * are ones a URL parser reads back, and a wildcard bind adds nothing: every
+ * address is the daemon's to answer on but none of them is a name it can tell
+ * its own from. `resource` is the public identifier a deployment behind a proxy
+ * names, so its host is one of them too - decision
+ * `the-http-api-checks-origin-and-host-and-takes-only-json`.
+ */
+export function apiOrigins(host: string, resource: string | undefined, port: number): ApiOrigins {
+  const names = ['127.0.0.1', 'localhost', '[::1]'];
+  if (host !== '0.0.0.0' && host !== '::') names.push(isIPv6(host) ? `[${host}]` : host);
+  const authorities = names.map((one) => `${one}:${port}`);
+  const origins = names.map((one) => `http://${one}:${port}`);
+  if (resource !== undefined) {
+    const at = new URL(resource);
+    authorities.push(at.hostname, `${at.hostname}:${port}`);
+    origins.push(at.origin);
+  }
+  return { authorities, origins };
+}
 
 /**
  * One host, one working directory, one port.
@@ -51,7 +78,7 @@ import type { Options } from './options.js';
  * to answer "which sessions" before it could answer anything, and the protocol
  * has no place to ask.
  */
-export async function runForeground(options: Options, registry: Runner): Promise<void> {
+export async function runForeground(options: Options): Promise<void> {
   const { token, from } = secret(options);
 
   /*
@@ -151,27 +178,73 @@ export async function runForeground(options: Options, registry: Runner): Promise
   if (options.http !== undefined && runtime() !== 'node') {
     stop(`The HTTP API is served on Node, and this is ${runtime()}.`);
   }
+  /*
+   * A host with no gate is not one the API may be served from.
+   *
+   * With neither a deployment token nor a directory there is nothing to hold a
+   * request against, so `http` here would be an administration surface anybody
+   * who reaches the port may drive - decision
+   * `an-unconfigured-daemon-does-not-serve-the-http-api`.
+   */
+  if (options.http !== undefined && token === undefined && users === undefined) {
+    stop('http needs a credential: pass --connection-token, --connection-token-file or --users.');
+  }
+  const ownPort = options.http?.port;
+  // The API's own listener binds where `http.host` says, and on the daemon's
+  // address otherwise.
+  const apiHost = options.http?.host ?? options.host;
+  /*
+   * The daemon's own facts, for the commands it serves.
+   *
+   * A request names no file, no directory and no plugin: the declarations it
+   * reaches read these instead. The bound address is read per request, because
+   * the socket is opened after the registry is built.
+   */
+  const startedAt = new Date().toISOString();
+  let boundHost = '';
+  let boundPort = 0;
+  const facts: ServedFacts = {
+    options,
+    configFile: options.configFile ?? configPath(),
+    ...(users === undefined ? {} : { users }),
+    running: () => ({
+      pid: process.pid,
+      url: `ws://${boundHost}:${boundPort}`,
+      host: boundHost,
+      port: boundPort,
+      paths: options.paths,
+      startedAt,
+      automations: memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`,
+    }),
+  };
+  /*
+   * The port the API answers on: its own when `http.port` gave it one, and the
+   * daemon's otherwise. Read per request, because both listeners are bound
+   * after the handler is built.
+   */
+  let apiBoundPort = 0;
   const api = options.http === undefined ? undefined : apiHandler({
-    registry,
+    registry: servedRegistry(facts),
     ...(token === undefined ? {} : { token }),
     ...(users === undefined ? {} : { users }),
     program: { name: 'ahpd', version: version(), description: 'An Agent Host Protocol server, with a Claude backend' },
+    origins: () => apiOrigins(apiHost, options.resource, apiBoundPort),
   });
-  const ownPort = options.http?.port;
   // On the daemon's own port: the API where it is, and the 404 that says it is
   // not where `http.port` moved it.
   const daemonRequest = ownPort === undefined ? (api ?? withoutApi()) : withoutApi();
   const apiListener: ApiListener | undefined = api === undefined || ownPort === undefined
     ? undefined
-    : await listenApi(api, { port: ownPort, host: options.host });
+    : await listenApi(api, { port: ownPort, host: apiHost });
+  apiBoundPort = apiListener?.port ?? 0;
 
   /*
-   * What the daemon contributes before any plugin does.
+   * The host the plugins are folded into.
    *
-   * This is the literal it has always been, named so a plugin's contributions
-   * can be folded into it rather than built beside it. It keeps every port, so a
-   * daemon with no plugins is exactly the daemon it was, and it is a value the
-   * fold never mutates.
+   * It is the literal this daemon is built from, named so a plugin's
+   * contributions can be folded into it rather than built beside it. It keeps
+   * every field, so a daemon with no plugins gets the same host either way, and
+   * it is a value the fold never mutates.
    */
   const base: HostOptions = {
     path: options.paths[0] as string,
@@ -222,20 +295,6 @@ export async function runForeground(options: Options, registry: Runner): Promise
      */
     advancedTools: options.advancedTools,
     /*
-     * Automations, with a clock unless asked otherwise.
-     *
-     * A daemon is the case the port was written for: it is already running at
-     * nine in the morning, which is the only way an automation fires with
-     * nobody connected. Definitions live in a file beside the configuration and
-     * come back on a restart; the runs do not, because they name sessions that
-     * went when the process did.
-     *
-     * `--automations memory` is the same store without either half: nothing is
-     * written and nothing fires. Both are an `AutomationStore`, so the host is
-     * not told which it was given - a host embedded in something that already
-     * schedules passes a third of its own.
-     */
-    /*
      * What this host adds on top of a backend, kept between restarts.
      *
      * The bits every client shares and the settings a session runs under. A
@@ -249,6 +308,20 @@ export async function runForeground(options: Options, registry: Runner): Promise
         file: sessionsPath(),
         onProblem: (message) => process.stdout.write(`${message}\n`),
       }),
+    /*
+     * Automations, with a clock unless asked otherwise.
+     *
+     * A daemon is the case the port was written for: it is already running at
+     * nine in the morning, which is the only way an automation fires with
+     * nobody connected. Definitions live in a file beside the configuration and
+     * come back on a restart; the runs do not, because they name sessions that
+     * went when the process did.
+     *
+     * `--automations memory` is the same store without either half: nothing is
+     * written and nothing fires. Both are an `AutomationStore`, so the host is
+     * not told which it was given - a host embedded in something that already
+     * schedules passes a third of its own.
+     */
     automations: memory
       ? memoryAutomations()
       : scheduledAutomations({
@@ -280,17 +353,6 @@ export async function runForeground(options: Options, registry: Runner): Promise
   };
 
   /*
-   * The plugins, between the base and the host.
-   *
-   * `loadPlugins` is the only thing here that runs code the daemon did not
-   * write, and it is handed the specs the flags and the file named. Every
-   * problem is a line in the log so a skipped plugin is where a log reader
-   * looks; the one problem that is not skipped is a duplicate `provider`, which
-   * is refused because a host built over it would answer a turn with the wrong
-   * backend. Everything else - a plugin that does not resolve, one that throws,
-   * one whose manifest is wrong - costs itself and nothing else.
-   */
-  /*
    * What plugins asked to have said about this host.
    *
    * A plugin that made the daemon reachable somewhere - a tunnel, an
@@ -306,6 +368,17 @@ export async function runForeground(options: Options, registry: Runner): Promise
   const said: string[] = [];
   let announced = false;
 
+  /*
+   * The plugins, between the base and the host.
+   *
+   * `loadPlugins` is the only thing here that runs code the daemon did not
+   * write, and it is handed the specs the flags and the file named. Every
+   * problem is a line in the log so a skipped plugin is where a log reader
+   * looks; the one problem that is not skipped is a duplicate `provider`, which
+   * is refused because a host built over it would answer a turn with the wrong
+   * backend. Everything else - a plugin that does not resolve, one that throws,
+   * one whose manifest is wrong - costs itself and nothing else.
+   */
   const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
     base,
     configDir: configDir(),
@@ -337,9 +410,6 @@ export async function runForeground(options: Options, registry: Runner): Promise
 
   const host = createHost(folded);
 
-  // Whichever runtime this is. `listen` is the only file that knows, and it
-  // says which one it found - a daemon that silently ran somewhere unexpected
-  // would be a daemon nobody could tell apart from the one they meant to start.
   /*
    * The wire, written down as it happens.
    *
@@ -360,23 +430,21 @@ export async function runForeground(options: Options, registry: Runner): Promise
   })();
 
   /*
-   * The door, and what a token presented at it means.
+   * The door, and which transport this host answers on.
    *
    * The deployment's own token is the host, and no other is. A person's token
    * opens the socket and says nobody unless their record trusts it - decision
    * `the-door-is-a-door` - so a client that presents only a connection token is
    * admitted and then answers `-32007` until it authenticates. With no directory
-   * there is nothing to ask, so nothing is passed and the door refuses exactly
-   * what it refused.
-   */
-  /*
-   * Which transport this host answers on.
+   * there is nothing to ask, so nothing is passed and the door refuses what it
+   * refuses.
    *
    * Over stdio there is no door to guard: the process that started this one
    * holds the only handle to the pipes, so the connection is this host itself
    * and the token and the directory are not consulted at all. That is the case
    * a container runs in, and the outer host's own grant is what decided whether
-   * it may exist.
+   * it may exist. `listen` is the only file that knows which runtime answered,
+   * and the announcement says which one it found.
    */
   const listener = options.stdio
     ? await overStdio(
@@ -405,6 +473,10 @@ export async function runForeground(options: Options, registry: Runner): Promise
       },
       (peer, principal, root) => host.accept(peer, principal, root),
     );
+  // Where the API and the daemon actually are, now that both listeners are bound.
+  apiBoundPort = apiListener?.port ?? listener.port;
+  boundHost = listener.host;
+  boundPort = listener.port;
 
   /*
    * The socket is open, and this is the first thing that could have wanted it.
@@ -446,7 +518,7 @@ export async function runForeground(options: Options, registry: Runner): Promise
     // Where the API is, when there is one: on this port, or on the one
     // `http.port` bound. Its own line, and `http://` rather than `ws://`, so
     // `daemon.ts` keeps reading the origin off the line above.
-    + (api === undefined ? '' : `http on http://${options.host}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
+    + (api === undefined ? '' : `http on http://${apiHost}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
     // Its own line rather than the end of the one above, which `daemon.ts`
     // reads the session directories off with a regular expression.
     + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`
@@ -526,6 +598,6 @@ export const declareRun = (registry: Registry<object>): Command => registry.acti
   surfaces: { cli: { pattern: ['run'] } },
   input: serverFields,
   run: async (context) => {
-    await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>), registry);
+    await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>));
   },
 });

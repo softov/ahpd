@@ -104,7 +104,7 @@ export function recordOf(announced: string, pid: number, token?: string): Runnin
  * print `connectUrl` and with it the secret. The line is a function so a test
  * can hold it to that.
  */
-export function statusLine(record: Running): string {
+export function statusLine(record: Pick<Running, 'url' | 'pid' | 'startedAt'>): string {
   return `ahpd on ${record.url} (pid ${String(record.pid)}), started ${record.startedAt}`;
 }
 

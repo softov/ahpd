@@ -1,5 +1,7 @@
 #!/bin/sh
-# A stand-in for npm: says one line on stdout, and leaves the code the caller named.
+# A stand-in for npm: waits when the caller says to, says one line, and leaves
+# the code the caller named.
 
+[ -n "$FAKE_NPM_SLEEP" ] && sleep "$FAKE_NPM_SLEEP"
 echo "npm noise"
 exit "${FAKE_NPM_EXIT:-0}"

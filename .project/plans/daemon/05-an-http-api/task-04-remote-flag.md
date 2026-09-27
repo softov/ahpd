@@ -30,4 +30,4 @@ A global `--remote <url>` (with `--token` or `AHPD_TOKEN`) loads `<url>/api/cli-
 `remoteRegistry` in `packages/server/src/commands/registry.ts` loads `<url>/api/cli-manifest` with `loadManifest` (cached under `tmpdir()/ahpd-remote`, `--refresh` bypassing it), registers `commandsFrom(manifest, { capability: 'transport' })` over a registry of only `run`, `start` and `stop`, and provides `httpTransport` against `<url>/api`.
 `localRegistry` keeps `start` and `stop` local, which is the whole of what stays behind.
 The admin declarations gained `http` bindings (`status`, `config`, `plugin list|install|remove`, `user list|add|rm|token`) so the manifest describes what the CLI already declares.
-`test/server-http.test.ts` runs `--remote` `status` and `plugin list` against a daemon it starts, and again with the token in `AHPD_TOKEN`.
+`packages/server/test/server-http.test.ts` runs `--remote` `status` and `plugin list` against a daemon it starts, and again with the token in `AHPD_TOKEN`.

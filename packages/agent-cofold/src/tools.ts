@@ -189,6 +189,22 @@ export const intentionOf = (name: string, input: unknown): string | undefined =>
 };
 
 /**
+ * What a call's input is on the wire.
+ *
+ * The command itself for `shell_exec` and for a command a person typed as a
+ * string, so a terminal row shows what is run rather than a JSON object; the
+ * JSON text of the input for every other call, which is what a client reads as
+ * the arguments.
+ */
+export const toolInputOf = (name: string, input: unknown): string | undefined => {
+  if (input === undefined) return undefined;
+  if (typeof input === 'string') return input;
+  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : undefined;
+  if (name === 'shell_exec' && typeof held?.command === 'string') return held.command;
+  return JSON.stringify(input);
+};
+
+/**
  * The response part a tool call holds in a snapshot.
  *
  * The client's reducer builds the same part from `chat/toolCallStart`, so
@@ -249,7 +265,7 @@ export const toolStartAction = (
  * draws a question nobody asked.
  */
 export const toolReadyAction = (turnId: string, callId: string, name: string, input: unknown, owner?: string): Bag => {
-  const written = input === undefined ? undefined : JSON.stringify(input);
+  const written = toolInputOf(name, input);
   return {
     type: 'chat/toolCallReady',
     turnId,

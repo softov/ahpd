@@ -276,11 +276,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
    *
    * `ws` builds its own `http` server when it is given a port, and that server
    * answers everything that is not an upgrade with 426. A host with an HTTP
-   * surface on the same port needs the server to be its own, so `request` is
-   * handed one and `ws` attaches to it; the upgrade itself is decided by the
-   * same `verifyClient` either way. With no handler the port path is the
-   * literal one it has always been, which is what keeps every other host
-   * unchanged.
+   * surface on the same port brings its own server through `request`, which
+   * `ws` attaches to; the upgrade itself is decided by the same `verifyClient`
+   * either way. With no handler the port path is `ws`'s own server, so a host
+   * that wants no HTTP surface carries nothing extra.
    */
   let server: NodeServer;
   if (options.request === undefined) {

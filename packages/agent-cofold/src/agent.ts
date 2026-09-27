@@ -247,7 +247,7 @@ const connectionOf = (
   const ownRef = named !== undefined && named.provider === own;
   if (strict) {
     if (reference === undefined) {
-      throw new Error(`${own}: no model was chosen, this backend has no default, and ${harness.path} names none`);
+      throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
     }
     if (named !== undefined && provider === undefined && explicitBase === undefined && !ownRef) {
       const known = harness.providers.map((one) => one.id);

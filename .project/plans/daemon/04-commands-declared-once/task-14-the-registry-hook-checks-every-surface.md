@@ -1,14 +1,17 @@
 ---
 title: The registry's authorize hook checks a command's scopes on every surface
-status: todo
+status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/registry.ts#L35-L58](../../../../packages/server/src/commands/registry.ts#L35-L58) - both registries built with an `authorize` hook that allows everything"
-  - "[code://packages/server/src/commands/authorize.ts#L59-L84](../../../../packages/server/src/commands/authorize.ts#L59-L84) - `authorizeOverHttp`, which today both identifies the caller and checks the scopes"
-  - "[code://packages/server/src/http.ts#L49-L60](../../../../packages/server/src/http.ts#L49-L60) - where `serve()` is given `authorizeOverHttp`"
-  - "file:///github/cofold/packages/remote/src/serve.ts - `serve()` calls `authorize` with the request, then `registry.execute` with `request: { metadata: { headers } }` and no `actor`"
-  - "file:///github/cofold/packages/commands/src/types/registry.ts - `AuthorizeRequest`, which carries `command`, `context` (with `context.request`) and `scopes`"
+  - "[code://packages/server/src/commands/scopes.ts#L34-L45](../../../../packages/server/src/commands/scopes.ts#L34-L45) - `checkScopes`, the hook both registries are built with"
+  - "[code://packages/server/src/commands/registry.ts#L37-L57](../../../../packages/server/src/commands/registry.ts#L37-L57) - `cliRegistry` and `localRegistry`, built with `checkScopes`"
+  - "[code://packages/server/src/commands/authorize.ts#L29-L34](../../../../packages/server/src/commands/authorize.ts#L29-L34) and [#L62-L88](../../../../packages/server/src/commands/authorize.ts#L62-L88) - `ROOT` and `authorizeOverHttp`, which identifies the caller and answers the actor"
+  - "[code://packages/server/src/http.ts#L81-L107](../../../../packages/server/src/http.ts#L81-L107) - `apiHandler`, where `serve()` is given `authorizeOverHttp`"
+  - "[code://packages/server/test/server-commands.test.ts#L69-L78](../../../../packages/server/test/server-commands.test.ts#L69-L78) and [#L90-L100](../../../../packages/server/test/server-commands.test.ts#L90-L100) - the registry-level cases, remote with and without the grant"
+  - "[code://packages/server/test/server-http.test.ts#L430-L436](../../../../packages/server/test/server-http.test.ts#L430-L436) - the 403 and the WebSocket sentence, which only the hook produces now"
+  - file:///github/cofold/packages/remote/src/serve.ts - `serve()` calls `authorize`, then `registry.execute` with what it answered as `request.actor`
+  - file:///github/cofold/packages/commands/src/types/registry.ts - `AuthorizeRequest`, which carries `command`, `context` (with `context.request`) and `scopes`
   - "[plans/daemon/05-an-http-api/task-09-the-grants-each-command-needs.md](../05-an-http-api/task-09-the-grants-each-command-needs.md) - which grant each command needs"
 ---
 
@@ -18,10 +21,12 @@ Every surface that runs a command goes through the registry's `authorize` hook, 
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/registry.ts:35-58` - `cliRegistry` and `localRegistry` take the hook that checks scopes; the comment at lines 1-18 says so.
-- `UPDATE: packages/server/src/commands/authorize.ts:59-84` - `authorizeOverHttp` identifies the caller (401) and no longer checks scopes.
-- `UPDATE: packages/server/src/http.ts:49-60` - how the principal reaches the hook.
-- `UPDATE: test/server-http.test.ts` - the scope refusals, proved through the hook.
+- `CREATE: packages/server/src/commands/scopes.ts` - `checkScopes`, the `authorize` hook `cliRegistry` and `localRegistry` are built with.
+- `UPDATE: packages/server/src/commands/registry.ts:37-57` - `cliRegistry` and `localRegistry`, both built with `checkScopes`; the header comment says so.
+- `UPDATE: packages/server/src/commands/authorize.ts:22-27, 62-88` - `authorizeOverHttp` identifies the caller (401) and answers the actor, and no longer checks scopes; `AuthorizeOptions` loses the registry.
+- `UPDATE: packages/server/src/http.ts:81-107` - `apiHandler` hands `serve()` the identity hook alone.
+- `UPDATE: packages/server/test/server-http.test.ts:430-436` - the scope refusal, which now comes from the hook.
+- `UPDATE: packages/server/test/server-commands.test.ts:69-78, 90-100` - the registry-level cases.
 
 ## Steps
 
@@ -34,8 +39,14 @@ Every surface that runs a command goes through the registry's `authorize` hook, 
 
 ## Validation
 
-- `test/server-http.test.ts`, a person whose roles lack the command's grant is answered 403 with the WebSocket's sentence, and the case asserts the refusal came from the registry hook (a registry built with a hook that records its calls sees the command id); today the hook is never consulted, so that assertion fails.
-- A registry-level case in `test/server-commands.test.ts`: `execute` of a scoped command on surface `remote` with a principal lacking the grant rejects; today it resolves.
-- `node_modules/.bin/vitest run test/server-http.test.ts test/server-commands.test.ts test/server-cli.test.ts` green.
+- `packages/server/test/server-http.test.ts`, a person whose roles lack the command's grant is answered 403 with the WebSocket's sentence, and the case asserts the refusal came from the registry hook (a registry built with a hook that records its calls sees the command id); today the hook is never consulted, so that assertion fails.
+- A registry-level case in `packages/server/test/server-commands.test.ts`: `execute` of a scoped command on surface `remote` with a principal lacking the grant rejects; today it resolves.
+- `node_modules/.bin/vitest run packages/server/test/server-http.test.ts packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts` green.
 
 ## Resume
+
+Done.
+`checkScopes` is the `authorize` hook both registries are built with: it lets the terminal caller through, reads the caller from `context.request.actor`, and refuses a missing grant with `HttpError(403, refusalReason(id, grant))` over the `scopes` cofold hands it.
+`authorizeOverHttp` only identifies: it answers `ROOT` for the deployment token, the verified principal for a person, and throws 401 on a host with no gate; `AuthorizeOptions` no longer carries the registry, so nothing reads `scopesFor`.
+The hook is proved two ways because `apiHandler` is handed a registry the test process cannot see inside: `test/server-commands.test.ts` executes `daemon.config` on surface `remote` with a caller lacking the grant and gets the sentence, and the HTTP case's 403 sentence can only come from the hook now that `authorizeOverHttp` checks no scope.
+`node_modules/.bin/vitest run packages/server/test/server-http.test.ts packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts` green, 52 cases; `pnpm typecheck` green.

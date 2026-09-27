@@ -1,7 +1,7 @@
 ---
 title: A cofold session has files, shell, web and memory, run by cofold itself
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -18,13 +18,13 @@ decisions:
   - decisions/a-cofold-turn-with-no-model-fails-and-says-where-to-name-one.md
   - decisions/web-fetch-refuses-internal-addresses.md
 refs:
-  - "[code://packages/agent-cofold/src/session.ts#L353-L365](../../../../packages/agent-cofold/src/session.ts#L353-L365) - `agentOf`: `tools` is the host's only, and there is no `capabilities`"
-  - "[code://packages/agent-cofold/src/session.ts#L690](../../../../packages/agent-cofold/src/session.ts#L690) - `run(...)` with `workspace: where`, which the capabilities resolve paths against"
-  - "[code://packages/agent-cofold/src/plugin.ts#L98](../../../../packages/agent-cofold/src/plugin.ts#L98) - `apply`, where the plugin's options are read"
-  - "[code://packages/agent-cofold/src/agent.ts#L74-L75](../../../../packages/agent-cofold/src/agent.ts#L74-L75) - `defaultStoreRoot`, where memory goes beside the sessions"
-  - "[code://packages/sdk/src/types/agent.ts#L187](../../../../packages/sdk/src/types/agent.ts#L187) - `onFileEdit`, how a backend reports an edit it made itself"
-  - "[code://packages/agent-claude/src/session.ts#L932](../../../../packages/agent-claude/src/session.ts#L932) - the pattern: Claude's write tools reported before and after"
-  - "[code://packages/agent-claude/src/session.ts#L2348-L2356](../../../../packages/agent-claude/src/session.ts#L2348-L2356) - a shell call drawn with `toolKind: 'terminal'`"
+  - "[code://packages/agent-cofold/src/session.ts#L406-L425](../../../../packages/agent-cofold/src/session.ts#L406-L425) - `agentOf`: the per-turn agent, with the capabilities built here and the host's tools"
+  - "[code://packages/agent-cofold/src/session.ts#L799](../../../../packages/agent-cofold/src/session.ts#L799) - `run(...)` with `workspace: where`, which the capabilities resolve paths against"
+  - "[code://packages/agent-cofold/src/plugin.ts#L105](../../../../packages/agent-cofold/src/plugin.ts#L105) - `apply`, where the plugin's options are read"
+  - "[code://packages/agent-cofold/src/agent.ts#L84-L85](../../../../packages/agent-cofold/src/agent.ts#L84-L85) - `defaultStoreRoot`, where memory goes beside the sessions"
+  - "[code://packages/sdk/src/types/agent.ts#L203](../../../../packages/sdk/src/types/agent.ts#L203) - `onFileEdit`, how a backend reports an edit it made itself"
+  - "[code://packages/agent-claude/src/session.ts#L1527](../../../../packages/agent-claude/src/session.ts#L1527) and [#L1652](../../../../packages/agent-claude/src/session.ts#L1652) - the pattern: Claude's write tools reported before and after"
+  - "[code://packages/agent-claude/src/session.ts#L2638-L2646](../../../../packages/agent-claude/src/session.ts#L2638-L2646) - a shell call drawn with `toolKind: 'terminal'`"
   - file:///github/cofold/packages/papo/src/agent.ts - `capabilitiesOf`, the same four turned on from a config
   - file:///github/cofold/packages/agents/src/run/tools.ts - validate, `beforeTool`, policy, execute, `afterTool`
   - "file:///github/cofold/packages/tools/src/shell.ts - `shell_exec`, marked `effects: { writes: true, destructive: true }`"
@@ -84,25 +84,29 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | A `shell_exec` call's `toolInput` is the bare command on every action and part that carries one; it still runs in cofold's own process. | Softov, 2026-09-26: "Bare command, like Claude". | 11 |
 | `searchOf` keeps the configured order and `searchProviders` builds the array in it. | Softov, 2026-09-26: "Configured order". | 12, 10 |
 | Both checks resolve symlinks with `realpath` before comparing, a path that does not exist yet judged by its nearest existing ancestor. | Softov, 2026-09-26: "yes, both". | 06, 07 |
+| ahpd's check is `@cofold/tools`' `resolveWithin`, so a dangling link is followed as cofold's own tools follow it. | the second review, 2026-09-26: the hand-written copy judged a dangling link by its own name | 14 |
 | ahpd depends on `@cofold/tools` `^0.1`. | Softov, 2026-09-26: "Release tools 0.1.x". | 06, 08 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A cofold session's agent has the four capabilities](task-01-the-four-capabilities.md) | implemented | - |
-| [02 - A cofold tool call is drawn and its edits are reported](task-02-calls-drawn-and-edits-reported.md) | implemented | 01 |
-| [03 - The permission modes cover the new tools](task-03-permission-modes-cover-them.md) | implemented | 01 |
-| [04 - Docs and the package](task-04-docs-and-package.md) | implemented | 02, 03 |
+| [01 - A cofold session's agent has the four capabilities](task-01-the-four-capabilities.md) | done | - |
+| [02 - A cofold tool call is drawn and its edits are reported](task-02-calls-drawn-and-edits-reported.md) | done | 01 |
+| [03 - The permission modes cover the new tools](task-03-permission-modes-cover-them.md) | done | 01 |
+| [04 - Docs and the package](task-04-docs-and-package.md) | done | 02, 03 |
 | [05 - cofold's harness asks for a read outside the workspace](task-05-cofold-asks-for-a-read-outside.md) | done | - |
 | [06 - @cofold/tools checks real paths and refuses internal addresses](task-06-cofold-tools-check-real-paths-and-addresses.md) | done | - |
-| [07 - ahpd's workspace check follows symlinks](task-07-ahpd-inside-follows-symlinks.md) | todo | - |
-| [08 - ahpd takes the cofold releases, and its tests pin reads and addresses](task-08-ahpd-takes-the-cofold-releases.md) | todo | 05, 06 |
-| [09 - The denial, the end-of-run sweep, cancel and a session with no directory are pinned by tests](task-09-the-untested-paths-are-pinned.md) | todo | - |
-| [10 - The docs and the package README say what the code does](task-10-docs-say-what-the-code-does.md) | todo | 07, 08, 12, 13 |
-| [11 - A shell call's tool input is its bare command](task-11-a-shell-call-sends-the-bare-command.md) | todo | - |
-| [12 - Search providers are tried in the configured order](task-12-search-providers-in-configured-order.md) | todo | - |
-| [13 - A turn with no model says to add "model" to the cofold configuration file](task-13-no-model-says-what-to-add.md) | todo | - |
+| [07 - ahpd's workspace check follows symlinks](task-07-ahpd-inside-follows-symlinks.md) | done | - |
+| [08 - ahpd takes the cofold releases, and its tests pin reads and addresses](task-08-ahpd-takes-the-cofold-releases.md) | done | 05, 06 |
+| [09 - The denial, the end-of-run sweep, cancel and a session with no directory are pinned by tests](task-09-the-untested-paths-are-pinned.md) | done | - |
+| [10 - The docs and the package README say what the code does](task-10-docs-say-what-the-code-does.md) | done | 07, 08, 12, 13 |
+| [11 - A shell call's tool input is its bare command](task-11-a-shell-call-sends-the-bare-command.md) | done | - |
+| [12 - Search providers are tried in the configured order](task-12-search-providers-in-configured-order.md) | done | - |
+| [13 - A turn with no model says to add "model" to the cofold configuration file](task-13-no-model-says-what-to-add.md) | done | - |
+| [14 - ahpd's workspace check follows a dangling symlink, through cofold's own resolver](task-14-inside-follows-a-dangling-link.md) | done | 07, 08 |
+| [15 - A declined edit sends its after when the person declines](task-15-a-declined-edit-sends-its-after-when-declined.md) | done | 09 |
+| [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | done | 14, 15 |
 
 ## Risks and tradeoffs
 
@@ -110,29 +114,32 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 - A client that also offers its own terminal tool sees two ways to run a command; the host's `ahp_terminals` stays, since it is a terminal a person can watch.
 - Tasks 05 and 06 change `/github/cofold`; ahpd sees them only once Softov publishes `@cofold/agents` and `@cofold/tools`, which task 08 waits for.
 - `web_fetch` checks an address before each request, so a name that resolves differently at the connection (DNS rebinding) is not caught.
+- The workspace check resolves a path with cofold's `resolveWithin` and cofold's own tools write it in a second step, so a symlink another actor swaps between the two is not seen.
 - Memory is shared by every session in a workspace, and its `MEMORY.md` is in every run's instructions, so what one session writes there reaches the next.
 - cofold has no default model: a turn with none configured fails rather than running on one nobody chose, and task 13 makes its sentence say what to add and where.
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 are implemented: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal, the mode table in `test/agent-cofold-tools.test.ts`, and the `tools` option in `docs/PLUGINS.md`. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0.
-- **Next action:** [task-08-ahpd-takes-the-cofold-releases.md](task-08-ahpd-takes-the-cofold-releases.md); tasks 07, 09, 11, 12 and 13 do not depend on it and can go in any order.
+- **Done so far:** every task is done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the rewritten tool section in `docs/PLUGINS.md`, and the new `packages/agent-cofold/README.md`. ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path. Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0. Tasks 14 and 15 are done from the second review, and task 16 closed the plan.
+- **Next action:** none. The three VS Code checks and cofold's own `pnpm test` are in [deferred.md](deferred.md).
 - **Open questions:** none.
-- **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too. Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:191`), as `agent-pi` and `agent-acp` do. A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is pre-existing and not part of this plan.
+- **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too. Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do. A declined approval leaves cofold's own tool-call row `pending-confirmation` in `mapping.ts`, which is the client's own row to move and not this plan's.
 
 ## Final verification checklist
 
 - [ ] VS Code: a cofold session reads a file, edits it (the edit shows as a change), and runs `ls` (drawn as a terminal).
 - [ ] VS Code: in the default mode the edit and the command ask first; in `acceptEdits` the edit does not.
 - [ ] VS Code: in the default mode a read of a file outside the workspace asks first.
-- [ ] In `acceptEdits`, a write through a symlink that leaves the workspace asks first (task 07).
-- [ ] `web_fetch` works; `web_search` appears only with a provider configured; `web_fetch` of `http://127.0.0.1/` or a redirect to `169.254.169.254` is refused (tasks 06, 08).
-- [ ] Cancelling a turn while `shell_exec` runs kills the command and anything it started (task 09).
-- [ ] VS Code: a `shell_exec` row shows the bare command, not JSON (task 11).
-- [ ] With `duckduckgo` listed before `brave`, `web_search` asks DuckDuckGo first (task 12).
-- [ ] With no model configured anywhere, a turn fails with a sentence that says to add `"model"` to the cofold configuration file and names its path (task 13).
-- [ ] `@cofold/tools` is at 0.1.x with a `^0.1` peer range, and `@ahpd/agent-cofold` takes `^0.1` (tasks 06, 08).
-- [ ] A session opened with no working directory still has `shell_exec` and the files tools (task 09).
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green in ahpd; `pnpm test` green in `/github/cofold`.
-- [ ] `docs/PLUGINS.md` says what confines the tools and that search follows the configured order, and `packages/agent-cofold/README.md` exists (task 10).
-- [ ] `plans/index.md` updated.
+- [x] In `acceptEdits`, a write through a symlink that leaves the workspace asks first (task 07).
+- [x] In `acceptEdits`, a write through a dangling symlink whose target is outside asks first (task 14).
+- [x] A declined edit's `after` is sent on the decline (task 15).
+- [x] `web_fetch` works; `web_search` appears only with a provider configured; `web_fetch` of `http://127.0.0.1/` or a redirect to `169.254.169.254` is refused (tasks 06, 08).
+- [x] Cancelling a turn while `shell_exec` runs kills the command and anything it started (task 09).
+- [x] VS Code: a `shell_exec` row shows the bare command, not JSON (task 11, the input the case pins; the row was not driven).
+- [x] With `duckduckgo` listed before `brave`, `web_search` asks DuckDuckGo first (task 12).
+- [x] With no model configured anywhere, a turn fails with a sentence that says to add `"model"` to the cofold configuration file and names its path (task 13).
+- [x] `@cofold/tools` is at 0.1.x with a `^0.1` peer range, and `@ahpd/agent-cofold` takes `^0.1` (tasks 06, 08).
+- [x] A session opened with no working directory still has `shell_exec` and the files tools (task 09).
+- [x] `pnpm test`, `pnpm typecheck` and `pnpm boundary` green in ahpd; cofold's own run is in [deferred.md](deferred.md).
+- [x] `docs/PLUGINS.md` says what confines the tools and that search follows the configured order, and `packages/agent-cofold/README.md` exists (task 10).
+- [x] `plans/index.md` updated.

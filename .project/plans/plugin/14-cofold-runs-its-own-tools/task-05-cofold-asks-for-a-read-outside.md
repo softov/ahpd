@@ -4,8 +4,8 @@ status: done
 depends: []
 layer: "cofold agents (/github/cofold)"
 refs:
-  - "file:///github/cofold/packages/agents/src/policy/modes.ts - `askOnEffects` (line 12) and `policyOf` (line 25), where the modes are defined"
-  - "file:///github/cofold/packages/agents/src/types/policy.ts - `PermissionModeRules` (lines 35-40), whose `inside` doc says it is about edits"
+  - "file:///github/cofold/packages/agents/src/policy/modes.ts - `askOnEffects` (line 16) and `policyOf` (line 41), where the modes are defined"
+  - "file:///github/cofold/packages/agents/src/types/policy.ts - `PermissionModeRules` (lines 35-40), whose `inside` doc says it judges a path a read or an edit names"
   - "file:///github/cofold/packages/agents/src/policy/modes.test.ts - the mode tests this extends"
 ---
 
@@ -15,8 +15,8 @@ In `/github/cofold`, a tool that reads and names a path outside the workspace as
 
 ## Files
 
-- `UPDATE: /github/cofold/packages/agents/src/policy/modes.ts:12-15` - `askOnEffects` allows every read today; it takes `rules` and asks for a read whose path is outside.
-- `UPDATE: /github/cofold/packages/agents/src/policy/modes.ts:25-49` - `policyOf` passes `rules` to `askOnEffects` in every case that calls it.
+- `UPDATE: /github/cofold/packages/agents/src/policy/modes.ts:16-24` - `askOnEffects` takes `rules` and asks for a read whose path is outside.
+- `UPDATE: /github/cofold/packages/agents/src/policy/modes.ts:41-66` - `policyOf` passes `rules` to `askOnEffects` in every case that calls it.
 - `UPDATE: /github/cofold/packages/agents/src/types/policy.ts:36` - the `inside` doc says it judges a path a read or an edit names.
 - `UPDATE: /github/cofold/packages/agents/src/policy/modes.test.ts` - the new cases.
 

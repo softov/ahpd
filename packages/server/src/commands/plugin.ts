@@ -14,17 +14,22 @@ import { running } from '../daemon.js';
 import { installPlugins, removePlugins, run as runProgram } from '../install.js';
 import { describePlugin, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
-import { optionsFrom, pluginWriteFields, refuse, serverFields } from './options.js';
+import { optionsFrom, pluginWriteFields, refuse, serverFields, servedPluginWriteFields } from './options.js';
+import type { ServedFacts } from './served.js';
 
-export const declarePlugin = (registry: Registry<object>): Command[] => {
+export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   const list = registry.action({
     id: 'plugin.list',
     summary: 'What the configuration names, and what a run would load',
     description: 'Resolves every spec and reads its manifest, without importing any of it.',
     surfaces: { cli: { pattern: ['plugin', 'list'] }, http: { method: 'GET', path: '/plugin/list' } },
-    input: serverFields,
+    scopes: ['config:read'],
+    // Served, the list is the daemon's own, so no field could name another.
+    ...(served === undefined ? { input: serverFields } : {}),
     run: async (context) => {
-      const options = optionsFrom(context.input as Readonly<Record<string, unknown>>);
+      const options = served === undefined
+        ? optionsFrom(context.input as Readonly<Record<string, unknown>>)
+        : served.options;
       if (options.noPlugins) return output([], 'plugins: --no-plugins, so nothing is listed\n');
       if (options.plugins.length === 0) return output([], 'plugins: none named\n');
       const rows = [];
@@ -42,24 +47,36 @@ export const declarePlugin = (registry: Registry<object>): Command[] => {
       : 'Take a plugin out of the configuration, and uninstall it unless --keep',
     surfaces: { cli: { pattern: ['plugin', sub, ':name...'] }, http: { method: 'POST', path: `/plugin/${sub}` } },
     input: {
-      ...pluginWriteFields,
+      ...(served === undefined ? pluginWriteFields : servedPluginWriteFields),
       name: { type: 'array', items: { type: 'string' }, description: 'A package name. One or more.' },
     },
     scopes: ['config:write'],
+    // Installing or removing a plugin runs code in this process, so over HTTP
+    // it is the deployment's own token and never a person.
+    meta: { deploymentTokenOnly: true },
     run: async (context) => {
       const names = context.list<string>('name');
-      const configFile = context.optional<string>('configFile');
-      const said: string[] = [];
-      const say = (line: string): void => { said.push(line); };
+      // Served, the file edited is the daemon's, whatever the request names.
+      const configFile = served === undefined ? context.optional<string>('configFile') : served.configFile;
+      /*
+       * Each line is written when it is said, so a step that throws has still
+       * shown what it did. With a payload asked for, the lines are diagnostics
+       * and go to stderr, because stdout is the JSON.
+       */
+      const payload = context.globals['json'] === true || context.globals['quiet'] === true;
+      const say = (line: string): void => {
+        if (payload) context.error(line);
+        else context.write(`${line}\n`);
+      };
       try {
         if (sub === 'install') {
-          installPlugins(names, {
+          await installPlugins(names, {
             configDir: configDir(), configFile: configFile ?? configPath(),
             version: version(), enable: !context.flag('noEnable'), run: runProgram, say,
           });
         }
         else {
-          removePlugins(names, {
+          await removePlugins(names, {
             configDir: configDir(), configFile: configFile ?? configPath(),
             uninstall: !context.flag('keep'), run: runProgram, say,
           });
@@ -69,12 +86,13 @@ export const declarePlugin = (registry: Registry<object>): Command[] => {
         refuse(context.surface, error instanceof Error ? error.message : String(error));
       }
       /*
-       * A running daemon holds the list it started with and nothing here can
-       * change that, so the last line says what does.
+       * The list a running daemon serves is the one it started with, and a
+       * served install is that same daemon's own file, so the change is loaded
+       * only by a restart. At the terminal a record is what says one is up.
        */
-      const restart = running() !== undefined;
+      const restart = served !== undefined || running() !== undefined;
       if (restart) say('Restart the daemon to load the change: ahpd stop && ahpd start');
-      return output({ plugins: names, ...(restart ? { restart: true } : {}) }, `${said.join('\n')}${said.length === 0 ? '' : '\n'}`);
+      return output({ plugins: names, ...(restart ? { restart: true } : {}) }, '');
     },
   });
 

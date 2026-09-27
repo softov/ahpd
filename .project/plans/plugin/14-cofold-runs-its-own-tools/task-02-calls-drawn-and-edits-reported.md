@@ -1,12 +1,12 @@
 ---
 title: A cofold tool call is drawn and its edits are reported
-status: implemented
+status: done
 depends: [task-01-the-four-capabilities.md]
 layer: "agent-cofold"
 refs:
-  - "[code://packages/sdk/src/types/agent.ts#L187](../../../../packages/sdk/src/types/agent.ts#L187) - `onFileEdit`"
-  - "[code://packages/agent-claude/src/session.ts#L932](../../../../packages/agent-claude/src/session.ts#L932) - the write tools Claude reports"
-  - "[code://packages/agent-claude/src/session.ts#L2348-L2356](../../../../packages/agent-claude/src/session.ts#L2348-L2356) - `toolKind: 'terminal'`"
+  - "[code://packages/sdk/src/types/agent.ts#L203](../../../../packages/sdk/src/types/agent.ts#L203) - `onFileEdit`"
+  - "[code://packages/agent-claude/src/session.ts#L1080-L1085](../../../../packages/agent-claude/src/session.ts#L1080-L1085) - the write tools Claude reports"
+  - "[code://packages/agent-claude/src/session.ts#L2638-L2646](../../../../packages/agent-claude/src/session.ts#L2638-L2646) - `toolKind: 'terminal'`"
   - file:///github/cofold/packages/agents/src/types/hooks.ts - `beforeTool` and `afterTool`
 ---
 

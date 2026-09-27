@@ -18,9 +18,10 @@
  *   `responseParts` is what the agent answered.
  */
 
-import { resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store, Tool } from '@cofold/agents';
+import { resolveWithin } from '@cofold/tools';
 import { Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
@@ -36,15 +37,18 @@ import type { ClientToolRelay } from './tools.js';
 /**
  * Whether a path a tool names stays inside the directory the session works in.
  *
+ * `resolveWithin` is the check `@cofold/tools` runs before its own file tools
+ * touch a path, so what this host calls outside is what cofold also refuses: a
+ * symlink that leaves the workspace is outside, and a link whose target does
+ * not exist yet is judged by the target it names rather than by the link.
+ *
  * The workspace boundary is a host fact, which is why the harness takes it as
  * a predicate rather than a directory: this host's tools are the daemon's and
  * a client's, and a path is either under the directory the session was opened
  * in or it is not.
  */
-const insideDirectory = (workspace: string, path: string): boolean => {
-  const target = resolve(workspace, path);
-  return target === workspace || target.startsWith(workspace.endsWith(sep) ? workspace : `${workspace}${sep}`);
-};
+const insideDirectory = (workspace: string, path: string): boolean =>
+  resolveWithin(workspace, path).inside;
 
 /**
  * The tools whose calls change a file, by the names `@cofold/tools` gives them.
@@ -514,22 +518,13 @@ export function cofoldSession(
     /*
      * A call that will never have a result still owes its `after`.
      *
-     * A denial ends the call without the tool running and a stopped run can
-     * cut one off mid-flight; either way the file was announced as changing,
-     * so the `after` goes out here when the tool's own result will not carry
-     * it. The sweep is idempotent: `settleEdit` forgets the call it answers.
+     * A denial from the run ends the call without the tool running and a
+     * stopped run can cut one off mid-flight; either way the file was announced
+     * as changing, so the `after` goes out here when the tool's own result will
+     * not carry it. The sweep is idempotent: `settleEdit` forgets the call it
+     * answers, so a call settled where it ended is not settled again.
      */
     if (event.type === 'tool.denied') settleEdit(event.callId);
-    /*
-     * A person declining an approval is the other way a call ends without a
-     * result: cofold says so with `approval.resolved` and writes no
-     * `tool.denied`, so the call the entry was about is settled from the
-     * request it named before the mapping takes the entry down.
-     */
-    if (event.type === 'approval.resolved' && event.decision === 'deny') {
-      const callId = pending.get(event.requestId)?.callId;
-      if (callId !== undefined) settleEdit(callId);
-    }
     if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
       for (const callId of [...editing.keys()]) settleEdit(callId);
     }
@@ -1334,6 +1329,13 @@ export function cofoldSession(
     confirm: (toolCallId, approved) => {
       const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
       if (held === undefined) return;
+      /*
+       * A decline ends the call without a result, so the file it announced as
+       * changing is settled here, where the call id is still known: the run's
+       * own `approval.resolved` arrives after this entry is gone, and a run
+       * paused on the next question never reaches the end-of-run sweep.
+       */
+      if (!approved && held.callId !== undefined) settleEdit(held.callId);
       pending.delete(held.requestId);
       const removal = activeMapping?.settle(held.requestId);
       if (removal !== undefined) start.emit('session', removal);

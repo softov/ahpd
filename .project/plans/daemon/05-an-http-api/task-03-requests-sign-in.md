@@ -23,7 +23,7 @@ The `authorize` hook reads `Authorization: Bearer <token>`: the connection token
 
 ## Validation
 
-- `test/server-http.test.ts`: no token 401, root token ok, a user without the grant 403 with the reason, a user with it ok.
+- `packages/server/test/server-http.test.ts`: no token 401, root token ok, a user without the grant 403 with the reason, a user with it ok.
 
 ## Resume
 
@@ -31,4 +31,4 @@ The `authorize` hook reads `Authorization: Bearer <token>`: the connection token
 The sentence is now one export, `refusalReason` in `packages/sdk/src/host.ts` (exported from `packages/sdk/src/index.ts`), used by both the WebSocket gate and this hook, so the two cannot drift.
 An unconfigured daemon with a token requires it; with neither a token nor a directory it keeps the gate it never had.
 Commands exposed over HTTP no longer `process.exit` on the remote surface (`refuse` in `commands/options.ts`, plus `status` and `user rm`), so a refused request cannot end the daemon.
-`test/server-http.test.ts` covers no-token 401, the deployment token, a member refused `config:write` with `ada may not config:write here`, and an admin answered.
+`packages/server/test/server-http.test.ts` covers no-token 401, the deployment token, a member refused `config:write` with `ada may not config:write here`, and an admin answered.

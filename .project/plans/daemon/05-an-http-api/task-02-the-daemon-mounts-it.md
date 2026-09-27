@@ -25,7 +25,7 @@ refs:
 
 ## Validation
 
-- `test/server-http.test.ts`: off is 404; on answers `/api/cli-manifest`; `http.port` listens separately.
+- `packages/server/test/server-http.test.ts`: off is 404; on answers `/api/cli-manifest`; `http.port` listens separately.
 
 ## Resume
 
@@ -33,4 +33,4 @@ refs:
 `packages/server/src/http.ts` builds `serve(registry, program, { prefix: '/api', authorize })`, a 404 handler for the off case, and `listenApi` for `http.port`.
 `packages/sdk/src/listen.ts` gained `ListenOptions.request`, wired on Node through `ws`'s `server:` option so the upgrade path is the literal one it was when no handler is passed.
 `packages/server/src/commands/run.ts` mounts it and announces `http on http://<host>:<port>/api`; `@cofold/remote@^0.3.0` is in `packages/server/package.json`.
-`test/server-http.test.ts` covers off-is-404, the manifest on the shared port, and `http.port` on its own listener.
+`packages/server/test/server-http.test.ts` covers off-is-404, the manifest on the shared port, and `http.port` on its own listener.

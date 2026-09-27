@@ -35,6 +35,8 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
     return held === undefined ? undefined : { id: token, roles: ['r'], can: (one: Grant) => held.includes(one) };
   },
   list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
   add: async () => {},
   remove: async () => false,
   mint: async () => '',

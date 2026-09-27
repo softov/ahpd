@@ -358,7 +358,10 @@ client pushes with `authenticate` is a different thing again and is covered in
 
 `http` in the configuration serves the same declarations under `/api`, so
 `status`, `config`, `plugin` and `user` can be run by something that is not a
-terminal. It is off until it is named:
+terminal. It is off until it is named, and it needs something to hold a request
+against: a connection token or a user directory. With neither, the daemon
+refuses to start rather than serve an administration surface that anybody who
+reaches the port may drive.
 
 ```json
 {
@@ -369,13 +372,17 @@ terminal. It is off until it is named:
 That puts it on the daemon's own port, beside the WebSocket, at
 `http://127.0.0.1:9187/api`, so a tunnel that reaches the socket reaches the API
 with no more setup. `http.port` moves it to a listener of its own, which is how
-it is bound where AHP is not:
+it is bound where AHP is not, and `http.host` says where that listener binds.
+The default is the daemon's own `host`, so naming `127.0.0.1` keeps
+administration on the machine while AHP is on the network:
 
 ```json
 {
-  "http": { "port": 9188 }
+  "http": { "port": 9188, "host": "127.0.0.1" }
 }
 ```
+
+`http.host` without `http.port` has no listener to bind, and is refused.
 
 The startup line says where it went: `http on http://127.0.0.1:9187/api`.
 Without `http`, `/api` answers 404 and a request anywhere else keeps the answer
@@ -387,21 +394,61 @@ The same commands under the same grants. A request carries
 `Authorization: Bearer <token>`: the deployment's connection token is root,
 exactly as it is on the socket; anything else is a person's token, verified the
 way `authenticate` verifies one, and the command's scopes are checked against
-the grants their roles resolve to - `config:write` for `config`,
-`plugin install` and `plugin remove`, `admin` for the `user` verbs. A refusal
-carries the same sentence the WebSocket gives, so a script reads the reason:
+the grants their roles resolve to:
+
+| Command | Needs |
+| --- | --- |
+| `status`, `plugin list` | `config:read` |
+| `config` | `config:write` |
+| `user list`, `user add`, `user rm`, `user token` | `users:write` |
+| `plugin install`, `plugin remove` | the deployment's token only |
+
+`users:write` manages people at or below the caller: `user add` refuses a role,
+and `user token` and `user rm` refuse a person, that holds a grant the caller
+does not hold, so the grant is not `admin` under another name.
+
+`plugin install` runs `npm install` and names a package the daemon loads at its
+next start, so it runs code as the host; no grant a person may hold confers
+that, and a person's token is refused whatever its roles. A served install
+answers `restart: true`, because the daemon that answered is the one holding the
+list it started with. `GET /api/config` answers every key of the daemon's own
+file, with `connectionToken` and every value under a plugin entry's `options`
+reported as `<set>` rather than as what they are, so a grant to read or change
+settings carries neither the root credential nor a plugin's own secrets.
+
+A refusal carries the same sentence the WebSocket gives, so a script reads the
+reason:
 
 ```bash
 curl http://127.0.0.1:9187/api/status -H "Authorization: Bearer $SECRET"
 curl http://127.0.0.1:9187/api/config -H "Authorization: Bearer $SECRET"
 
 # A person the grant does not cover, and the answer the socket gives too.
+curl -i http://127.0.0.1:9187/api/status -H "Authorization: Bearer $ADA"
+# HTTP/1.1 403 Forbidden
+# { "message": "ada may not config:read here" }
+
+# Installing a plugin is the deployment's own, whatever a person's roles are.
 curl -i http://127.0.0.1:9187/api/plugin/install \
   -H "Authorization: Bearer $ADA" -H "content-type: application/json" \
   -d '{"name":["@ahpd/agent-claude"]}'
 # HTTP/1.1 403 Forbidden
-# { "message": "ada may not config:write here" }
+# { "message": "ada may not install or remove a plugin here; only the deployment token may" }
 ```
+
+A request is answered only when its `Host` is one of the daemon's own names -
+the loopback names at the port the API is bound to, the address it is bound to
+when that is a specific one, and the host of `resource` when a deployment names
+it - and when its `Origin`, if a browser sends one, is one of them too. A body
+is served only when its `content-type` is `application/json`; anything else is
+answered 415. That keeps a page on another site, or one that rebinds its own
+name to loopback, from driving the API.
+
+A served command reads the daemon's own options and never the request's idea of
+them: its configuration file, its user directory, its plugins and its
+directories. `configFile`, `users`, `plugins` and `paths` are absent from the
+served declarations and so from the manifest, and `GET /api/status` describes
+the process answering rather than the record a detached daemon wrote.
 
 `GET /api/cli-manifest` is the command surface as JSON - the same declaration
 the CLI parses - and it is not gated, so a client can read what a daemon offers
@@ -410,23 +457,29 @@ before it has a token. It is what `--remote` reads.
 ### `--remote`: the same CLI, against a daemon
 
 `--remote <url>` runs the administration commands on the daemon the URL names
-instead of here. The manifest is cached on disk, so `--help` is not a round trip
-and the binary still works when the daemon is not answering; `--refresh` fetches
-it again. The token is `--token` or `AHPD_TOKEN`.
+instead of here. A token is required: `--token <secret>`, `--token-file <path>`
+or `AHPD_TOKEN`, and a call with none is refused before anything is fetched.
+`--token` and `--token-file` together are refused, as is a file that is missing
+or empty. Plain `http://` to a host that is not loopback sends the token
+readable by anything on the path, so the client says so on stderr and proceeds;
+`https://`, or `http://` on loopback, says nothing. The manifest is cached under
+`~/.cache/ahpd/remote`, mode 0700, so `--help` is not a round trip and the
+binary still works while the daemon is not answering; `--refresh` fetches it
+again.
 
 ```bash
 ahpd --remote http://127.0.0.1:9187 --token "$SECRET" status
-ahpd --remote http://127.0.0.1:9187 --token "$SECRET" plugin list
-ahpd --remote http://127.0.0.1:9187 --refresh config
+ahpd --remote http://127.0.0.1:9187 --token-file ~/.config/ahpd/token plugin list
+AHPD_TOKEN="$SECRET" ahpd --remote http://127.0.0.1:9187 --refresh config
 ```
 
 The URL is the daemon's origin; `/api` is appended. `start` and `stop` are the
 one pair that stays local, because they are about a background daemon on this
 machine rather than the one answering. Everything else - `status`, `config`,
-`plugin` and `user` - is the daemon's declaration, with the same flags, help,
-completion and `--json` it has when typed at its terminal. `status` reads the
-record a detached daemon wrote, so it answers against one started with
-`ahpd start`.
+`plugin` and `user` - is the daemon's declaration, with the same help,
+completion and `--json` it has when typed at its terminal, and it answers about
+the daemon that is running. A served `status` and `config` take no fields at
+all.
 
 ## Clients
 

@@ -1,16 +1,18 @@
 ---
 title: The command handlers fail by throwing a cofold error, and never touch the process
-status: todo
+status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/commands/options.ts#L78-L81](../../../../packages/server/src/commands/options.ts#L78-L81) - `stop`, which writes to stderr and calls `process.exit(2)`"
-  - "[code://packages/server/src/commands/status.ts#L25-L39](../../../../packages/server/src/commands/status.ts#L25-L39) - a plain `Error` over HTTP, `process.exit(1)` on the terminal"
-  - "[code://packages/server/src/commands/stop.ts#L22-L27](../../../../packages/server/src/commands/stop.ts#L22-L27) - `None running.` on stdout, then `process.exit(1)`"
-  - "[code://packages/server/src/commands/start.ts#L43-L46](../../../../packages/server/src/commands/start.ts#L43-L46) - `context.error`, then `process.exit(1)`"
-  - "[code://packages/server/src/commands/user.ts#L41](../../../../packages/server/src/commands/user.ts#L41) - `onProblem` on the daemon's own stderr"
-  - "[code://packages/server/src/commands/user.ts#L115-L121](../../../../packages/server/src/commands/user.ts#L115-L121) - `No user called` on stdout, then `process.exit(1)`"
-  - "[code://test/server-cli.test.ts#L195-L203](../../../../test/server-cli.test.ts#L195-L203) - the pinned `status` case with nothing running"
+  - "[code://packages/server/src/commands/options.ts#L72-L99](../../../../packages/server/src/commands/options.ts#L72-L99) - `stop`, `refuse` and `conflict`, each throwing rather than touching the process"
+  - "[code://packages/server/src/commands/status.ts#L28-L33](../../../../packages/server/src/commands/status.ts#L28-L33) - nothing running throws on every surface"
+  - "[code://packages/server/src/commands/stop.ts#L22-L27](../../../../packages/server/src/commands/stop.ts#L22-L27) - the same, keeping `{\"stopped\":false}` for `--json`"
+  - "[code://packages/server/src/commands/start.ts#L117-L119](../../../../packages/server/src/commands/start.ts#L117-L119) - a failed start throws rather than ending the process"
+  - "[code://packages/server/src/commands/user.ts#L40-L77](../../../../packages/server/src/commands/user.ts#L40-L77) - `people` writes what the directory complained about through the context"
+  - "[code://packages/server/src/commands/user.ts#L154](../../../../packages/server/src/commands/user.ts#L154) - no user called, thrown"
+  - "[code://packages/server/test/server-cli.test.ts#L341-L348](../../../../packages/server/test/server-cli.test.ts#L341-L348) - the re-pinned `None running.` case"
+  - "[code://packages/server/test/server-cli.test.ts#L521-L523](../../../../packages/server/test/server-cli.test.ts#L521-L523) - the re-pinned `No user called` case"
+  - "[code://packages/server/test/server-http.test.ts#L555-L562](../../../../packages/server/test/server-http.test.ts#L555-L562) and [#L639-L646](../../../../packages/server/test/server-http.test.ts#L639-L646) - the served sentences"
   - file:///github/cofold/packages/commands/src/errors.ts - `CofoldError`, `ArgumentError` and the exit code of each kind
 ---
 
@@ -21,14 +23,14 @@ Over HTTP, each of those failures is answered with its sentence and a status, ne
 
 ## Files
 
-- `UPDATE: packages/server/src/commands/options.ts:78-81` - `stop` throws `ArgumentError(message)` (exit 2); `refuse` keeps its shape and needs no surface branch, since both surfaces now throw.
-- `UPDATE: packages/server/src/commands/status.ts:25-39` - nothing running throws `new CofoldError('conflict', 'None running.')` on every surface; `--json` keeps `{"running":false}` by throwing after `context.write` of the JSON.
+- `UPDATE: packages/server/src/commands/options.ts:72-99` - `stop` throws `ArgumentError(message)` (exit 2); `refuse` has no surface branch, since both surfaces now throw; `conflict` throws the kind whose exit code is 1.
+- `UPDATE: packages/server/src/commands/status.ts:28-33` - nothing running throws on every surface; `--json` keeps `{"running":false}` by throwing after `context.write` of the JSON.
 - `UPDATE: packages/server/src/commands/stop.ts:22-27` - the same, with `{"stopped":false}`.
-- `UPDATE: packages/server/src/commands/start.ts:43-46` - throws `new CofoldError('conflict', 'Could not start it: ...')`.
-- `UPDATE: packages/server/src/commands/user.ts:41` - `onProblem` goes to `context.error`; `people` takes the context.
-- `UPDATE: packages/server/src/commands/user.ts:115-121` - throws `new CofoldError('conflict', 'No user called <id>.')`, with no surface branch.
-- `UPDATE: test/server-cli.test.ts:195-203` and the other cases that pin these sentences - re-pinned to stderr with the `ahpd: ` prefix and the same exit code.
-- `UPDATE: test/server-http.test.ts` - the remote cases below.
+- `UPDATE: packages/server/src/commands/start.ts:117-119` - throws a conflict carrying `Could not start it: ...`.
+- `UPDATE: packages/server/src/commands/user.ts:40-77` - `onProblem` goes to `context.error`; `people` takes the context.
+- `UPDATE: packages/server/src/commands/user.ts:154` - throws a conflict carrying `No user called <id>.`, with no surface branch.
+- `UPDATE: packages/server/test/server-cli.test.ts:341-348, 521-523` and the other cases that pin these sentences - re-pinned to stderr with the `ahpd: ` prefix and the same exit code.
+- `UPDATE: packages/server/test/server-http.test.ts:555-562, 639-646` - the remote cases below.
 
 ## Steps
 
@@ -40,10 +42,16 @@ Over HTTP, each of those failures is answered with its sentence and a status, ne
 
 ## Validation
 
-- `test/server-cli.test.ts`: `ahpd status` with nothing running exits 1 with `ahpd: None running.` on stderr; `ahpd stop` the same; `ahpd user rm nobody --users <file>` exits 1 with `ahpd: No user called nobody.` on stderr; a `stop` refusal still exits 2.
-- `test/server-http.test.ts`: `GET /api/status` on a daemon with no record answers a 4xx with the sentence, not 500 "Failed"; today the body is `{ "message": "Failed" }`.
-- `test/server-http.test.ts`: `POST /api/user/rm/nobody` answers the sentence and the daemon keeps running.
+- `packages/server/test/server-cli.test.ts`: `ahpd status` with nothing running exits 1 with `ahpd: None running.` on stderr; `ahpd stop` the same; `ahpd user rm nobody --users <file>` exits 1 with `ahpd: No user called nobody.` on stderr; a `stop` refusal still exits 2.
+- `packages/server/test/server-http.test.ts`: `GET /api/status` on a daemon with no record answers a 4xx with the sentence, not 500 "Failed"; today the body is `{ "message": "Failed" }`.
+- `packages/server/test/server-http.test.ts`: `POST /api/user/rm/nobody` answers the sentence and the daemon keeps running.
 - The `rg` of step 4.
 - `pnpm typecheck` green.
 
 ## Resume
+
+Done.
+Every handler under `commands/` fails by throwing: `stop` and `refuse` throw `ArgumentError` (exit 2), and the machine-state failures throw through `conflict`, whose kind is `conflict` (exit 1) and which carries `status: 409`.
+The status is there because `serve()` answers a plain `conflict` with 500: the decision keeps the exit code, and the validation asks for a 4xx with the sentence, so the error carries the status `serve()` reads.
+`rg -n "process\.(exit|stdout|stderr)" packages/server/src/commands/ --glob '!run.ts'` finds only `registry.ts`'s `warn`.
+`pnpm typecheck` green; `packages/server/test/server-cli.test.ts` 32 cases and `packages/server/test/server-http.test.ts` 10 cases green.

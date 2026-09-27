@@ -3,9 +3,8 @@
  *
  * Every flag is a field here and every field is a flag: `@cofold/commands`
  * spells each one for the terminal, for help, for completion and for the JSON
- * input a command is run with. What `parse` used to do by hand - read argv, then
- * read `config.json` under it - is `optionsFrom`, which takes the canonical
- * input a surface produced rather than the words a person typed.
+ * input a command is run with. `optionsFrom` takes the canonical input a
+ * surface produced and folds `config.json` under it.
  *
  * The fields carry no `default`, deliberately: a value that came from the
  * configuration file has to be told apart from one that came from a flag, and
@@ -14,7 +13,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { ArgumentError, type Field } from '@cofold/commands';
+import { ArgumentError, CofoldError, type Field, type OptionSpec } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
 import type { HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
@@ -76,28 +75,47 @@ export interface Options {
  * `if (path === undefined) stop(...)` narrows `path` for every line after.
  */
 export const stop: (message: string) => never = (message) => {
-  process.stderr.write(`${message}\n`);
-  process.exit(2);
+  throw new ArgumentError(message);
 };
 
 /**
- * Refuse a command the way it always has, or answer a remote caller.
+ * A refusal, on whichever surface asked.
  *
- * `stop` assumes the process is the person's terminal. Over HTTP the process is
- * the daemon, so a refusal is thrown and `serve()` maps it to a status rather
- * than the daemon exiting under every other connection.
+ * A handler fails by throwing, so the same sentence reaches a terminal through
+ * `runEntry` and a request through `serve()`; nothing here decides by surface.
  */
-export const refuse: (surface: string | undefined, message: string) => never = (surface, message) => {
-  if (surface === 'remote') throw new ArgumentError(message);
-  stop(message);
+export const refuse: (surface: string | undefined, message: string) => never = (_surface, message) => stop(message);
+
+/**
+ * A failure of the machine's state rather than of the words typed.
+ *
+ * The kind keeps the exit code a script sees, which is 1; the status is what a
+ * served request answers with, because `serve()` reads a numeric `status` off a
+ * thrown error and a daemon with nothing running is a conflict rather than
+ * evidence that the daemon broke.
+ */
+export const conflict: (message: string) => never = (message) => {
+  throw Object.assign(new CofoldError('conflict', message), { status: 409 });
 };
 
 /**
- * Every flag a run takes, as the fields help and the parser read.
+ * The three options that decide where a command runs.
  *
- * The descriptions are the ones `--help` printed before this was a declaration,
- * so a person reading help loses nothing to the migration.
+ * `--remote` is the whole switch, `--token` is the credential the API checks and
+ * falls back to `AHPD_TOKEN` so it need not be on the line, and `--refresh`
+ * re-reads a command surface that is otherwise cached on disk. They belong to the
+ * program rather than to a run, so they sit outside `serverFields`, and they are
+ * declared here because `start` reads the program's option table to find its own
+ * word in the line.
  */
+export const programGlobals: readonly OptionSpec[] = [
+  { name: '--remote', value: 'URL', description: 'Run the administration commands against a daemon over its HTTP API, rather than here.' },
+  { name: '--token', value: 'SECRET', description: 'The credential --remote presents. Defaults to AHPD_TOKEN.', env: 'AHPD_TOKEN' },
+  { name: '--token-file', value: 'PATH', description: 'Read the credential --remote presents from this file.' },
+  { name: '--refresh', description: 'Fetch the command surface --remote cached again.' },
+];
+
+/** Every flag a run takes, as the fields help and the parser read. */
 export const serverFields = {
   port: {
     type: 'integer',
@@ -111,7 +129,7 @@ export const serverFields = {
   },
   stdio: {
     type: 'boolean',
-    description: 'Serve one connection over stdin and stdout instead of binding a port.',
+    description: 'Serve one connection over stdin and stdout instead of binding a port. This is how a host runs inside a container for another host to carry: one line of JSON per frame, no token, and the connection is this host itself.',
   },
   paths: {
     type: 'array',
@@ -179,12 +197,13 @@ export const serverFields = {
   plugins: {
     type: 'array',
     items: { type: 'string' },
-    description: 'A package, a path, or a package installed in the configuration directory, loaded at startup. Repeatable.',
+    description: 'A package, a path, or a package installed in the configuration directory, loaded at startup. Repeatable. Naming one runs its code in this process with this process\'s permissions: installing a plugin is the trust decision.',
     cli: { flag: '--plugin', value: 'SPEC' },
   },
   noPlugins: {
     type: 'boolean',
     description: 'Load none, whatever the configuration file says.',
+    cli: { negatable: false },
   },
   updateCheck: {
     type: 'boolean',
@@ -229,6 +248,25 @@ export const pluginWriteFields = {
   },
 } satisfies Record<string, Field>;
 
+/**
+ * The `user` fields a request may set.
+ *
+ * The file and the address are the daemon's own, so they are absent here: a
+ * served `user` verb reads them from the process answering, which is what keeps
+ * a request from naming another file to write.
+ */
+export const servedUserFields = {
+  issuer: userFields.issuer,
+  role: userFields.role,
+  url: userFields.url,
+} satisfies Record<string, Field>;
+
+/** The plugin-write fields a request may set; the configuration file is the daemon's. */
+export const servedPluginWriteFields = {
+  noEnable: pluginWriteFields.noEnable,
+  keep: pluginWriteFields.keep,
+} satisfies Record<string, Field>;
+
 /** A string that was actually given, which a canonical input may not have. */
 const said = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
@@ -245,29 +283,39 @@ const isOneOf = (value: unknown, ...allowed: readonly string[]): boolean =>
  * `true` and an object are both on; `false` and absent are off. A value that is
  * neither refuses the start rather than being guessed at, because a person who
  * wrote `"port": "8080"` meant something and a daemon that quietly dropped it
- * would serve the API where they were not looking.
+ * would serve the API where they were not looking. `host` binds the API's own
+ * listener and has none to bind without a `port`, so it is refused on its own -
+ * decision `http-host-binds-the-apis-own-listener`.
  */
 const httpOf = (value: unknown): HttpSetting | undefined => {
   if (value === undefined || value === false) return undefined;
   if (value === true) return {};
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return stop(`"http" must be true, false, or { "port": N }, not ${JSON.stringify(value)}.`);
+    return stop(`"http" must be true, false, or an object with "port" and "host", not ${JSON.stringify(value)}.`);
   }
-  const held = (value as { port?: unknown }).port;
-  if (held === undefined) return {};
-  if (typeof held !== 'number' || !Number.isInteger(held) || held < 0 || held > 65535) {
-    return stop(`http.port must be a number from 0 to 65535, not ${JSON.stringify(held)}.`);
+  const held = value as { port?: unknown; host?: unknown };
+  if (held.host !== undefined && typeof held.host !== 'string') {
+    return stop(`http.host must be a string, not ${JSON.stringify(held.host)}.`);
   }
-  return { port: held };
+  if (typeof held.host === 'string' && held.host.trim() === '') {
+    return stop(`http.host must name an address, not ${JSON.stringify(held.host)}.`);
+  }
+  if (held.host !== undefined && held.port === undefined) {
+    return stop('http.host names the API\'s own listener, so it needs an http.port to bind.');
+  }
+  if (held.port === undefined) return {};
+  if (typeof held.port !== 'number' || !Number.isInteger(held.port) || held.port < 0 || held.port > 65535) {
+    return stop(`http.port must be a number from 0 to 65535, not ${JSON.stringify(held.port)}.`);
+  }
+  return { port: held.port, ...(held.host === undefined ? {} : { host: held.host }) };
 };
 
 /**
  * The canonical input and the configuration file, as the options a run takes.
  *
- * The order is the one `parse` kept: what was typed, then the file, then the
- * default, because a flag is this run and a file is every run until somebody
- * edits it. An input field is present only when a flag (or its environment)
- * named it, which is what the fields carrying no default buys.
+ * The order is what was typed, then the file, then the default, because a flag
+ * is this run and a file is every run until somebody edits it; the defaults
+ * live here, after the file, rather than on the fields.
  */
 export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   const configFile = said(input['configFile']);

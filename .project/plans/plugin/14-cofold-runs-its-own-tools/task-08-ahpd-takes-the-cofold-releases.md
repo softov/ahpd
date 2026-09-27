@@ -1,12 +1,12 @@
 ---
 title: ahpd takes the cofold releases, and its tests pin reads and addresses
-status: todo
+status: done
 depends: [task-05-cofold-asks-for-a-read-outside.md, task-06-cofold-tools-check-real-paths-and-addresses.md]
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/package.json#L61-L66](../../../../packages/agent-cofold/package.json#L61-L66) - `@cofold/agents` and `@cofold/tools` ranges"
-  - "[code://test/agent-cofold-tools.test.ts#L116-L123](../../../../test/agent-cofold-tools.test.ts#L116-L123) - the `globalThis.fetch` stub"
-  - "[code://test/agent-cofold-tools.test.ts#L328-L354](../../../../test/agent-cofold-tools.test.ts#L328-L354) - `ROWS`"
+  - "[code://packages/agent-cofold/package.json#L64-L69](../../../../packages/agent-cofold/package.json#L64-L69) - `@cofold/agents` and `@cofold/tools` ranges"
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L123-L131](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L123-L131) - the `globalThis.fetch` stub"
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L547-L597](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L547-L597) - `ROWS`"
 ---
 
 ## Objective
@@ -15,9 +15,9 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/agent-cofold/package.json:61-66` - `@cofold/tools` from `^0.0.1` to `^0.1`.
+- `UPDATE: packages/agent-cofold/package.json:68` - `@cofold/tools` from `^0.0.1` to `^0.1`.
 - `UPDATE: pnpm-lock.yaml` - the new versions.
-- `UPDATE: test/agent-cofold-tools.test.ts` - the rows and cases below.
+- `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts` - the rows and cases below.
 
 ## Steps
 
@@ -28,7 +28,7 @@ refs:
 
 ## Validation
 
-- `test/agent-cofold-tools.test.ts`: a row "a read outside the workspace" (`read_file` on `away/secret`) expects `default: 'ask'`, `acceptEdits: 'ask'`, `plan: 'ask'`, `auto: 'run'`, `bypassPermissions: 'run'`, `dontAsk: 'deny'`; it runs under `default` today.
+- `packages/agent-cofold/test/agent-cofold-tools.test.ts`: a row "a read outside the workspace" (`read_file` on `away/secret`) expects `default: 'ask'`, `acceptEdits: 'ask'`, `plan: 'ask'`, `auto: 'run'`, `bypassPermissions: 'run'`, `dontAsk: 'deny'`; it runs under `default` today.
 - A case where `web_fetch` of `http://127.0.0.1:1/` under `bypassPermissions` completes with `success: false` and the stubbed `fetch` is never called; today the stub is called.
 - `pnpm install --frozen-lockfile` is clean with no peer-dependency warning for `@cofold/tools`.
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.

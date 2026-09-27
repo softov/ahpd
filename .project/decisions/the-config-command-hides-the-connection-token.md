@@ -1,6 +1,7 @@
 ---
 title: The config command hides the connection token over HTTP
-status: accepted
+status: superseded
+superseded-by: decisions/the-config-command-hides-its-secrets.md
 date: 2026-09-26
 refs:
   - "[code://packages/server/src/commands/config.ts#L68-L85](../../packages/server/src/commands/config.ts#L68-L85) - `daemon.config`, which returns every key of the file"

@@ -9,14 +9,18 @@ import { issuerKind, type PluginSpec } from '@ahpd/sdk';
  * The HTTP API, as the configuration turns it on.
  *
  * `true` serves it under `/api` on the daemon's own listener, beside the
- * WebSocket; a `port` moves it to a listener of its own - decision
- * `the-http-api-is-on-the-daemon-port-under-api`. The API is off unless this
- * names it, because an administration surface on a public port is a choice
- * rather than a default.
+ * WebSocket; a `port` moves it to a listener of its own, bound to the daemon's
+ * `host` unless `host` says otherwise - decisions
+ * `the-http-api-is-on-the-daemon-port-under-api` and
+ * `http-host-binds-the-apis-own-listener`. The API is off unless this names it,
+ * because an administration surface on a public port is a choice rather than a
+ * default.
  */
 export interface HttpSetting {
   /** The port the API is bound to. Absent is the daemon's own port. */
   port?: number;
+  /** The address the API's own listener binds. Absent is the daemon's host. */
+  host?: string;
 }
 
 /** What a config file may say. Every key is what a flag would have said. */

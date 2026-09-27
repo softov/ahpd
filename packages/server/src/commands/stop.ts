@@ -3,13 +3,13 @@
  *
  * The record is the whole of what this knows; there is no host to build and
  * nothing to parse beyond the flags a run would have taken, which are accepted
- * and ignored the way they always were.
+ * and ignored.
  */
 
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import { stop as stopDaemon } from '../daemon.js';
-import { serverFields } from './options.js';
+import { conflict, serverFields } from './options.js';
 
 export const declareStop = (registry: Registry<object>): Command => registry.action({
   id: 'daemon.stop',
@@ -22,8 +22,8 @@ export const declareStop = (registry: Registry<object>): Command => registry.act
     if (stopped === undefined) {
       // As with `status`, a script that asked for JSON gets JSON even when the
       // answer is that there was nothing to stop.
-      context.write(context.globals['json'] === true ? '{"stopped":false}\n' : 'None running.\n');
-      process.exit(1);
+      if (context.globals['json'] === true) context.write('{"stopped":false}\n');
+      conflict('None running.');
     }
     return output(
       { url: stopped.url, pid: stopped.pid },

@@ -1,12 +1,13 @@
 ---
 title: Search providers are tried in the configured order
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/src/capabilities.ts#L63-L70](../../../../packages/agent-cofold/src/capabilities.ts#L63-L70) - `searchProviders`, a fixed order"
-  - "[code://packages/agent-cofold/src/capabilities.ts#L125-L136](../../../../packages/agent-cofold/src/capabilities.ts#L125-L136) - `searchOf`, which rebuilds the value in the fixed order"
-  - "file:///github/cofold/packages/tools/src/web.ts - `web({ search })`, which keeps the array's order"
+  - "[code://packages/agent-cofold/src/capabilities.ts#L63-L73](../../../../packages/agent-cofold/src/capabilities.ts#L63-L73) - `searchProviders`, which follows the configured order"
+  - "[code://packages/agent-cofold/src/capabilities.ts#L128-L147](../../../../packages/agent-cofold/src/capabilities.ts#L128-L147) - `searchOf`, which keeps the value's own key order"
+  - "[code://packages/agent-cofold/src/capabilities.ts#L22-L37](../../../../packages/agent-cofold/src/capabilities.ts#L22-L37) - `SearchConfig` and its comment on the configured order"
+  - file:///github/cofold/packages/tools/src/web.ts - `web({ search })`, which keeps the array's order
 ---
 
 ## Objective
@@ -15,10 +16,10 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/agent-cofold/src/capabilities.ts:125-136` - `searchOf` walks the value's own keys in order.
-- `UPDATE: packages/agent-cofold/src/capabilities.ts:63-70` - `searchProviders` walks `Object.keys(search)` in order.
+- `UPDATE: packages/agent-cofold/src/capabilities.ts:128-147` - `searchOf` walks the value's own keys in order.
+- `UPDATE: packages/agent-cofold/src/capabilities.ts:63-73` - `searchProviders` walks `Object.keys(search)` in order.
 - `UPDATE: packages/agent-cofold/src/capabilities.ts:22-29` and `:63` - the comments on `SearchConfig` and `searchProviders` say the configured order.
-- `UPDATE: test/agent-cofold-tools.test.ts` - the order cases.
+- `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts` - the order cases.
 
 ## Steps
 
@@ -30,6 +31,6 @@ refs:
 
 - `toolsOf({ web: { search: { duckduckgo: true, brave: { apiKey: 'b' } } } })` has keys `duckduckgo` then `brave`; it is `brave` then `duckduckgo` today.
 - A scripted `web_search` turn with `duckduckgo` listed before `brave`, where both answer through a stubbed `fetch`, returns DuckDuckGo's results; today Brave's come back.
-- `node_modules/.bin/vitest run test/agent-cofold-tools.test.ts` green.
+- `node_modules/.bin/vitest run packages/agent-cofold/test/agent-cofold-tools.test.ts` green.
 
 ## Resume
