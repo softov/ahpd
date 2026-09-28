@@ -298,7 +298,8 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       for (const [index, part] of message.parts.entries()) {
         const id = `${message.id}:${index}`;
         if (part.type === 'text') {
-          live.parts.push({ id, kind: 'markdown', content: part.text });
+          // Text that is only whitespace opens no part, as it opens none live.
+          if (part.text.trim() !== '') live.parts.push({ id, kind: 'markdown', content: part.text });
         } else if (part.type === 'reasoning') {
           live.parts.push({ id, kind: 'reasoning', content: part.text });
         } else if (part.type === 'toolCall') {

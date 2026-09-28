@@ -5,7 +5,9 @@ import { expect, it } from 'vitest';
 import { textOf } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
-import type { Message, ModelAdapter, Policy } from '@cofold/agents';
+import type { Message, ModelAdapter, ModelReply, ModelStreamEvent, Policy } from '@cofold/agents';
+import { chatReducer } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
 import { cofoldAgent } from '../src/index.js';
 
@@ -132,6 +134,131 @@ it('lists a session that was created and torn down, with its workspace and title
   // The timestamps are the store's, so a row says when the conversation moved.
   expect(Date.parse(String(listed?.[0]?.createdAt))).not.toBeNaN();
   expect(Date.parse(String(listed?.[0]?.modifiedAt))).not.toBeNaN();
+});
+
+/** One model step as a script gives it: the deltas it streams, then the reply they add up to. */
+type Step = { deltas: ModelStreamEvent[]; parts: Message['parts'] };
+
+/**
+ * A model that streams each step's deltas and then its reply, as a real
+ * adapter does, naming its replies `m1`, `m2` and on.
+ */
+const scripted = (steps: Step[]): ModelAdapter => {
+  let ids = 0;
+  const reply = (parts: Message['parts']): ModelReply => ({
+    message: { id: `m${++ids}`, role: 'assistant', source: 'model', createdAt: new Date().toISOString(), parts },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    finish: parts.some((one) => one.type === 'toolCall') ? 'tool_calls' : 'stop',
+  });
+  return {
+    id: 'thinker',
+    modelId: 'thinker',
+    features: { tools: true, streaming: true, images: false, structuredOutput: false, reasoning: true },
+    complete: async () => reply([{ type: 'text', text: 'not streamed' }]),
+    stream: async function* (): AsyncIterable<ModelStreamEvent> {
+      const step = steps.shift();
+      if (step === undefined) throw new Error('the script is done');
+      yield* step.deltas;
+      yield { type: 'done', reply: reply(step.parts) };
+    },
+  };
+};
+
+/** The first turn's parts as a client watching the chat drew them, folded as it folds. */
+const drawn = (view: ReturnType<typeof channels>): Bag[] => {
+  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
+  for (const note of view.notes.filter((held) => held.channel === 'chat')) {
+    state = chatReducer(state, note.action as unknown as ChatAction);
+  }
+  return (state.turns[0]?.responseParts ?? []) as unknown as Bag[];
+};
+
+/** Each part's kind and what it holds, a call's being its call id. */
+const shape = (parts: Bag[]): unknown[] => parts.map((part) => [
+  part.kind,
+  part.kind === 'toolCall' ? (part.toolCall as Bag).toolCallId : part.content,
+]);
+
+/** A part's id, a call's being its call id. */
+const idOf = (part: Bag): unknown => (part.kind === 'toolCall' ? (part.toolCall as Bag).toolCallId : part.id);
+
+/**
+ * One turn run to its end on a scripted model: the chat actions sent, what a
+ * client drew from them, and what the transcript reads back.
+ */
+const played = async (steps: Step[]): Promise<{ said: Bag[]; live: Bag[]; read: Bag[] }> => {
+  const { root, sweep } = place();
+  const agent = backend(root, scripted(steps), allowAll());
+  const one = open(agent, 'one', sweep, { tools: [lookup([])] });
+  one.session.begin('t1', 'hello there');
+  await until(() => ended(one.view));
+  one.session.close();
+  const turns = await agent.transcript?.('one');
+  return {
+    said: one.view.notes.filter((held) => held.channel === 'chat').map((held) => held.action),
+    live: drawn(one.view),
+    read: (turns?.[0]?.responseParts ?? []) as Bag[],
+  };
+};
+
+it('shows live the parts its transcript rebuilds, in the order the model wrote them', async () => {
+  // A model that thinks, calls a tool, thinks again and answers.
+  const { live, read } = await played([
+    {
+      deltas: [{ type: 'reasoning.delta', text: 'THINK-' }, { type: 'reasoning.delta', text: '1' }],
+      parts: [
+        { type: 'reasoning', text: 'THINK-1' },
+        { type: 'toolCall', callId: 'c1', name: 'lookup', input: { query: 'x' }, raw: '{"query":"x"}' },
+      ],
+    },
+    {
+      deltas: [{ type: 'reasoning.delta', text: 'THINK-2' }, { type: 'text.delta', text: 'REPLY' }],
+      parts: [{ type: 'reasoning', text: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
+    },
+  ]);
+  expect(shape(live)).toEqual([['reasoning', 'THINK-1'], ['toolCall', 'c1'], ['reasoning', 'THINK-2'], ['markdown', 'REPLY']]);
+  expect(shape(read)).toEqual(shape(live));
+  /*
+   * Each part named by its step and its place in it, as the transcript names
+   * it by the reply's message and its place there. cofold mints the message
+   * id once the reply is whole, after its deltas, so live has the step.
+   */
+  expect(live.map(idOf)).toEqual(['t1:1:0', 'c1', 't1:2:0', 't1:2:1']);
+  expect(read.map(idOf)).toEqual(['m1:0', 'c1', 'm2:0', 'm2:1']);
+});
+
+it('opens no part for text that is only whitespace, live or read back', async () => {
+  // Kimi K2.6's shape: a blank text between each thought and its call.
+  const { live, read } = await played([
+    {
+      deltas: [{ type: 'reasoning.delta', text: 'THINK-1' }, { type: 'text.delta', text: ' ' }],
+      parts: [
+        { type: 'reasoning', text: 'THINK-1' },
+        { type: 'text', text: ' ' },
+        { type: 'toolCall', callId: 'c1', name: 'lookup', input: { query: 'x' }, raw: '{"query":"x"}' },
+      ],
+    },
+    {
+      deltas: [{ type: 'reasoning.delta', text: 'THINK-2' }, { type: 'text.delta', text: 'REPLY' }],
+      parts: [{ type: 'reasoning', text: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
+    },
+  ]);
+  expect(shape(live)).toEqual([['reasoning', 'THINK-1'], ['toolCall', 'c1'], ['reasoning', 'THINK-2'], ['markdown', 'REPLY']]);
+  expect(shape(read)).toEqual(shape(live));
+  expect(live.map(idOf)).toEqual(['t1:1:0', 'c1', 't1:2:0', 't1:2:1']);
+  // The blank block keeps its place in the message, so `m1:1` names nothing.
+  expect(read.map(idOf)).toEqual(['m1:0', 'c1', 'm2:0', 'm2:1']);
+});
+
+it('keeps the whitespace a reply starts with in its one part, live and read back', async () => {
+  const { said, live, read } = await played([{
+    deltas: [{ type: 'text.delta', text: ' ' }, { type: 'text.delta', text: '\n' }, { type: 'text.delta', text: 'REPLY' }],
+    parts: [{ type: 'text', text: ' \nREPLY' }],
+  }]);
+  // Held until the words arrive, then sent ahead of them in the part they open.
+  expect(said.filter((action) => action.type === 'chat/delta').map((action) => action.content)).toEqual([' \nREPLY']);
+  expect(shape(live)).toEqual([['markdown', ' \nREPLY']]);
+  expect(shape(read)).toEqual(shape(live));
 });
 
 it('rebuilds a turn with its text, its reasoning and its tool call in order', async () => {

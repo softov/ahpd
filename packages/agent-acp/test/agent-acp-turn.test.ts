@@ -140,6 +140,55 @@ it('keeps a delta a plain action and sends reasoning as chat/reasoning', async (
   expect(order.indexOf('chat/responsePart')).toBeLessThan(order.indexOf('chat/reasoning'));
 });
 
+it('opens a part per run of one kind, in the order the server wrote them', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'ponder it');
+  await until(() => ended(p, chatUri));
+
+  type Part = { id: string; kind: string; content?: string; toolCall?: { toolCallId: string } };
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: Part[] }[] } };
+  }).snapshot.state.turns[0]?.responseParts ?? [];
+  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  expect(kept.map((part) => part.content ?? part.toolCall?.toolCallId))
+    .toEqual(['first thought', 'call-2', 'second thought', 'the answer']);
+  expect(new Set(kept.map((part) => part.id)).size).toBe(4);
+
+  // Each text part is announced once, before the first chunk that fills it,
+  // and every chunk names the part it belongs to.
+  const said = actions(p, chatUri).map((e) => e.action);
+  const announced = said.filter((action) => action.type === 'chat/responsePart')
+    .map((action) => (action.part as Part).id);
+  expect(announced).toEqual([kept[0]?.id, kept[2]?.id, kept[3]?.id]);
+  for (const action of said.filter((one) => one.type === 'chat/reasoning' || one.type === 'chat/delta')) {
+    expect(said.findIndex((one) => one.type === 'chat/responsePart' && (one.part as Part).id === action.partId))
+      .toBeLessThan(said.indexOf(action));
+  }
+  expect(said.filter((one) => one.partId === kept[2]?.id).map((one) => one.content)).toEqual(['second ', 'thought']);
+});
+
+it('opens no part for a message that is only whitespace, and keeps the whitespace an answer starts with', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'blank it');
+  await until(() => ended(p, chatUri));
+
+  type Part = { id: string; kind: string; content?: string; toolCall?: { toolCallId: string } };
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: Part[] }[] } };
+  }).snapshot.state.turns[0]?.responseParts ?? [];
+  expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  expect(kept.map((part) => part.content ?? part.toolCall?.toolCallId))
+    .toEqual(['first thought', 'call-2', 'second thought', ' \nthe answer']);
+  expect(kept.map((part) => part.id)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+
+  // The held whitespace goes out with the words it came before, in their part.
+  const said = actions(p, chatUri).map((e) => e.action);
+  expect(said.filter((one) => one.type === 'chat/delta').map((one) => [one.partId, one.content]))
+    .toEqual([['t1:3', ' \nthe answer']]);
+  expect(said.filter((one) => one.type === 'chat/responsePart').map((one) => (one.part as Part).id))
+    .toEqual(['t1:0', 't1:2', 't1:3']);
+});
+
 it('reports a tool call as start, ready and complete, with its result', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'use a tool');

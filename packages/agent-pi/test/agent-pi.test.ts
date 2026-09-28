@@ -37,10 +37,48 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); forget(); });
 
 const turn = (turnId = 't1'): PiTurn => ({
   turnId,
-  textPartId: `${turnId}:text`,
-  parts: [{ id: `${turnId}:text`, kind: 'markdown', content: '' }],
+  messages: 0,
+  blocks: new Map(),
+  waiting: new Map(),
+  parts: [],
   calls: new Map(),
 });
+
+/**
+ * The events pi raises for one assistant message, in pi's order: the message
+ * and each block streamed by its index, then each call it asked for run.
+ */
+const streamed = (content: Bag[]): AgentSessionEvent[] => {
+  const message = { role: 'assistant', content };
+  const events: Bag[] = [{ type: 'message_start', message }];
+  const update = (contentIndex: number, inner: Bag): void => {
+    events.push({ type: 'message_update', message, assistantMessageEvent: { contentIndex, partial: message, ...inner } });
+  };
+  content.forEach((block, index) => {
+    if (block.type === 'thinking') {
+      update(index, { type: 'thinking_start' });
+      update(index, { type: 'thinking_delta', delta: block.thinking });
+      update(index, { type: 'thinking_end', content: block.thinking });
+    }
+    else if (block.type === 'text') {
+      update(index, { type: 'text_start' });
+      update(index, { type: 'text_delta', delta: block.text });
+      update(index, { type: 'text_end', content: block.text });
+    }
+    else if (block.type === 'toolCall') {
+      update(index, { type: 'toolcall_start' });
+      update(index, { type: 'toolcall_end', toolCall: block });
+    }
+  });
+  events.push({ type: 'message_end', message });
+  for (const block of content.filter((one) => one.type === 'toolCall')) {
+    events.push({ type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: block.arguments });
+    events.push({
+      type: 'tool_execution_end', toolCallId: block.id, toolName: block.name, result: 'ok', isError: false,
+    });
+  }
+  return events as unknown as AgentSessionEvent[];
+};
 
 /** A pi that raises whatever a test tells it to, and records what it was asked. */
 function fakePi() {
@@ -901,33 +939,148 @@ it('marks a client-owned call with the client that runs it', () => {
 
 // Mapping -----------------------------------------------------------------
 
-it('streams text into the part the turn opened, and into the snapshot', () => {
+it('streams text into the part its block opened, and into the snapshot', () => {
   const one = turn();
+  const [started] = streamed([]);
+  mapEvent(one, started!);
+  // A text block opens its part at its first words, not at its start.
+  expect(mapEvent(one, {
+    type: 'message_update',
+    message: {} as never,
+    assistantMessageEvent: { type: 'text_start', contentIndex: 0, partial: {} as never },
+  })).toEqual([]);
   const actions = mapEvent(one, {
     type: 'message_update',
     message: {} as never,
     assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hello', partial: {} as never },
   });
-  expect(actions).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:text', content: 'hello' }]);
+  expect(actions).toEqual([
+    { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
+    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: 'hello' },
+  ]);
   // The snapshot is the parts, not a replay of the actions.
   expect(one.parts[0]?.content).toBe('hello');
 });
 
-it('opens the reasoning part once, however much pi thinks', () => {
+it('keeps the whitespace a text block starts with in its one part', () => {
   const one = turn();
-  const first = mapEvent(one, {
+  const [started] = streamed([]);
+  mapEvent(one, started!);
+  const text = (delta: string): AgentSessionEvent => ({
     type: 'message_update',
     message: {} as never,
-    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'hm', partial: {} as never },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta, partial: {} as never },
   });
+  expect(mapEvent(one, text(' '))).toEqual([]);
+  expect(mapEvent(one, text('\n'))).toEqual([]);
+  expect(mapEvent(one, text('hello'))).toEqual([
+    { type: 'chat/responsePart', turnId: 't1', part: { id: 't1:1:0', kind: 'markdown', content: '' } },
+    { type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' \nhello' },
+  ]);
+  expect(mapEvent(one, text(' '))).toEqual([{ type: 'chat/delta', turnId: 't1', partId: 't1:1:0', content: ' ' }]);
+  expect(one.parts.map((p) => [p.kind, p.content])).toEqual([['markdown', ' \nhello ']]);
+});
+
+it('opens a thought\'s part once, however much pi thinks, and the next thought its own', () => {
+  const one = turn();
+  const thinking = (contentIndex: number, delta: string): AgentSessionEvent => ({
+    type: 'message_update',
+    message: {} as never,
+    assistantMessageEvent: { type: 'thinking_delta', contentIndex, delta, partial: {} as never },
+  });
+  // A delta whose block never announced a start still opens it first.
+  const first = mapEvent(one, thinking(0, 'hm'));
   expect(first.map((a) => a.type)).toEqual(['chat/responsePart', 'chat/reasoning']);
-  const second = mapEvent(one, {
-    type: 'message_update',
-    message: {} as never,
-    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'm', partial: {} as never },
-  });
+  const second = mapEvent(one, thinking(0, 'm'));
   expect(second.map((a) => a.type)).toEqual(['chat/reasoning']);
-  expect(one.parts.find((p) => p.kind === 'reasoning')?.content).toBe('hmm');
+  const third = mapEvent(one, thinking(1, 'so'));
+  expect(third.map((a) => a.type)).toEqual(['chat/responsePart', 'chat/reasoning']);
+  expect(one.parts.map((p) => [p.kind, p.content])).toEqual([['reasoning', 'hmm'], ['reasoning', 'so']]);
+});
+
+it('keeps thinking, a call and thinking again in the order pi wrote them, live and replayed', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.ts' } };
+  const shapes: Bag[][][] = [
+    // One message holding all four blocks.
+    [[{ type: 'thinking', thinking: 'THINK-1' }, call, { type: 'thinking', thinking: 'THINK-2' }, { type: 'text', text: 'REPLY' }]],
+    // The call ending the first message, and the answer in a second.
+    [[{ type: 'thinking', thinking: 'THINK-1' }, call], [{ type: 'thinking', thinking: 'THINK-2' }, { type: 'text', text: 'REPLY' }]],
+  ];
+  for (const messages of shapes) {
+    const live = turn('u1');
+    for (const content of messages) for (const event of streamed(content)) mapEvent(live, event);
+    const seen = live.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
+    expect(seen.map(([, kind, content]) => [kind, content])).toEqual([
+      ['reasoning', 'THINK-1'], ['toolCall', 'c1'], ['reasoning', 'THINK-2'], ['markdown', 'REPLY'],
+    ]);
+
+    const at = new Date().toISOString();
+    const entries: Bag[] = [
+      { type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } },
+    ];
+    messages.forEach((content, index) => {
+      entries.push({ type: 'message', id: `a${index}`, parentId: 'u1', timestamp: at, message: answer(content, 'stop') });
+      if (content.includes(call)) {
+        entries.push({
+          type: 'message',
+          id: `r${index}`,
+          parentId: `a${index}`,
+          timestamp: at,
+          message: { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
+        });
+      }
+    });
+    const { turns } = replayEntries(entries as never);
+    const replayed = turns[0]!.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
+    expect(replayed).toEqual(seen);
+  }
+});
+
+it('opens no part for a text block that is only whitespace, live and replayed', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.ts' } };
+  // Kimi K2.6's shape: a blank text block between each thought and its call.
+  const messages: Bag[][] = [
+    [{ type: 'thinking', thinking: 'THINK-1' }, { type: 'text', text: ' ' }, call],
+    [{ type: 'thinking', thinking: 'THINK-2' }, { type: 'text', text: 'REPLY' }],
+  ];
+  const live = turn('u1');
+  const sent: Bag[] = [];
+  for (const content of messages) for (const event of streamed(content)) sent.push(...mapEvent(live, event));
+  const seen = live.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
+  expect(seen).toEqual([
+    ['u1:1:0', 'reasoning', 'THINK-1'], ['c1', 'toolCall', 'c1'], ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
+  ]);
+  expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual(['REPLY']);
+
+  const at = new Date().toISOString();
+  const entries: Bag[] = [
+    { type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } },
+    { type: 'message', id: 'a0', parentId: 'u1', timestamp: at, message: answer(messages[0]!, 'toolUse') },
+    {
+      type: 'message',
+      id: 'r0',
+      parentId: 'a0',
+      timestamp: at,
+      message: { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
+    },
+    { type: 'message', id: 'a1', parentId: 'r0', timestamp: at, message: answer(messages[1]!, 'stop') },
+  ];
+  const { turns } = replayEntries(entries as never);
+  const replayed = turns[0]!.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
+  expect(replayed).toEqual(seen);
+});
+
+it('opens a call\'s row when the model starts writing it, and starts it once', () => {
+  const one = turn();
+  const events = streamed([{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } }]);
+  const starts = events
+    .map((event) => [event, mapEvent(one, event).filter((a) => a.type === 'chat/toolCallStart')] as const)
+    .filter(([, found]) => found.length > 0);
+  expect(starts).toHaveLength(1);
+  expect(starts[0]![1]).toHaveLength(1);
+  expect((starts[0]![0] as Bag).assistantMessageEvent).toMatchObject({ type: 'toolcall_start' });
 });
 
 it('opens a tool call and leaves its ready to the hook', () => {
@@ -979,14 +1132,31 @@ it('tells "this event says nothing about activity" from "it is idle now"', () =>
 
 // The session -------------------------------------------------------------
 
-it('opens a turn before anything streams into it', async () => {
+it('opens a turn with no part, before anything streams into it', async () => {
   const { session, types } = opened();
   session.begin('t1', 'hello');
   await settled();
   const chat = types('chat');
   expect(chat[0]).toBe('chat/turnStarted');
-  expect(chat[1]).toBe('chat/responsePart');
+  // pi wrote nothing, so the turn holds nothing.
+  expect(chat).not.toContain('chat/responsePart');
   expect(chat).toContain('chat/turnComplete');
+  expect((session.chatState().turns as Bag[])[0]?.responseParts).toEqual([]);
+});
+
+it('skips a call the model was still writing when the turn stopped, in the snapshot too', async () => {
+  const { session, pi } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  const events = streamed([{ type: 'toolCall', id: 'c1', name: 'write', arguments: {} }]);
+  // The call's start and nothing after: the turn stops mid-arguments.
+  for (const event of events.slice(0, 2)) pi.raise(event);
+  session.cancel('t1');
+  await settled();
+  const turns = session.chatState().turns as Bag[];
+  const row = (turns[0]?.responseParts as Bag[]).find((one) => one.id === 'c1')?.toolCall as Bag;
+  expect(row).toMatchObject({ status: 'cancelled', reason: 'skipped' });
 });
 
 it('ends the turn on pi settling, not on the prompt returning', async () => {
@@ -1527,8 +1697,8 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
   expect(turns?.map((one) => [one.id, one.message.text, one.state]))
     .toEqual([[disk.first, 'read a.ts', 'complete'], [disk.second, 'again', 'error']]);
   expect(turns?.[0]?.responseParts).toEqual([
-    { id: `${disk.first}:text`, kind: 'markdown', content: 'Reading it. It is empty.' },
-    { id: `${disk.first}:reasoning`, kind: 'reasoning', content: 'I should read it.' },
+    { id: `${disk.first}:1:0`, kind: 'reasoning', content: 'I should read it.' },
+    { id: `${disk.first}:1:1`, kind: 'markdown', content: 'Reading it.' },
     {
       id: 'call-1',
       kind: 'toolCall',
@@ -1544,12 +1714,12 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         pastTenseMessage: 'read',
       },
     },
+    { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },
   ]);
   expect(turns?.[0]?.usage).toEqual({
     inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, model: 'anthropic/claude-opus-5', _meta: { cacheWriteTokens: 0 },
   });
   expect(turns?.[1]?.responseParts).toEqual([
-    { id: `${disk.second}:text`, kind: 'markdown', content: '' },
     { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' } },
   ]);
 
@@ -1558,10 +1728,13 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
   pi.hold();
   session.begin('t1', 'read a.ts');
   await settled();
-  const delta = (type: string, text: string): AgentSessionEvent =>
-    ({ type: 'message_update', assistantMessageEvent: { type, delta: text } }) as never;
-  pi.raise(delta('thinking_delta', 'I should read it.'));
-  pi.raise(delta('text_delta', 'Reading it.'));
+  const asked = streamed([
+    { type: 'thinking', thinking: 'I should read it.' },
+    { type: 'text', text: 'Reading it.' },
+    { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } },
+  ]);
+  // Up to the message's end: the call is then run as pi runs it, hook and all.
+  for (const event of asked.slice(0, asked.findIndex((one) => one.type === 'message_end') + 1)) pi.raise(event);
   await driveCall(pi, 'call-1', 'read', { path: 'a.ts' });
   pi.raise({
     type: 'tool_execution_end',
@@ -1570,7 +1743,7 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
     result: { content: [{ type: 'text', text: 'export {};' }] },
     isError: false,
   });
-  pi.raise(delta('text_delta', ' It is empty.'));
+  for (const event of streamed([{ type: 'text', text: ' It is empty.' }])) pi.raise(event);
   pi.raise({ type: 'agent_settled' });
   await settled();
   const live = (session.allTurns()[0] as Bag).responseParts;
@@ -1628,7 +1801,7 @@ it('reads a turn whose last answer was aborted as cancelled, as a stopped live t
     { type: 'message', id: 'a1', parentId: 'u1', timestamp: at, message: answer([{ type: 'text', text: 'Start' }], 'aborted') },
   ] as never);
   expect(turns.map((one) => one.state)).toEqual(['cancelled']);
-  expect(turns[0]?.parts).toEqual([{ id: 'u1:text', kind: 'markdown', content: 'Start' }]);
+  expect(turns[0]?.parts).toEqual([{ id: 'u1:1:0', kind: 'markdown', content: 'Start' }]);
 });
 
 // The id a session is saved under --------------------------------------------

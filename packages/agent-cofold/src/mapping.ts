@@ -55,14 +55,6 @@ export interface TurnMappingOptions {
   turnId: string;
   /** The session's own chat URI, which every entry and request names. */
   chatUri: string;
-  /**
-   * The markdown part opened when the turn began.
-   *
-   * Text deltas append to it rather than opening a part of their own, which
-   * is what the protocol requires: a delta naming a part nobody opened has
-   * nowhere to go.
-   */
-  markdownPartId: string;
   /** The turn's response parts, held so a subscription snapshot shows them. */
   parts: Bag[];
   /** When the turn began, so the action that ends it can carry a duration. */
@@ -184,9 +176,19 @@ const questionOf = (question: AskQuestion): Bag => {
 };
 
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
-  const { turnId, markdownPartId, parts } = options;
-  /** One reasoning part per turn, opened the first time the model thinks. */
-  let reasoningId: string | undefined;
+  const { turnId, parts } = options;
+  /** How many model steps this turn has started, which numbers the one streaming. */
+  let step = 0;
+  /**
+   * The current step's reasoning and text parts, by kind.
+   *
+   * cofold's adapters gather a step's reasoning into one part and its text
+   * into another, and its deltas name neither a message nor a block, so a
+   * step holds at most one of each here too.
+   */
+  const blocks = new Map<'reasoning' | 'text', Bag>();
+  /** The whitespace the current step's text has written before its part opened. */
+  let waiting = '';
   /**
    * Whether the current step streamed its text and its reasoning.
    *
@@ -202,27 +204,57 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   /** Requests a client is being asked about, by the run's request id. */
   const requests = new Map<string, OpenRequest>();
 
-  const partOf = (id: string): Bag | undefined => parts.find((held) => held.id === id);
-
-  /** The markdown part, which the session opened before the run began. */
-  const prose = (): Bag => {
-    const held = partOf(markdownPartId);
-    if (held !== undefined) return held;
-    // Unreachable while the session opens the part it named, and better than
-    // appending to nothing if some future caller forgets to.
-    const part: Bag = { id: markdownPartId, kind: 'markdown', content: '' };
+  /**
+   * The part a step's reasoning or its text is written into, and the action
+   * announcing it the first time the step writes that kind.
+   *
+   * Opened where the step starts writing it, so the turn's parts are in the
+   * order the model wrote them: a step's thinking, the calls it asked for,
+   * then the next step's thinking and text. The id names the step and the
+   * block's place in it. The announcement is a copy, because the object the
+   * deltas keep writing into is the one it would otherwise carry, and a
+   * client that applied both would read the text twice.
+   */
+  const blockOf = (kind: 'reasoning' | 'text'): { part: Bag; opened: Bag[] } => {
+    const known = blocks.get(kind);
+    if (known !== undefined) return { part: known, opened: [] };
+    const part: Bag = {
+      id: `${turnId}:${step}:${blocks.size}`,
+      kind: kind === 'text' ? 'markdown' : 'reasoning',
+      content: '',
+    };
+    blocks.set(kind, part);
     parts.push(part);
-    return part;
+    return { part, opened: [{ type: 'chat/responsePart', turnId, part: { ...part } }] };
   };
 
-  /** The reasoning part, opened on the first reasoning delta of the turn. */
-  const thinking = (): Bag => {
-    const known = reasoningId === undefined ? undefined : partOf(reasoningId);
-    if (known !== undefined) return known;
-    reasoningId = `${turnId}:reasoning`;
-    const part: Bag = { id: reasoningId, kind: 'reasoning', content: '' };
-    parts.push(part);
-    return part;
+  /**
+   * Some of the step's reasoning or text, as the part holds it and the
+   * actions that send it.
+   *
+   * `chat/reasoning` for reasoning and `chat/delta` for text: the reducer
+   * pairs each append action with the kind of part it may append to, and one
+   * naming the other kind is dropped.
+   *
+   * A step's text is held while it is only whitespace and leads the part it
+   * opens once it writes something else, so text that is only whitespace, as
+   * some models write before a call, opens nothing.
+   */
+  const write = (kind: 'reasoning' | 'text', written: string): Bag[] => {
+    let text = written;
+    if (kind === 'text' && !blocks.has('text')) {
+      text = `${waiting}${written}`;
+      if (text.trim() === '') {
+        waiting = text;
+        return [];
+      }
+      waiting = '';
+    }
+    const { part, opened } = blockOf(kind);
+    part.content = `${String(part.content ?? '')}${text}`;
+    return [...opened, {
+      type: kind === 'text' ? 'chat/delta' : 'chat/reasoning', turnId, partId: part.id, content: text,
+    }];
   };
 
   /**
@@ -254,13 +286,18 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * one here would be the same turn announced twice.
          */
         case 'run.started':
+          return only([]);
         /*
          * A step boundary. Nothing on the wire means anything to a client: it
          * already sees the deltas, and the step number is cofold's bookkeeping.
-         * What it does mean is that the next step has not streamed anything
-         * yet, which is what the `model.completed` fallback reads.
+         * What it does mean is that the next step writes parts of its own and
+         * has not streamed anything yet, which is what the `model.completed`
+         * fallback reads.
          */
         case 'model.started':
+          step += 1;
+          blocks.clear();
+          waiting = '';
           textStreamed = false;
           reasoningStreamed = false;
           return only([]);
@@ -276,20 +313,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const actions: Bag[] = [];
           for (const piece of event.message.parts) {
             if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
-              // Opened here only if a delta never did: a later step whose
-              // adapter did not stream still appends to the part the turn
-              // already has, rather than announcing a second one.
-              if (reasoningId === undefined) {
-                actions.push({ type: 'chat/responsePart', turnId, part: { ...thinking() } });
-              }
-              const held = thinking();
-              held.content = `${String(held.content ?? '')}${piece.text}`;
-              actions.push({ type: 'chat/reasoning', turnId, partId: held.id, content: piece.text });
+              actions.push(...write('reasoning', piece.text));
             }
             else if (piece.type === 'text' && !textStreamed && piece.text !== '') {
-              const held = prose();
-              held.content = `${String(held.content ?? '')}${piece.text}`;
-              actions.push({ type: 'chat/delta', turnId, partId: held.id, content: piece.text });
+              actions.push(...write('text', piece.text));
             }
           }
           // The step is told, so a later step that did not stream is not
@@ -312,38 +339,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           return only([]);
 
         case 'model.delta': {
-          if (event.kind === 'reasoning') {
-            reasoningStreamed = true;
-            const actions: Bag[] = [];
-            /*
-             * The thinking part is announced once, when it is opened, and every
-             * delta after that is an append to it.
-             *
-             * Announcing it again on each delta is the same part to a client
-             * that appends on `chat/responsePart`, and it draws the whole
-             * thinking block again for every delta that arrives - four blocks
-             * where the snapshot, built from the transcript, has one. The
-             * announcement is a *copy*, because the object the deltas keep
-             * writing into is the one the announcement would otherwise carry:
-             * a client that applied both would read the text twice.
-             */
-            if (reasoningId === undefined) {
-              actions.push({ type: 'chat/responsePart', turnId, part: { ...thinking() } });
-            }
-            const part = thinking();
-            part.content = `${String(part.content ?? '')}${event.text}`;
-            /*
-             * `chat/reasoning`, not `chat/delta`: the reducer pairs each
-             * append action with the kind of part it may append to, and a
-             * delta naming a reasoning part is dropped.
-             */
-            actions.push({ type: 'chat/reasoning', turnId, partId: part.id, content: event.text });
-            return only(actions);
-          }
-          textStreamed = true;
-          const part = prose();
-          part.content = `${String(part.content ?? '')}${event.text}`;
-          return only([{ type: 'chat/delta', turnId, partId: part.id, content: event.text }]);
+          if (event.kind === 'reasoning') reasoningStreamed = true;
+          else textStreamed = true;
+          return only(write(event.kind, event.text));
         }
 
         case 'tool.proposed': {

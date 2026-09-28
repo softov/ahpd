@@ -151,20 +151,17 @@ export interface AcpCall {
 /**
  * One turn's mapping state, mutated as updates arrive.
  *
- * The markdown part is opened by the session before the turn runs, so a text
- * delta always has somewhere to go. The reasoning part is opened by the
- * mapping at the first thought chunk, because nothing before it says one is
- * coming. `parts` is the turn's own response-part list, held for a snapshot.
+ * A turn starts with no part. The mapping opens a markdown or reasoning part
+ * at the first chunk of a run of that kind, so `parts` holds the turn's
+ * response parts in the order the server wrote them, held for a snapshot.
  */
 export interface AcpTurn {
   /** The turn the client began. */
   turnId: string;
-  /** The markdown part the session opened before the first delta. */
-  textPartId: string;
   /** Every response part this turn holds, shared with the session's snapshot. */
   parts: Bag[];
-  /** The reasoning part id, once a thought chunk opens one. */
-  reasoningPartId?: string;
+  /** The whitespace a run of message chunks has written before its part opened. */
+  waiting?: string;
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
 }

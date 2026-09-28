@@ -155,8 +155,9 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [08 - A pi session store can move between hosts](pi/08-a-session-store-can-move/plan.md) | low | dropped 2026-09-26 | - | - |
 | [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | built 2026-09-28 ([implemented.md](pi/09-pi-asks-before-a-tool-runs/implemented.md)) | pi 02 | - |
 | [10 - pi's models and history outlive the process, and pi loads without holding the daemon](pi/10-pi-outlives-the-process/plan.md) | high | built 2026-09-28 ([implemented.md](pi/10-pi-outlives-the-process/implemented.md)) | pi 01 | - |
+| [11 - A turn's parts come in the order the model wrote them, one part per block](pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) | high | active 2026-09-28; tasks 01-02 implemented, awaiting review; task 03 implemented, awaiting review; task 04 implemented, awaiting review | pi 10 | - |
 
-Next free number in `pi`: `11`.
+Next free number in `pi`: `12`.
 
 ## acp
 

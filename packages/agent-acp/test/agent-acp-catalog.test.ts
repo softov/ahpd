@@ -239,6 +239,34 @@ it('reads back the turn this process watched and nothing for one it did not', as
   expect(await agent.transcript?.('a-session-nobody-watched')).toBeUndefined();
 });
 
+it('reads back an interleaved turn with its parts in the order they streamed', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'interleaved');
+  await runTurn(session, watch, 't1', 'ponder it');
+
+  const turns = await agent.transcript?.(String(session.agentId()));
+  const parts = turns?.[0]?.responseParts as { id: string; kind?: string; content?: string }[];
+  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  expect(parts.map((part) => part.content)).toEqual(['first thought', undefined, 'second thought', 'the answer']);
+  // The same ids the live turn held, so a reloaded client keys the same parts.
+  const live = session.allTurns()[0]?.responseParts as { id: string }[];
+  expect(parts.map((part) => part.id)).toEqual(live.map((part) => part.id));
+});
+
+it('reads back no part for a message that was only whitespace, with the ids the live turn held', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'blank');
+  await runTurn(session, watch, 't1', 'blank it');
+
+  const turns = await agent.transcript?.(String(session.agentId()));
+  const parts = turns?.[0]?.responseParts as { id: string; kind?: string; content?: string }[];
+  expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
+  expect(parts.map((part) => part.content)).toEqual(['first thought', undefined, 'second thought', ' \nthe answer']);
+  const live = session.allTurns()[0]?.responseParts as { id: string }[];
+  expect(parts.map((part) => part.id)).toEqual(live.map((part) => part.id));
+  expect(parts.map((part) => part.id)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+});
+
 it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
   const { agent, log } = backend();
   const { session, watch } = start(agent, 'config');

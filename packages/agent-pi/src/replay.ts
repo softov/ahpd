@@ -64,10 +64,11 @@ const raise = (turn: PiTurn, event: Bag): void => { mapEvent(turn, event as unkn
 /**
  * The entries of one branch, root first, as turns.
  *
- * A user message opens a turn. An assistant message's thinking and text are
- * its deltas, and each tool call is raised as pi raises it live: its start,
- * then the ready the `tool_call` hook gives a call that runs without asking,
- * then its end with the tool result that follows. The turn ends as the last
+ * A user message opens a turn. An assistant message is raised as its start,
+ * then each block by its index: a thinking or text block as its start and one
+ * delta, and a tool call as the model's start of it, pi's start of running it,
+ * the ready the `tool_call` hook gives a call that runs without asking, and
+ * its end with the tool result that follows. The turn ends as the last
  * assistant message in it ended, as a live turn does when pi retried: `error`
  * for an error, `cancelled` for an answer that was aborted, and `complete`
  * otherwise.
@@ -118,10 +119,9 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
     if (message.role === 'user') {
       seal();
       const turnId = entry.id;
-      const text: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
-      const parts: Bag[] = [text];
+      const parts: Bag[] = [];
       open = {
-        mapping: { turnId, textPartId: String(text.id), parts, calls: new Map() },
+        mapping: { turnId, messages: 0, blocks: new Map(), waiting: new Map(), parts, calls: new Map() },
         watched: {
           turnId,
           startedAt: entry.timestamp,
@@ -142,20 +142,27 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
     if (message.role === 'assistant') {
       const answer = message as unknown as AssistantMessage;
       const turn = open.mapping;
-      for (const block of answer.content ?? []) {
+      raise(turn, { type: 'message_start', message: answer });
+      (answer.content ?? []).forEach((block, contentIndex) => {
+        const update = (inner: Bag): void => {
+          raise(turn, { type: 'message_update', message: answer, assistantMessageEvent: { contentIndex, partial: answer, ...inner } });
+        };
         if (block.type === 'thinking') {
-          raise(turn, { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: block.thinking } });
+          update({ type: 'thinking_start' });
+          update({ type: 'thinking_delta', delta: block.thinking });
         }
         else if (block.type === 'text') {
-          raise(turn, { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: block.text } });
+          update({ type: 'text_start' });
+          update({ type: 'text_delta', delta: block.text });
         }
         else if (block.type === 'toolCall') {
           const input = (block.arguments ?? {}) as Bag;
+          update({ type: 'toolcall_start' });
           raise(turn, { type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: input });
           const row = turn.parts.find((one) => one.id === block.id)?.toolCall as Bag | undefined;
           if (row !== undefined) readyRow(row, block.name, input, { confirmed: 'not-needed' });
         }
-      }
+      });
       open.answered = answer;
       open.end = entry.id;
       open.endedAt = entry.timestamp;

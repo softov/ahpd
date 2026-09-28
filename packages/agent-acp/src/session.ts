@@ -580,12 +580,6 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     from: MessageFrom | undefined,
     queuedMessageId: string | undefined,
   ): void => {
-    /*
-     * The markdown part is opened now rather than at the first delta: a client
-     * that subscribes between two updates still sees the part the text is
-     * arriving in, and `chat/delta` has somewhere to go.
-     */
-    const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
     active = {
       id: turnId,
       startedAt: new Date().toISOString(),
@@ -594,11 +588,10 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
       },
-      responseParts: [part],
+      responseParts: [],
     };
     mapping = {
       turnId,
-      textPartId: String(part.id),
       parts: active.responseParts as Bag[],
       calls: new Map(),
     };
@@ -619,7 +612,6 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       message: active.message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    emit('chat', { type: 'chat/responsePart', turnId, part });
     doing('Thinking');
   };
 

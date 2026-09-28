@@ -6,11 +6,12 @@
  * is one edit in one file. `session.ts` iterates what this returns and sends
  * it; it makes no choices of its own about an update.
  *
- * The protocol requires a part to exist before text streams into it, which is
- * why the session opens the turn's markdown part before the prompt is sent and
- * this file opens a reasoning part the first time the server thinks. An update
- * this bridge does not understand returns nothing rather than throwing, so a
- * 1.5 server does not fail a 1.4 bridge.
+ * The protocol requires a part to exist before text streams into it, so this
+ * file opens a markdown or reasoning part at the first chunk of each run of
+ * that kind, a markdown run at its first chunk holding more than whitespace,
+ * and a turn's parts land in the order the server wrote them. An
+ * update this bridge does not understand returns nothing rather than
+ * throwing, so a 1.5 server does not fail a 1.4 bridge.
  */
 
 import type { ContentBlock, SessionUpdate, ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
@@ -32,6 +33,50 @@ const partOf = (turn: AcpTurn, id: string): Bag | undefined =>
   turn.parts.find((held) => held.id === id);
 
 /**
+ * The part a chunk of one kind appends to, with the action that announces it
+ * when this chunk opens it.
+ *
+ * ACP chunks carry no block index, so a run is what the order says: the part
+ * last opened in the turn takes the chunk when it is of the same kind and
+ * `continues`, and a chunk of the other kind, one after a tool call, or one
+ * after a run of held whitespace, opens a new part. Its id is the turn's and
+ * its position in the turn, which no later part changes.
+ */
+const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', continues: boolean): { part: Bag; opened?: Bag } => {
+  const last = turn.parts.at(-1);
+  if (continues && last !== undefined && last.kind === kind) return { part: last };
+  const part: Bag = { id: `${turn.turnId}:${turn.parts.length}`, kind, content: '' };
+  turn.parts.push(part);
+  return { part, opened: { type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } } };
+};
+
+/**
+ * One chunk's actions: its part's announcement when it opens one, then the text.
+ *
+ * A run of message chunks is held while it is only whitespace and leads the
+ * part it opens once a chunk writes something else, so a message that is only
+ * whitespace, as some models write before a call, opens nothing and takes no
+ * position in the turn.
+ */
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', written: string): Bag[] => {
+  const held = turn.waiting;
+  delete turn.waiting;
+  let text = written;
+  if (kind === 'markdown' && turn.parts.at(-1)?.kind !== 'markdown') {
+    text = `${held ?? ''}${written}`;
+    if (text.trim() === '') {
+      turn.waiting = text;
+      return [];
+    }
+  }
+  const { part, opened } = runOf(turn, kind, held === undefined);
+  part.content = `${String(part.content ?? '')}${text}`;
+  const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
+  const streamed: Bag = { type, turnId: turn.turnId, partId: part.id, content: text };
+  return opened === undefined ? [streamed] : [opened, streamed];
+};
+
+/**
  * The tool call an update names, opening the row on the first sight of it.
  *
  * A server may send a `tool_call_update` for a call whose `tool_call` arrived
@@ -47,6 +92,8 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
   const name = 'name' in update && update.name !== undefined && update.name !== null ? update.name : title;
   const call: AcpCall = { toolCallId: update.toolCallId, toolName: name, displayName: title, readied: false };
   turn.calls.set(update.toolCallId, call);
+  // A call ends the run of message chunks before it, held whitespace and all.
+  delete turn.waiting;
   turn.parts.push({
     id: update.toolCallId,
     kind: 'toolCall',
@@ -78,39 +125,23 @@ const contentText = (content: ToolCallUpdate['content']): string =>
 export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
   switch (update.sessionUpdate) {
     /*
-     * Prose and thinking, both appended to a part the caller opened.
+     * Prose and thinking, each appended to the run it continues.
      *
      * The part is mutated as well as the action sent, because the session's
      * snapshot is built from the turn's own parts rather than by replaying the
-     * actions a client was sent.
+     * actions a client was sent. The part is announced once, when it is
+     * opened, as a copy: the held part keeps growing, and announcing it again
+     * would draw the whole block again in a client that appends on
+     * `chat/responsePart`.
      */
     case 'agent_message_chunk': {
       const text = textOf(update.content);
-      if (text === undefined) return [];
-      const part = partOf(turn, turn.textPartId);
-      if (part !== undefined) part.content = `${String(part.content ?? '')}${text}`;
-      return [{ type: 'chat/delta', turnId: turn.turnId, partId: turn.textPartId, content: text }];
+      return text === undefined ? [] : chunk(turn, 'markdown', text);
     }
 
     case 'agent_thought_chunk': {
       const text = textOf(update.content);
-      if (text === undefined) return [];
-      const actions: Bag[] = [];
-      /*
-       * The part is announced once, when it is opened, and every delta after
-       * that appends to it. Announcing it again would draw the whole block
-       * again in a client that appends on `chat/responsePart`.
-       */
-      if (turn.reasoningPartId === undefined) {
-        const part: Bag = { id: `${turn.turnId}:reasoning`, kind: 'reasoning', content: '' };
-        turn.reasoningPartId = String(part.id);
-        turn.parts.push(part);
-        actions.push({ type: 'chat/responsePart', turnId: turn.turnId, part });
-      }
-      const part = partOf(turn, turn.reasoningPartId as string);
-      if (part !== undefined) part.content = `${String(part.content ?? '')}${text}`;
-      actions.push({ type: 'chat/reasoning', turnId: turn.turnId, partId: turn.reasoningPartId, content: text });
-      return actions;
+      return text === undefined ? [] : chunk(turn, 'reasoning', text);
     }
 
     /*

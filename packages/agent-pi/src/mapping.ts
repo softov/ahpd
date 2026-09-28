@@ -7,9 +7,11 @@
  *
  * Two rules the protocol requires and this file keeps:
  *
- * - A part exists before anything streams into it. The turn's markdown part is
- *   opened with the turn; the reasoning part is opened here, the first time pi
- *   thinks, and announced exactly once.
+ * - A part exists before anything streams into it. Each thinking or text
+ *   block pi writes is its own part, opened here when the block starts and
+ *   announced exactly once, so a turn's parts are in the order pi wrote them.
+ *   A text block opens at its first delta holding more than whitespace, so a
+ *   block that is only whitespace opens nothing.
  * - The snapshot is built from the turn's own parts, so every action that adds
  *   text also appends it to the part. A client that re-subscribes mid-turn is
  *   served the state, not a replay of what the last one was sent.
@@ -48,13 +50,17 @@ export function resultText(result: unknown): string {
 /**
  * The call an event names, opening the row the first time it is seen.
  *
- * Opened here rather than only on `tool_execution_start`, because an update or
- * an end for a call whose start was missed is still a call a client should
- * see, and dropping it would leave a turn with a result nothing accounts for.
+ * Opened here rather than only where the model starts writing the call,
+ * because an update or an end for a call whose start was missed is still a
+ * call a client should see, and dropping it would leave a turn with a result
+ * nothing accounts for.
  */
 function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
-  const known = turn.calls.get(toolCallId);
-  if (known !== undefined) return known;
+  return turn.calls.get(toolCallId) ?? openCall(turn, toolCallId, toolName);
+}
+
+/** A new row for a call, in the snapshot. */
+function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   const call: PiCall = { toolCallId, toolName, displayName: toolName };
   turn.calls.set(toolCallId, call);
   const owner = turn.ownerOf?.(toolName);
@@ -70,6 +76,53 @@ function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
     },
   });
   return call;
+}
+
+/**
+ * A call's row, opened and announced once, whichever event names it first.
+ *
+ * Nothing for a call already open, so the model's `toolcall_start` and pi's
+ * `tool_execution_start` for the same call start one row.
+ */
+function startCall(turn: PiTurn, toolCallId: string, toolName: string): Bag[] {
+  if (turn.calls.has(toolCallId)) return [];
+  const call = openCall(turn, toolCallId, toolName);
+  /*
+   * A client-owned tool is that client's to run, so the call is reported
+   * against it and not as the host's own. The host's own tools and pi's
+   * built-ins carry nothing.
+   */
+  const owner = turn.ownerOf?.(call.toolName);
+  return [{
+    type: 'chat/toolCallStart',
+    turnId: turn.turnId,
+    toolCallId: call.toolCallId,
+    toolName: call.toolName,
+    displayName: call.displayName,
+    ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+  }];
+}
+
+/** The key a block is held under: the message and the block's index in it. */
+const keyOf = (turn: PiTurn, contentIndex: number): string => `${turn.messages}:${contentIndex}`;
+
+/**
+ * The part a thinking or text block streams into, and the action announcing
+ * it the first time the block is seen.
+ *
+ * Keyed by the message and the block's index in it, so a second thought is a
+ * part of its own and a block pi raised no start for is still opened before
+ * its first delta.
+ */
+function blockOf(turn: PiTurn, contentIndex: number, kind: 'markdown' | 'reasoning'): { id: string; opened: Bag[] } {
+  const key = keyOf(turn, contentIndex);
+  const known = turn.blocks.get(key);
+  if (known !== undefined) return { id: known, opened: [] };
+  const part: Bag = { id: `${turn.turnId}:${key}`, kind, content: '' };
+  const id = String(part.id);
+  turn.blocks.set(key, id);
+  turn.parts.push(part);
+  return { id, opened: [{ type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } }] };
 }
 
 /** Append to a part, and to nothing else: the snapshot is these parts. */
@@ -134,39 +187,67 @@ export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag):
  */
 export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
   switch (event.type) {
+    /** A new assistant message, whose blocks are numbered from zero again. */
+    case 'message_start': {
+      if (event.message.role === 'assistant') turn.messages += 1;
+      return [];
+    }
+
     /*
-     * The answer, and the thinking before it.
+     * The answer, the thinking before it and the calls it asks for.
      *
-     * pi streams both as deltas on one assistant message, discriminated by the
-     * inner event rather than by the outer one, so this is where the two are
-     * told apart.
+     * pi streams all three as blocks of one assistant message, discriminated
+     * by the inner event rather than by the outer one, so this is where they
+     * are told apart. Each block is opened where it starts, a text block at
+     * its first words, which is what keeps a turn's parts in the order pi
+     * wrote them.
      */
     case 'message_update': {
       const inner = event.assistantMessageEvent;
-      if (inner.type === 'text_delta') {
-        if (inner.delta === '') return [];
-        append(turn, turn.textPartId, inner.delta);
-        return [{ type: 'chat/delta', turnId: turn.turnId, partId: turn.textPartId, content: inner.delta }];
-      }
-      if (inner.type === 'thinking_delta') {
-        if (inner.delta === '') return [];
-        const actions: Bag[] = [];
+      if (inner.type === 'thinking_start') return blockOf(turn, inner.contentIndex, 'reasoning').opened;
+      if (inner.type === 'text_delta' || inner.type === 'thinking_delta') {
+        const text = inner.type === 'text_delta';
+        let delta = inner.delta;
         /*
-         * Announced once, on the first thought. Announcing it again would draw
-         * the whole block a second time in a client that appends on
-         * `chat/responsePart`.
+         * A text block's whitespace is held until it writes something else,
+         * and then leads the part it opens; a block that is only whitespace,
+         * as some models write before a call, opens nothing.
          */
-        if (turn.reasoningPartId === undefined) {
-          const part: Bag = { id: `${turn.turnId}:reasoning`, kind: 'reasoning', content: '' };
-          turn.reasoningPartId = String(part.id);
-          turn.parts.push(part);
-          actions.push({ type: 'chat/responsePart', turnId: turn.turnId, part });
+        const key = keyOf(turn, inner.contentIndex);
+        if (text && !turn.blocks.has(key)) {
+          delta = `${turn.waiting.get(key) ?? ''}${delta}`;
+          if (delta.trim() === '') {
+            turn.waiting.set(key, delta);
+            return [];
+          }
+          turn.waiting.delete(key);
         }
-        append(turn, turn.reasoningPartId as string, inner.delta);
-        actions.push({
-          type: 'chat/reasoning', turnId: turn.turnId, partId: turn.reasoningPartId, content: inner.delta,
-        });
-        return actions;
+        const { id, opened } = blockOf(turn, inner.contentIndex, text ? 'markdown' : 'reasoning');
+        if (delta === '') return opened;
+        append(turn, id, delta);
+        /*
+         * `chat/delta` appends to a markdown part and `chat/reasoning` to a
+         * reasoning one; the protocol's reducer ignores either sent to the
+         * other kind.
+         */
+        return [...opened, {
+          type: text ? 'chat/delta' : 'chat/reasoning', turnId: turn.turnId, partId: id, content: delta,
+        }];
+      }
+      /*
+       * A call, from the moment the model names it: opened here rather than
+       * when pi runs it, which is after the whole message, so its row sits
+       * between the blocks written before and after it. A provider that
+       * streams the id later names it by the block's end.
+       */
+      if (inner.type === 'toolcall_start' || inner.type === 'toolcall_delta' || inner.type === 'toolcall_end') {
+        const block = bag(inner.type === 'toolcall_end'
+          ? inner.toolCall
+          : (inner.partial?.content as unknown[] | undefined)?.[inner.contentIndex]);
+        const { id, name } = block;
+        if (block.type !== 'toolCall' || typeof id !== 'string' || id === ''
+          || typeof name !== 'string' || name === '') return [];
+        return startCall(turn, id, name);
       }
       return [];
     }
@@ -174,28 +255,14 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
     /*
      * A tool about to run.
      *
-     * pi raises this before its `tool_call` hook, so the row is opened here
-     * and the session's hook moves it: a call nobody asks about is readied
-     * `not-needed` and one that is asked about is readied
+     * The row is open already when the model's stream named the call, and is
+     * opened here when it did not. pi raises this before its `tool_call` hook,
+     * and the session's hook moves the row: a call nobody asks about is
+     * readied `not-needed` and one that is asked about is readied
      * `pending-confirmation`, both from the hook, which sees the same id.
      */
-    case 'tool_execution_start': {
-      const call = callOf(turn, event.toolCallId, event.toolName);
-      /*
-       * A client-owned tool is that client's to run, so the call is reported
-       * against it and not as the host's own. The host's own tools and pi's
-       * built-ins carry nothing.
-       */
-      const owner = turn.ownerOf?.(call.toolName);
-      return [{
-        type: 'chat/toolCallStart',
-        turnId: turn.turnId,
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        displayName: call.displayName,
-        ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
-      }];
-    }
+    case 'tool_execution_start':
+      return startCall(turn, event.toolCallId, event.toolName);
 
     /** Output while it is still running, which is what a long command gives. */
     case 'tool_execution_update': {

@@ -361,9 +361,10 @@ export function piSession(
   /**
    * Decide a call and ready its row, asking a person when the policy says to.
    *
-   * pi opens the row at `tool_execution_start` and calls this before it runs
-   * the tool, so the row is moved rather than opened again. Answers nothing to
-   * run the call, or a block to refuse it.
+   * The row is open already, from the model's stream or from pi's
+   * `tool_execution_start`, and pi calls this before it runs the tool, so the
+   * row is moved rather than opened again. Answers nothing to run the call,
+   * or a block to refuse it.
    */
   const askBefore = async (event: ToolCallEvent): Promise<ToolCallEventResult | undefined> => {
     const id = event.toolCallId;
@@ -469,6 +470,18 @@ export function piSession(
     // A call cut off before its end still owes the `after` it was announced with.
     for (const callId of [...editing.keys()]) settleEdit(callId);
     doing(undefined);
+    /*
+     * A call the model was still writing when the turn ended is one pi never
+     * runs, and a client's reducer skips it on the turn's end; the snapshot
+     * says the same, or a reload shows it streaming forever.
+     */
+    for (const part of turn.responseParts as Bag[]) {
+      const row = part.kind === 'toolCall' ? bag(part.toolCall) : undefined;
+      if (row?.status !== 'streaming') continue;
+      row.status = 'cancelled';
+      row.reason = 'skipped';
+      row.invocationMessage = row.invocationMessage ?? row.displayName;
+    }
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
     turn.duration = duration;
@@ -741,17 +754,19 @@ export function piSession(
         ? { model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } }
         : {}),
     };
-    const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
+    // No part yet: each is opened when pi starts writing the block it holds.
     active = {
       id: turnId,
       startedAt,
       message,
-      responseParts: [part],
+      responseParts: [],
       state: 'running',
     };
     mapping = {
       turnId,
-      textPartId: String(part.id),
+      messages: 0,
+      blocks: new Map(),
+      waiting: new Map(),
       parts: active.responseParts as Bag[],
       calls: new Map(),
       ownerOf: clientOf,
@@ -772,7 +787,6 @@ export function piSession(
       message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    emit('chat', { type: 'chat/responsePart', turnId, part });
     doing('Thinking');
     touch();
 

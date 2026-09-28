@@ -30,17 +30,15 @@ export type TranscriptTurn = Transcript[number];
 /**
  * One watched session's turns, in the order they ran.
  *
- * Each turn starts from the markdown part the session opens before a prompt,
- * exactly as the live mapping does, and every watched update is replayed into
- * it. The part list a replay builds is the same list the live turn held,
- * because it is the same function building it.
+ * Each turn starts with no part, exactly as the live one does, and every
+ * watched update is replayed into it. The part list a replay builds is the
+ * same list the live turn held, because it is the same function building it.
  */
 export function turnsOf(session: WatchedSession): TranscriptTurn[] {
   return session.turns.map((watched) => {
     const replay: AcpTurn = {
       turnId: watched.turnId,
-      textPartId: `${watched.turnId}:text`,
-      parts: [{ id: `${watched.turnId}:text`, kind: 'markdown', content: '' }],
+      parts: [],
       calls: new Map(),
     };
     for (const update of watched.updates) mapUpdate(replay, update);

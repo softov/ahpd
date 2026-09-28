@@ -249,14 +249,11 @@ it('opens the thinking part once, so a client folds one block however many delta
     .filter((part) => part.kind === 'reasoning');
   expect(parts).toHaveLength(1);
   expect((parts[0] as { content: string }).content).toBe('weighing it up');
-  /*
-   * The markdown part is announced the same way - once, before the run, empty -
-   * and only its count is asserted here. This peer sees the *live* object the
-   * deltas keep writing into, where a socket sees the announcement as it was
-   * when it was sent; the count is the same on both.
-   */
-  expect(state.turns.flatMap((turn) => turn.responseParts)
-    .filter((part) => part.kind === 'markdown')).toHaveLength(1);
+  // The markdown part is announced the same way: once, empty, and filled by its deltas.
+  const prose = state.turns.flatMap((turn) => turn.responseParts)
+    .filter((part) => part.kind === 'markdown');
+  expect(prose).toHaveLength(1);
+  expect((prose[0] as { content: string }).content).toBe('the answer');
 });
 
 it('reports a host tool call as three actions and gives its result back to the model', async () => {
@@ -384,7 +381,8 @@ it('says what a step said even when the adapter did not stream it', async () => 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: { content?: string }[] }[] } };
   };
-  expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('not streamed');
+  // In the order the reply holds them, as the transcript reads it back.
+  expect(opened.snapshot.state.turns[0]?.responseParts.map((part) => part.content)).toEqual(['thought it', 'not streamed']);
 });
 
 it('does not offer a tool a client runs, because nothing here can answer it', () => {

@@ -754,12 +754,7 @@ export function cofoldSession(
     // the values in force, then the plugin option, then the harness file.
     const reference = modelReferenceOf(options, values, harness);
     const began = Date.now();
-    /*
-     * The markdown part is opened now rather than at the first delta, the way
-     * the echo example opens it: a client that subscribes between two events
-     * still sees the part the text is arriving in.
-     */
-    const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
+    // No part yet: each is opened when the model starts writing the block it holds.
     active = {
       id: turnId,
       startedAt: new Date(began).toISOString(),
@@ -774,7 +769,7 @@ export function cofoldSession(
           ? { model: { id: reference, ...(model?.config === undefined ? {} : { config: model.config }) } }
           : {}),
       },
-      responseParts: [part],
+      responseParts: [],
     };
     start.emit('chat', {
       type: 'chat/turnStarted',
@@ -783,13 +778,11 @@ export function cofoldSession(
       message: active.message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    start.emit('chat', { type: 'chat/responsePart', turnId, part });
     doing('Thinking');
 
     const mapping = mapTurn({
       turnId,
       chatUri: start.chatUri,
-      markdownPartId: String(part.id),
       parts: active.responseParts as Bag[],
       startedAt: began,
       displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
@@ -994,23 +987,19 @@ export function cofoldSession(
     const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
     if (seeded >= 0) turns.splice(seeded, 1);
     /*
-     * The same opening as a live turn: the markdown part exists before the
-     * replay, so a text delta from a replayed event has a part to append to
-     * exactly as it did when the turn first ran.
+     * The same opening as a live turn, with no part: the replayed events open
+     * each part as they did when the turn first ran.
      */
-    const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
     active = {
       id: turnId,
       startedAt,
       message: { text: input === undefined ? '' : textOf(input) },
-      responseParts: [part],
+      responseParts: [],
     };
     start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: active.message });
-    start.emit('chat', { type: 'chat/responsePart', turnId, part });
     const mapping = mapTurn({
       turnId,
       chatUri: start.chatUri,
-      markdownPartId: String(part.id),
       parts: active.responseParts as Bag[],
       startedAt: Number.isFinite(began) ? began : Date.now(),
       displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,

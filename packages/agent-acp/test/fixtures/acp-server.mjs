@@ -10,6 +10,10 @@
  * needs:
  *
  * - text containing `think` emits a thought chunk before the answer;
+ * - text containing `ponder` thinks, calls a tool, thinks again in two chunks
+ *   and answers in two, which is a turn whose parts interleave;
+ * - text containing `blank` thinks, writes a message that is one space, calls
+ *   a tool, thinks again and answers in chunks that start with whitespace;
  * - text containing `tool` opens a tool call with its input and completes it;
  * - text containing `read` asks the client for a file and says what it got;
  * - text containing `write` asks it to write one and says it did;
@@ -143,6 +147,39 @@ const textOf = (params) => {
  */
 const scriptFor = (text) => {
   const updates = [];
+
+  /** A directory listed and its result, the call the interleaved scripts make. */
+  const listing = [
+    {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-2',
+      title: 'List a directory',
+      name: 'list_dir',
+      kind: 'read',
+      status: 'in_progress',
+      rawInput: { path: '/tmp' },
+    },
+    {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-2',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: 'a.txt' } }],
+    },
+  ];
+  const thought = (said) => ({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: said } });
+  const message = (said) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: said } });
+
+  if (text.includes('ponder')) {
+    updates.push(thought('first thought'), ...listing, thought('second '), thought('thought'));
+    updates.push(message('the '), message('answer'));
+    return updates;
+  }
+
+  if (text.includes('blank')) {
+    updates.push(thought('first thought'), message(' '), ...listing, thought('second thought'));
+    updates.push(message(' '), message('\n'), message('the answer'));
+    return updates;
+  }
 
   if (text.includes('think')) {
     updates.push({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'weighing it up' } });

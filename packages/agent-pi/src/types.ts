@@ -106,10 +106,12 @@ export interface PiCall {
 /** The running turn, and what has been opened inside it. */
 export interface PiTurn {
   turnId: string;
-  /** The markdown part every answer streams into, opened with the turn. */
-  textPartId: string;
-  /** The reasoning part, opened the first time pi thinks and not before. */
-  reasoningPartId?: string;
+  /** How many assistant messages this turn has started, which numbers the one streaming. */
+  messages: number;
+  /** Each thinking or text block's part id, by `${message}:${contentIndex}`. */
+  blocks: Map<string, string>;
+  /** The whitespace a text block has written before its part opened, by the same key. */
+  waiting: Map<string, string>;
   /** The parts, as the snapshot carries them. Mutated as the answer arrives. */
   parts: Bag[];
   /** The calls this turn opened, by pi's own id for each. */
