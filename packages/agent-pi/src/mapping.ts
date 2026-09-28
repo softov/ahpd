@@ -56,10 +56,17 @@ function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   if (known !== undefined) return known;
   const call: PiCall = { toolCallId, toolName, displayName: toolName };
   turn.calls.set(toolCallId, call);
+  const owner = turn.ownerOf?.(toolName);
   turn.parts.push({
     id: toolCallId,
     kind: 'toolCall',
-    toolCall: { toolCallId, toolName, displayName: toolName, status: 'streaming' },
+    toolCall: {
+      toolCallId,
+      toolName,
+      displayName: toolName,
+      status: 'streaming',
+      ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
+    },
   });
   return call;
 }
@@ -120,33 +127,27 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
     /*
      * A tool about to run.
      *
-     * The arguments are already known - pi finished parsing the call before it
-     * raised this - so the row is opened and readied in one go. Without the
-     * ready action a client parks the call in `pending-confirmation`, which is
-     * the wrong question: pi has no built-in permission policy and nobody is
-     * being asked anything.
+     * pi raises this before its `tool_call` hook, so the row is opened here
+     * and the session's hook moves it: a call nobody asks about is readied
+     * `not-needed` and one that is asked about is readied
+     * `pending-confirmation`, both from the hook, which sees the same id.
      */
     case 'tool_execution_start': {
       const call = callOf(turn, event.toolCallId, event.toolName);
-      const held = bag(partOf(turn, call.toolCallId)?.toolCall);
-      held.status = 'running';
-      return [
-        {
-          type: 'chat/toolCallStart',
-          turnId: turn.turnId,
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          displayName: call.displayName,
-        },
-        {
-          type: 'chat/toolCallReady',
-          turnId: turn.turnId,
-          toolCallId: call.toolCallId,
-          invocationMessage: call.displayName,
-          confirmed: 'not-needed',
-          toolInput: JSON.stringify(event.args ?? {}),
-        },
-      ];
+      /*
+       * A client-owned tool is that client's to run, so the call is reported
+       * against it and not as the host's own. The host's own tools and pi's
+       * built-ins carry nothing.
+       */
+      const owner = turn.ownerOf?.(call.toolName);
+      return [{
+        type: 'chat/toolCallStart',
+        turnId: turn.turnId,
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        displayName: call.displayName,
+        ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+      }];
     }
 
     /** Output while it is still running, which is what a long command gives. */
@@ -168,10 +169,37 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(partOf(turn, call.toolCallId)?.toolCall);
-      held.status = 'completed';
-      held.success = success;
-      held.pastTenseMessage = call.displayName;
-      return [{
+      /*
+       * A call still `streaming` was never readied: pi failed it before its
+       * `tool_call` hook, for a tool it does not have, arguments that do not
+       * validate, or an extension that blocked it first. A client completes a
+       * call only from `running` or `pending-confirmation`, so it is readied
+       * here, or the row would stay open in every client.
+       */
+      const unreadied = held.status === 'streaming';
+      const owner = turn.ownerOf?.(call.toolName);
+      /*
+       * A call a person declined is already `cancelled`. pi reports the block
+       * as a failed execution, and a result does not reopen a row somebody
+       * answered no to.
+       */
+      if (held.status !== 'cancelled') {
+        held.status = 'completed';
+        held.success = success;
+        held.pastTenseMessage = call.displayName;
+        if (unreadied) {
+          held.invocationMessage = call.displayName;
+          held.confirmed = 'not-needed';
+        }
+      }
+      return [...(unreadied ? [{
+        type: 'chat/toolCallReady',
+        turnId: turn.turnId,
+        toolCallId: call.toolCallId,
+        invocationMessage: call.displayName,
+        confirmed: 'not-needed' as const,
+        ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+      }] : []), {
         type: 'chat/toolCallComplete',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,

@@ -42,7 +42,7 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       origin: watched.message.origin ?? { kind: 'user' },
     },
     responseParts: watched.parts,
-    usage: undefined,
+    usage: watched.usage,
     state: watched.state,
     ...(watched.duration === undefined ? {} : { duration: watched.duration }),
   })) as TranscriptTurn[];

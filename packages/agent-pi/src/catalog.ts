@@ -35,7 +35,7 @@ export function watchedSession(provider: string, id: string): WatchedSession | u
   return watched.get(provider)?.get(id);
 }
 
-/** Forget a provider's records. For a test, so one does not leak into the next. */
+/** Forget a provider's records, or every provider's. */
 export function forget(provider?: string): void {
   if (provider === undefined) watched.clear();
   else watched.delete(provider);

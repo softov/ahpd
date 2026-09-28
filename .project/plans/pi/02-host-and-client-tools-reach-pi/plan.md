@@ -1,7 +1,7 @@
 ---
 title: Host and client tools reach pi
 domain: pi
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -66,15 +66,21 @@ host Start.tools -> piSession offering -> [new] tools.ts toPiTool(BoundTool) -> 
 | The schema is `Type.Unsafe(definition.inputSchema)` from pi-ai's own `Type` | pi-ai 0.87.1 re-exports `Type` from `typebox` | 01 |
 | Every host tool is offered, destructive ones included; asking before one runs is plan 09 | Softov, 2026-09-26, answering whether destructive host tools should wait for approvals: "offer every host tool" | 01 |
 | Once pi is open, `setTools` keeps the new list and pi is rebuilt on the same session file before the next turn | Softov, 2026-09-26, answering how `setTools` acts once pi is open: "rebuild pi on the same session file before the next turn" | 03 |
+| A `setTools` at any moment reaches pi, a running turn judges with the tools it was built with, and a tool hears pi's abort. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B3 setTools lost mid-open", "B7-B10 row, rebuild, abort" | 05 |
+| A rebuild keeps model, thinking level and id, and a failed one fails only its turn. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B4 one failure breaks session", "B7-B10 row, rebuild, abort" | 06 |
+| Each named case fails without its fix. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "Tests that fail without fix" | 07 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Host tools are pi tools](task-01-host-tools-are-pi-tools.md) | todo | - |
-| [02 - A client's tool is run by that client](task-02-a-client-tool-is-run-by-that-client.md) | todo | 01 |
-| [03 - The tools change with the clients](task-03-the-tools-change-with-the-clients.md) | todo | 02 |
-| [04 - The README lists the tools](task-04-the-readme-lists-the-tools.md) | todo | 03 |
+| [01 - Host tools are pi tools](task-01-host-tools-are-pi-tools.md) | implemented | - |
+| [02 - A client's tool is run by that client](task-02-a-client-tool-is-run-by-that-client.md) | implemented | 01 |
+| [03 - The tools change with the clients](task-03-the-tools-change-with-the-clients.md) | implemented | 02 |
+| [04 - The README lists the tools](task-04-the-readme-lists-the-tools.md) | implemented | 03 |
+| [05 - Tools announced while pi opens reach it, and a tool hears pi's abort](task-05-tools-announced-while-pi-opens-reach-it.md) | implemented | 03 |
+| [06 - A rebuild keeps the model, the thinking level and the session](task-06-a-rebuild-keeps-the-session.md) | implemented | 05 |
+| [07 - The tool and truncation tests fail when their fix is taken out](task-07-the-tests-fail-without-their-fix.md) | implemented | 06 |
 
 ## Risks and tradeoffs
 
@@ -85,8 +91,8 @@ host Start.tools -> piSession offering -> [new] tools.ts toPiTool(BoundTool) -> 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-host-tools-are-pi-tools.md](task-01-host-tools-are-pi-tools.md).
+- **Done so far:** tasks 01 to 07 are `implemented`: the tool conversion, the client wait and its `Session` methods, the `contributor`, `setTools` rebuilding pi on the same file, the README bullet, a change made at any moment reaching pi, a rebuild that keeps the model and the session and fails only its turn, and the four cases checked to fail without their guarded line.
+- **Next action:** none; all seven tasks are implemented and awaiting review; tasks 01 to 04 were reviewed on 2026-09-27.
 - **Open questions:** none.
 - **Watch out for:** the host names a client tool `<clientId>__<name>`; the owner is `BoundTool.owner`, never parsed back out of the name.
 

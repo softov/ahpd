@@ -1,7 +1,7 @@
 ---
 title: The host's instructions reach pi's system prompt
 domain: pi
-status: planned
+status: active
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -54,7 +54,7 @@ host Start.instructions -> piSession opened() -> [new] BackendOptions.instructio
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The instructions are appended](task-01-the-instructions-are-appended.md) | todo | - |
+| [01 - The instructions are appended](task-01-the-instructions-are-appended.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -62,8 +62,8 @@ host Start.instructions -> piSession opened() -> [new] BackendOptions.instructio
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-instructions-are-appended.md](task-01-the-instructions-are-appended.md).
+- **Done so far:** task 01 is `implemented`: the instructions reach pi's append list through `appendSystemPromptOverride`.
+- **Next action:** none; the task is implemented and awaiting review.
 - **Open questions:** none.
 - **Watch out for:** an instruction string that happens to be an existing path is read as a file by `appendSystemPrompt`; the override is not, which is one more reason for it.
 

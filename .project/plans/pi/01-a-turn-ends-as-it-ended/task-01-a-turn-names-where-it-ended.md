@@ -1,6 +1,6 @@
 ---
 title: A turn names where it ended
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -8,7 +8,7 @@ refs:
   - "[code://packages/agent-pi/src/session.ts#L151-L179](../../../../packages/agent-pi/src/session.ts#L151-L179) - `finish`, where a turn ends"
   - "[code://packages/agent-pi/src/session.ts#L268-L269](../../../../packages/agent-pi/src/session.ts#L268-L269) - the rewind on open, whose answer is dropped"
   - "[code://packages/agent-claude/src/session.ts#L2022-L2031](../../../../packages/agent-claude/src/session.ts#L2022-L2031) - the `ends` map to copy"
-  - "[code://test/agent-cofold-fork.test.ts#L262-L275](../../../../test/agent-cofold-fork.test.ts#L262-L275) - a truncation through the host"
+  - "[code://packages/agent-cofold/test/agent-cofold-fork.test.ts#L262-L275](../../../../packages/agent-cofold/test/agent-cofold-fork.test.ts#L262-L275) - a truncation through the host"
 ---
 
 ## Objective
@@ -38,3 +38,12 @@ refs:
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Built.
+`PiBackend` has `leaf()`, answered from `session.sessionManager.getLeafId()` with `null` as `undefined`.
+`session.ts` keeps `ends` by turn id, filled on `agent_settled` from `live.leaf()` before `finish`, and answers `endPoint(turnId)` from it.
+`opened` fails the turn with `pi refused to move the leaf back to the truncation point` when `backend.rewind` answers `false`, so a refused rewind is said rather than run on the untruncated leaf.
+
+- `test/agent-pi.test.ts` covers a watched turn naming its leaf, a turn never watched answering nothing, and a refused rewind failing the turn.
+- `test/agent-pi-truncate.test.ts` drives `chat/truncated` through the host with a fake backend: the host accepts it and the restarted session asks to rewind to the recorded leaf.
+- `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.

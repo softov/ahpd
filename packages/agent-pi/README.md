@@ -26,6 +26,7 @@ pi resolves its own model provider and credentials from its own settings, so the
 | `provider` | `pi` | The id a client names in `createSession` |
 | `displayName` | `pi` | What a person reads instead of the id |
 | `description` | | One line about this backend |
+| `model` | | The model a new session runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
 | `projectTrust` | `trust` | Whether a project's own pi extensions, skills and prompts are loaded |
 | `sessionDir` | pi's own (`~/.pi`) | Where pi keeps its sessions |
 
@@ -46,18 +47,19 @@ pi resolves its own model provider and credentials from its own settings, so the
 Some of pi lands on the protocol without adaptation:
 
 - **Steering** is pi's own `steer()`, so a message sent into a running turn is the thing the protocol means rather than a queued message pretending to be one.
-- **Truncation** is `navigateTree`. pi's sessions are append-only trees: the leaf moves back and the abandoned path stops being context, which is exactly what `chat/truncated` asks for.
+- **Truncation** is `navigateTree`. pi's sessions are append-only trees: the leaf moves back and the abandoned path stops being context, which is exactly what `chat/truncated` asks for. A turn this session did not watch end, a `!command` turn, and one whose `prompt` threw leave no point to cut at, and the host refuses to truncate them.
 - **The thinking level** rides in each model's own `configSchema`, the protocol's escape hatch for a model that needs an answer beside its name. A client draws it as a form beside the model and sends the values back in `ModelSelection.config`.
 - **Models** are identified as `provider/modelId`, the way pi's own configuration spells one, so two providers serving a model of the same name stay apart.
 - **The session file** is a real path, so the reference client's "open session state file" opens the conversation pi actually wrote.
+- **Host and client tools.** The tools the host contributes to a session are offered to pi's model, and one of the host's own runs in the host. A tool a connected client provides is offered too, and a call to it is reported against that client and waits for its answer. A client's tools take effect from the next turn, because pi fixes its custom tools when the session starts and the session is restarted on the same file with the new set.
+- **Tool confirmation.** A session asks a person before a call its `permissionMode` says to ask about: the call is shown `pending-confirmation`, the session is `InputNeeded`, and the answer runs the call or blocks it with a reason the model reads. A tool that declares no effects runs, a read outside the working directory asks, and the six modes carry the meanings Claude and cofold advertise, with `default` as pi's default.
 
 Some of it does not, and the backend says so rather than pretending:
 
-- **Tool confirmation.** pi has no built-in permission policy - a tool runs when the model calls it - so no tool call is ever reported waiting on a person and `confirm` has nothing to answer.
 - **Forking a turn.** pi can branch from an entry, but naming the entry a *turn* began at means recording it as the turn runs. This backend does not, so it advertises no fork rather than offering a control that fails when used.
 - **Turning a customization on or off, and MCP servers.** pi loads its extensions and skills when it opens and has no runtime switch for them, and its MCP support is an extension's business rather than pi's. Both answer `false`, which is a real answer; a control that reported success and changed nothing would be worse.
 - **Several directories per session.** pi's `AgentSession` is built around a single `cwd` - its tools, its project resources and its session store all hang off it.
-- **A model list before a session exists.** pi's models come from a runtime built with a session, against the credentials resolved for one directory. A list answered before that would be a different list from the one a session then reports, so `probe` offers none and `session/modelsChanged` carries them as soon as a session opens.
+- **A model list before a session exists.** pi's models come from a runtime built with a session, against the credentials resolved for one directory. A list answered before that would be a different list from the one a session then reports, so `probe` offers none and a session reports its own through `Session.models`.
 
 ## The catalogue
 

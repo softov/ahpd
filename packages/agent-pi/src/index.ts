@@ -10,4 +10,6 @@ export { idOf, modelFor, offered, THINKING_KEY } from './models.js';
 export type { PiModel } from './models.js';
 export { turnsOf } from './transcript.js';
 export type { TranscriptTurn } from './transcript.js';
+export { toPiTool } from './tools.js';
+export type { RunByClient } from './tools.js';
 export type { PiCall, PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';

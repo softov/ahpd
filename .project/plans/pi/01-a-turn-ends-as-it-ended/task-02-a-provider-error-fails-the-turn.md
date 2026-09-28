@@ -1,6 +1,6 @@
 ---
 title: A provider error fails the turn
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -35,3 +35,11 @@ A turn whose last assistant message ended with `stopReason: 'error'` ends as `er
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+Built.
+`session.ts` holds `answered`, the last assistant message of the running turn, reset in `begin` and overwritten on every assistant `message_end`.
+`agent_settled` judges the ending from it: `cancelled` stays `cancelled`, `stopReason: 'error'` is `finish('error', errorMessage)`, and anything else is `complete`.
+The whole message is kept rather than two fields, which is what plan 04 reads for usage.
+
+- `test/agent-pi.test.ts` covers an error message failing the turn with the provider's text, an error followed by a retry that answered ending `complete`, and an aborted last message on a cancelled turn staying `cancelled`.
+- `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.

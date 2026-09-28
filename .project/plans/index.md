@@ -142,15 +142,15 @@ Worked in this order: 01, 02, 09, then problem [a pi transcript opens empty](../
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - A pi turn can be truncated, one that failed at the provider says so, and the configured model is used](pi/01-a-turn-ends-as-it-ended/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | pi 04, pi 05 |
-| [02 - Host and client tools reach pi](pi/02-host-and-client-tools-reach-pi/plan.md) | high | planned 2026-09-26, tasks 01-04 todo | - | pi 03, pi 09 |
-| [03 - The host's instructions reach pi's system prompt](pi/03-the-host-instructions-reach-pi/plan.md) | medium | planned 2026-09-26, task 01 todo | pi 02 | - |
-| [04 - A pi turn reports what it used](pi/04-a-turn-reports-its-usage/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | pi 01 | - |
+| [01 - A pi turn can be truncated, one that failed at the provider says so, and the configured model is used](pi/01-a-turn-ends-as-it-ended/plan.md) | high | active 2026-09-26, tasks 01-04 implemented and reviewed, review fix 05 implemented and awaiting review | - | pi 04, pi 05 |
+| [02 - Host and client tools reach pi](pi/02-host-and-client-tools-reach-pi/plan.md) | high | active 2026-09-26, tasks 01-04 implemented and reviewed, review fixes 05-07 implemented and awaiting review | - | pi 03, pi 09 |
+| [03 - The host's instructions reach pi's system prompt](pi/03-the-host-instructions-reach-pi/plan.md) | medium | active 2026-09-26, task 01 implemented and awaiting review | pi 02 | - |
+| [04 - A pi turn reports what it used](pi/04-a-turn-reports-its-usage/plan.md) | medium | active 2026-09-26, tasks 01-02 implemented and reviewed, fixes 03-04 implemented and awaiting review | pi 01 | - |
 | [05 - A pi chat forks from a turn](pi/05-a-chat-forks-from-a-turn/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | pi 01, host 19 | - |
 | [06 - pi's edits reach the host's changesets](pi/06-pi-edits-reach-the-changesets/plan.md) | medium | planned 2026-09-26, task 01 todo | - | - |
-| [07 - Input from a client is tagged as not the terminal's](pi/07-remote-input-is-tagged/plan.md) | low | planned 2026-09-26, task 01 todo | - | - |
+| [07 - Input from a client is tagged as not the terminal's](pi/07-remote-input-is-tagged/plan.md) | low | active 2026-09-26, task 01 implemented and awaiting review | - | - |
 | [08 - A pi session store can move between hosts](pi/08-a-session-store-can-move/plan.md) | low | dropped 2026-09-26 | - | - |
-| [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | pi 02 | - |
+| [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | active 2026-09-26, tasks 01-09 implemented and reviewed, review fix 10 implemented and awaiting review | pi 02 | - |
 
 Next free number in `pi`: `10`.
 

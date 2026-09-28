@@ -20,6 +20,7 @@ import { catalogue, stateFile, watchedSession } from './catalog.js';
 import { piSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { PiOptions } from './types.js';
+import { permissionModeProperty } from './types.js';
 
 /**
  * One AHP backend over one embedded pi.
@@ -37,9 +38,9 @@ export function piAgent(options: PiOptions, directories: readonly string[]): Age
    * What a session may be told.
    *
    * One property, and no `model`: a model belongs to the turn. pi carries the
-   * choice per message, the list reaches a client through `Session.models` and
-   * `session/modelsChanged`, and the choice itself arrives on `begin`, so a
-   * `model` key here would be a second answer to a question the turn owns.
+   * choice per message, the list reaches a client through `Session.models`,
+   * and the choice itself arrives on `begin`, so a `model` key here would be a
+   * second answer to a question the turn owns.
    *
    * The thinking level is not here either, for the same reason and one more:
    * it is a property of the model that was picked, so it travels in that
@@ -60,11 +61,19 @@ export function piAgent(options: PiOptions, directories: readonly string[]): Age
         // would say something the running session is not doing.
         sessionMutable: false,
       },
+      /*
+       * The same six modes Claude and cofold advertise, because the labels are
+       * what a person reads and the harness owns the meanings - decision
+       * `permission-modes-live-in-the-harness`. `default` asks before a call
+       * that writes, reaches the network or destroys.
+       */
+      permissionMode: permissionModeProperty(),
     },
   });
 
   const defaults = (): Record<string, unknown> => ({
     projectTrust: options.projectTrust ?? 'trust',
+    permissionMode: 'default',
   });
 
   return {
@@ -91,8 +100,7 @@ export function piAgent(options: PiOptions, directories: readonly string[]): Age
      * list comes from a runtime that is built with a session, against the
      * credentials and settings resolved for one directory, so a list answered
      * here would be a different list from the one a session then reports.
-     * `Session.models()` and `session/modelsChanged` are where it arrives, as
-     * soon as a session has been opened.
+     * `Session.models()` is where it arrives, as soon as a session has opened.
      */
     probe: async (): Promise<Offered> => ({ models: [], customizations: [], commands: [] }),
 

@@ -1,6 +1,6 @@
 ---
 title: The instructions are appended
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -31,3 +31,12 @@ refs:
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+Built.
+`BackendOptions.instructions` reaches `createAgentSessionServices` through `resourceLoaderOptions.appendSystemPromptOverride`, which adds to what pi discovered rather than replacing it, so a project's or a user's `APPEND_SYSTEM.md` keeps its place.
+pi joins the entries itself with a blank line in `dist/core/agent-session.js`, so nothing is joined here.
+`session.ts` drops blank entries and passes the rest, and passes nothing when there are none.
+
+- `test/agent-pi.test.ts` covers instructions reaching the fake's `open` with the blank entry dropped, and a session with none passing none.
+- By hand, for Softov: a real pi session in a directory with `.pi/APPEND_SYSTEM.md` keeps that text and adds the host's after it.
+- `pnpm test` 102 files, 1366 tests; `pnpm typecheck` and `pnpm boundary` green.

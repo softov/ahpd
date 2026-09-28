@@ -1,6 +1,6 @@
 ---
 title: A client's tool is run by that client
-status: todo
+status: implemented
 depends: [task-01-host-tools-are-pi-tools.md]
 layer: "agent-pi"
 refs:
@@ -38,3 +38,14 @@ A call pi makes to a client-owned tool is reported against that client, waits fo
 - `pnpm test`, `pnpm typecheck`, `pnpm wire` green.
 
 ## Resume
+
+Built.
+`session.ts` keeps `byClient` by pi's call id with the owner and the settle, `releaseCalls`, `clientOf`, and `ranByClient`, which sets the activity to `Waiting on <owner>: <title>` and waits.
+The returned `Session` has `toolCallOwner`, `completeToolCall` (only the owner's answer settles, and nothing is emitted) and `clientGone`, which releases that client's calls as failed with the sibling's sentence.
+`cancel` and `close` release everything waiting, so an aborted turn does not leave pi waiting.
+`tools.ts` rejects a call with the answer's text when a client answers `ok: false`.
+`mapping.ts` reads `PiTurn.ownerOf` and puts `contributor: { kind: 'client', clientId }` on `chat/toolCallStart` and `chat/toolCallReady` and on the snapshot row.
+
+- `test/agent-pi.test.ts` covers the wait, a result from another client answered false and leaving it waiting, a refusal and a gone client rejecting the call, release on cancel, and the contributor on a mapped client call.
+- `pnpm test` 102 files, 1360 tests; `pnpm typecheck` and `pnpm boundary` green.
+- `pnpm wire` needs a capture file and was not run.

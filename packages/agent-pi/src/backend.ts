@@ -9,11 +9,18 @@
  * whoever started it.
  *
  * The seam is deliberately narrow. Everything above it - the turn, the parts,
- * the actions - works against this interface rather than against pi, so the
- * session can be driven in a test without a model provider.
+ * the actions - works against this interface rather than against pi, so a
+ * session can be driven without a model provider.
  */
 
-import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type {
+  AgentSession,
+  AgentSessionEvent,
+  ExtensionAPI,
+  ToolCallEvent,
+  ToolCallEventResult,
+  ToolDefinition,
+} from '@earendil-works/pi-coding-agent';
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
@@ -40,6 +47,8 @@ export interface PiBackend {
   abort(): Promise<void>;
   /** The models this session could run on. */
   models(): Promise<PiModel[]>;
+  /** The entry the conversation currently ends at, which pi calls its leaf. */
+  leaf(): string | undefined;
   /** The thinking levels a model offers, which is pi's own rule. */
   levels(model: PiModel): string[];
   /** What a new message would run on right now. */
@@ -71,6 +80,23 @@ export interface BackendOptions {
   sessionDir?: string;
   /** Whether the project's own pi extensions, skills and prompts are loaded. */
   trustProject?: boolean;
+  /** The custom tools pi offers the model, on top of its own. */
+  tools?: ToolDefinition[];
+  /**
+   * What the host wants the model told, appended to pi's own system prompt.
+   *
+   * Each entry is added after what pi discovered itself, so a project's or a
+   * user's `APPEND_SYSTEM.md` keeps its place.
+   */
+  instructions?: string[];
+  /**
+   * Asked before pi runs a tool.
+   *
+   * Returns nothing to let the call run, or a pi result to block it. The
+   * session answers from its permission policy, and waits for a person when
+   * the policy says to ask.
+   */
+  onToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
 }
 
 /**
@@ -90,8 +116,43 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
    */
   const settingsManager = SettingsManager.create(options.cwd, undefined, { projectTrusted: trusted });
   const sessionManager = resumeOrCreate(options);
-  const services = await createAgentSessionServices({ cwd: options.cwd, settingsManager });
-  const { session } = await createAgentSessionFromServices({ services, sessionManager });
+  const instructions = options.instructions ?? [];
+  const onToolCall = options.onToolCall;
+  /*
+   * Through the override rather than `appendSystemPrompt`, which replaces what
+   * pi discovered - a project's or a user's `APPEND_SYSTEM.md` would stop
+   * reaching the prompt. pi joins the list it gets back itself.
+   *
+   * The inline extension is this host's, not the project's, so it is passed
+   * whatever the project trust says; it is loaded after the file extensions,
+   * so its `tool_call` handler sees the input the others left.
+   */
+  const loaderOptions = {
+    ...(instructions.length > 0
+      ? { appendSystemPromptOverride: (base: string[]) => [...base, ...instructions] }
+      : {}),
+    ...(onToolCall !== undefined
+      ? {
+          extensionFactories: [{
+            name: 'ahpd',
+            hidden: true,
+            factory: (pi: ExtensionAPI): void => {
+              pi.on('tool_call', (event) => onToolCall(event));
+            },
+          }],
+        }
+      : {}),
+  };
+  const services = await createAgentSessionServices({
+    cwd: options.cwd,
+    settingsManager,
+    ...(Object.keys(loaderOptions).length > 0 ? { resourceLoaderOptions: loaderOptions } : {}),
+  });
+  const { session } = await createAgentSessionFromServices({
+    services,
+    sessionManager,
+    ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
+  });
   return wrap(session);
 }
 
@@ -106,6 +167,15 @@ function resumeOrCreate(options: BackendOptions): SessionManager {
   return SessionManager.create(options.cwd, options.sessionDir);
 }
 
+/**
+ * What pi is told about where a message came from.
+ *
+ * `rpc` is pi's own name for input from a program driving it, which is what
+ * this host is; the value pi defaults to is `interactive`, which would tell an
+ * extension's `input` handler that a person typed at pi's own terminal.
+ */
+const INPUT_SOURCE = 'rpc' as const;
+
 /** The narrow surface, over the session pi built. */
 function wrap(session: AgentSession): PiBackend {
   const models = async (): Promise<PiModel[]> => {
@@ -117,10 +187,11 @@ function wrap(session: AgentSession): PiBackend {
     id: session.sessionId,
     file: session.sessionManager.getSessionFile(),
     subscribe: (listener) => session.subscribe(listener),
-    prompt: (text) => session.prompt(text),
-    steer: (text) => session.steer(text),
+    prompt: (text) => session.prompt(text, { source: INPUT_SOURCE }),
+    steer: (text) => session.steer(text, undefined, { source: INPUT_SOURCE }),
     abort: () => session.abort(),
     models,
+    leaf: () => session.sessionManager.getLeafId() ?? undefined,
     /*
      * Per model, not per session.
      *

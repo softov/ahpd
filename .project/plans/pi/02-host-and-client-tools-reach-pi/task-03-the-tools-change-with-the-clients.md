@@ -1,6 +1,6 @@
 ---
 title: The tools change with the clients
-status: todo
+status: implemented
 depends: [task-02-a-client-tool-is-run-by-that-client.md]
 layer: "agent-pi"
 refs:
@@ -36,3 +36,12 @@ refs:
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+Built.
+`session.ts` splits the old `opened` into `build(resume, first)`, `opened` and `reopen`.
+`setTools` compares the new list to `offering` by name and owner, answers true with nothing to do when they match, replaces `offering`, and marks the backend stale when pi is already open.
+`begin` rebuilds a stale backend before `prompt`, with `resume` set to its own id, so the same session file continues with the new `customTools`; a turn already running is not touched, and a rebuild that throws fails the turn.
+The subscription, the record and the model list move to the rebuilt backend, and `first` keeps the configured model and the truncation to the session's own opening.
+
+- `test/agent-pi.test.ts` covers a change before pi opens, a change after a turn rebuilding with the id as `resume` and the new tools, an unchanged list not reopening, and a change during a turn taking effect on the next one.
+- `pnpm test` 102 files, 1364 tests; `pnpm typecheck` and `pnpm boundary` green.

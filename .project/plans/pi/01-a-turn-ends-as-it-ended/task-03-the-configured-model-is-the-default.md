@@ -1,6 +1,6 @@
 ---
 title: The configured model is the default
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -33,3 +33,12 @@ A new pi session with `model` configured runs on that model until a turn chooses
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+Built.
+`opened` chooses `options.model` once the model list is read and before the rewind, only when `start.resume` and `start.forkAt` are both unset, so a resumed or forked session keeps the model its own file recorded.
+A turn's own `model` is still chosen in `begin` after `opened`, so it wins.
+An id `choose` cannot resolve changes nothing, which is the stale-pick path `wrap` already keeps.
+
+- `test/agent-pi.test.ts` covers a new session choosing the configured model, a resumed one not, and a turn choosing over it.
+- `packages/agent-pi/README.md` options table gains a `model` row.
+- `pnpm test`, `pnpm typecheck` and `pnpm boundary` green.

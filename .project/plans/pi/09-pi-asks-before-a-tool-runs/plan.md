@@ -1,7 +1,7 @@
 ---
 title: pi asks a person before a tool runs
 domain: pi
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -65,14 +65,29 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 | The asking mirrors `@ahpd/agent-claude`: a `pending` map by id, the call opened `pending-confirmation`, a `toolConfirmation` input entry, `InputNeeded` status, `confirm` found by call id and said back with `chat/toolCallConfirmed` | Softov, 2026-09-26: "Mirror how `@ahpd/agent-claude` asks" | 01 |
 | Which calls ask is the six-value `permissionMode` session key Claude and cofold advertise, default `default`; pi's `edit`, `write` and `bash` are judged by name and a host tool by its `effects`, as cofold does | Softov, 2026-09-26, answering which calls pi asks about: "use `permissionMode`, the same six-value key that Claude and cofold have, defaulting to `default`" | 02 |
 | A declined call is blocked with a reason the model reads, and a cancelled turn declines what is still waiting | [`code://packages/agent-claude/src/session.ts#L3257-L3259`](../../../../packages/agent-claude/src/session.ts#L3257-L3259) | 01 |
+| The ask reuses the row pi opened at `tool_execution_start`, since pi emits it before the `tool_call` hook. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B1 ask comes after start"; pi-agent-core 0.87.1 `agent-loop.js` | 04 |
+| A path is judged after pi's own resolution and symlinks, and a pi built-in keeps its own effects. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B2 acceptEdits path check", "B5 dropped tool's effects" | 05 |
+| A tool with no `effects` runs, as cofold's does. | Softov, 2026-09-27, asked how the modes treat a tool with no effects: "Run it, as cofold does". | 05 |
+| A read outside the workspace asks in `default`, `acceptEdits` and `plan`, and is refused in `dontAsk`, as cofold's does. | Softov, 2026-09-27, asked whether pi matches cofold on reads outside: "Match cofold". | 05 |
+| A cancel answers each question with `chat/toolCallConfirmed` and "The turn was stopped". | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B6 cancel and pending asks" | 06 |
+| The `Asking` seam goes and the ask cases drive `permissionMode`; the README and comments are corrected; a wire capture is validated. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "Drop the Asking seam", "README and comments true", "pnpm wire on a capture" | 07, 08, 09 |
+| The undeclared `session/statusChanged` and `session/modelsChanged` actions are removed, status reaching a client as the declared `session/chatUpdated` and a session's models left to `Session.models()` | Softov, 2026-09-27, answering how the capture should pass `pnpm wire`: "Remove both emits from packages/agent-pi" | 09 |
+| A call pi failed before its hook is readied `not-needed` at its end, so a client can complete it. | Softov, 2026-09-27, asked how to handle the call that stays `streaming`: "I fix it now, then commit" | 10 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A call can wait on a person](task-01-a-call-can-wait-on-a-person.md) | todo | - |
-| [02 - A mode says which calls ask](task-02-a-mode-says-which-calls-ask.md) | todo | 01 |
-| [03 - The README says pi asks](task-03-the-readme-says-pi-asks.md) | todo | 02 |
+| [01 - A call can wait on a person](task-01-a-call-can-wait-on-a-person.md) | implemented | - |
+| [02 - A mode says which calls ask](task-02-a-mode-says-which-calls-ask.md) | implemented | 01 |
+| [03 - The README says pi asks](task-03-the-readme-says-pi-asks.md) | implemented | 02 |
+| [04 - The ask reuses the row pi already opened, and a client tool runs only after it is approved](task-04-the-ask-reuses-the-row-pi-opened.md) | implemented | 01 |
+| [05 - A path is judged where pi puts it, reads outside the workspace ask, and pi's own tools keep their effects](task-05-a-path-is-judged-where-pi-puts-it.md) | implemented | 02 |
+| [06 - A cancel answers every question it leaves](task-06-a-cancel-answers-what-it-asked.md) | implemented | 04 |
+| [07 - piSession has no test-only parameter](task-07-no-test-only-seam.md) | implemented | 05 |
+| [08 - The README and the comments say what the code does](task-08-the-readme-and-comments-say-what-is-true.md) | implemented | 07 |
+| [09 - A captured pi session validates against the protocol schema](task-09-a-wire-capture-validates.md) | implemented | 08 |
+| [10 - A call pi failed before its hook still closes in a client](task-10-a-call-pi-failed-first-still-closes.md) | implemented | 04 |
 
 ## Risks and tradeoffs
 
@@ -82,8 +97,8 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-call-can-wait-on-a-person.md](task-01-a-call-can-wait-on-a-person.md).
+- **Done so far:** tasks 01 to 10 are `implemented`: the ask with `pending-confirmation` and `confirm`, the six-value `permissionMode`, the README bullet, the ask reusing the row pi opened, pi's own path resolution with reads outside asking, a cancel answering every question it leaves, no test-only seam, the README and comments brought in line with the code, a scripted wire capture that passes `pnpm wire`, and a call pi failed before its hook readied at its end.
+- **Next action:** none; tasks 01 to 09 were reviewed on 2026-09-27, and task 10 was built in that review and awaits Softov's.
 - **Open questions:** none.
 - **Watch out for:** client-owned tools from plan 02 are the client's to run; asking about them is still ahpd's, before the call goes out to the client.
 

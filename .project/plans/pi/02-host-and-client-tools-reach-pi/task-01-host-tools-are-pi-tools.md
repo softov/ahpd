@@ -1,6 +1,6 @@
 ---
 title: Host tools are pi tools
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -35,3 +35,12 @@ Every `Start.tools` entry with a `run` is offered to pi's model as a custom tool
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `pnpm boundary` confirms nothing new is imported past `@ahpd/sdk` and pi's own packages.
 
 ## Resume
+
+Built.
+`src/tools.ts` is new: `toPiTool(bound, client)` builds a pi `defineTool` from a `BoundTool`, keeps `definition.name`, `title` and `inputSchema` through `Type.Unsafe`, and returns nothing with a warning for a name pi already owns.
+A host tool's `execute` answers `run`'s text as a text result, and a `run` that throws rejects the call with the same message.
+`BackendOptions.tools` is passed as `customTools` to `createAgentSessionFromServices`, and `session.ts` keeps `offering` from `Start.tools` and converts it in `opened`.
+The client-owned branch calls the `client` callback, which task 02 fills with the real wait; until then a call to a client tool fails and says so.
+
+- `test/agent-pi.test.ts` covers the conversion, `run`'s answer, a throwing `run`, a dropped built-in name, and a session handing pi its custom tools.
+- `pnpm test` 102 files, 1356 tests; `pnpm typecheck` and `pnpm boundary` green.

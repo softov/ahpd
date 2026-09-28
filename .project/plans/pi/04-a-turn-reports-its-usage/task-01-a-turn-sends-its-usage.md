@@ -1,6 +1,6 @@
 ---
 title: A turn sends its usage
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -33,3 +33,11 @@ A pi turn that had an assistant message emits `chat/usage` before it ends, and i
 - `pnpm test`, `pnpm typecheck`, `pnpm wire` green.
 
 ## Resume
+
+Built.
+`usageOf` in `session.ts` reads the remembered last assistant message: `inputTokens`, `outputTokens` and `cacheReadTokens` from pi's `usage`, `model` as `provider/model`, and `cacheWriteTokens` in `_meta`.
+On `agent_settled` the usage is set on the active turn and on the watched turn, and emitted as `chat/usage` before the ending action.
+`WatchedTurn.usage` and `transcript.ts` carry the same usage, so a client that subscribes reads it.
+
+- `test/agent-pi.test.ts` covers the mapped fields, the order against the ending action, the transcript carrying it, and no usage for a turn with no assistant message or for a `!command` turn.
+- `pnpm test` 102 files, 1369 tests; `pnpm typecheck` and `pnpm boundary` green.

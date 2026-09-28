@@ -21,6 +21,10 @@ export interface PiModel {
   provider: string;
   id: string;
   name?: string;
+  /** How many tokens the model can hold, when pi knows. */
+  contextWindow?: number;
+  /** How many tokens the model may answer with, when pi knows. */
+  maxTokens?: number;
 }
 
 /** The key the thinking level rides under in a `ModelSelection.config`. */
@@ -79,6 +83,17 @@ export function offered(model: PiModel, levels: readonly string[]): Bag {
         },
       },
     };
+  }
+  /*
+   * The limits, when pi has them. A client sizes the conversation against the
+   * window, and a model pi knows nothing about gets no number rather than a
+   * made-up one.
+   */
+  if (typeof model.contextWindow === 'number' && model.contextWindow > 0) {
+    row.maxContextWindow = model.contextWindow;
+  }
+  if (typeof model.maxTokens === 'number' && model.maxTokens > 0) {
+    row.maxOutputTokens = model.maxTokens;
   }
   return row;
 }

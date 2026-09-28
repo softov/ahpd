@@ -1,7 +1,7 @@
 ---
 title: A pi turn can be truncated, one that failed at the provider says so, and the configured model is used
 domain: pi
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -20,7 +20,7 @@ refs:
   - "[code://packages/agent-claude/src/session.ts#L2022-L2031](../../../../packages/agent-claude/src/session.ts#L2022-L2031) - the sibling's `ends` map, the shape to copy"
   - "[code://packages/agent-claude/src/session.ts#L2705-L2706](../../../../packages/agent-claude/src/session.ts#L2705-L2706) - the sibling answers `forkPoint` and `endPoint` from its maps"
   - "[code://packages/agent-cofold/src/session.ts#L533-L541](../../../../packages/agent-cofold/src/session.ts#L533-L541) - the other sibling records its points before the client is told the turn ended"
-  - "[code://test/agent-cofold-fork.test.ts#L262-L275](../../../../test/agent-cofold-fork.test.ts#L262-L275) - a truncation driven through the host, the test shape to copy"
+  - "[code://packages/agent-cofold/test/agent-cofold-fork.test.ts#L262-L275](../../../../packages/agent-cofold/test/agent-cofold-fork.test.ts#L262-L275) - a truncation driven through the host, the test shape to copy"
   - npm://@earendil-works/pi-coding-agent@^0.87.1 - `SessionManager.getLeafId()` in `dist/core/session-manager.d.ts`; `navigateTree` in `dist/core/agent-session.d.ts`
   - "[code://packages/agent-pi/src/types.ts#L23-L28](../../../../packages/agent-pi/src/types.ts#L23-L28) - `PiOptions.model`, which nothing reads"
   - npm://@earendil-works/pi-ai@^0.87.1 - `AssistantMessage.stopReason` (`'error'` among its values) and `errorMessage`, in `dist/types.d.ts`
@@ -65,14 +65,19 @@ pi message_end (assistant, stopReason 'error') -> [new] remembered as the turn's
 | An assistant `message_end` with `stopReason: 'error'` becomes `chat/error` and the turn ends as `error` | Softov, 2026-09-26: "an assistant `message_end` with `stopReason: 'error'` becomes `chat/error` and the turn ends as `error`" | 02 |
 | `PiOptions.model`, parsed and never read today, becomes the default model of a new session; a turn's own choice still wins | Softov, 2026-09-26, answering whether the unread `model` option should be wired or removed: "add a task in pi plan 01 that makes it the default model" | 03 |
 | The error is judged on the last assistant message at `agent_settled`, not on each `message_end`, so a turn pi retried and then answered is not failed | the settle rule this backend already keeps, [`code://packages/agent-pi/src/session.ts#L217-L231`](../../../../packages/agent-pi/src/session.ts#L217-L231) | 02 |
+| A refused rewind fails only its turn. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "B4 one failure breaks session" | 04 |
+| The turn after a refused rewind tries the rewind again. | (defaulted: the truncation the client asked for still stands; Softov may choose to run on the untruncated leaf instead) | 04 |
+| pi calls `onHandshake` once it has opened and listed its models, as agent-claude does. | Softov, 2026-09-27, asked how the host should learn pi's models: "I fix it now, as agent-claude" | 05 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn names where it ended](task-01-a-turn-names-where-it-ended.md) | todo | - |
-| [02 - A provider error fails the turn](task-02-a-provider-error-fails-the-turn.md) | todo | - |
-| [03 - The configured model is the default](task-03-the-configured-model-is-the-default.md) | todo | - |
+| [01 - A turn names where it ended](task-01-a-turn-names-where-it-ended.md) | implemented | - |
+| [02 - A provider error fails the turn](task-02-a-provider-error-fails-the-turn.md) | implemented | - |
+| [03 - The configured model is the default](task-03-the-configured-model-is-the-default.md) | implemented | - |
+| [04 - A refused rewind fails that turn and not the session](task-04-a-refused-rewind-fails-only-its-turn.md) | implemented | 01 |
+| [05 - The host learns pi's models once pi has listed them](task-05-the-host-learns-the-models.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -81,8 +86,8 @@ pi message_end (assistant, stopReason 'error') -> [new] remembered as the turn's
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-turn-names-where-it-ended.md](task-01-a-turn-names-where-it-ended.md).
+- **Done so far:** tasks 01 to 05 are `implemented`: `PiBackend.leaf()`, the `ends` map and `endPoint`, a refused rewind failing only its turn, a provider error ending the turn as `error`, the configured `model` as a new session's default, and the handshake that lets the host learn pi's models.
+- **Next action:** none; tasks 01 to 04 were reviewed on 2026-09-27, and task 05 was built in that review and awaits Softov's.
 - **Open questions:** none.
 - **Watch out for:** a turn cancelled by the client ends with `stopReason: 'aborted'`, not `'error'`; it stays `cancelled`.
 

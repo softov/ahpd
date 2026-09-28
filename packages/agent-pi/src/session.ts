@@ -12,33 +12,44 @@
  * - **Truncation** is `navigateTree`: pi's sessions are append-only trees, the
  *   leaf moves, and the abandoned path stops being context. That is exactly
  *   what `chat/truncated` asks for, so `rewindAt` is honest here.
- * - **Confirmation** is not. pi has no built-in permission policy: a tool runs
- *   when the model calls it. So `confirm` has nothing to answer and no tool
- *   call is ever reported `pending-confirmation`.
+ * - **Confirmation** is an inline pi extension's `tool_call` handler: the call
+ *   is opened `pending-confirmation`, a `toolConfirmation` entry is published
+ *   as `session/inputNeeded`, and `confirm` answers it. Which calls are asked
+ *   about is the session's `permissionMode`.
  * - **A fork** is not, yet. pi can branch from an entry, but naming the entry a
  *   *turn* began at means recording it as the turn runs, and this bridge does
  *   not - so `forkPoint` is left out and the host advertises no fork rather
  *   than offering a control that fails.
  */
 
+import { existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
+import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
 import { activityOf, mapEvent } from './mapping.js';
-import { idOf, offered } from './models.js';
+import { idOf } from './models.js';
+import { toPiTool } from './tools.js';
+import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
+import { modeOf, PERMISSION_MODES, permissionModeProperty } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
+/** The space characters pi folds to a plain space before it reads a path. */
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
 /**
- * How pi is opened, so a session can be driven without a model provider.
+ * How pi is opened for a session.
  *
- * Not an option a person sets: it is a parameter with a default, and the
- * default is the real thing. A test hands a backend of its own and gets the
- * whole turn lifecycle without credentials, a network or a session file.
+ * The default opens the embedded pi this package ships; a caller may pass its
+ * own, and then the whole turn lifecycle runs against that backend.
  */
 export type OpenPi = (options: BackendOptions) => Promise<PiBackend>;
 
@@ -52,17 +63,61 @@ const titleFrom = (text: string): string => {
 };
 
 /**
+ * What one assistant message used, in the protocol's spelling.
+ *
+ * The protocol names no field for a cache write, and it is a measurement
+ * rather than a guess, so it rides `_meta` as the other sibling's does. A
+ * number pi did not report is left out rather than sent as zero.
+ */
+function usageOf(message: AssistantMessage | undefined): Bag | undefined {
+  const usage = message?.usage;
+  if (message === undefined || usage === undefined) return undefined;
+  // A call that failed before the provider answered reports every count at
+  // zero, and a zero report is not something the turn used.
+  if (message.stopReason === 'error'
+    && usage.input === 0 && usage.output === 0 && usage.cacheRead === 0 && usage.cacheWrite === 0) {
+    return undefined;
+  }
+  const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+  const wrote = num(usage.cacheWrite);
+  const info: Bag = {
+    ...(num(usage.input) !== undefined ? { inputTokens: num(usage.input) } : {}),
+    ...(num(usage.output) !== undefined ? { outputTokens: num(usage.output) } : {}),
+    ...(num(usage.cacheRead) !== undefined ? { cacheReadTokens: num(usage.cacheRead) } : {}),
+    ...(message.provider !== undefined && message.model !== undefined
+      ? { model: `${message.provider}/${message.model}` }
+      : {}),
+    ...(wrote !== undefined ? { _meta: { cacheWriteTokens: wrote } } : {}),
+  };
+  return Object.keys(info).length > 0 ? info : undefined;
+}
+
+/**
  * One conversation over one embedded pi.
  *
  * pi is opened lazily, on the first turn, so a session somebody made and never
  * used costs no model runtime and reads no project resources.
  */
-export function piSession(options: PiOptions, start: Start, open: OpenPi = openPi): Session {
+export function piSession(
+  options: PiOptions,
+  start: Start,
+  open: OpenPi = openPi,
+): Session {
   const provider = options.provider ?? 'pi';
   const emit = start.emit;
   const where = start.workingDirectory ?? process.cwd();
 
   const settings: Record<string, unknown> = { ...start.settings };
+  /**
+   * The tools this session offers the model, as the host and its clients bound
+   * them.
+   *
+   * Held rather than read from `start` once, because a client's tools arrive
+   * and go while the session runs.
+   */
+  let offering: BoundTool[] = [...(start.tools ?? [])];
+  /** The tools the live or opening backend was built with, by their names. */
+  let built: BoundTool[] = [];
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
   const seeds: Bag[] = [...(start.seedCustomizations ?? [])];
@@ -72,6 +127,8 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
   let live: PiBackend | undefined;
   /** The one opening, shared by every caller, so one pi is built. */
   let opening: Promise<PiBackend> | undefined;
+  /** Whether the tools changed since pi was built, so it is rebuilt next turn. */
+  let stale = false;
   let unsubscribe: (() => void) | undefined;
   let closed = false;
   let cancelled = false;
@@ -80,6 +137,15 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
   let modified = new Date().toISOString();
   /** What a turn failed with, or nothing. Cleared when a turn starts. */
   let failed: string | undefined;
+  /**
+   * The last assistant message of the running turn, or nothing yet.
+   *
+   * How the turn ends is judged from this at the settle rather than from each
+   * `message_end`: pi retries a failed call itself, and a retry that answered
+   * replaces the error, so only the last message counts. What the turn used is
+   * read from the same message.
+   */
+  let answered: AssistantMessage | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
   let draft: Bag | undefined;
@@ -94,6 +160,14 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
    * would be a session whose first turn is missing from its own transcript.
    */
   const watchedTurns: WatchedTurn[] = [];
+  /**
+   * The entry each watched turn ended at, by this host's turn id.
+   *
+   * Where a truncation of that turn has to cut. pi's sessions are append-only
+   * trees, so the leaf at the settle is the last thing the turn left behind,
+   * and nothing is dropped until `navigateTree` moves it there.
+   */
+  const ends = new Map<string, string>();
   /** The catalogue's record, so a transcript can be read back after the turn. */
   let record: WatchedSession | undefined;
   let watched: WatchedTurn | undefined;
@@ -107,15 +181,245 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
     emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
   };
 
+  /**
+   * Calls a client is running for this session, by pi's call id.
+   *
+   * Held for the same reason a queued message is: the thing that settles one
+   * arrives later and from somewhere else, and anything that ends the turn has
+   * to settle it itself or pi waits for ever on a promise nobody owns.
+   */
+  const byClient = new Map<string, { owner: string; settle: (answer: { text: string; ok: boolean }) => void }>();
+
+  /** Every outstanding client call, answered the same way and forgotten. */
+  const releaseCalls = (why: string, whose?: string): void => {
+    for (const [id, held] of [...byClient.entries()]) {
+      if (whose !== undefined && held.owner !== whose) continue;
+      byClient.delete(id);
+      held.settle({ text: why, ok: false });
+    }
+  };
+
+  /** The client that provides a tool, by the name pi calls it. */
+  const clientOf = (toolName: string): string | undefined =>
+    built.find((one) => one.definition.name === toolName)?.owner;
+
+  /** Hand a call to the client that provides the tool, and wait for its answer. */
+  const ranByClient: RunByClient = async (bound, toolCallId) => {
+    const owner = bound.owner ?? '';
+    doing(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
+    return await new Promise((settle) => { byClient.set(toolCallId, { owner, settle }); });
+  };
+
+  /**
+   * Calls waiting on a person, by pi's call id.
+   *
+   * A map because a turn can ask twice at once: the protocol's `inputNeeded`
+   * is a list and `session/inputNeededSet` matches by id.
+   */
+  const pending = new Map<string, {
+    id: string;
+    entry: Bag;
+    settle: (answer: ToolCallEventResult | undefined) => void;
+  }>();
+
+  /** What a declined call answers, which is the reason the model reads. */
+  const DECLINED = 'The person declined this action';
+
+  /**
+   * Cancel every question still waiting, so pi does not wait for ever.
+   *
+   * Each one is said back as an answer nobody gave and taken off the input
+   * list, and its row is moved to `cancelled`, which is what a client watching
+   * the actions sees too.
+   */
+  const releasePending = (why: string): void => {
+    for (const [id, held] of [...pending.entries()]) {
+      pending.delete(id);
+      const part = mapping?.parts.find((one) => one.id === id);
+      if (part !== undefined) bag(part.toolCall).status = 'cancelled';
+      emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
+        toolCallId: id,
+        approved: false,
+        reason: 'denied' as const,
+      });
+      emit('session', { type: 'session/inputNeededRemoved', id });
+      held.settle({ block: true, reason: why });
+    }
+  };
+
+  /** What pi's own tools do to the world, by the name pi calls them. */
+  const PI_EFFECTS: Record<string, ToolEffects> = {
+    read: { reads: true },
+    grep: { reads: true },
+    find: { reads: true },
+    ls: { reads: true },
+    edit: { writes: true },
+    write: { writes: true },
+    bash: { writes: true, destructive: true },
+    powershell: { writes: true, destructive: true },
+  };
+
+  /** What one call does, from pi's own name for it or the tool the host bound. */
+  const effectsOf = (toolName: string): ToolEffects => {
+    // pi's own name wins, so a host tool dropped for shadowing it changes
+    // nothing about the built-in of that name.
+    const owned = PI_EFFECTS[toolName];
+    if (owned !== undefined) return owned;
+    // A tool that declares no effects does not change anything, which is how
+    // cofold's `createTool` reads one.
+    return built.find((one) => one.definition.name === toolName)?.effects ?? {};
+  };
+
+  /** The path a pi tool input names, with `~` expanded and a leading `@` stripped. */
+  const piPath = (value: string): string => {
+    let at = value.replace(UNICODE_SPACES, ' ');
+    if (at.startsWith('@')) at = at.slice(1);
+    if (at === '~') return homedir();
+    if (at.startsWith('~/') || at.startsWith('~\\')) return join(homedir(), at.slice(2));
+    if (/^file:\/\//.test(at)) return fileURLToPath(at);
+    return at;
+  };
+
+  /** A path with symlinks followed, up to its nearest ancestor that exists. */
+  const realPath = (path: string): string => {
+    const rest: string[] = [];
+    let at = path;
+    while (!existsSync(at)) {
+      const parent = dirname(at);
+      if (parent === at) return path;
+      rest.unshift(basename(at));
+      at = parent;
+    }
+    try { return join(realpathSync(at), ...rest); }
+    catch { return path; }
+  };
+
+  /** Whether a path names somewhere under the directory this session works in. */
+  const insideWorkspace = (path: unknown): boolean => {
+    if (typeof path !== 'string' || path === '') return false;
+    const named = piPath(path);
+    const at = realPath(isAbsolute(named) ? named : resolve(where, named));
+    const rel = relative(realPath(where), at);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  };
+
+  /** The path a read names: its own `path`, or the `cwd` it works from. */
+  const readTarget = (input: Bag): unknown =>
+    (typeof input.path === 'string' ? input.path : input.cwd);
+
+  /**
+   * What to do about one call: run it, ask a person, or refuse it.
+   *
+   * The modes are the siblings' six - decision
+   * `permission-modes-live-in-the-harness`.
+   */
+  const decide = (toolName: string, input: Bag): ToolCallEventResult | 'ask' | undefined => {
+    const effects = effectsOf(toolName);
+    /** Whether the modes that ask before a change ask about this call. */
+    const asks = (): boolean => {
+      if (effects.writes === true || effects.destructive === true || effects.network === true) return true;
+      // A read outside the workspace asks, as cofold's does; one that names
+      // nothing reads where the session works.
+      if (effects.reads === true) {
+        const target = readTarget(input);
+        if (target !== undefined && !insideWorkspace(target)) return true;
+      }
+      return false;
+    };
+    const onEffects = (): ToolCallEventResult | 'ask' | undefined => (asks() ? 'ask' : undefined);
+    switch (modeOf(settings.permissionMode)) {
+      case 'bypassPermissions':
+        return undefined;
+      case 'plan':
+        return effects.writes === true || effects.destructive === true
+          ? { block: true, reason: `${toolName} would change something and the mode is plan` }
+          : onEffects();
+      case 'auto':
+        return effects.destructive === true ? 'ask' : undefined;
+      case 'acceptEdits':
+        // An edit is a write that does not destroy, and only one that names a
+        // path inside the working directory is let through.
+        return effects.writes === true && effects.destructive !== true && insideWorkspace(input.path)
+          ? undefined
+          : onEffects();
+      case 'dontAsk':
+        return asks()
+          ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
+          : undefined;
+      default:
+        return onEffects();
+    }
+  };
+
   /*
    * One state, not a set of bits.
    *
-   * A running turn is what the session is doing, whatever it failed with
-   * last; `InputNeeded` is never reached, because pi asks nobody anything.
+   * A call waiting on a person is what the session is doing, ahead of the
+   * turn that is running behind it; a running turn is next, whatever it
+   * failed with last.
    */
-  const status = (): number => (active !== undefined ? Status.InProgress
-    : failed !== undefined ? Status.Error
-      : Status.Idle);
+  const status = (): number => (pending.size > 0 ? Status.InputNeeded
+    : active !== undefined ? Status.InProgress
+      : failed !== undefined ? Status.Error
+        : Status.Idle);
+
+  /**
+   * Decide a call and ready its row, asking a person when the policy says to.
+   *
+   * pi opens the row at `tool_execution_start` and calls this before it runs
+   * the tool, so the row is moved rather than opened again. Answers nothing to
+   * run the call, or a block to refuse it.
+   */
+  const askBefore = async (event: ToolCallEvent): Promise<ToolCallEventResult | undefined> => {
+    const id = event.toolCallId;
+    const input = bag(event.input);
+    const displayName = event.toolName;
+    const turnId = active === undefined ? '' : String(active.id);
+    const part = mapping?.parts.find((one) => one.id === id);
+    const row = part === undefined ? undefined : bag(part.toolCall);
+    const owner = mapping?.ownerOf?.(event.toolName);
+    const contributor = owner === undefined
+      ? {}
+      : { contributor: { kind: 'client' as const, clientId: owner } };
+    /** Move the row and say where it stands, once. */
+    const ready = (extra: Bag): void => {
+      if (row !== undefined) {
+        row.status = extra.confirmed === 'not-needed' ? 'running' : 'pending-confirmation';
+        row.invocationMessage = displayName;
+        row.toolInput = JSON.stringify(input);
+        if (extra.confirmationTitle !== undefined) row.confirmationTitle = extra.confirmationTitle;
+        if (extra.confirmed !== undefined) row.confirmed = extra.confirmed;
+        else delete row.confirmed;
+      }
+      emit('chat', {
+        type: 'chat/toolCallReady',
+        turnId,
+        toolCallId: id,
+        invocationMessage: displayName,
+        toolInput: JSON.stringify(input),
+        ...contributor,
+        ...extra,
+      });
+    };
+
+    const decided = decide(event.toolName, input);
+    if (decided === 'ask') {
+      const title = `Run ${displayName}?`;
+      return await new Promise<ToolCallEventResult | undefined>((settle) => {
+        ready({ confirmationTitle: title });
+        const toolCall = row ?? { toolCallId: id, toolName: event.toolName, displayName };
+        const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
+        pending.set(id, { id, entry, settle });
+        emit('session', { type: 'session/inputNeededSet', request: entry });
+        doing(`Waiting on you: ${displayName}`);
+        touch();
+      });
+    }
+    ready({ confirmed: 'not-needed' });
+    return decided;
+  };
 
   const schemaOf = (): Bag => ({
     type: 'object',
@@ -130,6 +434,7 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
         // taken after that would say something the session is not doing.
         sessionMutable: false,
       },
+      permissionMode: permissionModeProperty(),
     },
   });
 
@@ -174,7 +479,6 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
     mapping = undefined;
     cancelled = false;
     touch();
-    emit('session', { type: 'session/statusChanged', status: status() });
     startNext();
   };
 
@@ -182,6 +486,10 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
   const heard = (event: AgentSessionEvent): void => {
     const said = activityOf(event);
     if (said !== false) doing(said);
+
+    // Each new answer replaces the last, so a retried error is forgotten the
+    // moment the retry answers.
+    if (event.type === 'message_end' && event.message.role === 'assistant') answered = event.message;
 
     if (mapping !== undefined) {
       for (const action of mapEvent(mapping, event)) emit('chat', action);
@@ -226,7 +534,23 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
 
       /** Nothing more is coming. This is where a turn actually ends. */
       case 'agent_settled': {
-        finish(cancelled ? 'cancelled' : 'complete');
+        // Recorded before `finish` seals the turn, so a truncation asked for
+        // the moment the turn appears already has the point it cuts to.
+        if (active !== undefined && live !== undefined) {
+          const at = live.leaf();
+          if (at !== undefined) ends.set(String(active.id), at);
+        }
+        // Before the ending action: a client hangs usage on the turn it is
+        // ending, and the ending is what moves that turn into the history.
+        const used = usageOf(answered);
+        if (used !== undefined && active !== undefined) {
+          active.usage = used;
+          if (watched !== undefined) watched.usage = used;
+          emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: used });
+        }
+        if (cancelled) finish('cancelled');
+        else if (answered?.stopReason === 'error') finish('error', answered.errorMessage);
+        else finish('complete');
         return;
       }
 
@@ -235,53 +559,159 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
     }
   };
 
+  /**
+   * Build pi for this session, over the tools currently on offer.
+   *
+   * `first` distinguishes the session's own opening from a rebuild after the
+   * tools changed: only the first applies the configured model and a
+   * truncation, because a rebuilt session continues one and keeps what it
+   * already chose.
+   */
+  const build = async (resume: string | undefined, first: boolean): Promise<PiBackend> => {
+    const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
+    const tools = offering.flatMap((one) => {
+      const tool = toPiTool(one, ranByClient);
+      return tool === undefined ? [] : [tool];
+    });
+    // What this backend is built with, so a turn it runs judges owner and
+    // effects against the list pi was handed and not one a client changed
+    // while the turn ran.
+    built = [...offering];
+    // An empty entry is not an instruction, and pi would put a blank paragraph
+    // in the system prompt for one.
+    const instructions = (start.instructions ?? []).filter((one) => one.trim() !== '');
+    const backend = await open({
+      cwd: where,
+      ...(resume !== undefined ? { resume } : {}),
+      ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
+      ...(tools.length > 0 ? { tools } : {}),
+      ...(instructions.length > 0 ? { instructions } : {}),
+      // The inline extension pi loads is this host's, and this is the handler
+      // it calls before a tool runs.
+      onToolCall: askBefore,
+      trustProject: trust !== 'deny',
+    });
+    live = backend;
+    unsubscribe = backend.subscribe(heard);
+    record = watch(provider, {
+      id: backend.id,
+      title,
+      // A rebuild continues the same conversation, so its creation time stays
+      // the one already recorded rather than the moment pi was replaced.
+      createdAt: record?.createdAt ?? modified,
+      modifiedAt: modified,
+      directory: where,
+      turns: watchedTurns,
+    });
+    // The model list is held for `Session.models()`, which the host reads for
+    // a client; pi only knows it once its runtime exists.
+    const available = await backend.models();
+    models = available.map((model) => ({ id: idOf(model), name: model.name ?? model.id }));
+    if (first) {
+      /*
+       * The model the configuration names, when nobody has chosen one.
+       *
+       * A resumed or forked session keeps the model its own file recorded,
+       * and pi's own current model when the option is left out. A turn's own
+       * choice arrives in `begin` after this and still wins.
+       */
+      if (options.model !== undefined && start.resume === undefined && start.forkAt === undefined) {
+        await backend.choose(options.model);
+      }
+      // `rewindAt` is the host asking for a truncation on a resumed session.
+      if (start.rewindAt !== undefined) {
+        /*
+         * pi can refuse the move - an extension's `session_before_tree`
+         * handler cancels it - and the session would then run on the leaf it
+         * was resumed at. Failing the turn says that rather than answering
+         * from a conversation the person asked to be rid of.
+         */
+        const moved = await backend.rewind(start.rewindAt);
+        if (!moved) throw new Error('pi refused to move the leaf back to the truncation point');
+      }
+      // The host learns this agent's models from here; a rebuild lists the
+      // same ones, so only the first open says so.
+      start.onHandshake?.();
+    }
+    return backend;
+  };
+
   /** Open pi, once, however many callers arrive at the same moment. */
   const opened = async (): Promise<PiBackend> => {
-    if (opening === undefined) {
-      opening = (async () => {
-        const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
-        const backend = await open({
-          cwd: where,
-          ...(start.resume !== undefined ? { resume: start.resume } : {}),
-          ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
-          trustProject: trust !== 'deny',
-        });
-        live = backend;
-        unsubscribe = backend.subscribe(heard);
-        record = watch(provider, {
-          id: backend.id,
-          title,
-          createdAt: modified,
-          modifiedAt: modified,
-          directory: where,
-          turns: watchedTurns,
-        });
-        // The model list is a client's to draw and pi only knows it once its
-        // runtime exists, so it is read here and announced rather than waited
-        // for on a screen that has already drawn an empty picker.
-        const available = await backend.models();
-        models = available.map((model) => ({ id: idOf(model), name: model.name ?? model.id }));
-        emit('session', {
-          type: 'session/modelsChanged',
-          models: available.map((model) => offered(model, backend.levels(model))),
-        });
-        // `rewindAt` is the host asking for a truncation on a resumed session.
-        if (start.rewindAt !== undefined) await backend.rewind(start.rewindAt);
-        return backend;
-      })();
+    if (opening !== undefined) return opening;
+    const started = build(start.resume, true);
+    opening = started;
+    try {
+      return await started;
     }
-    return opening;
+    catch (error: unknown) {
+      /*
+       * A first open that failed leaves nothing live, so the next turn opens
+       * pi again rather than reusing the rejection. A refused rewind is this
+       * case: the truncation the client asked for is tried again.
+       */
+      if (opening === started) opening = undefined;
+      const abandoned: unknown = live;
+      if (abandoned !== undefined) (abandoned as PiBackend).close();
+      live = undefined;
+      throw error;
+    }
+  };
+
+  /**
+   * Replace pi with one built over the tools now on offer.
+   *
+   * pi fixes its custom tools when the session is built, so a tool a client
+   * announced after it opened reaches the model only through a new session on
+   * the same file. The subscription, the record and the model list move to the
+   * new backend before the turn runs, and it continues on the model and
+   * thinking level the conversation was on.
+   */
+  const reopen = async (previous: PiBackend): Promise<PiBackend> => {
+    const id = previous.id;
+    // Read before closing: the new session has its own model until told.
+    const carrying = previous.chosen();
+    unsubscribe?.();
+    unsubscribe = undefined;
+    previous.close();
+    live = undefined;
+    stale = false;
+    const rebuilt = build(id, false);
+    opening = rebuilt;
+    try {
+      const backend = await rebuilt;
+      if (carrying !== undefined) await backend.choose(carrying.id, carrying.config);
+      return backend;
+    }
+    catch (error: unknown) {
+      // Nothing is live after a failed rebuild, so the next turn opens again.
+      const abandoned: unknown = live;
+      if (abandoned !== undefined && abandoned !== previous) (abandoned as PiBackend).close();
+      live = undefined;
+      if (opening === rebuilt) opening = undefined;
+      throw error;
+    }
   };
 
   /** Start a turn, once there is nothing else running. */
   const begin = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
     failed = undefined;
     cancelled = false;
+    answered = undefined;
     const startedAt = new Date().toISOString();
+    /*
+     * The model this turn runs on, so a client that reopens the chat can show
+     * the one it used. A turn's own choice wins, then the model the session is
+     * already on, then the one the configuration names.
+     */
+    const ran = model?.id ?? live?.chosen()?.id ?? options.model;
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : { origin: { kind: 'user' } }),
       ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+      ...(ran !== undefined
+        ? { model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } }
+        : {}),
     };
     const part: Bag = { id: `${turnId}:text`, kind: 'markdown', content: '' };
     active = {
@@ -291,7 +721,13 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
       responseParts: [part],
       state: 'running',
     };
-    mapping = { turnId, textPartId: String(part.id), parts: active.responseParts as Bag[], calls: new Map() };
+    mapping = {
+      turnId,
+      textPartId: String(part.id),
+      parts: active.responseParts as Bag[],
+      calls: new Map(),
+      ownerOf: clientOf,
+    };
     watched = { turnId, startedAt, message, parts: active.responseParts as Bag[], state: 'complete' };
     watchedTurns.push(watched);
 
@@ -309,13 +745,15 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
     emit('chat', { type: 'chat/responsePart', turnId, part });
-    emit('session', { type: 'session/statusChanged', status: status() });
     doing('Thinking');
     touch();
 
     void (async () => {
       try {
-        const backend = await opened();
+        let backend = await opened();
+        // pi fixes its custom tools when it is built, so a change made since
+        // means a rebuilt pi on the same file before this turn runs.
+        if (stale) backend = await reopen(backend);
         if (model !== undefined) await backend.choose(model.id, model.config);
         await backend.prompt(text);
         /*
@@ -408,6 +846,7 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
 
     models: () => models,
     agentId: () => live?.id,
+    endPoint: (turnId) => ends.get(turnId),
     customizations: () => [...seeds],
     allTurns: () => turns,
 
@@ -426,7 +865,6 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
     workingDirectories: () => [`file://${where}`],
 
     sessionState: () => ({
-      resource: start.uri,
       provider,
       title,
       status: status(),
@@ -517,6 +955,11 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
       if (active === undefined || String(bag(active).id) !== turnId) return;
       cancelled = true;
       doing('Stopping');
+      // What a client was running for this turn is not coming back, so pi is
+      // told the calls failed rather than left waiting on a stopped turn.
+      releaseCalls('The turn was stopped');
+      // A question nobody can answer any more is answered the same way.
+      releasePending('The turn was stopped');
       // The turn is closed on pi's settle rather than here, so what it had
       // already said stays in the transcript.
       void live?.abort().catch(() => { finish('cancelled'); });
@@ -555,18 +998,100 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
     },
 
     /*
-     * Nothing to answer. pi has no built-in permission policy - a tool runs
-     * when the model calls it - so no call of this backend's is ever reported
-     * waiting on a person, and nothing here is ever the answer to one.
+     * A person's answer to a call that was shown `pending-confirmation`.
+     *
+     * Found by id rather than assumed to be the only one: two calls can wait
+     * at once, and answering one must not answer the other.
      */
-    confirm: () => {},
+    confirm: (toolCallId, approved) => {
+      const held = pending.get(toolCallId);
+      if (held === undefined) return;
+      pending.delete(toolCallId);
+      emit('session', { type: 'session/inputNeededRemoved', id: held.id });
+      const toolCall = bag(held.entry.toolCall);
+      const part = mapping?.parts.find((one) => one.id === toolCallId);
+      if (part !== undefined) {
+        const row = bag(part.toolCall);
+        row.status = approved ? 'running' : 'cancelled';
+        if (approved) row.confirmed = 'user-action';
+      }
+      emit('chat', {
+        type: 'chat/toolCallConfirmed',
+        turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
+        toolCallId,
+        approved,
+        ...(approved ? { confirmed: 'user-action' as const } : { reason: 'denied' as const }),
+      });
+      // Said back like every other action a client originates. Nothing in a
+      // client applies its own dispatch, so a row approved here would stay
+      // pending on every screen watching it, including the answering one.
+      if (approved) doing(`Running ${String(toolCall.displayName ?? '')}`);
+      else doing('Thinking');
+      held.settle(approved ? undefined : { block: true, reason: DECLINED });
+      touch();
+    },
     answer: () => {},
 
-    setConfig: async (key, value) => {
-      if (key !== 'projectTrust') return `pi sessions have no "${key}" setting`;
-      if (value !== 'trust' && value !== 'deny') return 'projectTrust is "trust" or "deny"';
-      settings[key] = value;
+    toolCallOwner: (toolCallId) => byClient.get(toolCallId)?.owner,
+
+    /*
+     * What a client says its own tool did.
+     *
+     * Only from the client the call was reported against: the protocol makes
+     * that one responsible for the call, and a result from anybody else is a
+     * client answering for work it did not do. Nothing is emitted here: pi's
+     * own `tool_execution_end` reports the completion through the path every
+     * other call takes, and a completion announced here as well would be the
+     * same row finished twice.
+     */
+    completeToolCall: (toolCallId, clientId, result) => {
+      const held = byClient.get(toolCallId);
+      if (held === undefined || held.owner !== clientId) return false;
+      byClient.delete(toolCallId);
+      held.settle(result);
       return true;
+    },
+
+    clientGone: (clientId) => {
+      // A call whose client has gone is a turn waiting on a promise nothing
+      // will settle. The agent is told it failed, which is true.
+      releaseCalls('The client that provides this tool is no longer here', clientId);
+    },
+
+    /**
+     * The tools on offer, replaced whole.
+     *
+     * Held and used for the next build. Before pi has opened it is simply what
+     * `opened` will offer; once pi is open the session is rebuilt on the same
+     * file before the next turn, because pi fixes its custom tools when the
+     * session is built.
+     */
+    setTools: async (next) => {
+      const key = (list: BoundTool[]): string => list
+        .map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`)
+        .join('\n');
+      if (key(offering) === key(next)) return true;
+      offering = [...next];
+      // A backend already built or being built holds the old list; the next
+      // turn rebuilds it. Nothing built yet just takes the new list.
+      if (opening !== undefined || live !== undefined) stale = true;
+      return true;
+    },
+
+    setConfig: async (key, value) => {
+      if (key === 'projectTrust') {
+        if (value !== 'trust' && value !== 'deny') return 'projectTrust is "trust" or "deny"';
+        settings[key] = value;
+        return true;
+      }
+      if (key === 'permissionMode') {
+        if (typeof value !== 'string' || !(PERMISSION_MODES as readonly string[]).includes(value)) {
+          return `permissionMode is one of ${PERMISSION_MODES.join(', ')}`;
+        }
+        settings[key] = value;
+        return true;
+      }
+      return `pi sessions have no "${key}" setting`;
     },
     settings: () => ({ ...settings }),
 
@@ -582,6 +1107,8 @@ export function piSession(options: PiOptions, start: Start, open: OpenPi = openP
 
     close: () => {
       closed = true;
+      releaseCalls('The turn was stopped');
+      releasePending('The turn was stopped');
       unsubscribe?.();
       unsubscribe = undefined;
       live?.close();

@@ -1,6 +1,6 @@
 ---
 title: A call can wait on a person
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -38,3 +38,13 @@ When a policy says a call needs asking, pi waits in its `tool_call` hook while t
 - `pnpm test`, `pnpm typecheck`, `pnpm wire` green.
 
 ## Resume
+
+Built.
+`BackendOptions.onToolCall` is passed to `openPi`, which loads a hidden inline extension whose `tool_call` handler calls it; the extension is this host's, so it is passed whatever the project trust says.
+`session.ts` has `pending` by pi's call id, `releasePending`, a `decide` that runs, asks or refuses a call (a policy handed in replaces it), and `askBefore`, which opens the call `pending-confirmation`, emits `session/inputNeededSet` and `session/statusChanged`, sets `Waiting on you: <tool>` and awaits.
+`confirm` finds the call by id, removes the entry, emits `chat/toolCallConfirmed`, and settles `undefined` on approval or `{ block: true, reason: 'The person declined this action' }` on a decline.
+`status` is `InputNeeded` while anything is pending, and `cancel` and `close` release what waits as declined.
+`mapping.ts` gives a call opened by the ask no second `chat/toolCallReady` when pi's own execution starts.
+
+- `test/agent-pi.test.ts` drives the hook directly with a policy forced to yes: approve, decline, two calls answered independently, release on cancel, no second ready, and the extension present under `projectTrust: deny`.
+- `pnpm test` 102 files, 1376 tests; `pnpm typecheck` and `pnpm boundary` green.

@@ -1,6 +1,6 @@
 ---
 title: A mode says which calls ask
-status: todo
+status: implemented
 depends: [task-01-a-call-can-wait-on-a-person.md]
 layer: "agent-pi"
 refs:
@@ -35,3 +35,13 @@ A pi session advertises `permissionMode`, the same six values Claude and cofold 
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+Built.
+`PERMISSION_MODES`, the labels, the descriptions and `modeOf` live in `types.ts`, and `agent.ts` advertises `permissionMode` with them and defaults it to `default`.
+`session.ts` decides from the mode: `default` asks on a write, the network or destruction; `acceptEdits` lets a non-destructive write whose `path` resolves under the working directory through; `plan` refuses a write or destruction; `auto` asks only about a destructive tool; `bypassPermissions` runs everything; `dontAsk` refuses what `default` would ask about.
+Effects come from the bound tool's `effects`, or from pi's own tools by name, and a tool this session was not told about is treated as one that writes.
+A refusal is `{ block: true, reason }` naming the mode, and nobody is asked.
+`setConfig` takes a mode and refuses a value that is not one of the six, and `schemaOf` publishes the same control for a session with no host schema.
+
+- `test/agent-pi.test.ts` covers every mode against `edit` inside and outside the directory, `bash`, `read`, and host tools with `destructive`, `writes` and no effects; a refusal naming the mode; the advertised schema and default; and `setConfig` taking a mode.
+- `pnpm test` 102 files, 1380 tests; `pnpm typecheck` and `pnpm boundary` green.
