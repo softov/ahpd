@@ -26,8 +26,14 @@ The daemon bundles no agent. Every backend it serves is a plugin's,
 has nothing to run and says so:
 
 ```
-No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in the configuration - "@ahpd/agent-claude" is Claude Code.
+No backend is loaded, so this host could serve nothing. Run ahpd plugin install @ahpd/agent-claude to install Claude Code and add it to "plugins" in /home/me/.config/ahpd/config.json, or run npm i in /home/me/.config/ahpd and add the package to "plugins" yourself.
 ```
+
+A daemon started with `--config-file` names that file, and the command carries
+the same `--config-file` so the plugin is added where that daemon reads it.
+
+A configuration written for 0.6 names no plugin, because 0.6 had Claude built
+in. After upgrading from it, run `ahpd plugin install @ahpd/agent-claude` once.
 
 Installing one is one command, because a bare name is resolved from the
 configuration directory and nowhere else:

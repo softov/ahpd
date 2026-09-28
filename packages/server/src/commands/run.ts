@@ -398,10 +398,12 @@ export async function runForeground(options: Options): Promise<void> {
    *
    * `createHost` refuses this too, but its sentence is written for an embedder
    * holding a `HostOptions`, and the person reading this log wrote a
-   * configuration file instead.
+   * configuration file instead. The command carries `--config-file` when this
+   * run was given one, so it names the plugin in the file this daemon reads.
    */
   if (folded.agents.length === 0) {
-    stamp(`No backend is loaded, so this host could serve nothing. Add an agent plugin to "plugins" in ${options.configFile ?? configPath()} - "@ahpd/agent-claude" is Claude Code, installed with npm i in ${configDir()}.`);
+    const install = `ahpd plugin install @ahpd/agent-claude${options.configFile === undefined ? '' : ` --config-file ${options.configFile}`}`;
+    stamp(`No backend is loaded, so this host could serve nothing. Run ${install} to install Claude Code and add it to "plugins" in ${options.configFile ?? configPath()}, or run npm i in ${configDir()} and add the package to "plugins" yourself.`);
     process.exit(1);
   }
 

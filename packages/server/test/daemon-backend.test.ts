@@ -27,14 +27,17 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
  *
  * Everything it says is on stderr here, because stdout is the protocol in
  * `--stdio` mode and a line written there would be a frame nobody sent.
+ * `named` is whether the file is handed over with `--config-file`; without it
+ * the file is the one under the configuration directory, which is `home`'s.
  */
-const run = async (config: Record<string, unknown>): Promise<{ code: number | null; said: string; path: string }> => {
-  const path = join(home, 'config.json');
+const run = async (config: Record<string, unknown>, named = true): Promise<{ code: number | null; said: string; path: string }> => {
+  const path = named ? join(home, 'config.json') : join(home, 'ahpd', 'config.json');
+  if (!named) mkdirSync(join(home, 'ahpd'));
   writeFileSync(path, JSON.stringify({ paths: [], withoutConnectionToken: true, sessions: 'memory', automations: 'memory', ...config }));
   const child = spawn(
     process.execPath,
-    ['--conditions', 'development', '--import', './scripts/dev.mjs', 'packages/server/src/main.ts', '--stdio', '--config-file', path],
-    { cwd: REPO, env: { ...process.env, CI: '1' }, stdio: ['pipe', 'pipe', 'pipe'] },
+    ['--conditions', 'development', '--import', './scripts/dev.mjs', 'packages/server/src/main.ts', '--stdio', ...(named ? ['--config-file', path] : [])],
+    { cwd: REPO, env: { ...process.env, CI: '1', XDG_CONFIG_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] },
   );
   // The peer's end of the pipe, closed at once: a host on stdio serves until
   // the client goes away, and this one has nothing to say to it. Without this
@@ -64,6 +67,26 @@ it('refuses to start when nothing contributed a backend, and names the fix', asy
   expect(said).toContain('"plugins"');
   expect(said).toContain(path);
   expect(said).toContain('@ahpd/agent-claude');
+});
+
+it('names the command that installs Claude Code, and npm i as the other way', async () => {
+  const { code, said, path } = await run({}, false);
+  expect(code).toBe(1);
+  // The file read is the default one, so the command needs no flag to edit it.
+  expect(said).toContain('ahpd plugin install @ahpd/agent-claude ');
+  expect(said).not.toContain('--config-file');
+  expect(said).toContain('"plugins"');
+  expect(said).toContain(path);
+  expect(said).toContain(`npm i in ${join(home, 'ahpd')}`);
+});
+
+it('names the command with the file the daemon was started with', async () => {
+  const { code, said, path } = await run({});
+  expect(code).toBe(1);
+  // Without the flag the command would name the plugin in a file this daemon
+  // does not read.
+  expect(said).toContain(`ahpd plugin install @ahpd/agent-claude --config-file ${path}`);
+  expect(said).toContain('npm i in');
 });
 
 it('starts when a plugin brought one', async () => {
