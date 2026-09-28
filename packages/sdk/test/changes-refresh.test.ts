@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync, type FSWatcher } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -121,28 +121,45 @@ const open = async (dir: string, changes: ChangesetSource, agent: Agent = echo({
 };
 
 /** A source that wraps the real one and counts what the host asks of it. */
-const counting = (): {
-  calls: { refresh: number; watched: (() => void) | undefined; stopped: number; watches: number };
-  source: ChangesetSource;
-} => {
+interface Calls {
+  /** Re-reads begun. */
+  refresh: number;
+  /** Re-reads that have answered. */
+  finished: number;
+  watched: (() => void) | undefined;
+  stopped: number;
+  watches: number;
+}
+
+/**
+ * The git source with its watch replaced by one the test fires, counting what
+ * the host asks of it. `ready`, when given, is what the watch says it is armed
+ * on; without it the watch says nothing, as a source that cannot tell.
+ */
+const counting = (ready?: Promise<void>): { calls: Calls; source: ChangesetSource } => {
   const base = gitChanges();
-  const calls: { refresh: number; watched: (() => void) | undefined; stopped: number; watches: number } =
-    { refresh: 0, watched: undefined, stopped: 0, watches: 0 };
+  const calls: Calls = { refresh: 0, finished: 0, watched: undefined, stopped: 0, watches: 0 };
   return {
     calls,
     source: {
       ...base,
       refresh: async (dir) => {
         calls.refresh += 1;
-        return await base.refresh?.(dir) ?? false;
+        try {
+          return await base.refresh?.(dir) ?? false;
+        }
+        finally {
+          calls.finished += 1;
+        }
       },
       watch: (_dir, onChange) => {
         calls.watches += 1;
         calls.watched = onChange;
-        return () => {
+        const stop = (): void => {
           calls.stopped += 1;
           calls.watched = undefined;
         };
+        return ready === undefined ? stop : Object.assign(stop, { ready });
       },
     },
   };
@@ -267,11 +284,13 @@ it('coalesces a burst of triggers into at most two re-reads', async () => {
   const { calls, source } = counting();
   const { client } = await open(dir, source);
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
-  await settle(8);
+  // Counted from a host with its watch open and no re-read running.
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
   calls.refresh = 0;
+  calls.finished = 0;
 
   for (let i = 0; i < 20; i++) calls.watched?.();
-  await settle(20);
+  await waitFor(() => calls.finished >= 2 && calls.finished === calls.refresh);
   expect(calls.refresh).toBeGreaterThan(1);
   expect(calls.refresh).toBeLessThanOrEqual(2);
 });
@@ -368,13 +387,38 @@ it('closes a failing watcher, drops its pending re-read and leaves the process a
   }
 });
 
+it('reads the directory again once its watch says it is armed, and not before', async () => {
+  const dir = repository();
+  let arm: () => void = () => {};
+  const ready = new Promise<void>((resolve) => { arm = resolve; });
+  const { calls, source } = counting(ready);
+  const { client } = await open(dir, source);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+
+  const before = calls.refresh;
+  arm();
+  await waitFor(() => calls.finished === before + 1);
+  expect(calls.refresh).toBe(before + 1);
+});
+
+it('sees a commit made right after the first read, before the watch is armed', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'staged.txt'), 'staged\n');
+  git(dir, 'add', 'staged.txt');
+  const { client, peer: p } = await open(dir, gitChanges());
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+
+  git(dir, 'commit', '-q', '-m', 'x');
+  await waitFor(() => channelActions(p, CHANGESET).some((one) => one.type === 'changeset/cleared'));
+});
+
 it('moves the changeset when a branch moves with no index or HEAD write', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'staged.txt'), 'staged\n');
   git(dir, 'add', 'staged.txt');
   const { client, peer: p } = await open(dir, gitChanges());
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
-  await settle(10);
 
   const seen = (): Record<string, unknown>[] => channelActions(p, CHANGESET);
   git(dir, 'commit', '-q', '-m', 'x');
@@ -391,6 +435,61 @@ it('moves the changeset when a branch moves with no index or HEAD write', async 
   const beforeCommit = seen().length;
   git(dir, 'commit', '--allow-empty', '-q', '-m', 'y');
   await waitFor(() => seen().slice(beforeCommit).some((one) => one.type === 'changeset/cleared'));
+});
+
+it('ends quietly a re-read whose directory is removed while it runs', async () => {
+  const dir = repository();
+  /** Held by the test, so the directory can go while a re-read is in `refresh`. */
+  let release: (moved: boolean) => void = () => {};
+  let gated = false;
+  let threw = false;
+  const { calls, source } = counting();
+  const changes: ChangesetSource = {
+    ...source,
+    refresh: async (at) => {
+      if (!gated) return await source.refresh?.(at) ?? false;
+      return await new Promise<boolean>((resolve) => { release = resolve; });
+    },
+  };
+  // Facts that fail for a directory that is gone, as a port reading git would.
+  const directories = {
+    meta: (at: string) => {
+      if (!existsSync(at)) {
+        threw = true;
+        throw new Error(`${at} is gone`);
+      }
+      return {};
+    },
+    refresh: async () => false,
+  };
+  const rejected: unknown[] = [];
+  const onRejected = (reason: unknown): void => { rejected.push(reason); };
+  process.on('unhandledRejection', onRejected);
+  try {
+    const host = createHost({ path: dir, agents: [echo({ path: dir })], resources: fileResources(), changes, directories });
+    const client = host.accept(peer());
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+    await client.handle({ method: 'subscribe', params: { channel: URI } });
+    await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+    await waitFor(() => calls.watches === 1);
+
+    gated = true;
+    calls.watched?.();
+    rmSync(dir, { recursive: true, force: true });
+    release(true);
+    await waitFor(() => threw);
+    // Node reports an unhandled rejection once the microtasks after it have run.
+    await new Promise((resolve) => { setImmediate(resolve); });
+    await new Promise((resolve) => { setImmediate(resolve); });
+    expect(rejected).toEqual([]);
+  }
+  finally {
+    process.off('unhandledRejection', onRejected);
+  }
 });
 
 it('watches the directory holding the checked-out branch ref', async () => {

@@ -239,6 +239,16 @@ export interface ChangesetOperationResult {
 }
 
 /**
+ * What `ChangesetSource.watch` returns: a call that stops the watch.
+ *
+ * `ready` resolves once the source's watchers are armed, or once it has given
+ * up arming them. A change made before then reaches no watcher, so the host
+ * reads the directory again when it resolves. A source without `ready` is
+ * taken as armed from the start.
+ */
+export type ChangesetWatch = (() => void) & { ready?: Promise<void> };
+
+/**
  * Where a host's file changes come from.
  *
  * A port, like the filesystem and the shell, and for the sharpest version of
@@ -281,7 +291,7 @@ export interface ChangesetSource {
    * returned function stops the watch. `undefined` is a source that cannot
    * watch, which is most of them; the host then has only its other triggers.
    */
-  watch?(dir: string, onChange: () => void): (() => void) | undefined;
+  watch?(dir: string, onChange: () => void): ChangesetWatch | undefined;
   /**
    * Mark files reviewed, or clear them.
    *

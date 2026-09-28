@@ -2820,11 +2820,22 @@ export function createHost(options: HostOptions): Host {
         catch {
           moved = false;
         }
+        /*
+         * What moved, said to each session there. A directory removed while
+         * this ran fails the reads that describe it, and every caller starts
+         * this without waiting, so a failure ends the re-read here instead of
+         * leaving a rejection nobody handles.
+         */
         if (moved) {
-          for (const uri of inThere(dir)) {
-            dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
-            summaryMoved(uri);
-            await contentMoved(uri);
+          try {
+            for (const uri of inThere(dir)) {
+              dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
+              summaryMoved(uri);
+              await contentMoved(uri);
+            }
+          }
+          catch {
+            return;
           }
         }
         if (!waiting.has(dir)) return;
@@ -2852,7 +2863,16 @@ export function createHost(options: HostOptions): Host {
       }
       void refreshWatched(dir);
     });
-    if (stop !== undefined) dirWatchers.set(dir, stop);
+    if (stop === undefined) return;
+    dirWatchers.set(dir, stop);
+    /*
+     * A change made while the source was arming its watch reached no watcher,
+     * so the directory is read again once it says it is armed - unless this
+     * watch was stopped by then.
+     */
+    void stop.ready?.then(() => {
+      if (dirWatchers.get(dir) === stop) void refreshWatched(dir);
+    }, () => {});
   };
   /** The watch on a directory, closed once no subscribed changeset is there. */
   const stopUnwatched = (dir: string): void => {

@@ -123,6 +123,7 @@ interface ChangesetSource {
   summary(dir): ChangesSummary | undefined;
   read?(uri): Promise<{ data: string; encoding: string } | undefined>;
   refresh?(dir): Promise<boolean>;
+  watch?(dir, onChange): ChangesetWatch | undefined;
   review?(dir, session, scope, files, reviewed): boolean;
   observe?(dir, session, turnId, path, phase): void;
   operations?(dir, session, scope): ChangesetOperation[];
@@ -133,6 +134,12 @@ interface ChangesetSource {
 `read` is the part worth noticing: a changeset needs both sides of an edit, and
 what a file *used to be* is not a file on disk. `gitChanges()` serves the
 before-side out of `git show HEAD:` behind a URI it resolves itself.
+
+`watch` returns the call that stops it, and that call may carry `ready`, a
+promise that resolves once the source's watchers are armed. A change made
+before then reaches no watcher, so the host reads the directory again when
+`ready` resolves. `gitChanges()` resolves it after its last watcher opens, or
+when it gives up.
 
 ### `directories`
 

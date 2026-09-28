@@ -4,6 +4,14 @@ import { execFile } from 'node:child_process';
 import type { DirectoryFacts } from './types/host.js';
 
 /**
+ * The environment every `git` here runs with: the inherited one, with
+ * `GIT_OPTIONAL_LOCKS=0`, git's switch for a background process. A `git
+ * status` then refreshes no index, so it never holds `.git/index.lock` while a
+ * person's own `git add` needs it. A lock git cannot do without is still taken.
+ */
+const quiet = (): NodeJS.ProcessEnv => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+
+/**
  * The branch each served directory is on, as a host's `DirectoryFacts`.
  *
  * Deliberately not part of `createHost`: it spawns `git`, which is a binary
@@ -27,7 +35,7 @@ export function gitBranches(): DirectoryFacts {
   /** Run git in a directory and answer what it said, or nothing at all. */
   const git = (dir: string, args: string[]): Promise<string | undefined> =>
     new Promise((answer) => {
-      execFile('git', ['-C', dir, ...args], { timeout: 2000 }, (error, out) => {
+      execFile('git', ['-C', dir, ...args], { timeout: 2000, env: quiet() }, (error, out) => {
         answer(error ? undefined : out.toString().trim());
       });
     });

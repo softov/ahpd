@@ -4,27 +4,26 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-What is in progress and what is waiting. Plans, decisions and docs say the rest; [plans/index.md](../plans/index.md) is the backlog.
+Current progress and pending items only. [plans/index.md](../plans/index.md) is the backlog.
 
 ## Now
 
-- `origin/main` is at `474b455`; nothing since `v0.7.0` is released.
-- `@cofold/remote` 0.4.0 is released (cofold tag `release-2026-09-28`), and ahpd depends on `^0.4.0`.
-- Closed on 2026-09-28 after Softov's checks: [daemon/05](../plans/daemon/05-an-http-api/plan.md), [claude/04](../plans/claude/04-a-subagent-has-its-own-chat/plan.md), [pi/11](../plans/pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) and [plugin/14](../plans/plugin/14-cofold-runs-its-own-tools/plan.md).
-- Committed on main, awaiting Softov's review: [host/24](../plans/host/24-an-approval-offers-the-agents-own-options/plan.md), [host/25](../plans/host/25-a-forked-chat-says-where-it-came-from/plan.md), [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) (task 01 blocked, the `D` not reproduced), [host/27](../plans/host/27-a-session-reads-running-while-any-chat-runs/plan.md), [claude/05](../plans/claude/05-a-replayed-exchange-is-one-turn/plan.md), [claude/06](../plans/claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md), [claude/07](../plans/claude/07-a-turn-ends-with-no-call-left-open/plan.md), [pi/12](../plans/pi/12-a-tool-call-says-what-it-runs-on/plan.md), [daemon/07](../plans/daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) and [acp/01](../plans/acp/01-the-bridge-survives-its-agent/plan.md) task 01 (a missing ACP command fails the turn instead of ending the daemon).
-- Main has the 0.8.0 bump and no `v0.8.0` tag; the tag is made only once Softov validates publishing, since pushing it publishes.
-- `docs/PLUGINS.md` and `packages/agent-acp/README.md` name `@agentclientprotocol/codex-acp` as where `codex-acp` comes from, uncommitted.
-- The 0.6.x upgrade was checked on 2026-09-28: a 0.6 configuration names no plugin, since 0.6 had Claude built in, so 0.8.0 exits saying no backend is loaded, which daemon/07 makes name `ahpd plugin install @ahpd/agent-claude`; with the plugin installed it serves, and a 0.6.3 background daemon is shown and stopped by 0.8.0. Session state written by 0.6 was not exercised.
+- 0.8.0 is not published; npm has 0.7.0. The `v0.8.0` tag on `origin` points at `3a399bb`, whose release failed on flaky tests.
+- The fixes are committed on main and not pushed: the test flakes, [plugin/27](../plans/plugin/27-an-early-answer-reaches-the-paused-run/plan.md) and [host/28](../plans/host/28-a-changeset-watch-says-when-it-is-armed/plan.md).
+- Next: Softov pushes main, deletes the remote `v0.8.0` and pushes it on the new head; then all 8 `@ahpd` packages are checked at 0.8.0 on npm, and Softov checks the upgrade from his installed 0.7.0.
+- The worktree `/github/.worktrees/ahpd-flakes` (branch `flakes`) can be removed once the release is out.
 
 ## Waiting on Softov
 
-- Committed on main 2026-09-28 (`8e54c94`, `c3c23d6`, `d0e9714`), not pushed: the README pass, [daemon/08](../plans/daemon/08-the-config-file-is-checked-in-one-place/plan.md) (built, Softov checked) and [plugin/26](../plans/plugin/26-a-plugin-declares-its-options-schema/plan.md) (built, Softov checked). The `docs/` prose pass is next.
-- After 0.8.0 is published, Softov checks the upgrade from his installed 0.7.0.
-- Found by plugin/26, not fixed: the computer README lists 9 of 18 options; `ahpd.options` manifests disagree with the code in tunnel-devtunnel, agent-acp, agent-pi, computer, and agent-cofold has none; cofold's README says `apiKey` may be a function.
-
-- [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on Softov choosing the approach (task 01).
+- Review of built plans: [plugin/27](../plans/plugin/27-an-early-answer-reaches-the-paused-run/plan.md), [host/28](../plans/host/28-a-changeset-watch-says-when-it-is-armed/plan.md), [host/24](../plans/host/24-an-approval-offers-the-agents-own-options/plan.md), [host/25](../plans/host/25-a-forked-chat-says-where-it-came-from/plan.md), [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) (task 01 blocked, the `D` not reproduced), [host/27](../plans/host/27-a-session-reads-running-while-any-chat-runs/plan.md), [claude/05](../plans/claude/05-a-replayed-exchange-is-one-turn/plan.md), [claude/06](../plans/claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md), [claude/07](../plans/claude/07-a-turn-ends-with-no-call-left-open/plan.md), [pi/12](../plans/pi/12-a-tool-call-says-what-it-runs-on/plan.md), [daemon/07](../plans/daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md), [acp/01](../plans/acp/01-the-bridge-survives-its-agent/plan.md) task 01.
+- [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on the approach (task 01).
 - [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) is a draft with two open questions.
-- [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md) is open, with two candidate fixes and none chosen.
+- [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md): two candidate fixes, none chosen.
+
+## Next after the release
+
+- The `docs/` prose pass.
+- README and manifest mismatches: the computer README lists 9 of 18 options and says nothing under `computer:` is written, while [docs/COMPUTER.md](../../docs/COMPUTER.md) makes a machine with `resourceWrite`; the `ahpd.options` manifests disagree with the code in tunnel-devtunnel, agent-acp, agent-pi and computer, and agent-cofold has none; cofold's README says `apiKey` may be a function.
 
 ## Blocked or not started
 
@@ -36,7 +35,7 @@ What is in progress and what is waiting. Plans, decisions and docs say the rest;
 
 - VS Code with the seeded `computer` picker: the chip should read `This host` or a machine's name, once.
 - ahpapp against the published packages: the computer picker, and the dev container relay with `devcontainer.plugins` in a real container.
-- `packages/computer/README.md` is stale: it says nothing under `computer:` is written, while [docs/COMPUTER.md](../../docs/COMPUTER.md) makes a machine with `resourceWrite`. It waits on whether the README becomes the full user doc.
+- Session state written by 0.6 read by 0.8.
 
 ## Environment notes written nowhere else
 

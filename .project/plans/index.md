@@ -60,7 +60,9 @@ Reference: [00-host.md](host/00-host.md)
 | [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | active 2026-09-28; tasks 02-04 implemented, awaiting review; task 01 blocked: the `D` did not reproduce | - | - |
 | [27 - A session reads as running while any of its chats runs, a worker chat included](host/27-a-session-reads-running-while-any-chat-runs/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | - | - |
 
-Next free number in `host`: `28`.
+| [28 - A changeset watch says when it is armed, and nothing between the first read and the watch is missed](host/28-a-changeset-watch-says-when-it-is-armed/plan.md) | high | active 2026-09-28; tasks 01-05 implemented, awaiting review; blocks the 0.8.0 release | - | - |
+
+Next free number in `host`: `29`.
 
 ## claude
 
@@ -121,7 +123,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [25 - A plugin's agent sees every path the daemon serves](plugin/25-a-plugin-agent-sees-every-served-path/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/25-a-plugin-agent-sees-every-served-path/implemented.md)) | plugin 01 | - |
 | [26 - A plugin declares a schema for its options, and the loader checks it](plugin/26-a-plugin-declares-its-options-schema/plan.md) | medium | built 2026-09-28 ([implemented.md](plugin/26-a-plugin-declares-its-options-schema/implemented.md)) | daemon 08 | - |
 
-Next free number in `plugin`: `27`.
+| [27 - An answer given the moment a cofold request opens reaches the run](plugin/27-an-early-answer-reaches-the-paused-run/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review; blocks the 0.8.0 release | plugin 03 | - |
+
+Next free number in `plugin`: `28`.
 
 ## container
 

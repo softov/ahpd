@@ -45,10 +45,18 @@ const counted = (before: string, after: string): { added: number; removed: numbe
   return { added, removed };
 };
 
+/**
+ * The environment every `git` here runs with: the inherited one, with
+ * `GIT_OPTIONAL_LOCKS=0`, git's switch for a background process. A `git
+ * status` then refreshes no index, so it never holds `.git/index.lock` while a
+ * person's own `git add` needs it. A lock git cannot do without is still taken.
+ */
+const quiet = (): NodeJS.ProcessEnv => ({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+
 /** One `git` run, as text, or nothing when it would not run. */
 const git = (dir: string, args: string[]): Promise<string | undefined> =>
   new Promise((answer) => {
-    execFile('git', ['-C', dir, ...args], { timeout: 5000, maxBuffer: 32 * 1024 * 1024 },
+    execFile('git', ['-C', dir, ...args], { timeout: 5000, maxBuffer: 32 * 1024 * 1024, env: quiet() },
       (error, out) => answer(error ? undefined : out.toString()));
   });
 
@@ -63,7 +71,7 @@ const git = (dir: string, args: string[]): Promise<string | undefined> =>
  */
 const run = (dir: string, args: string[]): Promise<{ ok: boolean; out: string; err: string }> =>
   new Promise((answer) => {
-    execFile('git', ['-C', dir, ...args], { timeout: 30000, maxBuffer: 32 * 1024 * 1024 },
+    execFile('git', ['-C', dir, ...args], { timeout: 30000, maxBuffer: 32 * 1024 * 1024, env: quiet() },
       (error, out, errOut) => answer({
         ok: !error,
         out: out.toString(),
@@ -1184,7 +1192,7 @@ export function gitChanges(): ChangesetSource {
     watch: (dir, onChange) => {
       let closed = false;
       let stop: (() => void) | undefined;
-      void (async () => {
+      const ready = (async () => {
         const found = await git(dir, ['rev-parse', '--absolute-git-dir']);
         if (found === undefined || found === '' || closed) return;
         const gitDir = found.trim();
@@ -1298,10 +1306,10 @@ export function gitChanges(): ChangesetSource {
         stop = shut;
         if (closed) stop();
       })().catch(() => {});
-      return () => {
+      return Object.assign(() => {
         closed = true;
         stop?.();
-      };
+      }, { ready });
     },
   };
 }
