@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk';
 import type {
@@ -45,6 +46,30 @@ const REFUSED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } }
 const CLIENT_INFO = { name: 'ahpd', version: '0.0.1' };
 
 /**
+ * How long a call that failed because the stream closed waits to hear why.
+ *
+ * The child's stdout can end a moment before its `exit` arrives, and the exit
+ * code is the sentence a person needs; a server that closed its stdout and
+ * kept running is never heard, so the wait is bounded.
+ */
+const EXIT_GRACE_MS = 1000;
+
+/** The sentence for a server that could not be started at all. */
+const unstarted = (command: string, cwd: string | undefined, error: NodeJS.ErrnoException): Error => {
+  if (error.code === 'ENOENT' && cwd !== undefined && !existsSync(cwd)) {
+    return new Error(`${command} could not be started in ${cwd}, which does not exist`);
+  }
+  if (error.code === 'ENOENT') {
+    return new Error(`${command} was not found; install it, or put its directory on the PATH the daemon runs with`);
+  }
+  return new Error(`${command} could not be started: ${error.message}`);
+};
+
+/** The sentence for a server that exited, by its code or the signal that ended it. */
+const exited = (command: string, code: number | null, signal: NodeJS.Signals | null): Error =>
+  new Error(code !== null ? `${command} exited with code ${code}` : `${command} exited on ${signal ?? 'an unknown signal'}`);
+
+/**
  * Spawn one ACP server and speak the protocol to it.
  *
  * The environment is the daemon's with the package's own over the top, the way
@@ -60,6 +85,25 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   // Drained rather than inherited: a server that chatters on stderr must not
   // block on a full pipe, and it must not write into the daemon's own output.
   child.stderr.resume();
+
+  /** Why the server is gone, once it is; undefined while it runs. */
+  let death: Error | undefined;
+  let heardDeath: (why: Error) => void = () => {};
+  const ended = new Promise<Error>((resolve) => { heardDeath = resolve; });
+  const die = (why: Error): void => {
+    if (death !== undefined) return;
+    death = why;
+    heardDeath(why);
+  };
+  /*
+   * An `error` with no pid is a program that never started. One after a start
+   * is a failed kill or write, which the exit that follows reports; it is
+   * listened for either way, because an unheard `error` ends the daemon.
+   */
+  child.on('error', (error: NodeJS.ErrnoException) => {
+    if (child.pid === undefined) die(unstarted(options.command, options.cwd, error));
+  });
+  child.on('exit', (code, signal) => { die(exited(options.command, code, signal)); });
 
   const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
 
@@ -133,29 +177,50 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
    */
   let handshake: InitializeResponse | undefined;
 
+  /**
+   * One call, failed with the server's death rather than the SDK's closed stream.
+   *
+   * A call made after the server is gone fails at once, and one in flight fails
+   * when it goes even if the stream is still held open by something the server
+   * started.
+   */
+  const heard = <T>(call: () => Promise<T>): Promise<T> => {
+    if (death !== undefined) return Promise.reject(death);
+    const answered = call().catch(async (why: unknown) => {
+      if (death === undefined && connection.signal.aborted) {
+        await Promise.race([ended, new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); })]);
+      }
+      throw death ?? why;
+    });
+    return Promise.race([answered, ended.then((why): never => { throw why; })]);
+  };
+
   return {
     initialize: (): Promise<InitializeResponse> => {
       if (handshake !== undefined) return Promise.resolve(handshake);
-      return connection.initialize({
+      return heard(() => connection.initialize({
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities,
         clientInfo: CLIENT_INFO,
-      }).then((reply) => {
+      })).then((reply) => {
         handshake = reply;
         return reply;
       });
     },
-    newSession: (request: NewSessionRequest): Promise<NewSessionResponse> => connection.newSession(request),
-    loadSession: (request: LoadSessionRequest): Promise<LoadSessionResponse> => connection.loadSession(request),
-    listSessions: (request: ListSessionsRequest): Promise<ListSessionsResponse> => connection.listSessions(request),
-    setSessionMode: (request: SetSessionModeRequest): Promise<SetSessionModeResponse> => connection.setSessionMode(request),
+    newSession: (request: NewSessionRequest): Promise<NewSessionResponse> => heard(() => connection.newSession(request)),
+    loadSession: (request: LoadSessionRequest): Promise<LoadSessionResponse> => heard(() => connection.loadSession(request)),
+    listSessions: (request: ListSessionsRequest): Promise<ListSessionsResponse> =>
+      heard(() => connection.listSessions(request)),
+    setSessionMode: (request: SetSessionModeRequest): Promise<SetSessionModeResponse> =>
+      heard(() => connection.setSessionMode(request)),
     setSessionConfigOption: (request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> =>
-      connection.setSessionConfigOption(request),
-    prompt: (sessionId: string, text: string): Promise<PromptResponse> => connection.prompt({
+      heard(() => connection.setSessionConfigOption(request)),
+    prompt: (sessionId: string, text: string): Promise<PromptResponse> => heard(() => connection.prompt({
       sessionId,
       prompt: [{ type: 'text', text }],
-    }),
-    cancel: (sessionId: string): Promise<void> => connection.cancel({ sessionId }),
+    })),
+    cancel: (sessionId: string): Promise<void> => heard(() => connection.cancel({ sessionId })),
+    ended,
     close: (): void => {
       // The stdin end is what a well-behaved server reads as a shutdown; the
       // kill is for one that does not.

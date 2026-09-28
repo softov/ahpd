@@ -146,6 +146,13 @@ export interface AcpConnection {
   prompt(sessionId: string, text: string): Promise<PromptResponse>;
   /** The ACP cancel notification, which asks the server to stop a running prompt. */
   cancel(sessionId: string): Promise<void>;
+  /**
+   * Settles with why the server process is gone: it never started, or it exited.
+   *
+   * Every call made on a connection whose server is gone rejects with the same
+   * reason.
+   */
+  readonly ended: Promise<Error>;
   /** End the subprocess. */
   close(): void;
 }

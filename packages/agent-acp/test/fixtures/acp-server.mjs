@@ -24,6 +24,8 @@
  *   until `session/cancel` arrives, answering `cancelled` only then;
  * - text containing `fail` streams the plain answer and then answers the
  *   prompt with a JSON-RPC error;
+ * - text containing `die` streams the plain answer and then exits with code 3,
+ *   leaving the prompt unanswered;
  * - anything else streams two message chunks before ending.
  *
  * The port scripts are real requests *to* the client - `fs/read_text_file`,
@@ -243,6 +245,9 @@ const promptScript = async (id, params) => {
   if (text.includes('fail')) {
     write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'the model gave up' } });
     return;
+  }
+  if (text.includes('die')) {
+    process.exit(3);
   }
   if (text.includes('wait')) {
     // Held open, and answered only by the cancel below: a test that sees this

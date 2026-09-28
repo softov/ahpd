@@ -176,7 +176,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | planned 2026-09-26, tasks 01-05 todo | - | acp 12 |
+| [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | active 2026-09-28, task 01 implemented, 02-05 todo | - | acp 12 |
 | [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | plugin 18, acp 01 task 03 |
 | [03 - A turn ends as the agent ended it](acp/03-a-turn-ends-as-the-agent-ended-it/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | - |
 | [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | acp 05 |

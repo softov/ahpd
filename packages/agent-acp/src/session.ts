@@ -546,6 +546,13 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         },
       });
       live = connection;
+      // A server that dies between turns is let go, so the next turn spawns
+      // another rather than prompting a process that is no longer there.
+      void connection.ended.then(() => {
+        if (live !== connection) return;
+        live = undefined;
+        opening = undefined;
+      });
       const handshake = await connection.initialize();
       const extra = start.additional !== undefined && start.additional.length > 0
         ? { additionalDirectories: start.additional }

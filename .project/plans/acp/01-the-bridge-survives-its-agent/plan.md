@@ -1,7 +1,7 @@
 ---
 title: The bridge survives its agent: a bad command, a dying server and a close
 domain: acp
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -63,7 +63,7 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A child that fails to start or exits is heard](task-01-a-child-that-fails-is-heard.md) | todo | - |
+| [01 - A child that fails to start or exits is heard](task-01-a-child-that-fails-is-heard.md) | implemented | - |
 | [02 - The last of stderr rides on a failure](task-02-stderr-rides-on-a-failure.md) | todo | 01 |
 | [03 - A dead agent is reopened by its id](task-03-a-dead-agent-is-reopened-by-its-id.md) | todo | 01 |
 | [04 - Close ends the session and every process it started](task-04-close-ends-the-session-and-its-processes.md) | todo | - |
@@ -75,8 +75,8 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-child-that-fails-is-heard.md](task-01-a-child-that-fails-is-heard.md).
+- **Done so far:** task 01 implemented, awaiting review: a missing command or an exiting server fails the turn in a sentence and the daemon stays up.
+- **Next action:** review task 01, then [task-02-stderr-rides-on-a-failure.md](task-02-stderr-rides-on-a-failure.md) or [task-04-close-ends-the-session-and-its-processes.md](task-04-close-ends-the-session-and-its-processes.md).
 - **Open questions:** none.
 - **Watch out for:** task 03 reopens with a load, whose replay must not land in the new turn; plan 02 task 01 goes first.
 
