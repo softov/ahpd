@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { gitChanges } from '../src/changes.js';
+import { gitBranches } from '../src/git.js';
 import { createHost } from '../src/host.js';
 import { fileResources } from '../src/resources.js';
 import { shellTerminals } from '../src/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Agent, Start } from '../src/types/agent.js';
+import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -419,4 +420,186 @@ it('watches the common directory for a linked worktree', async () => {
   expect(handles.paths).toContain(inside);
   expect(handles.paths).toContain(join(common, 'refs', 'heads', 'agents'));
   stop?.();
+});
+
+/*
+ * A directory outside the host's `path`.
+ *
+ * Only `browsable()` is read at startup, so a session anywhere else has no git
+ * facts, no pull requests and no counts until something reads them. The two
+ * readers under test are the first subscribe to a changeset there and a pass
+ * over the stored sessions' directories once the host has started.
+ */
+
+/** A directory that is not a repository, for the host's own `path`. */
+const elsewhere = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+  made.push(dir);
+  return dir;
+};
+
+/** A repository with a GitHub `origin` and one uncommitted file. */
+const onGitHub = (): string => {
+  const dir = repository();
+  git(dir, 'remote', 'add', 'origin', 'git@github.com:owner/repo.git');
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  return dir;
+};
+
+/** GitHub, answering that the branch has no pull request. */
+const noRequests = () => {
+  const asked: string[] = [];
+  return {
+    asked,
+    port: {
+      resource: { resource: 'https://api.github.com/repos' },
+      forBranch: async (_repo: unknown, branch: string) => { asked.push(branch); return []; },
+      create: async () => { throw new Error('not here'); },
+    },
+  };
+};
+
+const hello = { method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } };
+
+const rowsMoved = (p: ReturnType<typeof peer>, session: string): Record<string, unknown>[] => p.notes
+  .filter((n) => n.method === 'root/sessionSummaryChanged')
+  .map((n) => n.params as { session: string; changes: Record<string, unknown> })
+  .filter((n) => n.session === session)
+  .map((n) => n.changes);
+
+/** Every operation id the first subscribe answers for a session made in `dir`. */
+const firstOperations = async (dir: string, github?: ReturnType<typeof noRequests>['port']) => {
+  const home = elsewhere();
+  const host = createHost({
+    path: home, agents: [echo({ path: home })], resources: fileResources(), terminals: shellTerminals(),
+    changes: gitChanges(), directories: gitBranches(), ...(github === undefined ? {} : { github }),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle(hello);
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo', workingDirectories: [`file://${dir}`] } });
+  const answer = await client.handle({ method: 'subscribe', params: { channel: CHANGESET } }) as {
+    snapshot: { state: { files: unknown[]; operations?: { id: string }[] } };
+  };
+  return { peer: p, state: answer.snapshot.state, ids: (answer.snapshot.state.operations ?? []).map((one) => one.id) };
+};
+
+it('offers the pull request pair on the first subscribe in a directory outside the path', async () => {
+  const dir = onGitHub();
+  const fake = noRequests();
+  const { ids } = await firstOperations(dir, fake.port);
+  expect(ids).toContain('create-pr');
+  expect(ids).toContain('prepare-pull-request');
+  // Asked about the branch before answering, which needs the facts' remote.
+  expect(fake.asked).toEqual(['main']);
+});
+
+it('offers no pull request on the first subscribe when there is no GitHub to ask', async () => {
+  const dir = onGitHub();
+  const { ids } = await firstOperations(dir);
+  expect(ids).toContain('commit');
+  expect(ids).not.toContain('create-pr');
+  expect(ids).not.toContain('prepare-pull-request');
+});
+
+it('announces the session\'s counts on the first subscribe in a directory outside the path', async () => {
+  const dir = onGitHub();
+  const { peer: p } = await firstOperations(dir);
+  const counted = rowsMoved(p, URI).find((one) => one.changes !== undefined);
+  expect((counted?.changes as { files?: number } | undefined)?.files).toBe(1);
+});
+
+it('answers a subscribe in a directory that is not a repository, when its facts fail', async () => {
+  const dir = elsewhere();
+  const home = elsewhere();
+  const host = createHost({
+    path: home, agents: [echo({ path: home })], resources: fileResources(), terminals: shellTerminals(),
+    changes: gitChanges(), github: noRequests().port,
+    directories: { meta: () => undefined, refresh: async () => { throw new Error('no git here'); } },
+  });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo', workingDirectories: [`file://${dir}`] } });
+  const answer = await client.handle({ method: 'subscribe', params: { channel: `${URI}/changeset/session` } }) as {
+    snapshot: { state: { files: unknown[]; operations?: unknown[] } };
+  };
+  expect(answer.snapshot.state.files).toEqual([]);
+  expect(answer.snapshot.state.operations).toBeUndefined();
+});
+
+/** An echo backend whose catalogue holds one stored session in `dir`. */
+const storing = (home: string, dir: string): Agent => {
+  const base = echo({ path: home });
+  const row: Listed = {
+    id: 'stored',
+    title: 'Stored',
+    createdAt: '2026-09-27T00:00:00.000Z',
+    modifiedAt: '2026-09-27T00:00:00.000Z',
+    workingDirectories: [`file://${dir}`],
+  };
+  return { ...base, list: async () => [row] };
+};
+
+/** A changes source that counts its re-reads per directory. */
+const perDirectory = (): { reads: Map<string, number>; source: ChangesetSource } => {
+  const base = gitChanges();
+  const reads = new Map<string, number>();
+  return {
+    reads,
+    source: {
+      ...base,
+      refresh: async (dir) => {
+        reads.set(dir, (reads.get(dir) ?? 0) + 1);
+        return await base.refresh?.(dir) ?? false;
+      },
+    },
+  };
+};
+
+it('lists a stored session outside the path with its counts, with no turn and no subscribe', async () => {
+  const dir = onGitHub();
+  const home = elsewhere();
+  const { reads, source } = perDirectory();
+  const host = createHost({
+    path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
+    changes: source, directories: gitBranches(),
+  });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  await waitFor(() => source.summary(dir) !== undefined);
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { resource: string; changes?: { files?: number } }[];
+  };
+  expect(listed.items.find((one) => one.resource === 'echo:/stored')?.changes?.files).toBe(1);
+  expect(reads.get(dir)).toBe(1);
+});
+
+it('tells a client already connected that a stored session\'s counts arrived', async () => {
+  const dir = onGitHub();
+  const home = elsewhere();
+  const host = createHost({
+    path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
+    changes: gitChanges(), directories: gitBranches(),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle(hello);
+  await waitFor(() => rowsMoved(p, 'echo:/stored').length > 0);
+  const moved = rowsMoved(p, 'echo:/stored').at(-1);
+  expect((moved?.changes as { files?: number } | undefined)?.files).toBe(1);
+});
+
+it('does not read a second time a stored session\'s directory that is already served', async () => {
+  const dir = onGitHub();
+  const { reads, source } = perDirectory();
+  const host = createHost({
+    path: dir, agents: [storing(dir, dir)], resources: fileResources(), terminals: shellTerminals(),
+    changes: source, directories: gitBranches(),
+  });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  await waitFor(() => source.summary(dir) !== undefined);
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  expect(reads.get(dir)).toBe(1);
 });

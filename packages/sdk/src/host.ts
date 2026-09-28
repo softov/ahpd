@@ -2017,11 +2017,12 @@ export function createHost(options: HostOptions): Host {
    * fallback is that one field rather than silence. Silence is what this did
    * before, and it was exactly the case that needed saying: marking a row read
    * is something somebody does from the catalogue, to a session nobody has
-   * opened.
+   * opened. Its diff stat goes with it, which is the directory's and is known
+   * without any process: a listed row's counts are read after it was listed.
    */
   const summaryMoved = (uri: string): void => {
     const summary = summaryOf(uri);
-    let changes: Bag = { status: statusOf(uri) };
+    let changes: Bag = { status: statusOf(uri), ...changesOf(uri) };
     if (summary !== undefined) {
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
       /*
@@ -2878,12 +2879,17 @@ export function createHost(options: HostOptions): Host {
    * terminal - so it is re-read when a turn ends rather than only when a
    * session starts. `session/metaChanged` replaces `_meta` whole, which is
    * what `metaOf` writes.
+   *
+   * The facts and then the pull requests, which need the facts' remote, beside
+   * the changes. Resolves once all of it is read, with whether the changes
+   * moved. A read that fails is a read that moved nothing, so this never
+   * rejects.
    */
-  const refreshFacts = (dir: string): void => {
-    void (options.directories?.refresh?.(dir) ?? Promise.resolve(false)).then(async (moved) => {
-      if (moved) metaMoved(dir);
+  const readFacts = async (dir: string): Promise<boolean> => {
+    const facts = (async () => {
+      if (await options.directories?.refresh?.(dir) === true) metaMoved(dir);
       if (await refreshPullRequests(dir)) metaMoved(dir);
-    }).catch(() => {});
+    })().catch(() => {});
 
     /*
      * And what it changed.
@@ -2893,14 +2899,21 @@ export function createHost(options: HostOptions): Host {
      * client that is watching one re-reads it from its own channel. Sending
      * the files here would be the same answer from two places.
      */
-    void options.changes?.refresh?.(dir).then((moved) => {
-      if (!moved) return;
+    const files = (options.changes?.refresh?.(dir) ?? Promise.resolve(false)).then((moved) => {
+      if (!moved) return false;
       for (const uri of inThere(dir)) {
         // Asked per session, because two of the scopes are the session's own.
         dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
         summaryMoved(uri);
       }
-    }).catch(() => {});
+      return true;
+    }).catch(() => false);
+    const [, moved] = await Promise.all([facts, files]);
+    return moved;
+  };
+  /** `readFacts`, for a caller with nothing to wait for. */
+  const refreshFacts = (dir: string): void => {
+    void readFacts(dir);
   };
 
   /**
@@ -3402,6 +3415,36 @@ export function createHost(options: HostOptions): Host {
     }
     return found;
   };
+  /**
+   * Every stored session's directory that `browsable()` leaves out, read once.
+   *
+   * The catalogue draws a row's counts from what was last read of its
+   * directory, and only `browsable()` is read at startup, so a session kept
+   * in any other directory would list with none until a turn of it ended.
+   * One directory at a time, since a host with many stored sessions would
+   * otherwise start by running every one's `git` at once; a directory that
+   * fails to read is skipped. A row whose counts moved is announced: a live
+   * session by `readFacts` itself, a listed one here.
+   */
+  const readStored = async (): Promise<void> => {
+    const served = new Set(browsable());
+    const rows = await listing().catch(() => [] as Summary[]);
+    const dirs = new Set<string>();
+    for (const row of rows) {
+      // A live session's directory is read by what that session does.
+      if (sessions.has(row.resource)) continue;
+      const dir_ = dirOf(row.resource);
+      if (dir_ !== undefined && !served.has(dir_)) dirs.add(dir_);
+    }
+    for (const dir_ of dirs) {
+      if (!await readFacts(dir_)) continue;
+      for (const row of rows) {
+        if (!sessions.has(row.resource) && dirOf(row.resource) === dir_) summaryMoved(row.resource);
+      }
+    }
+  };
+  // Once `createHost` has returned, so neither it nor a first request waits on it.
+  setTimeout(() => { void readStored(); }, 0);
   /**
    * The config properties this host owns, rather than the backend.
    *
@@ -5105,8 +5148,13 @@ export function createHost(options: HostOptions): Host {
        * client that wants to be *told* asks for `createResourceWatch` on a
        * path it names, which is what the protocol has for it; this is only
        * about the host's own cache being true at the moment it is read.
+       *
+       * The git facts and the pull requests with the files, because the verbs
+       * answered below are drawn from them, and a directory outside
+       * `browsable()` may have had nothing read them yet. What moved is
+       * announced, so the session's row carries what this read found.
        */
-      await options.changes?.refresh?.(at.dir).catch(() => false);
+      await readFacts(at.dir);
       // Somebody reads this directory's changesets now, so the source watches
       // what only git writes: staging, committing and checking out elsewhere.
       startWatchingDir(at.dir);

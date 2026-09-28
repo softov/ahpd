@@ -52,8 +52,9 @@ Reference: [00-host.md](host/00-host.md)
 | [20 - A changes URI opens in a client that normalises it](host/20-a-changes-uri-survives-a-client/plan.md) | high | planned 2026-09-27; starts after host 21 | host 21 | - |
 | [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | active 2026-09-27; tasks 01 to 08 implemented, review fixes 06 to 08 awaiting review; folds in the uncommitted `changes.ts` draft | - | host 20 |
 | [22 - A file or a folder is staged and unstaged from the session's changeset](host/22-a-file-or-folder-is-staged-from-the-session/plan.md) | high | active 2026-09-27; tasks 01 to 03 implemented and awaiting review | host 21 | - |
+| [23 - A session outside the configured paths has its git facts and its changes without waiting for a turn](host/23-a-session-outside-the-paths-has-its-facts/plan.md) | high | active 2026-09-27; tasks 01 and 02 implemented and awaiting review | - | - |
 
-Next free number in `host`: `23`.
+Next free number in `host`: `24`.
 
 ## claude
 
