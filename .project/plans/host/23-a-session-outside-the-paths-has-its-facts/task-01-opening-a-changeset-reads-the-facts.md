@@ -1,6 +1,6 @@
 ---
 title: Opening a changeset reads the folder's git facts first
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

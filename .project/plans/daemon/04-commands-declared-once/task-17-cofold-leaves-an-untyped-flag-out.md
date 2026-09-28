@@ -1,6 +1,6 @@
 ---
 title: cofold leaves a boolean flag nobody typed out of the canonical input, released by Softov
-status: implemented
+status: done
 depends: [task-12-cofold-fields-say-whether-they-negate.md]
 layer: "cofold commands"
 refs:

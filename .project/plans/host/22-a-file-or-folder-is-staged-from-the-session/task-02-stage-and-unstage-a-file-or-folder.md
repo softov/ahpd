@@ -1,6 +1,6 @@
 ---
 title: A file or a folder is staged and unstaged
-status: implemented
+status: done
 depends: [task-01-a-target-stays-inside-the-folder.md]
 layer: "sdk"
 refs:

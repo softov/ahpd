@@ -1,6 +1,6 @@
 ---
 title: A call pi failed before its hook still closes in a client
-status: implemented
+status: done
 depends: [task-04-the-ask-reuses-the-row-pi-opened.md]
 layer: "agent-pi"
 refs:

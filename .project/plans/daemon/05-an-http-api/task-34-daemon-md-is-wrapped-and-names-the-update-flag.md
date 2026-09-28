@@ -1,6 +1,6 @@
 ---
 title: DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:

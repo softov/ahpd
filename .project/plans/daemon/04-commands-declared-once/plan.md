@@ -1,7 +1,7 @@
 ---
 title: ahpd's commands are declared once, and the CLI is rendered from them
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -68,29 +68,29 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every flag and verb has a test that pins what it does](task-01-pin-every-flag-and-verb.md) | implemented | - |
-| [02 - The commands are declared, with their grants](task-02-the-commands-are-declared.md) | implemented | 01 |
-| [03 - main.ts runs through the terminal program](task-03-main-runs-through-the-program.md) | implemented | 02 |
-| [04 - Docs, dependencies and the lockfile](task-04-docs-and-dependencies.md) | implemented | 03 |
+| [01 - Every flag and verb has a test that pins what it does](task-01-pin-every-flag-and-verb.md) | done | - |
+| [02 - The commands are declared, with their grants](task-02-the-commands-are-declared.md) | done | 01 |
+| [03 - main.ts runs through the terminal program](task-03-main-runs-through-the-program.md) | done | 02 |
+| [04 - Docs, dependencies and the lockfile](task-04-docs-and-dependencies.md) | done | 03 |
 | [05 - start forwards the words after start, wherever it appears](task-05-start-forwards-the-words-after-start.md) | done | 04 |
-| [06 - The update check is declared by what it turns on, and its test can fail](task-06-the-update-check-is-declared-by-what-it-turns-on.md) | implemented | 12, 17 |
+| [06 - The update check is declared by what it turns on, and its test can fail](task-06-the-update-check-is-declared-by-what-it-turns-on.md) | done | 12, 17 |
 | [07 - ahpd --help keeps the sentences a person acts on](task-07-help-keeps-the-sentences-a-person-acts-on.md) | done | 04 |
 | [08 - plugin install and remove say each line as it happens, and npm writes to stderr](task-08-plugin-writes-say-each-line-as-it-happens.md) | done | 04 |
 | [09 - The bare run completes its flags, and -v and --help are read only where they are flags](task-09-the-bare-run-completes-and-reads-flags-only-as-flags.md) | done | 04 |
 | [10 - The pinning tests bind a port and start a daemon](task-10-the-pinning-tests-bind-a-port-and-start.md) | done | 05 |
-| [11 - The comments under commands/ document the declarations, and the refs point at them](task-11-comments-document-the-declarations.md) | implemented | 04 |
+| [11 - The comments under commands/ document the declarations, and the refs point at them](task-11-comments-document-the-declarations.md) | done | 04 |
 | [12 - A cofold field says whether its flag negates, released by Softov](task-12-cofold-fields-say-whether-they-negate.md) | done | 04 |
 | [13 - --plugins is an unknown option again](task-13-plugins-is-an-unknown-option.md) | done | 12 |
 | [14 - The registry's authorize hook checks a command's scopes on every surface](task-14-the-registry-hook-checks-every-surface.md) | done | 04 |
 | [15 - A bare plugin or user names its sub-commands](task-15-a-bare-verb-names-its-sub-commands.md) | done | 04 |
 | [16 - The command handlers fail by throwing a cofold error, and never touch the process](task-16-handlers-fail-by-throwing.md) | done | 04 |
-| [17 - cofold leaves a boolean flag nobody typed out of the canonical input, released by Softov](task-17-cofold-leaves-an-untyped-flag-out.md) | implemented | 12 |
-| [18 - start forwards its options wherever they are typed, and finds the start that is the word](task-18-start-forwards-its-options-wherever-they-are-typed.md) | implemented | 05 |
+| [17 - cofold leaves a boolean flag nobody typed out of the canonical input, released by Softov](task-17-cofold-leaves-an-untyped-flag-out.md) | done | 12 |
+| [18 - start forwards its options wherever they are typed, and finds the start that is the word](task-18-start-forwards-its-options-wherever-they-are-typed.md) | done | 05 |
 | [19 - The pinning cases fail when --host or a conflict's 409 breaks, and read no personal configuration](task-19-the-pinning-cases-fail-when-host-or-a-conflict-breaks.md) | done | 10, 16 |
-| [20 - A refusal takes only its sentence, and the group hint fails like every other failure](task-20-a-refusal-takes-its-sentence-and-the-group-hint-fails-like-the-others.md) | implemented | 15, 16 |
-| [21 - The task refs and Resumes in this plan point at the code as it is](task-21-the-refs-follow-the-code.md) | implemented | 18, 19, 20 |
-| [22 - A start regression leaves no daemon running, and the token case can fail](task-22-a-start-regression-leaves-no-daemon-and-the-token-case-can-fail.md) | implemented | 18 |
-| [23 - The comments and records of this plan say what is true](task-23-the-comments-and-records-say-what-is-true.md) | implemented | 20 |
+| [20 - A refusal takes only its sentence, and the group hint fails like every other failure](task-20-a-refusal-takes-its-sentence-and-the-group-hint-fails-like-the-others.md) | done | 15, 16 |
+| [21 - The task refs and Resumes in this plan point at the code as it is](task-21-the-refs-follow-the-code.md) | done | 18, 19, 20 |
+| [22 - A start regression leaves no daemon running, and the token case can fail](task-22-a-start-regression-leaves-no-daemon-and-the-token-case-can-fail.md) | done | 18 |
+| [23 - The comments and records of this plan say what is true](task-23-the-comments-and-records-say-what-is-true.md) | done | 20 |
 
 ## Risks and tradeoffs
 
@@ -99,9 +99,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** tasks 05, 07 to 10, 12 to 16 and 19 are done.
-  Tasks 01 to 04, 06, 11, 17, 18 and 20 to 23 are implemented and wait for review: the pinning cases, the declarations with their scopes, `main.ts` through `@cofold/terminal`'s `Program`, `docs/DAEMON.md`, the comments under `commands/`, `start` forwarding every option wherever it is typed, the refs following the code, `refuse` removed and the group hint failing as `ahpd: <sentence>` with exit 2 in every mode, the `start` cases killing every daemon the log names and the token case knocking without the token, the comments and records corrected, and `updateCheck` declared as `--update-check`, negatable, with the fold the decision names.
-- **Next action:** Softov's review of tasks 01 to 04, 06, 11, 17, 18 and 20 to 23.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
   A JSON shape for failures is [an idea](../../../ideas/failures-have-a-json-shape.md).
 - **Watch out for:** task 16 landed before [daemon/05 task 08](../05-an-http-api/task-08-served-commands-act-on-the-daemons-own-options.md), so that task rebases on the throwing handlers; task 14 landed before [daemon/05 task 09](../05-an-http-api/task-09-the-grants-each-command-needs.md), so task 09 applies the grants in the registry's `authorize` hook and `authorizeOverHttp` only identifies; `run` is a hidden command given its word when a line has no command, so the foreground daemon keeps matching `ahpd [options]`; this environment's global pnpm store is read-only, so installs need `--store-dir /tmp/pnpm-store`; the pinning cases set `CI=1`, which silences the update line in every case that does not remove it; [daemon/05](../05-an-http-api/plan.md) changes the scopes `packages/server/test/server-commands.test.ts:59-69` pins, so a scope failure there is daemon/05's to fix.
@@ -114,7 +113,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - [x] `pnpm test`, `pnpm boundary`, `pnpm install --frozen-lockfile` green.
 - [x] `pnpm typecheck` green.
 - [x] `ahpd --no-color start ...` starts a daemon that `ahpd status` and `ahpd stop` reach (task 05).
-- [ ] `updateCheck: true` means the check runs on every surface, and the update-check case runs without `CI` (task 06).
+- [x] `updateCheck: true` means the check runs on every surface, and the update-check case runs without `CI` (task 06).
 - [x] `ahpd --help` carries the trust warning, the container explanation, the configuration-key paragraph and the `?tkn=`/Bearer presentation, with no `ahpd run` and one global options section (task 07).
 - [x] A failed `plugin remove` still shows `plugins -= <name>`, and `plugin install --json` writes only JSON to stdout (task 08).
 - [x] `ahpd __complete -- --po` offers `--port`, and a value spelled `-v` is a value (task 09).
@@ -124,9 +123,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - [x] `ahpd --plugins` exits 2 with `Unknown option --plugins` (task 13).
 - [x] A scoped command is refused by the registry's `authorize` hook on every surface (task 14).
 - [x] `ahpd plugin` and `ahpd user` name their sub-commands and exit 2 (task 15).
-- [ ] `@cofold/commands` leaves an untyped boolean out of the canonical input, released by Softov, and ahpd depends on it (task 17).
+- [x] `@cofold/commands` leaves an untyped boolean out of the canonical input, released by Softov, and ahpd depends on it (task 17).
 - [x] `ahpd --connection-token abc start` serves with that token, and `ahpd --path start start` starts one daemon (task 18).
 - [x] The bind cases fail when `--host` or the file's `host` is dropped, a conflict is pinned at 409, and no case reads a personal configuration (task 19).
 - [x] `refuse` is gone, and the group hint is one `ahpd: ` line and exit 2 with or without `--json` (task 20).
 - [x] Every ref in tasks 05 to 20 names the lines it describes (task 21).
-- [ ] `docs/DAEMON.md`, `plans/index.md` updated.
+- [x] `docs/DAEMON.md`, `plans/index.md` updated.

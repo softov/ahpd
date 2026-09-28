@@ -1,7 +1,7 @@
 ---
 title: A pi turn reports what it used
 domain: pi
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -63,10 +63,10 @@ pi model list -> models.ts offered() -> [new] maxContextWindow, maxOutputTokens 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn sends its usage](task-01-a-turn-sends-its-usage.md) | implemented | - |
-| [02 - A model says its context window](task-02-a-model-says-its-context-window.md) | implemented | - |
-| [03 - A turn that failed before any token sends no usage](task-03-an-error-with-no-tokens-sends-no-usage.md) | implemented | 01 |
-| [04 - A live pi turn carries its model on the message](task-04-a-live-turn-carries-its-model.md) | implemented | 01 |
+| [01 - A turn sends its usage](task-01-a-turn-sends-its-usage.md) | done | - |
+| [02 - A model says its context window](task-02-a-model-says-its-context-window.md) | done | - |
+| [03 - A turn that failed before any token sends no usage](task-03-an-error-with-no-tokens-sends-no-usage.md) | done | 01 |
+| [04 - A live pi turn carries its model on the message](task-04-a-live-turn-carries-its-model.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -75,8 +75,8 @@ pi model list -> models.ts offered() -> [new] maxContextWindow, maxOutputTokens 
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 are `implemented`: `chat/usage` from the last assistant message, the context window and output limit on each offered model, no usage for an error that used no tokens, and the model on a live turn's message.
-- **Next action:** none; all four tasks are implemented and awaiting review; tasks 01 and 02 were reviewed on 2026-09-27.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `model` in `UsageInfo` is the wire id this backend offers, `provider/modelId`, taken from the message's `provider` and `model`, not pi's bare id.
 

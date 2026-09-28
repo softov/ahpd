@@ -1,6 +1,6 @@
 ---
 title: The ask reuses the row pi already opened, and a client tool runs only after it is approved
-status: implemented
+status: done
 depends: [task-01-a-call-can-wait-on-a-person.md]
 layer: "agent-pi"
 refs:

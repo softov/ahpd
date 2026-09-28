@@ -1,6 +1,6 @@
 ---
 title: A served config answers from the daemon's own file, hides its secrets, or says it is gone
-status: implemented
+status: done
 depends: [task-08-served-commands-act-on-the-daemons-own-options.md]
 layer: "server"
 refs:

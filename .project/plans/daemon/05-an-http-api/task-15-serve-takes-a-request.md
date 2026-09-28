@@ -1,6 +1,6 @@
 ---
 title: "`serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)"
-status: implemented
+status: done
 depends: [task-06-serve-survives-a-malformed-request.md]
 layer: "cofold remote"
 refs:

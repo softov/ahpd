@@ -1,7 +1,7 @@
 ---
 title: A plugin's agent sees every path the daemon serves
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -49,7 +49,7 @@ run.ts -> loadPlugins(specs, { base, ... }) -> paths = options.paths ?? [base.pa
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The daemon hands plugins every served path](task-01-the-daemon-hands-plugins-every-path.md) | implemented | - |
+| [01 - The daemon hands plugins every served path](task-01-the-daemon-hands-plugins-every-path.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -57,8 +57,8 @@ run.ts -> loadPlugins(specs, { base, ... }) -> paths = options.paths ?? [base.pa
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented and awaits review.
-- **Next action:** review of task 01, then Softov's check by hand in the final checklist.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** nothing; `run.ts` is the only caller of `loadPlugins` in `packages/server/src`.
 

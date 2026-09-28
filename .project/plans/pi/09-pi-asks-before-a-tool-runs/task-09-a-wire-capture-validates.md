@@ -1,6 +1,6 @@
 ---
 title: A captured pi session validates against the protocol schema
-status: implemented
+status: done
 depends: [task-08-the-readme-and-comments-say-what-is-true.md]
 layer: "agent-pi"
 refs:

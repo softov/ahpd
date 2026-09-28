@@ -1,6 +1,6 @@
 ---
 title: A cancel answers every question it leaves, and tells the model the turn was stopped
-status: implemented
+status: done
 depends: [task-04-the-ask-reuses-the-row-pi-opened.md]
 layer: "agent-pi"
 refs:

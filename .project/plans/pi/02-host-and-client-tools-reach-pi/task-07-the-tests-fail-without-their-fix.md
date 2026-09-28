@@ -1,6 +1,6 @@
 ---
 title: The tool and truncation tests fail when their fix is taken out
-status: implemented
+status: done
 depends: [task-06-a-rebuild-keeps-the-session.md]
 layer: "agent-pi"
 refs:

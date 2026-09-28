@@ -1,6 +1,6 @@
 ---
 title: "@cofold/remote serves a registry (cofold repository)"
-status: implemented
+status: done
 depends: []
 layer: "cofold remote"
 refs:

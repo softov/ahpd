@@ -1,6 +1,6 @@
 ---
 title: A live pi turn carries its model on the message
-status: implemented
+status: done
 depends: [task-01-a-turn-sends-its-usage.md]
 layer: "agent-pi"
 refs:

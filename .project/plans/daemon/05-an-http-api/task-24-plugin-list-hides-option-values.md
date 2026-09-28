@@ -1,6 +1,6 @@
 ---
 title: A served plugin list hides every plugin option value
-status: implemented
+status: done
 depends: [task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md]
 layer: "server"
 refs:

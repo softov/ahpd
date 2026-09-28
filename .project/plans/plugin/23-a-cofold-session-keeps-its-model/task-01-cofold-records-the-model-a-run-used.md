@@ -1,6 +1,6 @@
 ---
 title: cofold records the model each run used, released by Softov
-status: implemented
+status: done
 depends: []
 layer: "cofold agents"
 refs:

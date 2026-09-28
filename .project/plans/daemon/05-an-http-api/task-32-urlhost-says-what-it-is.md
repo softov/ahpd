@@ -1,6 +1,6 @@
 ---
 title: The comment on urlHost says what it is
-status: implemented
+status: done
 depends: [task-28-a-personal-url-brackets-an-ipv6-host.md]
 layer: "server"
 refs:

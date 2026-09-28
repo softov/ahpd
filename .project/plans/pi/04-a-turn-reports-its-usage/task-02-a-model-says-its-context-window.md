@@ -1,6 +1,6 @@
 ---
 title: A model says its context window
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

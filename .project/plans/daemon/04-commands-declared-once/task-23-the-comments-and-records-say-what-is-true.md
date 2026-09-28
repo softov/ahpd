@@ -1,6 +1,6 @@
 ---
 title: The comments and records of this plan say what is true
-status: implemented
+status: done
 depends: [task-20-a-refusal-takes-its-sentence-and-the-group-hint-fails-like-the-others.md]
 layer: "server, docs"
 refs:

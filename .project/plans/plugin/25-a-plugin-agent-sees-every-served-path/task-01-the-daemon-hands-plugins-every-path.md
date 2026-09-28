@@ -1,6 +1,6 @@
 ---
 title: The daemon hands plugins every served path
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

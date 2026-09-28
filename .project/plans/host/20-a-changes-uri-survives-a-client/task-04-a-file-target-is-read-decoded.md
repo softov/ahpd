@@ -1,6 +1,6 @@
 ---
 title: A file target an operation names is read decoded
-status: implemented
+status: done
 depends: [task-03-every-minted-uri-round-trips.md]
 layer: "sdk"
 refs:

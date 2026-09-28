@@ -1,6 +1,6 @@
 ---
 title: The commands are declared, with their grants
-status: implemented
+status: done
 depends: [task-01-pin-every-flag-and-verb.md]
 layer: "server"
 refs:

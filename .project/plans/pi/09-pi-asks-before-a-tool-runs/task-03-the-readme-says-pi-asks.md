@@ -1,6 +1,6 @@
 ---
 title: The README says pi asks
-status: implemented
+status: done
 depends: [task-02-a-mode-says-which-calls-ask.md]
 layer: "docs"
 refs:

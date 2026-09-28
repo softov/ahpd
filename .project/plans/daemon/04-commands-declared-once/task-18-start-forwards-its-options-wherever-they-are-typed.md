@@ -1,6 +1,6 @@
 ---
 title: start forwards its options wherever they are typed, and finds the start that is the word
-status: implemented
+status: done
 depends: [task-05-start-forwards-the-words-after-start.md]
 layer: "server"
 refs:

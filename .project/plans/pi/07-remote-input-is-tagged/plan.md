@@ -1,7 +1,7 @@
 ---
 title: Input from a client is tagged as not the terminal's
 domain: pi
-status: active
+status: built
 priority: low
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -50,7 +50,7 @@ begin() / steer() -> backend.prompt(text) / backend.steer(text) -> [new] { sourc
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - prompt and steer name their source](task-01-prompt-and-steer-name-their-source.md) | implemented | - |
+| [01 - prompt and steer name their source](task-01-prompt-and-steer-name-their-source.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -58,8 +58,8 @@ begin() / steer() -> backend.prompt(text) / backend.steer(text) -> [new] { sourc
 
 ## Resume state
 
-- **Done so far:** task 01 is `implemented`: `prompt` and `steer` both pass `source: 'rpc'`.
-- **Next action:** none; the task is implemented and awaiting review.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `ran` (the `!command`) does not go through pi and is not tagged.
 

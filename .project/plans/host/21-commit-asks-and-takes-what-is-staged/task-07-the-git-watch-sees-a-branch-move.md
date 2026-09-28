@@ -1,6 +1,6 @@
 ---
 title: The git watch sees the checked-out branch move, not only the index and HEAD
-status: implemented
+status: done
 depends: [task-06-the-git-watch-closes-with-its-directory.md]
 layer: "sdk"
 refs:

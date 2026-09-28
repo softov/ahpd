@@ -1,6 +1,6 @@
 ---
 title: The CLI runs commands against a daemon with --remote
-status: implemented
+status: done
 depends: [task-03-requests-sign-in.md]
 layer: "server"
 refs:

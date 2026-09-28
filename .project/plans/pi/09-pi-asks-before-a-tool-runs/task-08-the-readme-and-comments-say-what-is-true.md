@@ -1,6 +1,6 @@
 ---
 title: The README and the comments say what the code does
-status: implemented
+status: done
 depends: [task-07-no-test-only-seam.md]
 layer: "agent-pi"
 refs:

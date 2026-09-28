@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: implemented
+status: done
 depends: [task-04-remote-flag.md]
 layer: "docs"
 refs:

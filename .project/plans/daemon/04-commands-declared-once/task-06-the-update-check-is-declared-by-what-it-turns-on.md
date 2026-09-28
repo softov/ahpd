@@ -1,6 +1,6 @@
 ---
 title: The update check is declared by what it turns on, and its test can fail
-status: implemented
+status: done
 depends: [task-12-cofold-fields-say-whether-they-negate.md, task-17-cofold-leaves-an-untyped-flag-out.md]
 layer: "server"
 refs:

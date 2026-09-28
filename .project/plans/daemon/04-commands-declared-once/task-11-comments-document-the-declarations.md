@@ -1,6 +1,6 @@
 ---
 title: The comments under commands/ document the declarations, and the refs point at them
-status: implemented
+status: done
 depends: [task-04-docs-and-dependencies.md]
 layer: "server"
 refs:

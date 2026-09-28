@@ -1,6 +1,6 @@
 ---
 title: A resumed pi session keeps its history, and a stopped turn from disk reads cancelled
-status: implemented
+status: done
 depends: [task-03-a-session-from-disk-is-replayed.md]
 layer: "agent-pi"
 refs:

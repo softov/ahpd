@@ -1,6 +1,6 @@
 ---
 title: The docs say how to stage
-status: implemented
+status: done
 depends: [task-02-stage-and-unstage-a-file-or-folder.md]
 layer: "docs"
 refs:

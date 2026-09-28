@@ -1,6 +1,6 @@
 ---
 title: ahp-edit keeps the session out of the authority and is read by its parts
-status: implemented
+status: done
 depends: [task-01-ahp-git-reads-any-form.md]
 layer: "sdk"
 refs:

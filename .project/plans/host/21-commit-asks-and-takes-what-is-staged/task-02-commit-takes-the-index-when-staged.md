@@ -1,6 +1,6 @@
 ---
 title: Commit takes the index when anything is staged
-status: implemented
+status: done
 depends: [task-01-a-row-says-what-is-staged.md]
 layer: "sdk"
 refs:

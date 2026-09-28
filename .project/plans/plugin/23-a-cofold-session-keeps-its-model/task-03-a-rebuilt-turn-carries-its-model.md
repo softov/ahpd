@@ -1,6 +1,6 @@
 ---
 title: A rebuilt cofold turn carries the model it ran on
-status: implemented
+status: done
 depends: [task-01-cofold-records-the-model-a-run-used.md, task-02-a-live-turn-carries-its-model.md]
 layer: "agent-cofold"
 refs:

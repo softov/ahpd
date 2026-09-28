@@ -1,6 +1,6 @@
 ---
 title: Every flag and verb has a test that pins what it does
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

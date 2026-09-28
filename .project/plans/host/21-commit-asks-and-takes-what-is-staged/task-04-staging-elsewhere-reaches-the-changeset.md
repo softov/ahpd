@@ -1,6 +1,6 @@
 ---
 title: The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn
-status: implemented
+status: done
 depends: [task-03-commit-asks-first.md]
 layer: "sdk"
 refs:

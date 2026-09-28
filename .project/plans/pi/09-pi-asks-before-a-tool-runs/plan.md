@@ -1,7 +1,7 @@
 ---
 title: pi asks a person before a tool runs
 domain: pi
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -79,17 +79,17 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A call can wait on a person](task-01-a-call-can-wait-on-a-person.md) | implemented | - |
-| [02 - A mode says which calls ask](task-02-a-mode-says-which-calls-ask.md) | implemented | 01 |
-| [03 - The README says pi asks](task-03-the-readme-says-pi-asks.md) | implemented | 02 |
-| [04 - The ask reuses the row pi already opened, and a client tool runs only after it is approved](task-04-the-ask-reuses-the-row-pi-opened.md) | implemented | 01 |
-| [05 - A path is judged where pi puts it, reads outside the workspace ask, and pi's own tools keep their effects](task-05-a-path-is-judged-where-pi-puts-it.md) | implemented | 02 |
-| [06 - A cancel answers every question it leaves](task-06-a-cancel-answers-what-it-asked.md) | implemented | 04 |
-| [07 - piSession has no test-only parameter](task-07-no-test-only-seam.md) | implemented | 05 |
-| [08 - The README and the comments say what the code does](task-08-the-readme-and-comments-say-what-is-true.md) | implemented | 07 |
-| [09 - A captured pi session validates against the protocol schema](task-09-a-wire-capture-validates.md) | implemented | 08 |
-| [10 - A call pi failed before its hook still closes in a client](task-10-a-call-pi-failed-first-still-closes.md) | implemented | 04 |
-| [11 - A client that reconnects sees what pi is waiting on](task-11-a-reconnected-client-sees-the-question.md) | implemented | 01 |
+| [01 - A call can wait on a person](task-01-a-call-can-wait-on-a-person.md) | done | - |
+| [02 - A mode says which calls ask](task-02-a-mode-says-which-calls-ask.md) | done | 01 |
+| [03 - The README says pi asks](task-03-the-readme-says-pi-asks.md) | done | 02 |
+| [04 - The ask reuses the row pi already opened, and a client tool runs only after it is approved](task-04-the-ask-reuses-the-row-pi-opened.md) | done | 01 |
+| [05 - A path is judged where pi puts it, reads outside the workspace ask, and pi's own tools keep their effects](task-05-a-path-is-judged-where-pi-puts-it.md) | done | 02 |
+| [06 - A cancel answers every question it leaves](task-06-a-cancel-answers-what-it-asked.md) | done | 04 |
+| [07 - piSession has no test-only parameter](task-07-no-test-only-seam.md) | done | 05 |
+| [08 - The README and the comments say what the code does](task-08-the-readme-and-comments-say-what-is-true.md) | done | 07 |
+| [09 - A captured pi session validates against the protocol schema](task-09-a-wire-capture-validates.md) | done | 08 |
+| [10 - A call pi failed before its hook still closes in a client](task-10-a-call-pi-failed-first-still-closes.md) | done | 04 |
+| [11 - A client that reconnects sees what pi is waiting on](task-11-a-reconnected-client-sees-the-question.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -99,8 +99,8 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 11 are `implemented`: the ask with `pending-confirmation` and `confirm`, the six-value `permissionMode`, the README bullet, the ask reusing the row pi opened, pi's own path resolution with reads outside asking, a cancel answering every question it leaves, no test-only seam, the README and comments brought in line with the code, a scripted wire capture that passes `pnpm wire`, a call pi failed before its hook readied at its end, and `inputNeeded` in the session state while a question waits.
-- **Next action:** review of task 11; tasks 01 to 09 were reviewed on 2026-09-27, and task 10 was built in that review and awaits Softov's.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** client-owned tools from plan 02 are the client's to run; asking about them is still ahpd's, before the call goes out to the client.
 

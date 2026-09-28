@@ -1,6 +1,6 @@
 ---
 title: The git watch closes when nobody watches its directory, and a watcher error falls back
-status: implemented
+status: done
 depends: [task-04-staging-elsewhere-reaches-the-changeset.md]
 layer: "sdk"
 refs:

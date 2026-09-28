@@ -1,6 +1,6 @@
 ---
 title: An edit is announced before and after
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

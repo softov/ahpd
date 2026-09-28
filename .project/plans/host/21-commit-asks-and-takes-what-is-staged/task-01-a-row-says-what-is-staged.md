@@ -1,6 +1,6 @@
 ---
 title: A row says what is staged, and a staged rename is one row
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

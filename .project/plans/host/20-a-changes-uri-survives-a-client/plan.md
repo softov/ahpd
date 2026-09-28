@@ -1,7 +1,7 @@
 ---
 title: A changes URI opens in a client that normalises it
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -69,10 +69,10 @@ changeset row (before/after content URI) -> client URI.parse + toString -> resou
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahp-git: is minted with an authority and read in any client's form](task-01-ahp-git-reads-any-form.md) | implemented | - |
-| [02 - ahp-edit: keeps the session out of the authority and is read by its parts](task-02-ahp-edit-reads-by-its-parts.md) | implemented | 01 |
-| [03 - Every URI ahpd mints opens after a client normalises it](task-03-every-minted-uri-round-trips.md) | implemented | 02 |
-| [04 - A file target an operation names is read decoded](task-04-a-file-target-is-read-decoded.md) | implemented | 03 |
+| [01 - ahp-git: is minted with an authority and read in any client's form](task-01-ahp-git-reads-any-form.md) | done | - |
+| [02 - ahp-edit: keeps the session out of the authority and is read by its parts](task-02-ahp-edit-reads-by-its-parts.md) | done | 01 |
+| [03 - Every URI ahpd mints opens after a client normalises it](task-03-every-minted-uri-round-trips.md) | done | 02 |
+| [04 - A file target an operation names is read decoded](task-04-a-file-target-is-read-decoded.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -82,9 +82,8 @@ changeset row (before/after content URI) -> client URI.parse + toString -> resou
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 implemented, awaiting review.
-  `ahp-git:` and `ahp-edit:` are minted in the new forms and read by their parsed parts, the host takes `ahp-root:` as the root channel through `isRootChannel`, every other minted URI is pinned through the normaliser, and task 04 is pinned by regression cases.
-- **Next action:** review, then Softov's by-hand check in VS Code from task 03's Validation.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `packages/sdk/test/commit.test.ts` is host/21's; the cases here are in `packages/sdk/test/changes-uris.test.ts`.
   The normaliser in that file was ported from VS Code's `uri.ts`; check it against `uri.ts` again if VS Code changes it.

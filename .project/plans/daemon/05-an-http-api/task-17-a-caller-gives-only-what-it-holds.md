@@ -1,6 +1,6 @@
 ---
 title: A user command gives, mints for and removes only what its caller holds
-status: implemented
+status: done
 depends: [task-09-the-grants-each-command-needs.md]
 layer: "server, sdk"
 refs:

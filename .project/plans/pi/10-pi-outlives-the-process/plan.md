@@ -1,7 +1,7 @@
 ---
 title: pi's models and history outlive the process, and pi loads without holding the daemon
 domain: pi
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -79,12 +79,12 @@ resumed session -> [new] ends seeded from the same replay -> endPoint answers
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - agent-pi loads without importing pi](task-01-agent-pi-loads-without-importing-pi.md) | implemented | - |
-| [02 - The probe answers pi's models](task-02-the-probe-answers-pis-models.md) | implemented | 01 |
-| [03 - A session from disk is replayed into turns](task-03-a-session-from-disk-is-replayed.md) | implemented | 01 |
-| [04 - A resumed session keeps its history](task-04-a-resumed-session-keeps-its-history.md) | implemented | 03 |
-| [05 - The dev loader resolves on the main thread](task-05-the-dev-loader-resolves-in-thread.md) | implemented | 01 |
-| [06 - A new pi session is saved under the id the client named](task-06-a-new-session-is-saved-under-the-clients-id.md) | implemented | 01 |
+| [01 - agent-pi loads without importing pi](task-01-agent-pi-loads-without-importing-pi.md) | done | - |
+| [02 - The probe answers pi's models](task-02-the-probe-answers-pis-models.md) | done | 01 |
+| [03 - A session from disk is replayed into turns](task-03-a-session-from-disk-is-replayed.md) | done | 01 |
+| [04 - A resumed session keeps its history](task-04-a-resumed-session-keeps-its-history.md) | done | 03 |
+| [05 - The dev loader resolves on the main thread](task-05-the-dev-loader-resolves-in-thread.md) | done | 01 |
+| [06 - A new pi session is saved under the id the client named](task-06-a-new-session-is-saved-under-the-clients-id.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -94,8 +94,8 @@ resumed session -> [new] ends seeded from the same replay -> endPoint answers
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 06 are implemented and await review.
-- **Next action:** review of tasks 01 to 06, then Softov's checks by hand in the final checklist.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a type-only import of pi stays static; only runtime values move behind the lazy import.
 

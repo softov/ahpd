@@ -1,6 +1,6 @@
 ---
 title: A session from disk is replayed into turns
-status: implemented
+status: done
 depends: [task-01-agent-pi-loads-without-importing-pi.md]
 layer: "agent-pi"
 refs:

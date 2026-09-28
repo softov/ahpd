@@ -1,6 +1,6 @@
 ---
 title: A provider error fails the turn
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

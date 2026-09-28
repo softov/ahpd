@@ -1,7 +1,7 @@
 ---
 title: Host and client tools reach pi
 domain: pi
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -74,13 +74,13 @@ host Start.tools -> piSession offering -> [new] tools.ts toPiTool(BoundTool) -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Host tools are pi tools](task-01-host-tools-are-pi-tools.md) | implemented | - |
-| [02 - A client's tool is run by that client](task-02-a-client-tool-is-run-by-that-client.md) | implemented | 01 |
-| [03 - The tools change with the clients](task-03-the-tools-change-with-the-clients.md) | implemented | 02 |
-| [04 - The README lists the tools](task-04-the-readme-lists-the-tools.md) | implemented | 03 |
-| [05 - Tools announced while pi opens reach it, and a tool hears pi's abort](task-05-tools-announced-while-pi-opens-reach-it.md) | implemented | 03 |
-| [06 - A rebuild keeps the model, the thinking level and the session](task-06-a-rebuild-keeps-the-session.md) | implemented | 05 |
-| [07 - The tool and truncation tests fail when their fix is taken out](task-07-the-tests-fail-without-their-fix.md) | implemented | 06 |
+| [01 - Host tools are pi tools](task-01-host-tools-are-pi-tools.md) | done | - |
+| [02 - A client's tool is run by that client](task-02-a-client-tool-is-run-by-that-client.md) | done | 01 |
+| [03 - The tools change with the clients](task-03-the-tools-change-with-the-clients.md) | done | 02 |
+| [04 - The README lists the tools](task-04-the-readme-lists-the-tools.md) | done | 03 |
+| [05 - Tools announced while pi opens reach it, and a tool hears pi's abort](task-05-tools-announced-while-pi-opens-reach-it.md) | done | 03 |
+| [06 - A rebuild keeps the model, the thinking level and the session](task-06-a-rebuild-keeps-the-session.md) | done | 05 |
+| [07 - The tool and truncation tests fail when their fix is taken out](task-07-the-tests-fail-without-their-fix.md) | done | 06 |
 
 ## Risks and tradeoffs
 
@@ -91,8 +91,8 @@ host Start.tools -> piSession offering -> [new] tools.ts toPiTool(BoundTool) -> 
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 07 are `implemented`: the tool conversion, the client wait and its `Session` methods, the `contributor`, `setTools` rebuilding pi on the same file, the README bullet, a change made at any moment reaching pi, a rebuild that keeps the model and the session and fails only its turn, and the four cases checked to fail without their guarded line.
-- **Next action:** none; all seven tasks are implemented and awaiting review; tasks 01 to 04 were reviewed on 2026-09-27.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the host names a client tool `<clientId>__<name>`; the owner is `BoundTool.owner`, never parsed back out of the name.
 

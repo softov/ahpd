@@ -1,6 +1,6 @@
 ---
 title: A turn with no model reaches the person as the sentence that says what to add
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

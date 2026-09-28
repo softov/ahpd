@@ -1,6 +1,6 @@
 ---
 title: ahpd start runs the daemon under the same node flags it was run with
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

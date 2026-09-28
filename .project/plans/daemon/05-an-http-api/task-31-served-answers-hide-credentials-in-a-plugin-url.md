@@ -1,6 +1,6 @@
 ---
 title: Served answers hide the credentials in a plugin's URL
-status: implemented
+status: done
 depends: [task-24-plugin-list-hides-option-values.md]
 layer: "server"
 refs:

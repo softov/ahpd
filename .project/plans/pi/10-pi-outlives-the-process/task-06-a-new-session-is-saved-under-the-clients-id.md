@@ -1,6 +1,6 @@
 ---
 title: A new pi session is saved under the id the client named
-status: implemented
+status: done
 depends: [task-01-agent-pi-loads-without-importing-pi.md]
 layer: "agent-pi"
 refs:

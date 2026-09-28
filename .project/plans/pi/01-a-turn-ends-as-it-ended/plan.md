@@ -1,7 +1,7 @@
 ---
 title: A pi turn can be truncated, one that failed at the provider says so, and the configured model is used
 domain: pi
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -73,11 +73,11 @@ pi message_end (assistant, stopReason 'error') -> [new] remembered as the turn's
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn names where it ended](task-01-a-turn-names-where-it-ended.md) | implemented | - |
-| [02 - A provider error fails the turn](task-02-a-provider-error-fails-the-turn.md) | implemented | - |
-| [03 - The configured model is the default](task-03-the-configured-model-is-the-default.md) | implemented | - |
-| [04 - A refused rewind fails that turn and not the session](task-04-a-refused-rewind-fails-only-its-turn.md) | implemented | 01 |
-| [05 - The host learns pi's models once pi has listed them](task-05-the-host-learns-the-models.md) | implemented | 03 |
+| [01 - A turn names where it ended](task-01-a-turn-names-where-it-ended.md) | done | - |
+| [02 - A provider error fails the turn](task-02-a-provider-error-fails-the-turn.md) | done | - |
+| [03 - The configured model is the default](task-03-the-configured-model-is-the-default.md) | done | - |
+| [04 - A refused rewind fails that turn and not the session](task-04-a-refused-rewind-fails-only-its-turn.md) | done | 01 |
+| [05 - The host learns pi's models once pi has listed them](task-05-the-host-learns-the-models.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -86,8 +86,8 @@ pi message_end (assistant, stopReason 'error') -> [new] remembered as the turn's
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 05 are `implemented`: `PiBackend.leaf()`, the `ends` map and `endPoint`, a refused rewind failing only its turn, a provider error ending the turn as `error`, the configured `model` as a new session's default, and the handshake that lets the host learn pi's models.
-- **Next action:** none; tasks 01 to 04 were reviewed on 2026-09-27, and task 05 was built in that review and awaits Softov's.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a turn cancelled by the client ends with `stopReason: 'aborted'`, not `'error'`; it stays `cancelled`.
 

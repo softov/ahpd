@@ -1,6 +1,6 @@
 ---
 title: A rebuild keeps the model, the thinking level and the session, and a failed one fails only its turn
-status: implemented
+status: done
 depends: [task-05-tools-announced-while-pi-opens-reach-it.md]
 layer: "agent-pi"
 refs:

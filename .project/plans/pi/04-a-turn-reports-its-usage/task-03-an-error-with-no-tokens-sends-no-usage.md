@@ -1,6 +1,6 @@
 ---
 title: A turn that failed before any token sends no usage
-status: implemented
+status: done
 depends: [task-01-a-turn-sends-its-usage.md]
 layer: "agent-pi"
 refs:

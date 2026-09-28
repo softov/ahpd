@@ -1,6 +1,6 @@
 ---
 title: Tools announced while pi opens reach it, a running turn keeps the tools it started with, and a tool hears pi's abort
-status: implemented
+status: done
 depends: [task-03-the-tools-change-with-the-clients.md]
 layer: "agent-pi"
 refs:

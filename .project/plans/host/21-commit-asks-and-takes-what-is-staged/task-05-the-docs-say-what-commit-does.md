@@ -1,6 +1,6 @@
 ---
 title: The docs say what commit does
-status: implemented
+status: done
 depends: [task-04-staging-elsewhere-reaches-the-changeset.md]
 layer: "docs"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A session outside the configured paths has its git facts and its changes without waiting for a turn
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -82,8 +82,8 @@ turn ends -> refreshFacts(dir) -> facts, pull requests, changes -> row and verbs
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Opening a changeset reads the folder's git facts first](task-01-opening-a-changeset-reads-the-facts.md) | implemented | - |
-| [02 - A stored session's folder is read at startup](task-02-a-stored-sessions-folder-is-read-at-startup.md) | implemented | 01 |
+| [01 - Opening a changeset reads the folder's git facts first](task-01-opening-a-changeset-reads-the-facts.md) | done | - |
+| [02 - A stored session's folder is read at startup](task-02-a-stored-sessions-folder-is-read-at-startup.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -93,8 +93,8 @@ turn ends -> refreshFacts(dir) -> facts, pull requests, changes -> row and verbs
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 are implemented on 2026-09-27 in `/github/ahpd-worktree01`, uncommitted: `readFacts` in `host.ts` reads a folder's facts, pull requests and changes and resolves when done, `refreshFacts` and the changeset subscribe call it, `readStored` reads every stored session's folder outside `browsable()` once after startup, and `summaryMoved` carries a listed row's `changes`. Seven cases in `changes-refresh.test.ts`; `pnpm typecheck`, `pnpm boundary` and `pnpm test` green.
-- **Next action:** review by Softov, then the manual check in the verification checklist.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a folder in `browsable()` is already read at startup and must not be read twice; a listed row has no `Held`, so `summaryMoved` says nothing about its counts.
 

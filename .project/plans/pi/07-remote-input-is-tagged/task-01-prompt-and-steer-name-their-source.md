@@ -1,6 +1,6 @@
 ---
 title: prompt and steer name their source
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

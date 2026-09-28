@@ -1,6 +1,6 @@
 ---
 title: ahp-git is minted with an authority and read in any client's form
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

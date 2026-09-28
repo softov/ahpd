@@ -1,6 +1,6 @@
 ---
 title: main.ts runs through the terminal program
-status: implemented
+status: done
 depends: [task-02-the-commands-are-declared.md]
 layer: "server"
 refs:

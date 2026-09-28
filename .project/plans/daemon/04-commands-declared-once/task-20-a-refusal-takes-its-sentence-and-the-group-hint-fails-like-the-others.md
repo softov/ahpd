@@ -1,6 +1,6 @@
 ---
 title: A refusal takes only its sentence, and the group hint fails like every other failure
-status: implemented
+status: done
 depends: [task-15-a-bare-verb-names-its-sub-commands.md, task-16-handlers-fail-by-throwing.md]
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Docs, dependencies and the lockfile
-status: implemented
+status: done
 depends: [task-03-main-runs-through-the-program.md]
 layer: "docs"
 refs:

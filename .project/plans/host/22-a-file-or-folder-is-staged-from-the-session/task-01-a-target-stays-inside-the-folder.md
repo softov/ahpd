@@ -1,6 +1,6 @@
 ---
 title: A target is judged where it resolves, and nothing above the session's folder is reached
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

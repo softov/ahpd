@@ -1,6 +1,6 @@
 ---
 title: The host learns pi's models once pi has listed them
-status: implemented
+status: done
 depends: [task-03-the-configured-model-is-the-default.md]
 layer: "agent-pi"
 refs:

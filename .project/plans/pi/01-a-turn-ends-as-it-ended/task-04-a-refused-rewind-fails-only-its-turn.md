@@ -1,6 +1,6 @@
 ---
 title: A refused rewind fails that turn and not the session
-status: implemented
+status: done
 depends: [task-01-a-turn-names-where-it-ended.md]
 layer: "agent-pi"
 refs:

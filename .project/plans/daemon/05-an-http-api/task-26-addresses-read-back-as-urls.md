@@ -1,6 +1,6 @@
 ---
 title: The addresses the daemon prints and accepts read back as URLs - IPv6 in brackets, a resource with its port
-status: implemented
+status: done
 depends: [task-18-the-guards-have-no-gaps.md]
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A blank token or host is refused, and the comments and refs say what is true
-status: implemented
+status: done
 depends: [task-22-the-docs-comments-and-refs-say-what-the-code-does.md]
 layer: "server, docs"
 refs:

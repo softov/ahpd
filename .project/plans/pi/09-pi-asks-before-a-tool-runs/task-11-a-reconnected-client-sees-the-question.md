@@ -1,6 +1,6 @@
 ---
 title: A client that reconnects sees what pi is waiting on
-status: implemented
+status: done
 depends: [task-01-a-call-can-wait-on-a-person.md]
 layer: "agent-pi"
 refs:

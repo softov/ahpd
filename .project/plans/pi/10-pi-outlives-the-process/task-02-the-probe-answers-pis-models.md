@@ -1,6 +1,6 @@
 ---
 title: The probe answers pi's models
-status: implemented
+status: done
 depends: [task-01-agent-pi-loads-without-importing-pi.md]
 layer: "agent-pi"
 refs:

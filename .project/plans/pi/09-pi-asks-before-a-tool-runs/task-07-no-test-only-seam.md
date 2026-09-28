@@ -1,6 +1,6 @@
 ---
 title: piSession has no test-only parameter, and the ask tests drive the real mode
-status: implemented
+status: done
 depends: [task-05-a-path-is-judged-where-pi-puts-it.md]
 layer: "agent-pi"
 refs:

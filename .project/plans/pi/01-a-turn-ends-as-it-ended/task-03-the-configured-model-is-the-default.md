@@ -1,6 +1,6 @@
 ---
 title: The configured model is the default
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The tools change with the clients
-status: implemented
+status: done
 depends: [task-02-a-client-tool-is-run-by-that-client.md]
 layer: "agent-pi"
 refs:

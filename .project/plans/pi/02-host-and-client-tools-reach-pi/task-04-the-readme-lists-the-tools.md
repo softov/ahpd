@@ -1,6 +1,6 @@
 ---
 title: The README lists the tools
-status: implemented
+status: done
 depends: [task-03-the-tools-change-with-the-clients.md]
 layer: "docs"
 refs:

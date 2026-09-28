@@ -1,6 +1,6 @@
 ---
 title: A path is judged where pi puts it, reads outside the workspace ask, and pi's own tools keep their effects
-status: implemented
+status: done
 depends: [task-02-a-mode-says-which-calls-ask.md]
 layer: "agent-pi"
 refs:

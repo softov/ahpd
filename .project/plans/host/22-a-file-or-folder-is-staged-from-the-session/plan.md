@@ -1,7 +1,7 @@
 ---
 title: A file or a folder is staged and unstaged from the session's changeset
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -66,9 +66,9 @@ client invokeChangesetOperation stage|unstage { target.resource: file:///<dir>/<
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A target is judged where it resolves, and nothing above the session's folder is reached](task-01-a-target-stays-inside-the-folder.md) | implemented | - |
-| [02 - A file or a folder is staged and unstaged](task-02-stage-and-unstage-a-file-or-folder.md) | implemented | 01 |
-| [03 - The docs say how to stage](task-03-the-docs-say-how-to-stage.md) | implemented | 02 |
+| [01 - A target is judged where it resolves, and nothing above the session's folder is reached](task-01-a-target-stays-inside-the-folder.md) | done | - |
+| [02 - A file or a folder is staged and unstaged](task-02-stage-and-unstage-a-file-or-folder.md) | done | 01 |
+| [03 - The docs say how to stage](task-03-the-docs-say-how-to-stage.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -78,8 +78,8 @@ client invokeChangesetOperation stage|unstage { target.resource: file:///<dir>/<
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 03 are implemented on 2026-09-27: a resource target is decoded, resolved and followed through symlinks before it is judged, `stage` and `unstage` are offered on the uncommitted changeset and move a file or a folder, and `docs/AHP.md` says how a person stages.
-- **Next action:** Softov's review, then the manual check: in VS Code stage a row from the session and Commit, and in ahpapp stage a file and a folder.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a session's folder can be a subdirectory of its repository, so git itself accepts `../x`; the containment is this host's to enforce.
   A test stages in a scratch repository, never in the tree it runs from.

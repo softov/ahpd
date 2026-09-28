@@ -112,11 +112,11 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - @cofold/remote serves a registry (cofold repository)](task-01-serve-in-cofold-remote.md) | implemented | - |
-| [02 - The daemon mounts the API when http is on](task-02-the-daemon-mounts-it.md) | implemented | 01 |
-| [03 - A request signs in and is checked against the grants](task-03-requests-sign-in.md) | implemented | 02 |
-| [04 - The CLI runs commands against a daemon with --remote](task-04-remote-flag.md) | implemented | 03 |
-| [05 - Docs](task-05-docs.md) | implemented | 04 |
+| [01 - @cofold/remote serves a registry (cofold repository)](task-01-serve-in-cofold-remote.md) | done | - |
+| [02 - The daemon mounts the API when http is on](task-02-the-daemon-mounts-it.md) | done | 01 |
+| [03 - A request signs in and is checked against the grants](task-03-requests-sign-in.md) | done | 02 |
+| [04 - The CLI runs commands against a daemon with --remote](task-04-remote-flag.md) | done | 03 |
+| [05 - Docs](task-05-docs.md) | done | 04 |
 | [06 - `serve()` survives a malformed request and takes only JSON bodies (cofold repository)](task-06-serve-survives-a-malformed-request.md) | done | - |
 | [07 - The daemon's listener survives a malformed request, with the API on or off](task-07-the-listener-survives-a-malformed-request.md) | done | - |
 | [08 - Served commands act on the daemon's own options, and no request ends the daemon](task-08-served-commands-act-on-the-daemons-own-options.md) | done | 07 |
@@ -126,26 +126,26 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [12 - http.host binds the API's own listener](task-12-http-host.md) | done | - |
 | [13 - `--remote` needs a token, reads it from a file too, warns on cleartext, keeps its cache private, and its tests prove the daemon answered](task-13-remote-needs-a-token-and-proves-it-is-remote.md) | done | 08 |
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | done | 09, 10, 11, 12, 13 |
-| [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | implemented | 06 |
+| [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | done | 06 |
 | [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | todo | 07, 15 |
-| [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | implemented | 09 |
+| [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | done | 09 |
 | [18 - The API's guards have no gaps](task-18-the-guards-have-no-gaps.md) | done | 11, 12, 13 |
 | [19 - The API's tests prove what their tasks' Validation says](task-19-the-tests-prove-their-validation.md) | done | 08, 10, 12, 13 |
-| [20 - A served config answers from the daemon's own file, hides its secrets, or says it is gone](task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md) | implemented | 08 |
+| [20 - A served config answers from the daemon's own file, hides its secrets, or says it is gone](task-20-served-config-reads-the-daemons-file-or-says-it-is-gone.md) | done | 08 |
 | [21 - npm runs without holding the daemon, and a served install says to restart](task-21-npm-runs-without-holding-the-daemon.md) | done | 08 |
 | [22 - The docs, comments and task refs for the API say what the code does](task-22-the-docs-comments-and-refs-say-what-the-code-does.md) | done | 17, 18, 19, 20, 21 |
-| [23 - user add on a person who exists is bounded by the roles they hold](task-23-user-add-on-an-existing-person-is-bounded.md) | implemented | 17 |
-| [24 - A served plugin list hides every plugin option value](task-24-plugin-list-hides-option-values.md) | implemented | 20 |
-| [25 - Served plugin installs and removes run one at a time](task-25-served-plugin-writes-run-one-at-a-time.md) | implemented | 21 |
-| [26 - The addresses the daemon prints and accepts read back as URLs](task-26-addresses-read-back-as-urls.md) | implemented | 18 |
-| [27 - A blank token or host is refused, and the comments and refs say what is true](task-27-blank-values-are-refused-and-the-records-are-true.md) | implemented | 22 |
-| [28 - A personal URL brackets an IPv6 host](task-28-a-personal-url-brackets-an-ipv6-host.md) | implemented | 26 |
-| [29 - A role named __proto__ in the users file is read as a role](task-29-a-role-named-proto-is-a-role.md) | implemented | 23 |
-| [30 - ahpd start runs the daemon under the same node flags it was run with](task-30-start-runs-the-child-under-the-same-node-flags.md) | implemented | - |
-| [31 - Served answers hide the credentials in a plugin's URL](task-31-served-answers-hide-credentials-in-a-plugin-url.md) | implemented | 24 |
-| [32 - The comment on urlHost says what it is](task-32-urlhost-says-what-it-is.md) | implemented | 28 |
-| [33 - A --remote token is trimmed whichever of the three it came from](task-33-a-remote-token-is-trimmed-from-every-source.md) | implemented | 27 |
-| [34 - DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared](task-34-daemon-md-is-wrapped-and-names-the-update-flag.md) | implemented | - |
+| [23 - user add on a person who exists is bounded by the roles they hold](task-23-user-add-on-an-existing-person-is-bounded.md) | done | 17 |
+| [24 - A served plugin list hides every plugin option value](task-24-plugin-list-hides-option-values.md) | done | 20 |
+| [25 - Served plugin installs and removes run one at a time](task-25-served-plugin-writes-run-one-at-a-time.md) | done | 21 |
+| [26 - The addresses the daemon prints and accepts read back as URLs](task-26-addresses-read-back-as-urls.md) | done | 18 |
+| [27 - A blank token or host is refused, and the comments and refs say what is true](task-27-blank-values-are-refused-and-the-records-are-true.md) | done | 22 |
+| [28 - A personal URL brackets an IPv6 host](task-28-a-personal-url-brackets-an-ipv6-host.md) | done | 26 |
+| [29 - A role named __proto__ in the users file is read as a role](task-29-a-role-named-proto-is-a-role.md) | done | 23 |
+| [30 - ahpd start runs the daemon under the same node flags it was run with](task-30-start-runs-the-child-under-the-same-node-flags.md) | done | - |
+| [31 - Served answers hide the credentials in a plugin's URL](task-31-served-answers-hide-credentials-in-a-plugin-url.md) | done | 24 |
+| [32 - The comment on urlHost says what it is](task-32-urlhost-says-what-it-is.md) | done | 28 |
+| [33 - A --remote token is trimmed whichever of the three it came from](task-33-a-remote-token-is-trimmed-from-every-source.md) | done | 27 |
+| [34 - DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared](task-34-daemon-md-is-wrapped-and-names-the-update-flag.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -154,36 +154,13 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 
 ## Resume state
 
-- **Done so far:** tasks 06 to 14, 18, 19, 21 and 22 are done.
-  Tasks 01 to 05, 15, 17, 20 and 23 to 34 are implemented and wait for Softov's review.
-  Task 06 is `@cofold/remote` 0.3.1, released, and ahpd depends on `^0.3.1`.
-  With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, and a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook.
-  A served command reads the daemon's own options, malformed requests and foreign Origins and Hosts are answered, `http.host` binds the API's own listener, `--remote` needs and can read a token, and `docs/DAEMON.md` documents it.
-  Task 17 bounds `user add`, `user rm` and `user token` by what the caller holds.
-  Task 18 closes the guards: a request with no `Host`, an IPv6 bind, an empty `http.host`, a request with no actor and an uppercase cleartext scheme.
-  Task 19 makes the API's cases fail when the bind, the sentence, the cache mode or the plugin list breaks.
-  Task 20 makes a served `config` answer from the daemon's own file, mask every plugin option value, and say nothing is set when that file is gone.
-  Task 21 makes npm run without holding the daemon, streams its stderr and tells a served install to restart.
-  Task 22 makes the docs and the comments say what the code does and re-points every ref in tasks 07 to 21.
-  Task 23 bounds `user add` on a person who exists by the roles they hold, makes `bounded` refuse a served call with no actor, and reads a role named like an object key as unknown.
-  Task 24 makes a served `plugin list` mask every option value.
-  Task 25 runs served plugin installs and removes one at a time.
-  Task 26 prints and names an IPv6 bind in brackets, and answers a `resource` with a port by that port.
-  Task 27 refuses a blank `--remote` token and an `http.host` with space around it.
-  Task 28 makes `personalUrl` bracket an IPv6 host, with `urlHost` moved from the run command into `config.ts`.
-  Task 29 reads a role named `__proto__` as a role, by building the role table with no prototype.
-  Task 30 runs the started daemon under the parent's `process.execArgv`, so the dev runner's loader reaches it.
-  Task 31 masks a plugin spec URL's userinfo in a served `config` and `plugin list`, the row's other string fields included.
-  Task 32 makes `urlHost`'s comment say what the function is and nothing about where it came from.
-  Task 33 makes `tokenFor` trim the chosen value once, so `--token`, `--token-file` and `AHPD_TOKEN` share one rule; the case is a behaviour lock, since the HTTP layer already strips the header's surrounding whitespace.
-  Task 15 makes cofold's `serve()` a `Request` handler with a Node adapter, as `@cofold/remote` 0.4.0.
-  Task 34 wraps `docs/DAEMON.md`'s `--remote` paragraph at 80 columns and makes the flag row name `--update-check`, `--no-update-check` as `updateCheck` declares them.
-- **Next action:** Softov reviews tasks 01 to 05, 15, 17, 20 and 23 to 34.
-  Task 15 is built in the cofold repository, uncommitted, and waits for Softov's commit and release of `@cofold/remote` 0.4.0; task 16 is todo and waits for that release.
+- **Done so far:** every task but 16 is `done`, reviewed by Softov on 2026-09-28.
+  With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook, and `ahpd --remote <url>` runs the same commands against it.
+  Task 15 is `@cofold/remote` 0.4.0, released on 2026-09-28 (cofold tag `release-2026-09-28`); ahpd still depends on `^0.3.1` until task 16 moves it.
+- **Next action:** task 16, the API on Node, Bun and Deno over 0.4.0, is being built in the worktree `/github/ahpd-d05t16` on branch `d05-16`, then Softov's review; the plan closes after it.
 - **Open questions:** none.
 - **Watch out for:**
-  - Task 15 changes `serve()` to take a `Request` and answer a `Response`, with a Node adapter; task 16 then serves the API on Node, Bun and Deno.
-    Both wait on a cofold release.
+  - Task 15 made `serve()` take a `Request` and answer a `Response`, with a Node adapter; task 16 serves the API on Node, Bun and Deno with it.
   - A command added to the API later must take no path from the request, must not reach `stop`, and must declare a grant pair.
   - The dispatch gate and `PER_CONNECTION` have no staleness test, so a command reachable over HTTP must be classified the way a WebSocket method is.
   - A cofold release is staged by cofold's `release.yml` from a `release-*` tag and approved by Softov on npm; nobody runs `npm publish`.

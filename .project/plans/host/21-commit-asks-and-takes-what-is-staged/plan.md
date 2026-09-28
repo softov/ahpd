@@ -1,7 +1,7 @@
 ---
 title: The commit operation asks first, and commits what is staged when anything is
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -80,14 +80,14 @@ Commit clicked -> confirmation shown -> invokeChangesetOperation commit -> git c
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A row says what is staged, and a staged rename is one row](task-01-a-row-says-what-is-staged.md) | implemented | - |
-| [02 - Commit takes the index when anything is staged](task-02-commit-takes-the-index-when-staged.md) | implemented | 01 |
-| [03 - Commit asks first, naming its subject and its files](task-03-commit-asks-first.md) | implemented | 02 |
-| [04 - The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn](task-04-staging-elsewhere-reaches-the-changeset.md) | implemented | 03 |
-| [05 - The docs say what commit does](task-05-the-docs-say-what-commit-does.md) | implemented | 04 |
-| [06 - The git watch closes when nobody watches its directory, and a watcher error falls back](task-06-the-git-watch-closes-with-its-directory.md) | implemented | 04 |
-| [07 - The git watch sees the checked-out branch move](task-07-the-git-watch-sees-a-branch-move.md) | implemented | 06 |
-| [08 - The host's turn_end line is two lines again, and the unwatched case counts tool calls](task-08-the-host-line-and-the-unwatched-case.md) | implemented | 04 |
+| [01 - A row says what is staged, and a staged rename is one row](task-01-a-row-says-what-is-staged.md) | done | - |
+| [02 - Commit takes the index when anything is staged](task-02-commit-takes-the-index-when-staged.md) | done | 01 |
+| [03 - Commit asks first, naming its subject and its files](task-03-commit-asks-first.md) | done | 02 |
+| [04 - The uncommitted changeset follows git, tool calls, client writes and terminals without waiting for a turn](task-04-staging-elsewhere-reaches-the-changeset.md) | done | 03 |
+| [05 - The docs say what commit does](task-05-the-docs-say-what-commit-does.md) | done | 04 |
+| [06 - The git watch closes when nobody watches its directory, and a watcher error falls back](task-06-the-git-watch-closes-with-its-directory.md) | done | 04 |
+| [07 - The git watch sees the checked-out branch move](task-07-the-git-watch-sees-a-branch-move.md) | done | 06 |
+| [08 - The host's turn_end line is two lines again, and the unwatched case counts tool calls](task-08-the-host-line-and-the-unwatched-case.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -100,8 +100,8 @@ Commit clicked -> confirmation shown -> invokeChangesetOperation commit -> git c
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 08 are implemented; tasks 06 to 08 were the 2026-09-27 review's fixes.
-- **Next action:** nothing in this plan; plan host/20 starts after this plan's tasks are committed.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** VS Code shows no staging in the session view; the person stages in VS Code's Source Control and the session's Commit acts on it.
   A test commits in a scratch repository, never in the tree it runs from.

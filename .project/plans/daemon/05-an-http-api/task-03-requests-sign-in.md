@@ -1,6 +1,6 @@
 ---
 title: A request signs in and is checked against the grants
-status: implemented
+status: done
 depends: [task-02-the-daemon-mounts-it.md]
 layer: "server | sdk"
 refs:

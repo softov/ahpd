@@ -1,6 +1,6 @@
 ---
 title: A start regression leaves no daemon running, and the token case can fail
-status: implemented
+status: done
 depends: [task-18-start-forwards-its-options-wherever-they-are-typed.md]
 layer: "server"
 refs:

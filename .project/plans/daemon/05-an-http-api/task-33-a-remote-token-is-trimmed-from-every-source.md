@@ -1,6 +1,6 @@
 ---
 title: A --remote token is trimmed whichever of the three it came from
-status: implemented
+status: done
 depends: [task-27-blank-values-are-refused-and-the-records-are-true.md]
 layer: "server"
 refs:

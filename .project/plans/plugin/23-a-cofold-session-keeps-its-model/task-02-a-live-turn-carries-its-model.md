@@ -1,6 +1,6 @@
 ---
 title: A live cofold turn carries its model on the message
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

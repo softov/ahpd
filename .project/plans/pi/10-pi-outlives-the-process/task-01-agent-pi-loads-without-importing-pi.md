@@ -1,6 +1,6 @@
 ---
 title: agent-pi loads without importing pi
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

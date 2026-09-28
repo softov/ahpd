@@ -1,6 +1,6 @@
 ---
 title: The host's turn_end line is two lines again, and the unwatched case counts tool calls
-status: implemented
+status: done
 depends: [task-04-staging-elsewhere-reaches-the-changeset.md]
 layer: "sdk"
 refs:

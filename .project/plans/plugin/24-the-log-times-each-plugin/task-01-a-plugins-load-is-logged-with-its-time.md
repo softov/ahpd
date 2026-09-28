@@ -1,6 +1,6 @@
 ---
 title: A plugin's load is logged with its time
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

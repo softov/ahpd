@@ -1,6 +1,6 @@
 ---
 title: Commit asks first, naming its subject and its files
-status: implemented
+status: done
 depends: [task-02-commit-takes-the-index-when-staged.md]
 layer: "sdk"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Served plugin installs and removes run one at a time
-status: implemented
+status: done
 depends: [task-21-npm-runs-without-holding-the-daemon.md]
 layer: "server"
 refs:

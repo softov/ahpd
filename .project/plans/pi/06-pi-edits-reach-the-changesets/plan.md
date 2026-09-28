@@ -1,7 +1,7 @@
 ---
 title: pi's edits reach the host's changesets
 domain: pi
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -59,7 +59,7 @@ finish (settle, thrown prompt, cancel) with calls still open -> [new] 'after' fo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An edit is announced before and after](task-01-an-edit-is-announced-before-and-after.md) | implemented | - |
+| [01 - An edit is announced before and after](task-01-an-edit-is-announced-before-and-after.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -68,8 +68,8 @@ finish (settle, thrown prompt, cancel) with calls still open -> [new] 'after' fo
 
 ## Resume state
 
-- **Done so far:** task 01 is `implemented`: pi's `edit` and `write` calls send `before` and `after` for the absolute path, and a call still open when the turn ends, however it ends, gets its `after` in `finish` on that turn's id.
-- **Next action:** Softov's review of task 01.
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the session is where `onFileEdit` is called, not `mapping.ts`, which only returns actions.
 

@@ -1,6 +1,6 @@
 ---
 title: user add on a person who exists is bounded by the roles they hold, and a role named like an object key is refused
-status: implemented
+status: done
 depends: [task-17-a-caller-gives-only-what-it-holds.md]
 layer: "server, sdk"
 refs:

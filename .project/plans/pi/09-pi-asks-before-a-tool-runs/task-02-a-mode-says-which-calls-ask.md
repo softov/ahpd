@@ -1,6 +1,6 @@
 ---
 title: A mode says which calls ask
-status: implemented
+status: done
 depends: [task-01-a-call-can-wait-on-a-person.md]
 layer: "agent-pi"
 refs:

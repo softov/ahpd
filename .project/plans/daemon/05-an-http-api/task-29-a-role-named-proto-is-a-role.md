@@ -1,6 +1,6 @@
 ---
 title: A role named __proto__ in the users file is read as a role
-status: implemented
+status: done
 depends: [task-23-user-add-on-an-existing-person-is-bounded.md]
 layer: "sdk"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A client's tool is run by that client
-status: implemented
+status: done
 depends: [task-01-host-tools-are-pi-tools.md]
 layer: "agent-pi"
 refs:

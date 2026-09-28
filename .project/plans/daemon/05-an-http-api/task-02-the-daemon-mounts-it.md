@@ -1,6 +1,6 @@
 ---
 title: The daemon mounts the API when http is on
-status: implemented
+status: done
 depends: [task-01-serve-in-cofold-remote.md]
 layer: "server | sdk"
 refs:

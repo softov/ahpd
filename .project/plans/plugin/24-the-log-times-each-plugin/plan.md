@@ -1,7 +1,7 @@
 ---
 title: The log says when each plugin starts loading and how long it took
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -47,7 +47,7 @@ loadPlugins -> for each spec: [new] "plugin <name> loading" -> resolve, manifest
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin's load is logged with its time](task-01-a-plugins-load-is-logged-with-its-time.md) | implemented | - |
+| [01 - A plugin's load is logged with its time](task-01-a-plugins-load-is-logged-with-its-time.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -55,8 +55,8 @@ loadPlugins -> for each spec: [new] "plugin <name> loading" -> resolve, manifest
 
 ## Resume state
 
-- **Done so far:** task 01 is implemented and awaits review.
-- **Next action:** review [task-01-a-plugins-load-is-logged-with-its-time.md](task-01-a-plugins-load-is-logged-with-its-time.md).
+- **Done so far:** every task is `done`, reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a plugin that fails still logs its problem line; it also says how long it took before failing.
 

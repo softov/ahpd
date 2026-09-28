@@ -1,6 +1,6 @@
 ---
 title: Every URI ahpd mints opens after a client normalises it
-status: implemented
+status: done
 depends: [task-02-ahp-edit-reads-by-its-parts.md]
 layer: "sdk"
 refs:

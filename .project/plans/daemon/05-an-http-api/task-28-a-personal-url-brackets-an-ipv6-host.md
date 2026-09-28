@@ -1,6 +1,6 @@
 ---
 title: A personal URL brackets an IPv6 host
-status: implemented
+status: done
 depends: [task-26-addresses-read-back-as-urls.md]
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A stored session's folder is read at startup
-status: implemented
+status: done
 depends:
   - task-01-opening-a-changeset-reads-the-facts.md
 layer: "sdk"
