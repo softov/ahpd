@@ -992,6 +992,57 @@ it('moves the finished turn out of active and into the transcript', async () => 
   expect(session.status()).toBe(1);
 });
 
+/**
+ * One session that notes its own status as each ending action goes out.
+ *
+ * The host reads `status()` as it passes an ending action on, and announces
+ * the session's row with whatever it read; a session still running at that
+ * moment stays running in every client's list.
+ */
+function ending() {
+  const at = new Map<string, number>();
+  let status = (): number => -1;
+  const one = opened({
+    emit: (_channel: string, action: Bag) => {
+      const type = String(action.type);
+      if (type === 'chat/turnComplete' || type === 'chat/turnCancelled' || type === 'chat/error') at.set(type, status());
+    },
+  } as Partial<Start>);
+  status = () => one.session.status();
+  return { ...one, at };
+}
+
+it('is idle by the time it says a turn completed', async () => {
+  const { session, at } = ending();
+  session.begin('t1', 'hello');
+  await settled();
+  expect(at.get('chat/turnComplete')).toBe(Status.Idle);
+});
+
+it('is idle by the time it says a turn was cancelled', async () => {
+  const { session, pi, at } = ending();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.cancel('t1');
+  await settled();
+  expect(at.get('chat/turnCancelled')).toBe(Status.Idle);
+});
+
+it('has failed by the time it says a turn failed', async () => {
+  const { session, pi, at } = ending();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  pi.raise({
+    type: 'message_end',
+    message: { role: 'assistant', stopReason: 'error', errorMessage: 'boom' },
+  } as never);
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+  expect(at.get('chat/error')).toBe(Status.Error);
+});
+
 it('passes the chosen model and its thinking level through to pi', async () => {
   const { session, pi } = opened();
   session.begin('t1', 'hello', { id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
+import { Status } from '../../sdk/src/catalog.js';
 import { createHost } from '../../sdk/src/host.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -198,4 +199,55 @@ it("runs a !command in the host's shell rather than asking the server", async ()
   expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
+});
+
+/**
+ * The status the catalogue announced as a turn ended.
+ *
+ * The host moves the session's row on every chat action, reading the status
+ * as that action passes; the row sent right after the ending is the one a
+ * client's list is left with when nothing else about the session moves.
+ */
+const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
+  const at = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === type);
+  if (at < 0) return undefined;
+  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+    && (n.params as { session: string }).session === uri);
+  return (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+};
+
+it('announces the session idle with the turnComplete that ends its turn', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => ended(p, chatUri));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+});
+
+it('announces the session idle with the turnCancelled that ends its turn', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'please wait');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+});
+
+it('announces the session failed with the chat/error that ends its turn', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'fail');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(types(p, chatUri)).toContain('chat/error');
+  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+});
+
+it('announces the session idle with the turnComplete that ends a !command', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', '!echo acp-ran-it');
+  await until(() => ended(p, chatUri));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
+import { Status } from '../../sdk/src/catalog.js';
 import { createHost } from '../../sdk/src/host.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
@@ -307,8 +308,8 @@ it('keeps two turns in one cofold session and finishes both', async () => {
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('remember the number 41');
 });
 
-it('ends a cancelled turn as turnCancelled, once', async () => {
-  /** A model that streams one delta and then waits, so a cancel lands mid-turn. */
+/** A model that streams one delta and then waits, so a cancel lands mid-turn. */
+function heldModel(): ModelAdapter {
   let ids = 0;
   const reply = (text: string): ModelReply => ({
     message: {
@@ -336,7 +337,11 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
       yield { type: 'done', reply: reply('finished') };
     },
   };
-  const { client, peer: p, chatUri } = await talking(held);
+  return held;
+}
+
+it('ends a cancelled turn as turnCancelled, once', async () => {
+  const { client, peer: p, chatUri } = await talking(heldModel());
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
@@ -461,4 +466,116 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     if (was === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = was;
   }
+});
+
+/**
+ * The status the catalogue announced as a turn ended.
+ *
+ * The host moves the session's row on every chat action, reading the status
+ * as that action passes; the row sent right after the ending is the one a
+ * client's list is left with when nothing else about the session moves.
+ */
+const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
+  const at = p.notes.findIndex((n) => n.method === 'action'
+    && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === type);
+  if (at < 0) return undefined;
+  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+    && (n.params as { session: string }).session === uri);
+  return (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+};
+
+it('announces the session idle with the turnComplete that ends its turn', async () => {
+  const model = createFakeModel({ script: [{ text: 'hello there' }], stream: true });
+  const { client, peer: p, uri, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => ended(p, chatUri));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+});
+
+it('announces the session idle with the turnCancelled that ends its turn', async () => {
+  const { client, peer: p, uri, chatUri } = await talking(heldModel());
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+});
+
+/** A model that fails its first `failures` calls and then answers `text`. */
+function failingModel(failures: number, text = 'recovered'): ModelAdapter {
+  const answers = createFakeModel({ script: [{ text }], stream: true });
+  let left = failures;
+  return {
+    ...answers,
+    id: 'failing',
+    complete: async (request) => {
+      if (left > 0) { left--; throw new Error('the model gave up'); }
+      return answers.complete(request);
+    },
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      if (left > 0) { left--; throw new Error('the model gave up'); }
+      yield* answers.stream!(request);
+    },
+  };
+}
+
+it('announces the session failed with the chat/error that ends its turn', async () => {
+  const { client, peer: p, uri, chatUri } = await talking(failingModel(1));
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(types(p, chatUri)).toContain('chat/error');
+  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+});
+
+it('clears a failure when the next turn starts', async () => {
+  const { client, peer: p, uri, chatUri } = await talking(failingModel(1));
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  begin(client, chatUri, 't2', 'again');
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+});
+
+it('announces the session idle with the turnComplete that ends a !command', async () => {
+  const host = createHost({
+    path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-bang-')),
+    agents: [cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'never asked' }], stream: true }), memory: true })],
+    terminals: shellTerminals(),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'ahp-session:/bang';
+  const chatUri = 'ahp-chat:/bang';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  begin(client, chatUri, 't1', '!echo cofold-ran-it');
+  await until(() => ended(p, chatUri));
+  expect(types(p, chatUri)).toContain('chat/toolCallComplete');
+  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+});
+
+it('starts a queued turn only after the one before it has ended', async () => {
+  const model = createFakeModel({ script: [{ text: 'first' }, { text: 'second' }], stream: true });
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'one');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+  });
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+  const said = actions(p, chatUri).map((e) => String(e.action.type));
+  const first = said.indexOf('chat/turnComplete');
+  const next = said.lastIndexOf('chat/turnStarted');
+  expect(said.filter((type) => type === 'chat/turnStarted')).toHaveLength(2);
+  expect(first).toBeGreaterThanOrEqual(0);
+  expect(next).toBeGreaterThan(first);
 });

@@ -636,6 +636,21 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     if (turn === undefined || String(turn.id) !== turnId) return;
     doing(undefined);
     const duration = Date.now() - Date.parse(String(turn.startedAt));
+    turn.state = ending;
+    turn.duration = duration;
+    turns.push(turn);
+    // The watched turn is sealed here, which is what makes a transcript a
+    // record of turns rather than of one long stream of updates.
+    if (watchedTurn !== undefined && watchedTurn.turnId === turnId) {
+      watchedTurn.state = ending;
+      watchedTurn.duration = Number.isFinite(duration) ? duration : 0;
+      watchedTurn = undefined;
+    }
+    // Before the ending action, not after: the host reads `status()` as it
+    // passes that action on, and a turn still active there reads as running.
+    active = undefined;
+    mapping = undefined;
+    cancelRequested = false;
     if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration });
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
@@ -648,19 +663,6 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         part: { kind: 'error', error: { errorType: 'turnFailed', message } },
       });
     }
-    turn.state = ending;
-    turn.duration = duration;
-    turns.push(turn);
-    // The watched turn is sealed here, which is what makes a transcript a
-    // record of turns rather than of one long stream of updates.
-    if (watchedTurn !== undefined && watchedTurn.turnId === turnId) {
-      watchedTurn.state = ending;
-      watchedTurn.duration = Number.isFinite(duration) ? duration : 0;
-      watchedTurn = undefined;
-    }
-    active = undefined;
-    mapping = undefined;
-    cancelRequested = false;
     touch();
     // Somebody stopping a turn is stopping this conversation; a queued message
     // behind it is the opposite of what they asked for.

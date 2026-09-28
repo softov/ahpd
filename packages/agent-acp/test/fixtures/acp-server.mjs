@@ -18,6 +18,8 @@
  *   which option came back;
  * - text containing `wait` emits one chunk and then holds the prompt open
  *   until `session/cancel` arrives, answering `cancelled` only then;
+ * - text containing `fail` streams the plain answer and then answers the
+ *   prompt with a JSON-RPC error;
  * - anything else streams two message chunks before ending.
  *
  * The port scripts are real requests *to* the client - `fs/read_text_file`,
@@ -201,6 +203,10 @@ const promptScript = async (id, params) => {
   }
   const reaches = ['read', 'write', 'term', 'ask'].some((one) => text.includes(one));
   if (!reaches) for (const update of scriptFor(text)) notify(update);
+  if (text.includes('fail')) {
+    write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'the model gave up' } });
+    return;
+  }
   if (text.includes('wait')) {
     // Held open, and answered only by the cancel below: a test that sees this
     // turn end at all has proven the notification reached the server.

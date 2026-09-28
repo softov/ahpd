@@ -459,6 +459,15 @@ export function piSession(
     const turnId = String(turn.id);
     doing(undefined);
     const duration = Date.now() - Date.parse(String(turn.startedAt));
+    turn.state = ending;
+    turn.duration = duration;
+    turns.push(turn);
+    seal(ending, duration);
+    // Before the ending action, not after: the host reads `status()` as it
+    // passes that action on, and a turn still active there reads as running.
+    active = undefined;
+    mapping = undefined;
+    cancelled = false;
     if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration });
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
@@ -471,13 +480,6 @@ export function piSession(
         part: { kind: 'error', error: { errorType: 'turnFailed', message } },
       });
     }
-    turn.state = ending;
-    turn.duration = duration;
-    turns.push(turn);
-    seal(ending, duration);
-    active = undefined;
-    mapping = undefined;
-    cancelled = false;
     touch();
     startNext();
   };

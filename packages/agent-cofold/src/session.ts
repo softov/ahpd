@@ -294,6 +294,8 @@ export function cofoldSession(
   let paused: { runId: string; seq: number } | undefined;
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   let cancelRequested = false;
+  /** What the last turn failed with, or nothing. Cleared when a turn starts. */
+  let failed: string | undefined;
   let title = 'Cofold session';
   let modified = new Date().toISOString();
   let closed = false;
@@ -458,17 +460,26 @@ export function cofoldSession(
   };
 
   /**
-   * `SessionStatus`: 8 is in progress, 1 is idle, and 24 is waiting on a
-   * person and carries the 8.
+   * `SessionStatus`: 8 is in progress, 1 is idle, 2 is a last turn that
+   * failed, and 24 is waiting on a person and carries the 8.
    */
   const status = (): number => (pending.size > 0 ? Status.InputNeeded
     : active !== undefined ? Status.InProgress
-      : Status.Idle);
+      : failed !== undefined ? Status.Error
+        : Status.Idle);
 
-  /** Move the running turn into the history, once the stream has ended. */
-  const settleTurn = (ending: 'complete' | 'cancelled' | 'error'): void => {
+  /**
+   * Move the running turn into the history, once the stream has ended.
+   *
+   * Called before the ending action goes out: the host reads `status()` as it
+   * passes that action on, and a turn still active there reads as running.
+   * Answers whether there was a turn to settle. `why` is what an `error`
+   * ending failed with.
+   */
+  const settleTurn = (ending: 'complete' | 'cancelled' | 'error', why?: string): boolean => {
     const turn = active;
-    if (turn === undefined) return;
+    if (turn === undefined) return false;
+    if (ending === 'error') failed = why === undefined || why === '' ? 'The turn failed' : why;
     turn.state = ending;
     turn.duration = Date.now() - Date.parse(String(turn.startedAt));
     turns.push(turn);
@@ -482,9 +493,7 @@ export function cofoldSession(
     pending.clear();
     cancelRequested = false;
     touch();
-    // Somebody stopping a turn is stopping this conversation; a queued message
-    // behind it is the opposite of what they asked for.
-    if (ending !== 'cancelled') startNext();
+    return true;
   };
 
   /**
@@ -541,16 +550,23 @@ export function cofoldSession(
     const mapped = mapping.actions(event);
     for (const action of mapped.actions) {
       const type = str(action.type) ?? '';
+      const ending = type === 'chat/turnComplete' ? 'complete'
+        : type === 'chat/turnCancelled' ? 'cancelled'
+          : type === 'chat/error' ? 'error'
+            : undefined;
+      const why = ending === 'error' ? str(bag(bag(action.part).error).message) : undefined;
+      const ended = ending !== undefined && settleTurn(ending, why);
       /*
        * A pause lives on the session channel and a turn on the chat channel;
        * the action's own name is what says which, so a client watching the
        * catalogue alone still learns somebody is being asked.
        */
       start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
-      if (type === 'chat/turnComplete' || type === 'chat/turnCancelled' || type === 'chat/error') {
-        settled = true;
-        settleTurn(type === 'chat/turnCancelled' ? 'cancelled' : type === 'chat/error' ? 'error' : 'complete');
-      }
+      if (ending !== undefined) settled = true;
+      // Somebody stopping a turn is stopping this conversation; a queued
+      // message behind it is the opposite of what they asked for. After the
+      // ending, so the next turn starts after the last one ended.
+      if (ended && ending !== 'cancelled') startNext();
     }
     if (mapped.opened !== undefined) pending.set(mapped.opened.requestId, mapped.opened);
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
@@ -725,6 +741,7 @@ export function cofoldSession(
   ): { mapping: TurnMapping; values: Record<string, unknown> } | undefined => {
     if (closed || active !== undefined) return undefined;
     cancelRequested = false;
+    failed = undefined;
     if (title === 'Cofold session' && text !== '') {
       title = text.slice(0, 60);
       // Said, because a client that opened the session holds the old one.
@@ -1059,6 +1076,7 @@ export function cofoldSession(
   ): void => {
     if (closed || active !== undefined) return;
     cancelRequested = false;
+    failed = undefined;
     if (title === 'Cofold session' && command !== '') {
       title = command.slice(0, 60);
       start.emit('session', { type: 'session/titleChanged', title });
