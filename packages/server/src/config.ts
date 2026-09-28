@@ -207,14 +207,12 @@ export interface LoadedConfig {
   sourceOf(key: string): string | undefined;
 }
 
-/** Whether a plugin spec names a path relative to somewhere, rather than a package or a URL. */
-const isRelativeSpec = (name: string): boolean => name.startsWith('.');
-
 /**
  * `values` with every relative path made absolute against the directory of the
- * file that set it: `paths`, `users`, `connectionTokenFile` and a plugin spec
- * that is a relative path. A value of the wrong type is left as it is for the
- * schema to refuse.
+ * file that set it: `paths`, `users` and `connectionTokenFile`. A plugin spec
+ * is left as written, for the loader to try against the working directory and
+ * then the configuration directory. A value of the wrong type is left as it is
+ * for the schema to refuse.
  */
 const anchored = (values: Record<string, unknown>, sourceOf: (key: string) => string | undefined): Config => {
   const out: Record<string, unknown> = { ...values };
@@ -228,16 +226,6 @@ const anchored = (values: Record<string, unknown>, sourceOf: (key: string) => st
   }
   if (Array.isArray(out.paths)) {
     out.paths = out.paths.map((one: unknown) => (typeof one === 'string' ? at('paths', one) : one));
-  }
-  if (Array.isArray(out.plugins)) {
-    out.plugins = out.plugins.map((one: unknown) => {
-      if (typeof one === 'string') return isRelativeSpec(one) ? at('plugins', one) : one;
-      if (typeof one === 'object' && one !== null && !Array.isArray(one)) {
-        const named = (one as { name?: unknown }).name;
-        if (typeof named === 'string' && isRelativeSpec(named)) return { ...one, name: at('plugins', named) };
-      }
-      return one;
-    });
   }
   return out as Config;
 };

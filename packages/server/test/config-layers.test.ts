@@ -113,9 +113,11 @@ describe('a relative path', () => {
     expect(options.paths).toEqual([join(elsewhere, 'work'), '/abs']);
     expect(options.users).toBe(join(elsewhere, 'users.json'));
     expect(options.tokenFile).toBe(join(elsewhere, 'token'));
+    // A plugin spec stays as written: the loader tries it against the working
+    // directory, then the configuration directory.
     expect(options.plugins).toEqual([
-      join(elsewhere, 'plug'),
-      { name: join(home, 'other'), options: { x: 1 } },
+      './plug',
+      { name: '../other', options: { x: 1 } },
       'bare-name',
       '/abs/plugin',
     ]);

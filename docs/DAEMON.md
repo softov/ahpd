@@ -286,7 +286,7 @@ The daemon reads two files, in this order, each merged over the one before it ke
 
 A later file wins a key it sets, and an object such as `http` merges key by key; a list such as `paths` or `plugins` is replaced whole. No file in the working directory is read: starting `ahpd` inside a repository never picks up an `ahpd.json` or `.ahpd.json` from it, so per-project settings go through `$AHPD_CONFIG` or `--config-file`. `--config-file PATH` reads that file and nothing else, with `$AHPD_CONFIG` and the user file both left out.
 
-A relative path in a file - an entry of `paths`, `users`, `connectionTokenFile`, or a plugin spec starting with `.` - is taken from the directory of the file that set it, not from where the daemon was started. The startup block has a `config` line naming every file read, and `none` when there were none.
+A relative path in `paths`, `users` or `connectionTokenFile` is taken from the directory of the file that set it, not from where the daemon was started. A relative plugin spec is tried against the working directory and then the configuration directory, the same as `--plugin`. The startup block has a `config` line naming every file read, and `none` when there were none.
 
 Every flag can be a key instead, spelled without the dashes:
 

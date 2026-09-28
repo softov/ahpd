@@ -63,7 +63,8 @@ ahpd [flags] -> @cofold/commands checks the flags against serverFields -> option
 | --- | --- | --- |
 | `@ahpd/server` depends on `@cofold/config` and reads its file through `resolveConfig` | Softov, 2026-09-28, asked which way the file layers go: "adjust ... cofold config" | 01 |
 | `$AHPD_CONFIG` names a file, merged over the user file | (defaulted: cofold's environment layer, on by default) | 01 |
-| A relative path in a file (`paths`, a plugin path, `users`, `connectionTokenFile`) resolves against that file's directory | (defaulted: a file must not mean something different per working directory) | 01 |
+| A relative path in `paths`, `users` or `connectionTokenFile` resolves against the directory of the file that set it | (defaulted: a file must not mean something different per working directory) | 01 |
+| A relative plugin spec in a file keeps the loader's rule: the working directory, then the configuration directory | Softov, 2026-09-28, asked "How should a relative plugin path in a config file resolve?": "Old rule for plugins", after `./packages/agent-claude/src/index.ts` in his user file stopped loading | 01 |
 | A wrong value on a known key refuses the start, naming the file from `sourceOf` and the key | the gap above; decision 3 keeps refusal for known keys | 02 |
 | `http` joins `serverFields` as a schema, and `httpOf` goes | the gap above | 02 |
 
