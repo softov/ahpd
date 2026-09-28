@@ -411,7 +411,6 @@ cofold runs them in its own process, on the machine the daemon runs on, and the 
 
 In `default` a write, a command, a web fetch and a read outside the workspace each ask first; a session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and a write or a command asks.
 The workspace check resolves symlinks with cofold's own resolver, so a write through a symlink that leaves the workspace, including one whose target does not exist yet, is outside it and `acceptEdits` asks for it too.
-One shape is not caught yet: a link whose target does not exist and reads `dir/../name`, where `dir` is itself a symlink out of the workspace, is judged as if the `..` undid `dir`, so it can pass as inside.
 
 `web_fetch` refuses loopback, private and link-local addresses on every hop.
 The machine's public address is not among them, and a name that answers with a different address at the connection than at the check is not caught.

@@ -54,7 +54,7 @@ A session gets `@cofold/tools`' four capabilities by default, so it can read, se
 The permission mode is what confines them rather than the workspace, and `default` asks before a write, a command, a web fetch and a read outside the workspace.
 A session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and only a write or a command asks.
 
-The workspace check resolves symlinks with cofold's own resolver, including a link whose target does not exist yet, except a dangling link whose target reads `dir/../name` with `dir` a symlink out of the workspace, which can still pass as inside.
+The workspace check resolves symlinks with cofold's own resolver, including a link whose target does not exist yet, so a write through a link that leaves the workspace is outside it.
 `web_fetch` refuses loopback, private and link-local addresses on every hop, though not the machine's public address, and a name that answers with a different address at the connection is not caught.
 
 Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`.

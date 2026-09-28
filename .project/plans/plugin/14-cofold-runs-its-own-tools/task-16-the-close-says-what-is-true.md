@@ -1,6 +1,6 @@
 ---
 title: The plan closes on what is true - statuses, deferred work, docs, ranges and refs
-status: implemented
+status: done
 depends: [task-14-inside-follows-a-dangling-link.md, task-15-a-declined-edit-sends-its-after-when-declined.md]
 layer: "docs, agent-cofold"
 refs:

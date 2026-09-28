@@ -1,7 +1,7 @@
 ---
 title: A cofold session has files, shell, web and memory, run by cofold itself
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -107,11 +107,11 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 | [13 - A turn with no model says to add "model" to the cofold configuration file](task-13-no-model-says-what-to-add.md) | done | - |
 | [14 - ahpd's workspace check follows a dangling symlink, through cofold's own resolver](task-14-inside-follows-a-dangling-link.md) | done | 07, 08 |
 | [15 - A declined edit sends its after when the person declines](task-15-a-declined-edit-sends-its-after-when-declined.md) | done | 09 |
-| [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | implemented | 14, 15 |
-| [17 - cofold follows a link's target one name at a time, released by Softov](task-17-cofold-follows-a-link-target-one-name-at-a-time.md) | implemented | 14 |
-| [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | implemented | 15 |
-| [19 - The close is true](task-19-the-close-is-true.md) | implemented | 16, 18 |
-| [20 - The tool section and the README are one sentence per line again](task-20-the-tool-docs-are-one-sentence-per-line.md) | implemented | 19 |
+| [16 - The plan closes on what is true](task-16-the-close-says-what-is-true.md) | done | 14, 15 |
+| [17 - cofold follows a link's target one name at a time, released by Softov](task-17-cofold-follows-a-link-target-one-name-at-a-time.md) | done | 14 |
+| [18 - The tool tests wait on time, and the mode table is one case per row](task-18-the-tool-tests-wait-on-time.md) | done | 15 |
+| [19 - The close is true](task-19-the-close-is-true.md) | done | 16, 18 |
+| [20 - The tool section and the README are one sentence per line again](task-20-the-tool-docs-are-one-sentence-per-line.md) | done | 19 |
 
 ## Risks and tradeoffs
 
@@ -121,20 +121,13 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 - The workspace check resolves a path with cofold's `resolveWithin` and cofold's own tools write it in a second step, so a symlink another actor swaps between the two is not seen.
   [Plugin/22](../22-a-cofold-write-lands-where-it-was-allowed/plan.md) plans the fix.
 - `@cofold/tools` 0.1.1, committed in cofold as `d9d229e` and published, judges a dangling link whose target reads `dir/../name`, with `dir` a symlink out of the workspace, as outside, and ahpd takes it as `^0.1.1`.
-  The caveat that such a link is judged inside stays in `docs/PLUGINS.md` and `packages/agent-cofold/README.md` until task 19 step 6, which waits for Softov's review of tasks 16 to 19.
 - Memory is shared by every session in a workspace, and its `MEMORY.md` is in every run's instructions, so what one session writes there reaches the next.
 - cofold has no default model: a turn with none configured fails rather than running on one nobody chose, and task 13 makes its sentence say what to add and where.
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 15 are done: the four `@cofold/tools` capabilities per turn, edits reported through `onFileEdit`, `shell_exec` drawn as a terminal with its bare command, the mode table in `packages/agent-cofold/test/agent-cofold-tools.test.ts`, the `tools` option and the tool section in `docs/PLUGINS.md`, and `packages/agent-cofold/README.md`.
-  ahpd takes `@cofold/agents` `^0.1.1` with `@cofold/tools` `^0.1.1`, the workspace check is cofold's own `resolveWithin` so a symlink out of the workspace, dangling or not, asks, search providers follow the configured order, and a turn with no model says to add `"model"` to the cofold configuration file and names its path.
-  Tasks 05 and 06 are done in cofold, released as `@cofold/agents` 0.1.1 and `@cofold/tools` 0.1.0.
-  Task 16 is implemented and was not passed by the second review.
-  Tasks 18 and 19 are implemented: `when` waits on wall-clock time and throws, the mode table is one case per row, and the checklist, docs, comments and Resumes say what is true.
-  Task 17 is implemented: its fix is committed in cofold as `d9d229e` and published as `@cofold/tools` 0.1.1, which `packages/agent-cofold/package.json` takes as `^0.1.1`.
-  Task 20 is implemented: the tool section of `docs/PLUGINS.md` and `packages/agent-cofold/README.md` are one sentence per line again, with the wording they had, and nothing but line breaks moved.
-- **Next action:** Softov's review of tasks 16 to 19; after it, task 19 step 6 closes the plan (the `..`-after-a-symlink caveats come out of the docs, the Risks and the checklist, since `@cofold/tools` 0.1.1 catches it).
+- **Done so far:** every task is done, the fix tasks 16 to 20 reviewed by Softov on 2026-09-28; the plan is built, see [implemented.md](implemented.md), with the VS Code checks and cofold's own suite in [deferred.md](deferred.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `agentOf` is rebuilt per turn, so the capabilities are too.
   Relative paths and the memory slug resolve against the session's working directory, and against the daemon's current directory when the client named none (`session.ts:195`), as `agent-pi` and `agent-acp` do.
@@ -147,7 +140,7 @@ model calls edit_file -> beforeTool [new] onFileEdit(before) -> policy asks or a
 - [ ] VS Code: in the default mode a read of a file outside the workspace asks first.
 - [x] In `acceptEdits`, a write through a symlink that leaves the workspace asks first (task 07).
 - [x] In `acceptEdits`, a write through a dangling symlink whose target is outside asks first (task 14).
-- [ ] In `acceptEdits`, a write through a dangling link whose target is `sublink/../name`, with `sublink` a symlink out of the workspace, asks first (task 17, after the `@cofold/tools` release).
+- [x] In `acceptEdits`, a write through a dangling link whose target is `sublink/../name`, with `sublink` a symlink out of the workspace, asks first (task 17, on `@cofold/tools` 0.1.1).
 - [x] A declined edit's `after` is sent on the decline (task 15).
 - [x] `web_fetch` works; `web_search` appears only with a provider configured; `web_fetch` of `http://127.0.0.1/` or a redirect to `169.254.169.254` is refused (tasks 06, 08).
 - [x] Cancelling a turn while `shell_exec` runs kills the command and anything it started (task 09).

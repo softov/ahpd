@@ -1,13 +1,13 @@
 ---
 title: A nested worker is linked from the worker chat that spawned it, live and restored
-status: implemented
+status: done
 depends: []
 layer: "sdk, agent-claude"
 refs:
   - "[code://packages/sdk/src/host.ts#L2831-L2893](../../../../packages/sdk/src/host.ts#L2831-L2893) - `openSubagent`, which writes a nested link with `dispatch` rather than `sendSubagent`"
   - "[code://packages/agent-claude/src/transcript.ts#L136-L170](../../../../packages/agent-claude/src/transcript.ts#L136-L170) - `subagentsOf`, which never sets `parentToolCallId`"
   - "[code://packages/sdk/src/host.ts#L4764-L4790](../../../../packages/sdk/src/host.ts#L4764-L4790) - `linkedTurns`, applied to the lead chat's turns only"
-  - "[code://test/subagent-chat.test.ts#L111-L115](../../../../test/subagent-chat.test.ts#L111-L115) - the nested case, whose spawning call never exists in the parent worker's chat"
+  - "[code://packages/sdk/test/subagent-chat.test.ts#L111-L115](../../../../packages/sdk/test/subagent-chat.test.ts#L111-L115) - the nested case, whose spawning call never exists in the parent worker's chat"
 ---
 
 ## Objective

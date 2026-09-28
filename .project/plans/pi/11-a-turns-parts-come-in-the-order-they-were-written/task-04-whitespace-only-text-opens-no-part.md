@@ -1,6 +1,6 @@
 ---
 title: A text block that is only whitespace opens no part
-status: implemented
+status: done
 depends: [task-01-pi-opens-a-part-per-block.md, task-02-cofold-opens-a-part-per-block.md, task-03-acp-opens-a-part-per-run-of-chunks.md]
 layer: "agent-pi, agent-cofold, agent-acp"
 refs:

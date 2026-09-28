@@ -1,6 +1,6 @@
 ---
 title: The host holds a call's content only while a worker needs it
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

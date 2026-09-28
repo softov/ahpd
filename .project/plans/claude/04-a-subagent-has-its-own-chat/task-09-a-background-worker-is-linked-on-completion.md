@@ -1,12 +1,12 @@
 ---
 title: A background worker is linked from its call when the call completes
-status: implemented
+status: done
 depends: [task-08-the-host-holds-only-a-workers-call-content.md]
 layer: "agent-claude"
 refs:
   - "[code://packages/agent-claude/src/session.ts#L1655-L1692](../../../../packages/agent-claude/src/session.ts#L1655-L1692) - the spawning call's completion, its ending, and `workerBlock`"
   - "[code://packages/sdk/src/host.ts#L2880-L2893](../../../../packages/sdk/src/host.ts#L2880-L2893) - `openSubagent` writing the link with an empty turn id when the lead turn has ended"
-  - "[code://test/agent-claude-subagent.test.ts#L161-L174](../../../../test/agent-claude-subagent.test.ts#L161-L174) - the background case, which never looks at the completion's content"
+  - "[code://packages/agent-claude/test/agent-claude-subagent.test.ts#L161-L174](../../../../packages/agent-claude/test/agent-claude-subagent.test.ts#L161-L174) - the background case, which never looks at the completion's content"
   - https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/agentSideEffects.ts#L1049-L1066 - the reference writing the link only `if (parentTurnId)`
 ---
 

@@ -1,13 +1,13 @@
 ---
 title: Any task_started marks a worker background, and a foreground spawn ends on its result
-status: implemented
+status: done
 depends: [task-11-a-worker-ends-once-and-stays-ended.md]
 layer: "agent-claude"
 refs:
   - "[code://packages/agent-claude/src/session.ts#L2461-L2475](../../../../packages/agent-claude/src/session.ts#L2461-L2475) - `task_started` and `task_notification`, reading `is_backgrounded`"
   - "[code://packages/agent-claude/src/session.ts#L1661-L1669](../../../../packages/agent-claude/src/session.ts#L1661-L1669) - the spawning call's result, which ends a worker unless it is background"
   - "[code://packages/agent-claude/src/session.ts#L1448-L1460](../../../../packages/agent-claude/src/session.ts#L1448-L1460) - where a `Task` or `Agent` call's input is recorded in `spawning`"
-  - "[code://test/fixtures/claude-subagent.jsonl](../../../../test/fixtures/claude-subagent.jsonl) - the foreground capture: `run_in_background: false` on line 2, `task_started` on line 3, `task_notification` on line 12, the call's `tool_result` on line 13"
+  - "[code://packages/agent-claude/test/fixtures/claude-subagent.jsonl](../../../../packages/agent-claude/test/fixtures/claude-subagent.jsonl) - the foreground capture: `run_in_background: false` on line 2, `task_started` on line 3, `task_notification` on line 12, the call's `tool_result` on line 13"
   - https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts - `mapSubagentSystemMessage`, the reference's rule
 ---
 

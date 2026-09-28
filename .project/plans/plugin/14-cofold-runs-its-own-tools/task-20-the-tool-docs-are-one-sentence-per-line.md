@@ -1,6 +1,6 @@
 ---
 title: The tool section in PLUGINS.md and the agent-cofold README are one sentence per line again
-status: implemented
+status: done
 depends: [task-19-the-close-is-true.md]
 layer: "docs"
 refs:

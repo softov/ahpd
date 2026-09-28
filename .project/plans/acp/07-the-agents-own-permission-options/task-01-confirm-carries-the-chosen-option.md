@@ -1,6 +1,6 @@
 ---
 title: Confirm carries the chosen option
-status: todo
+status: dropped
 depends: []
 layer: "sdk"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The tool tests wait on time, not on a count of ticks, and the mode table is one case per row
-status: implemented
+status: done
 depends: [task-15-a-declined-edit-sends-its-after-when-declined.md]
 layer: "agent-cofold"
 refs:

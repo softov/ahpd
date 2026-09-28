@@ -1,6 +1,6 @@
 ---
 title: cofold opens a part per block live
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

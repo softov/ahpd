@@ -1,11 +1,11 @@
 ---
 title: A worker's own actions are schema-checked, and its comments document
-status: implemented
+status: done
 depends: [task-09-a-background-worker-is-linked-on-completion.md, task-10-the-spawning-call-carries-the-reference-meta.md, task-11-a-worker-ends-once-and-stays-ended.md, task-12-a-nested-worker-is-linked-from-its-parent-worker.md, task-13-a-resumed-session-keeps-its-restored-workers.md]
 layer: "tests, agent-claude, sdk"
 refs:
-  - "[code://test/subagent-chat.test.ts#L141-L160](../../../../test/subagent-chat.test.ts#L141-L160) - `running`, which subscribes to the session and the lead chat only"
-  - "[code://test/subagent-chat.test.ts#L233-L238](../../../../test/subagent-chat.test.ts#L233-L238) - the protocol check, which sees only subscribed channels"
+  - "[code://packages/sdk/test/subagent-chat.test.ts#L141-L160](../../../../packages/sdk/test/subagent-chat.test.ts#L141-L160) - `running`, which subscribes to the session and the lead chat only"
+  - "[code://packages/sdk/test/subagent-chat.test.ts#L233-L238](../../../../packages/sdk/test/subagent-chat.test.ts#L233-L238) - the protocol check, which sees only subscribed channels"
   - "[code://packages/agent-claude/src/session.ts#L887-L894](../../../../packages/agent-claude/src/session.ts#L887-L894) - a comment on `scopeFor` that narrates"
 ---
 

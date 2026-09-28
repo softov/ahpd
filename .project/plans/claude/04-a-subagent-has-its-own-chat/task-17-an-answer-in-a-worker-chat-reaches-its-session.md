@@ -1,6 +1,6 @@
 ---
 title: An answer given in a worker chat reaches its session, and a stop there stops the lead turn
-status: implemented
+status: done
 depends: [task-05-asks-inside-a-subagent.md]
 layer: "sdk"
 refs:

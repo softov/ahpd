@@ -1,7 +1,7 @@
 ---
 title: An HTTP API for the daemon, from the same commands, under the same grants
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -130,7 +130,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [13 - `--remote` needs a token, reads it from a file too, warns on cleartext, keeps its cache private, and its tests prove the daemon answered](task-13-remote-needs-a-token-and-proves-it-is-remote.md) | done | 08 |
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | done | 09, 10, 11, 12, 13 |
 | [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | done | 06 |
-| [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | implemented | 07, 15 |
+| [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | done | 07, 15 |
 | [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | done | 09 |
 | [18 - The API's guards have no gaps](task-18-the-guards-have-no-gaps.md) | done | 11, 12, 13 |
 | [19 - The API's tests prove what their tasks' Validation says](task-19-the-tests-prove-their-validation.md) | done | 08, 10, 12, 13 |
@@ -149,7 +149,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [32 - The comment on urlHost says what it is](task-32-urlhost-says-what-it-is.md) | done | 28 |
 | [33 - A --remote token is trimmed whichever of the three it came from](task-33-a-remote-token-is-trimmed-from-every-source.md) | done | 27 |
 | [34 - DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared](task-34-daemon-md-is-wrapped-and-names-the-update-flag.md) | done | - |
-| [35 - The SDK mounts the Node listener the server adapts, and node-pty is the server's](task-35-the-sdk-mounts-what-the-server-adapts.md) | implemented | 16 |
+| [35 - The SDK mounts the Node listener the server adapts, and node-pty is the server's](task-35-the-sdk-mounts-what-the-server-adapts.md) | done | 16 |
 
 ## Risks and tradeoffs
 
@@ -158,11 +158,8 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 
 ## Resume state
 
-- **Done so far:** every task but 16 and 35 is `done`, reviewed by Softov on 2026-09-28.
-  With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook, and `ahpd --remote <url>` runs the same commands against it.
-  Task 16 serves the API on Node, Bun and Deno over `@cofold/remote` 0.4.0: `ListenOptions.request` is a `Request` handler, `apiHandler` and `withoutApi` answer a `Request`, and `http.port`'s listener is `serveRequests` in the SDK.
-  Task 35 takes `@cofold/remote` out of the SDK: the server builds the Node listener with `toNodeListener` and hands it to `listen` and `serveRequests` as `nodeRequest`, and `node-pty` is the server's optional dependency.
-- **Next action:** Softov reviews tasks 16 and 35; the plan closes after it.
+- **Done so far:** every task is done, reviewed by Softov, the last two on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:**
   - `@ahpd/sdk` depends on no `@cofold/*` package: a host that serves plain requests on Node passes `nodeRequest` beside `request`, and `listen` refuses it without one.

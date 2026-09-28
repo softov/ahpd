@@ -1,6 +1,6 @@
 ---
 title: The close is true - checklist, docs, comments, Resumes and plan text
-status: implemented
+status: done
 depends: [task-16-the-close-says-what-is-true.md, task-18-the-tool-tests-wait-on-time.md]
 layer: "docs, agent-cofold"
 refs:

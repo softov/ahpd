@@ -1,6 +1,6 @@
 ---
 title: A resumed session keeps the worker chats it was restored with
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

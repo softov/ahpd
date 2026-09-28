@@ -1,6 +1,6 @@
 ---
 title: A cancelled turn ends its own workers, and an ended worker stays ended
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -8,7 +8,7 @@ refs:
   - "[code://packages/agent-claude/src/session.ts#L895-L925](../../../../packages/agent-claude/src/session.ts#L895-L925) - `scopeFor`, which opens a worker for any parent it holds no scope for"
   - "[code://packages/agent-claude/src/session.ts#L951-L967](../../../../packages/agent-claude/src/session.ts#L951-L967) - `endWorker`, which deletes the scope"
   - "[code://packages/agent-claude/src/session.ts#L3196-L3206](../../../../packages/agent-claude/src/session.ts#L3196-L3206) - `cancel`, which ends every worker"
-  - "[code://test/agent-claude-subagent.test.ts#L19-L47](../../../../test/agent-claude-subagent.test.ts#L19-L47) - the SDK mock, which yields every frame at once"
+  - "[code://packages/agent-claude/test/agent-claude-subagent.test.ts#L19-L47](../../../../packages/agent-claude/test/agent-claude-subagent.test.ts#L19-L47) - the SDK mock, which yields every frame at once"
 ---
 
 ## Objective

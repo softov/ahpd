@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-a-spec-declares-what-its-machine-needs.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L594-L605](../../../../docs/PLUGINS.md#L594-L605) - the ACP section"
+  - "[code://docs/PLUGINS.md#L600-L603](../../../../docs/PLUGINS.md#L600-L603) - the ACP section"
   - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - the table of what enters a machine"
 ---
 

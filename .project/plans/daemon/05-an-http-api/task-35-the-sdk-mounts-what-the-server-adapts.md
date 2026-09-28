@@ -1,6 +1,6 @@
 ---
 title: The SDK mounts the Node listener the server adapts, and node-pty is the server's
-status: implemented
+status: done
 depends: [task-16-the-api-on-bun-and-deno.md]
 layer: "sdk | server"
 refs:

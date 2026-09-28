@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-a-resume-does-not-replay.md, task-02-a-session-forks-where-the-server-can.md, task-03-a-servers-question-is-asked-in-the-chat.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L559-L641](../../../../docs/PLUGINS.md#L559-L641) - the ACP worked example and what the server may ask the host for"
+  - "[code://docs/PLUGINS.md#L560-L642](../../../../docs/PLUGINS.md#L560-L642) - the ACP worked example and what the server may ask the host for"
 ---
 
 ## Objective

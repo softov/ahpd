@@ -1,6 +1,6 @@
 ---
 title: The ACP bridge opens a part per run of chunks, in the order they arrived
-status: implemented
+status: done
 depends: []
 layer: "agent-acp"
 refs:

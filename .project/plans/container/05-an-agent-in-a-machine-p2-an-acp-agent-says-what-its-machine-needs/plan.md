@@ -17,7 +17,7 @@ refs:
   - "[code://packages/agent-acp/src/session.ts#L457-L481](../../../../packages/agent-acp/src/session.ts#L457-L481) - `placed()`, the spawn in a machine"
   - "[code://packages/sdk/src/types/agent.ts#L326](../../../../packages/sdk/src/types/agent.ts#L326) - `machine()` on the agent contract"
   - "[code://packages/agent-cofold/src/agent.ts#L542-L560](../../../../packages/agent-cofold/src/agent.ts#L542-L560) - cofold's `machine()`, the pattern to mirror"
-  - "[code://docs/PLUGINS.md#L594-L605](../../../../docs/PLUGINS.md#L594-L605) - the ACP section, which still says `--experimental-acp`"
+  - "[code://docs/PLUGINS.md#L600-L603](../../../../docs/PLUGINS.md#L600-L603) - the ACP section, which still says `--experimental-acp`"
 ---
 
 ## Goal

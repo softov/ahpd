@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: dropped
 depends: [task-02-the-agent-options-are-offered-and-answered.md]
 layer: "docs"
 refs:

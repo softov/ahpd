@@ -1,6 +1,6 @@
 ---
 title: The agent's options are offered and the chosen one answered
-status: todo
+status: dropped
 depends: [task-01-confirm-carries-the-chosen-option.md]
 layer: "agent-acp"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The host opens a subagent chat for a backend
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

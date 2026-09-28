@@ -1,6 +1,6 @@
 ---
 title: The spawning call carries the reference's subagent _meta
-status: implemented
+status: done
 depends: [task-08-the-host-holds-only-a-workers-call-content.md]
 layer: "agent-claude, sdk"
 refs:

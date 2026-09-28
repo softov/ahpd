@@ -1,6 +1,6 @@
 ---
 title: The HTTP API is served on Node, Bun and Deno
-status: implemented
+status: done
 depends: [task-15-serve-takes-a-request.md, task-07-the-listener-survives-a-malformed-request.md]
 layer: "sdk | server"
 refs:

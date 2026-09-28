@@ -1,6 +1,6 @@
 ---
 title: A permission ask inside a subagent is asked there
-status: implemented
+status: done
 depends: [task-03-subagent-frames-go-to-their-chat.md]
 layer: "agent-claude"
 refs:

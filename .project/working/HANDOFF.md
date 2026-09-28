@@ -10,11 +10,11 @@ What is in progress and what is waiting. Plans, decisions and docs say the rest;
 
 - `main` is pushed. Nothing since `v0.7.0` is released.
 - `@cofold/remote` 0.4.0 is released (cofold tag `release-2026-09-28`), and ahpd depends on `^0.4.0`.
-- On `main`, awaiting Softov's review: [daemon/05](../plans/daemon/05-an-http-api/plan.md) tasks 16 and 35, [claude/04](../plans/claude/04-a-subagent-has-its-own-chat/plan.md) fix tasks 08 to 17, and [pi/11](../plans/pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) tasks 01 to 04; each needs his by-hand check in ahpapp or VS Code.
+- Closed on 2026-09-28 after Softov's checks, uncommitted: [daemon/05](../plans/daemon/05-an-http-api/plan.md), [claude/04](../plans/claude/04-a-subagent-has-its-own-chat/plan.md), [pi/11](../plans/pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) and [plugin/14](../plans/plugin/14-cofold-runs-its-own-tools/plan.md), whose close also took the fixed `dir/../name` caveat out of `docs/PLUGINS.md` and `packages/agent-cofold/README.md`.
+- Planned on 2026-09-28, uncommitted, not started: [host/24](../plans/host/24-an-approval-offers-the-agents-own-options/plan.md) (takes over acp/07), [host/25](../plans/host/25-a-forked-chat-says-where-it-came-from/plan.md), [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) (task 01 reproduces the `D`), [claude/05](../plans/claude/05-a-replayed-exchange-is-one-turn/plan.md), [claude/06](../plans/claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) and [pi/12](../plans/pi/12-a-tool-call-says-what-it-runs-on/plan.md).
 
 ## Waiting on Softov
 
-- [plugin/14](../plans/plugin/14-cofold-runs-its-own-tools/plan.md) fix tasks 17 to 20 are implemented and await review.
 - [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on Softov choosing the approach (task 01).
 - [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) is a draft with two open questions.
 - [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md) is open, with two candidate fixes and none chosen.

@@ -1,7 +1,7 @@
 ---
 title: A subagent has its own chat, linked from the call that started it
 domain: claude
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -100,23 +100,23 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A subagent seen on a real stream](task-01-a-subagent-on-a-real-stream.md) | implemented | - |
-| [02 - The host opens a subagent chat for a backend](task-02-the-host-opens-a-subagent-chat.md) | implemented | - |
-| [03 - Claude's subagent frames go to that chat](task-03-subagent-frames-go-to-their-chat.md) | implemented | 01, 02 |
-| [04 - A subagent's turn ends, foreground or background](task-04-a-subagent-turn-ends.md) | implemented | 03 |
-| [05 - A permission ask inside a subagent is asked there](task-05-asks-inside-a-subagent.md) | implemented | 03 |
-| [06 - A subagent's chat is there again after a restart](task-06-restored-after-a-restart.md) | implemented | 03 |
-| [07 - Docs and upstream](task-07-docs-and-upstream.md) | implemented | 04, 05, 06 |
-| [08 - The host holds a call's content only while a worker needs it](task-08-the-host-holds-only-a-workers-call-content.md) | implemented | - |
-| [09 - A background worker is linked from its call when the call completes](task-09-a-background-worker-is-linked-on-completion.md) | implemented | 08 |
-| [10 - The spawning call carries the reference's subagent _meta](task-10-the-spawning-call-carries-the-reference-meta.md) | implemented | 08 |
-| [11 - A cancelled turn ends its own workers, and an ended worker stays ended](task-11-a-worker-ends-once-and-stays-ended.md) | implemented | - |
-| [12 - A nested worker is linked from the worker chat that spawned it](task-12-a-nested-worker-is-linked-from-its-parent-worker.md) | implemented | - |
-| [13 - A resumed session keeps the worker chats it was restored with](task-13-a-resumed-session-keeps-its-restored-workers.md) | implemented | - |
-| [14 - Any task_started marks a worker background, and a foreground spawn ends on its result](task-14-background-is-told-by-the-reference-rule.md) | implemented | 11 |
-| [15 - A permission ask inside a subagent, seen on a real stream](task-15-an-ask-inside-a-subagent-on-a-real-stream.md) | implemented | - |
-| [16 - A worker's own actions are schema-checked, and its comments document](task-16-worker-actions-checked-and-comments-document.md) | implemented | 09, 10, 11, 12, 13 |
-| [17 - An answer given in a worker chat reaches its session, and a stop there stops the lead turn](task-17-an-answer-in-a-worker-chat-reaches-its-session.md) | implemented | 05 |
+| [01 - A subagent seen on a real stream](task-01-a-subagent-on-a-real-stream.md) | done | - |
+| [02 - The host opens a subagent chat for a backend](task-02-the-host-opens-a-subagent-chat.md) | done | - |
+| [03 - Claude's subagent frames go to that chat](task-03-subagent-frames-go-to-their-chat.md) | done | 01, 02 |
+| [04 - A subagent's turn ends, foreground or background](task-04-a-subagent-turn-ends.md) | done | 03 |
+| [05 - A permission ask inside a subagent is asked there](task-05-asks-inside-a-subagent.md) | done | 03 |
+| [06 - A subagent's chat is there again after a restart](task-06-restored-after-a-restart.md) | done | 03 |
+| [07 - Docs and upstream](task-07-docs-and-upstream.md) | done | 04, 05, 06 |
+| [08 - The host holds a call's content only while a worker needs it](task-08-the-host-holds-only-a-workers-call-content.md) | done | - |
+| [09 - A background worker is linked from its call when the call completes](task-09-a-background-worker-is-linked-on-completion.md) | done | 08 |
+| [10 - The spawning call carries the reference's subagent _meta](task-10-the-spawning-call-carries-the-reference-meta.md) | done | 08 |
+| [11 - A cancelled turn ends its own workers, and an ended worker stays ended](task-11-a-worker-ends-once-and-stays-ended.md) | done | - |
+| [12 - A nested worker is linked from the worker chat that spawned it](task-12-a-nested-worker-is-linked-from-its-parent-worker.md) | done | - |
+| [13 - A resumed session keeps the worker chats it was restored with](task-13-a-resumed-session-keeps-its-restored-workers.md) | done | - |
+| [14 - Any task_started marks a worker background, and a foreground spawn ends on its result](task-14-background-is-told-by-the-reference-rule.md) | done | 11 |
+| [15 - A permission ask inside a subagent, seen on a real stream](task-15-an-ask-inside-a-subagent-on-a-real-stream.md) | done | - |
+| [16 - A worker's own actions are schema-checked, and its comments document](task-16-worker-actions-checked-and-comments-document.md) | done | 09, 10, 11, 12, 13 |
+| [17 - An answer given in a worker chat reaches its session, and a stop there stops the lead turn](task-17-an-answer-in-a-worker-chat-reaches-its-session.md) | done | 05 |
 
 ## Risks and tradeoffs
 
@@ -127,17 +127,17 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 17 are `implemented`: the captures, `Start.subagent`, the routing, the endings, the ask routing, the restore, the docs, and the review fixes 08 to 16 (the call-content index, the background link on completion, the reference `_meta`, cancel and late frames, the nested link live and restored, the resumed session's workers, the reference background rule, the captured ask, the worker channel check and the comments), and fix 17 (an answer or a stop given on a worker chat reaches its session).
-- **Next action:** review of tasks 08 to 17, Softov approving a permission asked inside a subagent in ahpapp or VS Code, then the VS Code checks in the checklist below.
+- **Done so far:** tasks 01 to 17 are done, reviewed and checked by Softov in ahpapp and VS Code on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a call whose input does not say `run_in_background` is foreground and ends on its result, so a worker the CLI backgrounds without being asked would end on its "launched" result; and a live chat's `subagent` links name the session in the spelling the host holds it under, not the alias a client subscribed with.
 
 ## Final verification checklist
 
 - [x] A captured stream with a subagent, checked into `test/fixtures`.
-- [ ] VS Code: a turn that uses `Task` shows the subagent as its own chat, opened from the call, with its text, thinking and tool calls.
-- [ ] VS Code: a permission ask inside the subagent appears in its chat.
-- [ ] After a daemon restart the subagent chat is still there.
+- [x] VS Code: a turn that uses `Task` shows the subagent as its own chat, opened from the call, with its text, thinking and tool calls.
+- [x] VS Code: a permission ask inside the subagent appears in its chat.
+- [x] After a daemon restart the subagent chat is still there.
 - [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; the new actions validate against the protocol schema.
 - [x] A captured stream with a permission ask inside a subagent, and the ask test replaying it (task 15).
 - [x] A background worker's spawning call completes with its `subagent` content, and every spawning call carries `subagentDescription`, `subagentAgentName` and `subagentChatUri` (tasks 09, 10).
@@ -146,4 +146,4 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 - [x] The host holds no content for ordinary tool calls (task 08).
 - [x] A nested worker is linked from its parent worker, live and restored, and a resumed session still lists its restored workers (tasks 12, 13).
 - [x] The worker channel's own actions pass the protocol check (task 16).
-- [ ] `UPSTREAM.md`, `docs/`, `plans/index.md` updated.
+- [x] `UPSTREAM.md`, `docs/`, `plans/index.md` updated.

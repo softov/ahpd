@@ -1,6 +1,6 @@
 ---
 title: cofold follows a link's target one name at a time, released by Softov
-status: implemented
+status: done
 depends: [task-14-inside-follows-a-dangling-link.md]
 layer: "cofold tools"
 refs:

@@ -1,10 +1,10 @@
 ---
 title: A subagent seen on a real stream
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:
-  - "[code://test/fixtures/claude-empty-round.jsonl](../../../../test/fixtures/claude-empty-round.jsonl) - the capture shape to follow"
+  - "[code://packages/agent-claude/test/fixtures/claude-empty-round.jsonl](../../../../packages/agent-claude/test/fixtures/claude-empty-round.jsonl) - the capture shape to follow"
 ---
 
 ## Objective

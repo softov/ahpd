@@ -1,6 +1,6 @@
 ---
 title: pi opens a part per block, live and in replay
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

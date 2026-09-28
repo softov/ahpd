@@ -14,7 +14,7 @@ decisions:
 refs:
   - "[code://packages/agent-acp/src/plugin.ts#L61-L92](../../../../packages/agent-acp/src/plugin.ts#L61-L92) - `optionsOf` and `apply`: one spec is one backend, written out by hand"
   - "[code://packages/agent-acp/src/types.ts#L42-L60](../../../../packages/agent-acp/src/types.ts#L42-L60) - `AcpOptions`"
-  - "[code://docs/PLUGINS.md#L594-L605](../../../../docs/PLUGINS.md#L594-L605) - the four configuration lines the docs show, one still `--experimental-acp`"
+  - "[code://docs/PLUGINS.md#L600-L603](../../../../docs/PLUGINS.md#L600-L603) - the four configuration lines the docs show, one still `--experimental-acp`"
   - "[code://.project/plans/container/05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md](../../../../.project/plans/container/05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md) - where each agent's version is pinned"
   - https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json - the launch commands the table was checked against
 ---

@@ -1,6 +1,6 @@
 ---
 title: Claude's subagent frames go to that chat
-status: implemented
+status: done
 depends: [task-01-a-subagent-on-a-real-stream.md, task-02-the-host-opens-a-subagent-chat.md]
 layer: "agent-claude"
 refs:

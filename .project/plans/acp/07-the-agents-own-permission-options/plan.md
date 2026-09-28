@@ -1,7 +1,7 @@
 ---
 title: A person answers with the agent's own permission options
 domain: acp
-status: planned
+status: dropped
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -18,6 +18,9 @@ refs:
 ---
 
 ## Goal
+
+Dropped 2026-09-28: the work is built in [host/24](../../host/24-an-approval-offers-the-agents-own-options/plan.md), task 02, with the SDK change in its task 01; Softov chose to fold it there.
+
 
 The options an agent offers in `session/request_permission` reach the client as AHP confirmation options, and the one the person picks is the one the agent receives, so "allow always" is available and is only ever the person's choice.
 
@@ -44,9 +47,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Confirm carries the chosen option](task-01-confirm-carries-the-chosen-option.md) | todo | - |
-| [02 - The agent's options are offered and the chosen one answered](task-02-the-agent-options-are-offered-and-answered.md) | todo | 01 |
-| [02 - Docs](task-02-docs.md) | todo | 02 |
+| [01 - Confirm carries the chosen option](task-01-confirm-carries-the-chosen-option.md) | dropped | - |
+| [02 - The agent's options are offered and the chosen one answered](task-02-the-agent-options-are-offered-and-answered.md) | dropped | 01 |
+| [02 - Docs](task-02-docs.md) | dropped | 02 |
 
 ## Risks and tradeoffs
 
@@ -54,8 +57,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-confirm-carries-the-chosen-option.md](task-01-confirm-carries-the-chosen-option.md).
+- **Done so far:** nothing; dropped 2026-09-28 into [host/24](../../host/24-an-approval-offers-the-agents-own-options/plan.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the host's `toolConfirmation` input-needed entry must carry the options too, or a client that reads only that list shows approve and deny.
 

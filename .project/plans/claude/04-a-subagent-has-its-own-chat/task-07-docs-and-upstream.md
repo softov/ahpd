@@ -1,6 +1,6 @@
 ---
 title: Docs and upstream
-status: implemented
+status: done
 depends: [task-04-a-subagent-turn-ends.md, task-05-asks-inside-a-subagent.md, task-06-restored-after-a-restart.md]
 layer: "docs"
 refs:

@@ -1,12 +1,12 @@
 ---
 title: A permission ask inside a subagent, seen on a real stream
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:
   - "[code://packages/agent-claude/src/session.ts#L1709-L1760](../../../../packages/agent-claude/src/session.ts#L1709-L1760) - `canUseTool`, which joins an ask to its worker by `toolUseID`, then `agentID`"
-  - "[code://test/agent-claude-subagent.test.ts#L194-L220](../../../../test/agent-claude-subagent.test.ts#L194-L220) - the ask case, a synthetic `canUseTool` call over the replay"
-  - "[code://test/fixtures/claude-subagent.jsonl](../../../../test/fixtures/claude-subagent.jsonl) - the capture task 01 drew its conclusion from, whose inner tools are `ls -la` and `find`"
+  - "[code://packages/agent-claude/test/agent-claude-subagent.test.ts#L194-L220](../../../../packages/agent-claude/test/agent-claude-subagent.test.ts#L194-L220) - the ask case, a synthetic `canUseTool` call over the replay"
+  - "[code://packages/agent-claude/test/fixtures/claude-subagent.jsonl](../../../../packages/agent-claude/test/fixtures/claude-subagent.jsonl) - the capture task 01 drew its conclusion from, whose inner tools are `ls -la` and `find`"
 ---
 
 ## Objective

@@ -1,7 +1,7 @@
 ---
 title: A turn's parts come in the order the model wrote them, one part per block
 domain: pi
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -61,10 +61,10 @@ pi event -> mapEvent (one text part from turn start, one reasoning part) -> chat
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi opens a part per block, live and in replay](task-01-pi-opens-a-part-per-block.md) | implemented | - |
-| [02 - cofold opens a part per block live](task-02-cofold-opens-a-part-per-block.md) | implemented | - |
-| [03 - The ACP bridge opens a part per run of chunks, in the order they arrived](task-03-acp-opens-a-part-per-run-of-chunks.md) | implemented | - |
-| [04 - A text block that is only whitespace opens no part](task-04-whitespace-only-text-opens-no-part.md) | implemented | 01, 02, 03 |
+| [01 - pi opens a part per block, live and in replay](task-01-pi-opens-a-part-per-block.md) | done | - |
+| [02 - cofold opens a part per block live](task-02-cofold-opens-a-part-per-block.md) | done | - |
+| [03 - The ACP bridge opens a part per run of chunks, in the order they arrived](task-03-acp-opens-a-part-per-run-of-chunks.md) | done | - |
+| [04 - A text block that is only whitespace opens no part](task-04-whitespace-only-text-opens-no-part.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -73,13 +73,13 @@ pi event -> mapEvent (one text part from turn start, one reasoning part) -> chat
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02, 03 and 04 implemented, awaiting review: pi and cofold open a part per block where it starts, the ACP bridge opens a part per run of chunks of one kind, a turn starts with no part, and text that is only whitespace opens no part, live or after a reload.
-- **Next action:** Softov reviews the four tasks and checks a pi, a cofold and an ACP turn that thinks, calls a tool and thinks again in ahpapp, before and after a reload, including a Kimi K2.6 turn on pi.
-- **Open questions:** cofold's live part ids name the step (`${turnId}:${step}:${index}`) rather than the transcript's `${message.id}:${index}`, because cofold mints the message id after the deltas; kinds, contents and order match.
+- **Done so far:** tasks 01 to 04 are done, reviewed and checked by Softov in ahpapp on 2026-09-28; the plan is built, see [implemented.md](implemented.md).
+- **Next action:** none.
+- **Open questions:** none.
 - **Watch out for:** a tool row now opens at the model's `toolcall_start`, so a call cut off mid-arguments is in the snapshot; pi's `finish` marks it `cancelled` with reason `skipped`.
 
 ## Final verification checklist
 
-- [ ] thinking, tool, thinking, text shows in that order with two reasoning blocks, live and after a reload, on pi and cofold.
-- [ ] `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
-- [ ] `plans/index.md` updated.
+- [x] thinking, tool, thinking, text shows in that order with two reasoning blocks, live and after a reload, on pi and cofold.
+- [x] `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
+- [x] `plans/index.md` updated.
