@@ -1,6 +1,6 @@
 ---
 title: A worker's own actions are schema-checked, and its comments document
-status: todo
+status: implemented
 depends: [task-09-a-background-worker-is-linked-on-completion.md, task-10-the-spawning-call-carries-the-reference-meta.md, task-11-a-worker-ends-once-and-stays-ended.md, task-12-a-nested-worker-is-linked-from-its-parent-worker.md, task-13-a-resumed-session-keeps-its-restored-workers.md]
 layer: "tests, agent-claude, sdk"
 refs:
@@ -32,3 +32,9 @@ The protocol check covers the worker channel's own actions, and the comments thi
 - `rg -n "before this existed|left out, because" packages/agent-claude/src/session.ts packages/agent-claude/src/claude.ts packages/sdk/src/types/agent.ts` finds none of the lines listed above.
 
 ## Resume
+
+The fake in `packages/sdk/test/subagent-chat.test.ts` opens the worker in `begin` and writes its part, its nested call and its ending on later ticks behind two gates, and `running` subscribes to the worker channel once its row is on the wire.
+A new case asserting the worker channel's own actions are on the wire failed first and passes, and the protocol checker case passes with those frames in it.
+The narrating comments on `scopeFor`, the empty-round announcement, `claude.ts`'s seam pass-through, `Start.subagent` and one test comment now say what the code does.
+`rg -n "before this existed|left out, because"` over the three files finds only `runsNested` in `types/agent.ts`, which this plan did not add and was left as it is.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

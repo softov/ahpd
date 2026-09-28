@@ -166,7 +166,29 @@ export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<
       turns: buildTurns(readJsonl(join(folder, name))) as unknown as Bag[],
     });
   }
+  /*
+   * A worker spawned from inside another worker: its call is in that worker's
+   * turns and not in the session's own, and that worker's call is its parent.
+   */
+  const inMain = callsIn(mainTurns as unknown as Bag[]);
+  for (const one of out) {
+    if (inMain.has(one.toolCallId)) continue;
+    const parent = out.find((other) => other !== one && callsIn(other.turns).has(one.toolCallId));
+    if (parent !== undefined) one.parentToolCallId = parent.toolCallId;
+  }
   return out;
+}
+
+/** The ids of every tool call in some turns. */
+function callsIn(turns: Bag[]): Set<string> {
+  const ids = new Set<string>();
+  for (const turn of turns) {
+    for (const part of list(turn.responseParts)) {
+      const id = str(bag(bag(part).toolCall).toolCallId);
+      if (id !== undefined) ids.add(id);
+    }
+  }
+  return ids;
 }
 
 /** One session's history, from the frames a reader already parsed. */

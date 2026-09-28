@@ -1,6 +1,6 @@
 ---
 title: A background worker is linked from its call when the call completes
-status: todo
+status: implemented
 depends: [task-08-the-host-holds-only-a-workers-call-content.md]
 layer: "agent-claude"
 refs:
@@ -34,3 +34,9 @@ A background worker's chat is opened when its spawning call's `tool_result` arri
 - `pnpm typecheck` green.
 
 ## Resume
+
+`results` opens the worker of a spawning call that asked for the background before building its completion, so the completion carries the `subagent` content.
+`openSubagent` writes the link only while the parent chat has an open turn, and never with an empty `turnId`.
+The background case in `packages/agent-claude/test/agent-claude-subagent.test.ts` failed first (the seam was asked after the completion) and a new case in `packages/sdk/test/subagent-chat.test.ts` failed first on the empty-turn link; both pass now.
+The background test is based on `run_in_background: true` in the call's input, per task 14's rule, so a call that says nothing is treated as foreground and is not opened at its result.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

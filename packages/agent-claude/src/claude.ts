@@ -550,8 +550,8 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),
       // The host's worker-chat seam, carried through unchanged: this backend
       // names a call and what the harness said about it, and the host opens
-      // the chat. A host without one leaves a subagent's frames in the turn
-      // that spawned them, which is what a session did before this existed.
+      // the chat. Without one, a subagent's frames stay in the turn that
+      // spawned them.
       ...(start.subagent ? { subagent: start.subagent } : {}),
       /*
        * A pushed token, as the variable the CLI reads.

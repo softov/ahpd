@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
-import type { Bag } from '@ahpd/sdk';
+import type { Agent, Bag } from '@ahpd/sdk';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
 /*
@@ -26,6 +26,37 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   listSessions: async () => sdk.sessions,
   getSessionMessages: async () => sdk.messages,
   createSdkMcpServer: () => ({}),
+  /*
+   * A CLI that answers each message it is sent with one line of text and the
+   * end of the turn, which is all a resumed session needs to go live.
+   */
+  query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
+    async *[Symbol.asyncIterator]() {
+      let n = 0;
+      for await (const _message of prompt) {
+        n += 1;
+        yield {
+          type: 'assistant', parent_tool_use_id: null,
+          message: { id: `live-${n}`, model: 'claude-opus-5', content: [{ type: 'text', text: 'Still here.' }] },
+        };
+        yield { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, stop_reason: 'end_turn' };
+      }
+    },
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    applyFlagSettings: async () => {},
+    toggleMcpServer: async () => {},
+    reconnectMcpServer: async () => {},
+    setMcpServers: async () => {},
+    initializationResult: async () => ({}),
+    mcpServerStatus: async () => [],
+    reloadSkills: async () => ({ skills: [] }),
+    reloadPlugins: async () => ({ plugins: [] }),
+    supportedModels: async () => [],
+    streamInput: async () => {},
+    close: () => {},
+  }),
 }));
 
 const { claude } = await import('../src/claude.js');
@@ -80,7 +111,20 @@ function laid(): { project: string; session: string } {
   writeFileSync(join(subagents, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'List files', toolUseId: 'toolu_task', spawnDepth: 1 }));
   writeFileSync(join(subagents, 'agent-a1.jsonl'), [
     frame('user', 'su1', { role: 'user', content: 'list the files' }),
-    frame('assistant', 'sa1', { id: 'sm1', model: 'claude-opus-5', content: [{ type: 'text', text: 'Found three files.' }] }),
+    frame('assistant', 'sa1', {
+      id: 'sm1', model: 'claude-opus-5',
+      content: [
+        { type: 'text', text: 'Found three files.' },
+        { type: 'tool_use', id: 'toolu_nested', name: 'Agent', input: { subagent_type: 'Explore', description: 'Look deeper', prompt: 'go deeper' } },
+      ],
+    }),
+    frame('user', 'su1b', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_nested', content: 'deeper done' }] }),
+  ].map(line).join(''));
+  // Spawned from inside a1, by a call in a1's own transcript.
+  writeFileSync(join(subagents, 'agent-d4.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Look deeper', toolUseId: 'toolu_nested', spawnDepth: 2 }));
+  writeFileSync(join(subagents, 'agent-d4.jsonl'), [
+    frame('user', 'su4', { role: 'user', content: 'go deeper' }),
+    frame('assistant', 'sa4', { id: 'sm4', model: 'claude-opus-5', content: [{ type: 'text', text: 'Deeper still.' }] }),
   ].map(line).join(''));
   // No meta file at all, linked only by the `agentId:` suffix.
   writeFileSync(join(subagents, 'agent-b2.jsonl'), [
@@ -102,8 +146,11 @@ it('reads a session\'s subagents back, their turns and the call that ran each', 
   laid();
   const agent = claude({ paths: [DIR] });
   const found = await agent.subagents?.(SESSION);
-  expect(found).toHaveLength(2);
+  expect(found).toHaveLength(3);
   const byCall = new Map((found ?? []).map((one) => [one.toolCallId, one]));
+  // The nested one names the call in a1's chat that spawned it.
+  expect(byCall.get('toolu_nested')?.parentToolCallId).toBe('toolu_task');
+  expect(byCall.get('toolu_task')?.parentToolCallId).toBeUndefined();
 
   const first = byCall.get('toolu_task');
   expect(first).toMatchObject({ title: 'Explore', agentName: 'Explore', description: 'List files' });
@@ -168,4 +215,92 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
     .flatMap((content) => content ?? [])
     .find((one) => one.type === 'subagent');
   expect(link).toMatchObject({ resource: workerUri, title: 'Explore' });
+});
+
+it('links a restored nested worker from the call in its parent worker\'s chat', async () => {
+  laid();
+  const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })] });
+  const peer: Peer = { send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} };
+  const client = host.accept(peer);
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'nested', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const encoded = Buffer.from(`ahp-session:/${SESSION}`, 'utf8').toString('base64url');
+  const outer = `ahp-chat://subagent/${encoded}/${encodeURIComponent('toolu_task')}`;
+  const nested = `ahp-chat://subagent/${encoded}/${encodeURIComponent('toolu_nested')}`;
+  const session = await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${SESSION}` } }) as { snapshot: { state: Bag } };
+  const row = (session.snapshot.state.chats as Bag[]).find((one) => one.resource === nested);
+  expect(row?.origin).toEqual({ kind: 'tool', chat: outer, toolCallId: 'toolu_nested' });
+
+  const worker = await client.handle({ method: 'subscribe', params: { channel: outer } }) as { snapshot: { state: Bag } };
+  const link = ((worker.snapshot.state.turns ?? []) as Bag[]).flatMap((turn) => (turn.responseParts as Bag[]) ?? [])
+    .map((part) => part.toolCall as Bag | undefined)
+    .find((call) => call?.toolCallId === 'toolu_nested');
+  expect((link?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent')).toMatchObject({ resource: nested, title: 'Explore' });
+});
+
+/** A host and one client, initialised. */
+async function connected(agent: Agent) {
+  const host = createHost({ path: DIR, agents: [agent] });
+  const peer: Peer = { send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} };
+  const client = host.accept(peer);
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'resumed', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  return client;
+}
+
+const SESSION_URI = `ahp-session:/${SESSION}`;
+const encodedSession = Buffer.from(SESSION_URI, 'utf8').toString('base64url');
+const workerOf = (call: string): string => `ahp-chat://subagent/${encodedSession}/${encodeURIComponent(call)}`;
+const leadChat = `ahp-chat://default/${encodedSession}`;
+
+it('keeps a restored session\'s workers listed and linked once it is sent a turn', async () => {
+  laid();
+  const client = await connected(claude({ paths: [DIR] }));
+  const before = await client.handle({ method: 'subscribe', params: { channel: SESSION_URI } }) as { snapshot: { state: Bag } };
+  const listed = (state: Bag): string[] => (state.chats as Bag[]).map((one) => String(one.resource));
+  expect(listed(before.snapshot.state)).toEqual(expect.arrayContaining([workerOf('toolu_task'), workerOf('toolu_second')]));
+
+  await client.handle({ method: 'subscribe', params: { channel: leadChat } });
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: leadChat, action: { type: 'chat/turnStarted', turnId: 'live-1', message: { text: 'are you there' } } },
+  });
+  await settle(40);
+
+  const after = await client.handle({ method: 'subscribe', params: { channel: SESSION_URI } }) as { snapshot: { state: Bag } };
+  const rows = listed(after.snapshot.state);
+  expect(rows).toEqual(expect.arrayContaining([workerOf('toolu_task'), workerOf('toolu_second')]));
+  expect(rows.filter((one) => one === workerOf('toolu_task'))).toHaveLength(1);
+
+  const lead = await client.handle({ method: 'subscribe', params: { channel: leadChat } }) as { snapshot: { state: Bag } };
+  const call = ((lead.snapshot.state.turns ?? []) as Bag[]).flatMap((turn) => (turn.responseParts as Bag[]) ?? [])
+    .map((part) => part.toolCall as Bag | undefined)
+    .find((one) => one?.toolCallId === 'toolu_task');
+  // Named in the spelling the host holds the session under, as a worker
+  // opened live is.
+  const link = (call?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent');
+  expect(link).toMatchObject({ title: 'Explore' });
+  expect(String(link?.resource)).toMatch(/^ahp-chat:\/\/subagent\/[^/]+\/toolu_task$/);
+});
+
+it('reads a session\'s workers again after a read that failed', async () => {
+  laid();
+  const inner = claude({ paths: [DIR] });
+  let asked = 0;
+  const flaky: Agent = {
+    ...inner,
+    subagents: async (id, turns) => {
+      asked += 1;
+      if (asked === 1) throw new Error('not yet');
+      return await inner.subagents?.(id, turns);
+    },
+  };
+  const client = await connected(flaky);
+  await client.handle({ method: 'subscribe', params: { channel: SESSION_URI } });
+  const again = await client.handle({ method: 'subscribe', params: { channel: SESSION_URI } }) as { snapshot: { state: Bag } };
+  expect((again.snapshot.state.chats as Bag[]).some((one) => one.resource === workerOf('toolu_task'))).toBe(true);
 });

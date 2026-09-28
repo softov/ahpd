@@ -174,8 +174,8 @@ export interface Start {
    * a tool call id is the one that opens it, and a second returns the same
    * chat without announcing it again.
    *
-   * Optional. A backend without it draws a worker's output inline, which is
-   * what every backend did before this existed.
+   * Optional. Without it, a backend draws a worker's output inline in the
+   * turn that spawned it.
    */
   subagent?(toolCallId: string, request: SubagentRequest): SubagentChat;
   /** A session of this backend's to continue, rather than starting a new one. */

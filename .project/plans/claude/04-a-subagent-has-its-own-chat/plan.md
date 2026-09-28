@@ -106,15 +106,15 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 | [05 - A permission ask inside a subagent is asked there](task-05-asks-inside-a-subagent.md) | implemented | 03 |
 | [06 - A subagent's chat is there again after a restart](task-06-restored-after-a-restart.md) | implemented | 03 |
 | [07 - Docs and upstream](task-07-docs-and-upstream.md) | implemented | 04, 05, 06 |
-| [08 - The host holds a call's content only while a worker needs it](task-08-the-host-holds-only-a-workers-call-content.md) | todo | - |
-| [09 - A background worker is linked from its call when the call completes](task-09-a-background-worker-is-linked-on-completion.md) | todo | 08 |
-| [10 - The spawning call carries the reference's subagent _meta](task-10-the-spawning-call-carries-the-reference-meta.md) | todo | 08 |
-| [11 - A cancelled turn ends its own workers, and an ended worker stays ended](task-11-a-worker-ends-once-and-stays-ended.md) | todo | - |
-| [12 - A nested worker is linked from the worker chat that spawned it](task-12-a-nested-worker-is-linked-from-its-parent-worker.md) | todo | - |
-| [13 - A resumed session keeps the worker chats it was restored with](task-13-a-resumed-session-keeps-its-restored-workers.md) | todo | - |
-| [14 - Any task_started marks a worker background, and a foreground spawn ends on its result](task-14-background-is-told-by-the-reference-rule.md) | todo | 11 |
-| [15 - A permission ask inside a subagent, seen on a real stream](task-15-an-ask-inside-a-subagent-on-a-real-stream.md) | todo | - |
-| [16 - A worker's own actions are schema-checked, and its comments document](task-16-worker-actions-checked-and-comments-document.md) | todo | 09, 10, 11, 12, 13 |
+| [08 - The host holds a call's content only while a worker needs it](task-08-the-host-holds-only-a-workers-call-content.md) | implemented | - |
+| [09 - A background worker is linked from its call when the call completes](task-09-a-background-worker-is-linked-on-completion.md) | implemented | 08 |
+| [10 - The spawning call carries the reference's subagent _meta](task-10-the-spawning-call-carries-the-reference-meta.md) | implemented | 08 |
+| [11 - A cancelled turn ends its own workers, and an ended worker stays ended](task-11-a-worker-ends-once-and-stays-ended.md) | implemented | - |
+| [12 - A nested worker is linked from the worker chat that spawned it](task-12-a-nested-worker-is-linked-from-its-parent-worker.md) | implemented | - |
+| [13 - A resumed session keeps the worker chats it was restored with](task-13-a-resumed-session-keeps-its-restored-workers.md) | implemented | - |
+| [14 - Any task_started marks a worker background, and a foreground spawn ends on its result](task-14-background-is-told-by-the-reference-rule.md) | implemented | 11 |
+| [15 - A permission ask inside a subagent, seen on a real stream](task-15-an-ask-inside-a-subagent-on-a-real-stream.md) | implemented | - |
+| [16 - A worker's own actions are schema-checked, and its comments document](task-16-worker-actions-checked-and-comments-document.md) | implemented | 09, 10, 11, 12, 13 |
 
 ## Risks and tradeoffs
 
@@ -125,10 +125,10 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 07 are `implemented`: the captures, `Start.subagent`, the routing, the endings, the ask routing, the restore and the docs.
-- **Next action:** [task-08-the-host-holds-only-a-workers-call-content.md](task-08-the-host-holds-only-a-workers-call-content.md); tasks 11, 12, 13 and 15 do not depend on it and can run beside it, and 14 follows 11.
+- **Done so far:** tasks 01 to 16 are `implemented`: the captures, `Start.subagent`, the routing, the endings, the ask routing, the restore, the docs, and the review fixes 08 to 16 (the call-content index, the background link on completion, the reference `_meta`, cancel and late frames, the nested link live and restored, the resumed session's workers, the reference background rule, the captured ask, the worker channel check and the comments).
+- **Next action:** review of tasks 08 to 16, then the VS Code checks in the checklist below.
 - **Open questions:** none.
-- **Watch out for:** the SDK mock in `test/agent-claude-subagent.test.ts` yields a whole fixture at once, so a cancel or a late frame cannot fall between two frames until task 11 makes it a pull queue; and the fakes in `test/subagent-chat.test.ts` must look like the Claude backend (a `toolKind: 'subagent'` on the spawning call, the nested call present in its parent's chat) or the tests pass without exercising the link.
+- **Watch out for:** a call whose input does not say `run_in_background` is foreground and ends on its result, so a worker the CLI backgrounds without being asked would end on its "launched" result; and a live chat's `subagent` links name the session in the spelling the host holds it under, not the alias a client subscribed with.
 
 ## Final verification checklist
 
@@ -136,12 +136,12 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 - [ ] VS Code: a turn that uses `Task` shows the subagent as its own chat, opened from the call, with its text, thinking and tool calls.
 - [ ] VS Code: a permission ask inside the subagent appears in its chat.
 - [ ] After a daemon restart the subagent chat is still there.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; the new actions validate against the protocol schema.
-- [ ] A captured stream with a permission ask inside a subagent, and the ask test replaying it (task 15).
-- [ ] A background worker's spawning call completes with its `subagent` content, and every spawning call carries `subagentDescription`, `subagentAgentName` and `subagentChatUri` (tasks 09, 10).
-- [ ] Cancelling a turn leaves an earlier background worker running, and a late frame does not reopen an ended worker (task 11).
-- [ ] A foreground worker ends once, on its notification or its result, and a background one only on its notification (task 14).
-- [ ] The host holds no content for ordinary tool calls (task 08).
-- [ ] A nested worker is linked from its parent worker, live and restored, and a resumed session still lists its restored workers (tasks 12, 13).
-- [ ] The worker channel's own actions pass the protocol check (task 16).
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; the new actions validate against the protocol schema.
+- [x] A captured stream with a permission ask inside a subagent, and the ask test replaying it (task 15).
+- [x] A background worker's spawning call completes with its `subagent` content, and every spawning call carries `subagentDescription`, `subagentAgentName` and `subagentChatUri` (tasks 09, 10).
+- [x] Cancelling a turn leaves an earlier background worker running, and a late frame does not reopen an ended worker (task 11).
+- [x] A foreground worker ends once, on its notification or its result, and a background one only on its notification (task 14).
+- [x] The host holds no content for ordinary tool calls (task 08).
+- [x] A nested worker is linked from its parent worker, live and restored, and a resumed session still lists its restored workers (tasks 12, 13).
+- [x] The worker channel's own actions pass the protocol check (task 16).
 - [ ] `UPSTREAM.md`, `docs/`, `plans/index.md` updated.

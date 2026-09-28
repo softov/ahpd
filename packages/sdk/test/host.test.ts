@@ -752,26 +752,28 @@ describe('driving a turn', () => {
         .map((e) => e.action._meta);
       // `_meta.progressMessage`, the reference client's word for a line on a
       // running row - never the result, which is what the tool answered and
-      // not what it was doing on the way. The kind stamped at the start rides
-      // along, because an action carrying `_meta` replaces the bag whole.
+      // not what it was doing on the way. The kind and the worker's keys
+      // stamped at the start ride along, because an action carrying `_meta`
+      // replaces the bag whole.
+      const worker = { toolKind: 'subagent', subagentDescription: 'look', subagentChatUri: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/) };
       expect(changed).toEqual([
-        { toolKind: 'subagent', progressMessage: 'Reading the tests' },
-        { toolKind: 'subagent', progressMessage: 'Running Grep' },
+        { ...worker, progressMessage: 'Reading the tests' },
+        { ...worker, progressMessage: 'Running Grep' },
       ]);
       const mid = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
         snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
       }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
-      expect(mid).toEqual({ toolKind: 'subagent', progressMessage: 'Running Grep' });
+      expect(mid).toEqual({ ...worker, progressMessage: 'Running Grep' });
 
       await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'found it' }] } });
       // Gone with the running state it described: a completed row that still
       // says "Running Grep" is a row saying two things.
       const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
-      expect(done?.action._meta).toEqual({ toolKind: 'subagent' });
+      expect(done?.action._meta).toEqual(worker);
       const after = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
         snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
       }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
-      expect(after).toEqual({ toolKind: 'subagent' });
+      expect(after).toEqual(worker);
     });
 
     it('says nothing for a tool it has no kind for', async () => {

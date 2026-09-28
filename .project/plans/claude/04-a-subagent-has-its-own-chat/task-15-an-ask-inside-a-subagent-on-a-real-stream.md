@@ -1,6 +1,6 @@
 ---
 title: A permission ask inside a subagent, seen on a real stream
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -32,3 +32,10 @@ A captured stream shows what the SDK does when a tool inside a subagent needs pe
 - If the capture shows `canUseTool` before the worker's `assistant` frame, that case fails today, and the join is fixed so it passes.
 
 ## Resume
+
+Captured live with `@anthropic-ai/claude-agent-sdk` 0.3.278, `permissionMode: 'default'`, `includePartialMessages` and `forwardSubagentText` on, from a script kept outside the repository, with the prompt "Use a subagent (the Agent tool, general-purpose) to create a file notes.txt in the current folder containing the word hello. Do not create it yourself."
+`packages/agent-claude/test/fixtures/claude-subagent-ask.jsonl` is the trimmed turn, 15 lines, with the `canUseTool` call recorded where it arrived and the capture's paths replaced by `/tmp/ahpd-sub-ask`.
+`canUseTool` was called for the inner `Write`, after the worker's own `assistant` frame naming the call, with `toolUseID` equal to that call's id and `agentID` set (`a8db1be9a0fded74f`), and `options.suggestions` offering `acceptEdits`.
+The ask case in `packages/agent-claude/test/agent-claude-subagent.test.ts` now replays that capture and calls `canUseTool` at the recorded point; it passed on first run, because the call is already joined by `toolUseID`, so no fix to the join was needed.
+No `stream_event` carried a `parent_tool_use_id` in this capture either.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

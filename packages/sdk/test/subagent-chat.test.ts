@@ -33,6 +33,22 @@ function peer(): Peer {
   };
 }
 
+/**
+ * The two points the fake's worker waits at before it goes on: `part`, before
+ * it says anything, and `end`, before its nested call completes and it ends.
+ */
+let gates: { part: Promise<void>; end: Promise<void> } = { part: Promise.resolve(), end: Promise.resolve() };
+let release: { part: () => void; end: () => void } = { part: () => {}, end: () => {} };
+const gated = (): void => {
+  let part = (): void => {};
+  let end = (): void => {};
+  gates = {
+    part: new Promise<void>((resolve) => { part = resolve; }),
+    end: new Promise<void>((resolve) => { end = resolve; }),
+  };
+  release = { part, end };
+};
+
 const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
@@ -46,9 +62,11 @@ const on = (channel: string): Bag[] => wire
  * A backend whose turn spawns a worker and writes one part into it.
  *
  * The smallest thing that exercises every half of the seam: the call is opened
- * on the lead chat first, so the link has something to be appended to.
+ * on the lead chat first, so the link has something to be appended to. With
+ * `late`, the call and the lead turn complete before the worker is opened, the
+ * order a background worker's frames arrive in.
  */
-function spawning(): Agent {
+function spawning(late = false): Agent {
   const agent: Agent = {
     provider: 'fake',
     displayName: 'Fake',
@@ -89,11 +107,39 @@ function spawning(): Agent {
            * ordinary order, because the assistant frame that names the call
            * arrives before any of the worker's frames do.
            */
-          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'toolu_task', toolName: 'Task', displayName: 'Task' });
+          start.emit('chat', {
+            type: 'chat/toolCallStart', turnId, toolCallId: 'toolu_task', toolName: 'Task', displayName: 'Task',
+            _meta: { toolKind: 'subagent' },
+          });
           start.emit('chat', {
             type: 'chat/toolCallReady', turnId, toolCallId: 'toolu_task',
             invocationMessage: 'Task', confirmed: 'not-needed',
           });
+          const finish = (): void => {
+            active = undefined;
+            turns.push({
+              id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } },
+              responseParts: [{
+                kind: 'toolCall',
+                toolCall: {
+                  toolCallId: 'toolu_task', toolName: 'Task', displayName: 'Task', status: 'completed',
+                  invocationMessage: 'Task', success: true, pastTenseMessage: 'Task', _meta: { toolKind: 'subagent' },
+                },
+              }],
+              state: 'complete', duration: 1, usage: undefined,
+            });
+            start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
+          };
+          if (late) {
+            start.emit('chat', {
+              type: 'chat/toolCallComplete', turnId, toolCallId: 'toolu_task',
+              result: { success: true, pastTenseMessage: 'Task', content: [{ type: 'text', text: 'launched' }] },
+            });
+            finish();
+            const worker = start.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
+            worker?.end('complete');
+            return;
+          }
           const worker = start.subagent?.('toolu_task', {
             title: 'Explore',
             agentName: 'Explore',
@@ -101,21 +147,44 @@ function spawning(): Agent {
             prompt: 'list the files',
           });
           if (!worker) return;
-          worker.emit({
-            type: 'chat/responsePart', turnId: worker.turnId,
-            part: { id: 'w1', kind: 'markdown', content: 'working' },
-          });
           // A second ask for the same call is the same chat, not a second one.
           start.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
-          // A worker spawned from inside that worker's call.
-          const inner = start.subagent?.('toolu_inner', {
-            title: 'Inner', prompt: 'go deeper', parentToolCallId: 'toolu_task',
-          });
-          inner?.end('complete');
-          worker.end('complete');
-          active = undefined;
-          turns.push({ id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [], state: 'complete', duration: 1, usage: undefined });
-          start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
+          /*
+           * What the worker says, on later ticks: after a client has had the
+           * chance to subscribe to the worker's channel, and in two steps so a
+           * test can read the worker's state while its nested call is open.
+           */
+          void (async () => {
+            await gates.part;
+            worker.emit({
+              type: 'chat/responsePart', turnId: worker.turnId,
+              part: { id: 'w1', kind: 'markdown', content: 'working' },
+            });
+            // A worker spawned from a call inside that worker's chat, which the
+            // backend opens on the worker's chat first.
+            worker.emit({
+              type: 'chat/toolCallStart', turnId: worker.turnId, toolCallId: 'toolu_inner', toolName: 'Task', displayName: 'Task',
+              _meta: { toolKind: 'subagent' },
+            });
+            worker.emit({
+              type: 'chat/toolCallReady', turnId: worker.turnId, toolCallId: 'toolu_inner',
+              invocationMessage: 'Task', confirmed: 'not-needed',
+            });
+            const inner = start.subagent?.('toolu_inner', {
+              title: 'Inner', prompt: 'go deeper', parentToolCallId: 'toolu_task',
+            });
+            await gates.end;
+            inner?.end('complete');
+            worker.emit({
+              type: 'chat/toolCallComplete', turnId: worker.turnId, toolCallId: 'toolu_inner',
+              result: {
+                success: true, pastTenseMessage: 'Task',
+                content: [{ type: 'subagent', resource: inner?.uri ?? '', title: 'Inner' }],
+              },
+            });
+            worker.end('complete');
+            finish();
+          })();
         },
         cancel: () => {},
         queue: () => {},
@@ -138,9 +207,17 @@ function spawning(): Agent {
 const asking = (client: { handle(r: { method: string; params: unknown }): Promise<unknown> }) =>
   async (method: string, params: Record<string, unknown> = {}): Promise<unknown> => await client.handle({ method, params });
 
-async function running() {
+/**
+ * A host running the fake, with one turn sent and its worker opened.
+ *
+ * The worker's channel is subscribed once its row is on the wire, so its own
+ * actions reach the wire too. With `hold`, the worker stops before its nested
+ * call completes, and `release.end` lets it go on.
+ */
+async function running(late = false, hold = false) {
   wire.length = 0;
-  const host = createHost({ path: '/tmp', agents: [spawning()] });
+  gated();
+  const host = createHost({ path: '/tmp', agents: [spawning(late)] });
   const client = host.accept(peer());
   const ask = asking(client);
   await ask('initialize', {
@@ -152,18 +229,24 @@ async function running() {
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
   await settle();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_task')}`;
+  const inner = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_inner')}`;
   void client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn one' } } },
   });
   await settle();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_task')}`;
-  const inner = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_inner')}`;
-  return { ask, client, uri, chatUri, worker, inner };
+  const added = on(uri).some((one) => one.type === 'session/chatAdded' && (one.summary as Bag).resource === worker);
+  if (added && !late) await ask('subscribe', { channel: worker });
+  release.part();
+  await settle();
+  if (!hold) release.end();
+  await settle();
+  return { ask, client, uri, chatUri, worker, inner, release };
 }
 
 it('announces a worker chat, opens its turn and links it from the call', async () => {
-  const { ask, uri, worker } = await running();
+  const { ask, uri, chatUri, worker, inner } = await running();
 
   const added = on(uri).filter((one) => one.type === 'session/chatAdded');
   expect(added).toHaveLength(2); // the worker, and the worker inside it
@@ -184,13 +267,15 @@ it('announces a worker chat, opens its turn and links it from the call', async (
   expect(turns).toHaveLength(1);
   expect(turns[0]?.message).toMatchObject({ text: 'list the files' });
 
-  const linked = wire
-    .filter((one) => one.method === 'action' && (one.params.action as Bag | undefined)?.type === 'chat/toolCallContentChanged')
-    .map((one) => one.params.action as Bag);
+  const linked = on(chatUri).filter((one) => one.type === 'chat/toolCallContentChanged');
   expect(linked).toHaveLength(1);
   const content = linked[0]?.content as Bag[];
   expect(content).toHaveLength(1);
   expect(content[0]).toMatchObject({ type: 'subagent', resource: worker, title: 'Explore', agentName: 'Explore', description: 'List files' });
+  // The nested worker's link is on the chat its call is in.
+  const nested = on(worker).filter((one) => one.type === 'chat/toolCallContentChanged');
+  expect(nested).toHaveLength(1);
+  expect((nested[0]?.content as Bag[])[0]).toMatchObject({ type: 'subagent', resource: inner });
 });
 
 it('answers a subscribe to the worker with its own state, and refuses a turn on it', async () => {
@@ -230,9 +315,59 @@ it('removes the worker chats when the session is disposed', async () => {
   expect(removed.length).toBe(2);
 });
 
+it('puts the worker channel\'s own actions on the wire', async () => {
+  const { worker } = await running();
+  const own = on(worker);
+  expect(own.some((one) => one.type === 'chat/responsePart')).toBe(true);
+  expect(own.some((one) => one.type === 'chat/turnComplete')).toBe(true);
+});
+
 it('sends nothing the protocol does not declare', async () => {
   await running();
   const check = checker();
   const defects = wire.flatMap((frame) => check.frame(frame));
   expect(defects.map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
+});
+
+it('writes no link on a call whose turn has already ended', async () => {
+  const { uri, worker } = await running(true);
+  const added = on(uri).filter((one) => one.type === 'session/chatAdded');
+  expect(added.some((one) => (one.summary as Bag).resource === worker)).toBe(true);
+  const linked = wire
+    .filter((one) => one.method === 'action' && (one.params.action as Bag | undefined)?.type === 'chat/toolCallContentChanged')
+    .map((one) => one.params.action as Bag);
+  expect(linked).toEqual([]);
+});
+
+it('stamps the worker chat\'s URI on the spawning call, on the wire and in a snapshot', async () => {
+  const { ask, chatUri, worker } = await running();
+  const start = wire.find((one) => one.method === 'action'
+    && (one.params.action as Bag).type === 'chat/toolCallStart' && (one.params.action as Bag).toolCallId === 'toolu_task');
+  expect(((start?.params.action as Bag | undefined)?._meta as Bag | undefined)?.subagentChatUri).toBe(worker);
+  const ready = wire.find((one) => one.method === 'action'
+    && (one.params.action as Bag).type === 'chat/toolCallReady' && (one.params.action as Bag).toolCallId === 'toolu_task');
+  expect(((ready?.params.action as Bag | undefined)?._meta as Bag | undefined)).toBeUndefined();
+
+  const answer = await ask('subscribe', { channel: chatUri }) as { snapshot: { state: Bag } };
+  const calls = ((answer.snapshot.state.turns ?? []) as Bag[])
+    .flatMap((turn) => (turn.responseParts ?? []) as Bag[])
+    .map((part) => part.toolCall as Bag | undefined)
+    .filter((call) => call?.toolCallId === 'toolu_task');
+  expect(calls).toHaveLength(1);
+  expect((calls[0]?._meta as Bag).subagentChatUri).toBe(worker);
+});
+
+it('links a nested worker from the call in the worker chat that spawned it', async () => {
+  const { ask, worker, inner, release } = await running(false, true);
+  const answer = await ask('subscribe', { channel: worker }) as { snapshot: { state: Bag } };
+  const state = answer.snapshot.state;
+  const turns = [...((state.turns ?? []) as Bag[]), ...(state.activeTurn !== undefined ? [state.activeTurn as Bag] : [])];
+  const call = turns.flatMap((turn) => (turn.responseParts ?? []) as Bag[])
+    .map((part) => part.toolCall as Bag | undefined)
+    .find((one) => one?.toolCallId === 'toolu_inner');
+  expect(call).toBeDefined();
+  expect((call?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent')).toMatchObject({ resource: inner, title: 'Inner' });
+  expect((call?._meta as Bag).subagentChatUri).toBe(inner);
+  release.end();
+  await settle();
 });

@@ -1,6 +1,6 @@
 ---
 title: The spawning call carries the reference's subagent _meta
-status: todo
+status: implemented
 depends: [task-08-the-host-holds-only-a-workers-call-content.md]
 layer: "agent-claude, sdk"
 refs:
@@ -36,3 +36,9 @@ Per [A spawning call carries the reference's subagent _meta, under its names](..
 - `pnpm typecheck` green.
 
 ## Resume
+
+`assistant` puts `subagentDescription` and `subagentAgentName` on a `Task` or `Agent` call's `_meta`, on the call part, its start and its ready action.
+`dispatch` and `sendSubagent` stamp `subagentChatUri` on every `chat/toolCall*` action whose `_meta.toolKind` is `subagent`, not only start, delta and ready, because an action carrying `_meta` replaces the call's whole bag and a progress update would otherwise drop the key.
+The live chat snapshot, the restored lead chat and the restored worker snapshot stamp the same key on their calls, and `spelledFor` respells it with the session.
+New cases in `packages/agent-claude/test/agent-claude-subagent.test.ts` and `packages/sdk/test/subagent-chat.test.ts` failed first and pass; `packages/sdk/test/host.test.ts`'s progress-line case now expects the worker keys in the `_meta` it carries.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

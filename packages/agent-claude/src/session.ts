@@ -867,21 +867,45 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * harness says what the worker is for: its kind, its one-line description
    * and the prompt it is run with. `parent` is the scope the call is in, which
    * is how a worker spawned from inside another worker's chat is linked from
-   * that chat rather than from the session's.
+   * that chat rather than from the session's. A record lives until the worker
+   * has ended and the call's own result has been emitted, whichever is later.
    */
   interface Spawning {
     subagentType?: string;
     description?: string;
     prompt?: string;
     parent: string;
+    /**
+     * The lead turn the call was made in, which is the turn whose cancel ends
+     * the worker. For a nested call, the turn its spawning worker was made in.
+     */
+    turn?: string;
+    /** The worker chat's URI, once the host has opened it. */
+    chat?: string;
+    /** Whether the call's own result has been emitted. */
+    completed?: boolean;
+    /**
+     * Whether the call did not ask for the background: its input said
+     * `run_in_background: false` or said nothing. Its result ends the worker.
+     */
+    foreground: boolean;
   }
   const spawning = new Map<string, Spawning>();
-  /** The calls `task_started` said were background, so their result does not end them. */
+  /** The calls `task_started` named, whose terminal `task_notification` ends them. */
   const background = new Set<string>();
   /** The agent ids a permission ask was seen with, so the next one lands in the same chat. */
   const byAgent = new Map<string, Scope>();
-  /** The scopes whose turn has ended, so a second end is not a second turn. */
+  /**
+   * The spawning calls whose worker has ended, one id each.
+   *
+   * Kept for the life of the session: a frame the harness sends for a worker
+   * after it ended is dropped by this, and without it that frame would open
+   * the worker a second time.
+   */
   const ended = new Set<string>();
+
+  /** The chat a frame for an ended worker is written to, which is nowhere. */
+  const dropped: SubagentChat = { uri: '', turnId: '', emit: () => {}, end: () => {} };
 
   /**
    * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
@@ -889,14 +913,20 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * The host mints the chat, announces it, opens its turn with the prompt and
    * links the call to it; what is left here is the scope the frames land in.
    * Without the host's seam there is nowhere to put a worker, so its frames
-   * stay in the turn that spawned them - which is what every session did
-   * before this existed.
+   * stay in the turn that spawned them. A worker that has ended gets a scope
+   * whose chat writes nowhere, so a late frame is dropped and never opens it
+   * again.
    */
   const scopeFor = (parent: string): Scope => {
     if (parent === '') return mainScope;
     const known = scopes.get(parent);
     if (known !== undefined) return known;
     if (options.subagent === undefined) return mainScope;
+    if (ended.has(parent)) {
+      return {
+        parent, chat: dropped, turn: { id: '', responseParts: [] }, parts: new Map(), calling: new Map(), streaming: undefined,
+      };
+    }
     const info = spawning.get(parent);
     const subagentType = info?.subagentType;
     const chat = options.subagent(parent, {
@@ -906,6 +936,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       ...(info?.prompt !== undefined ? { prompt: info.prompt } : {}),
       ...(info?.parent !== undefined && info.parent !== '' ? { parentToolCallId: info.parent } : {}),
     });
+    if (info !== undefined) info.chat = chat.uri;
     const scope: Scope = {
       parent,
       chat,
@@ -963,6 +994,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     scopes.delete(callId);
     rounds.delete(callId);
     background.delete(callId);
+    if (spawning.get(callId)?.completed === true) spawning.delete(callId);
     byAgent.forEach((held, key) => { if (held === scope) byAgent.delete(key); });
   };
 
@@ -1260,10 +1292,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * A round nobody answered, announced where it happened.
        *
        * The session's own rounds go on the session's chat, and a subagent's on
-       * the chat it was given - which is what `claude/03` left out, because
-       * a subagent had no scope to announce it on. Without the host's seam a
-       * subagent has no chat either, so its round stays unannounced rather
-       * than settling the main agent's thinking for a round it did not end.
+       * the chat it was given. Without the host's seam a subagent has no chat,
+       * so its round stays unannounced rather than settling the main agent's
+       * thinking for a round it did not end.
        */
       if ((parent === '' || scope.chat !== undefined)
         && round !== undefined && !round.answered && round.stopped === 'end_turn' && scope.turn) {
@@ -1450,11 +1481,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
           const kind = str(given.subagent_type);
           const about = str(given.description);
           const prompt = str(given.prompt);
+          const made = scope === mainScope ? str(turn.id) : spawning.get(scope.parent)?.turn;
+          const opened = spawning.get(id)?.chat ?? scopes.get(id)?.chat?.uri;
           spawning.set(id, {
             ...(kind !== undefined ? { subagentType: kind } : {}),
             ...(about !== undefined ? { description: about } : {}),
             ...(prompt !== undefined ? { prompt } : {}),
             parent: scope.parent,
+            foreground: given.run_in_background !== true,
+            ...(made !== undefined ? { turn: made } : {}),
+            ...(opened !== undefined ? { chat: opened } : {}),
           });
         }
         /*
@@ -1476,7 +1512,19 @@ export function createSession(options: ClaudeSessionOptions): Session {
         // Running against somebody else's server, and so a call that can end
         // up waiting on a sign-in rather than on its own work.
         if (from !== undefined) onServer.set(id, { server: from, turnId: str(turn.id) ?? '', blocked: false });
-        const meta = toolMetaOf(name);
+        /*
+         * A spawning call's `_meta` also says what the worker is for, under the
+         * reference's keys: `subagentDescription` from the call's `description`
+         * and `subagentAgentName` from its `subagent_type`. The host adds the
+         * worker chat's URI.
+         */
+        const spawned = spawning.get(id);
+        const described = spawned === undefined ? {} : {
+          ...(spawned.description !== undefined ? { subagentDescription: spawned.description } : {}),
+          ...(spawned.subagentType !== undefined ? { subagentAgentName: spawned.subagentType } : {}),
+        };
+        const kindOf = toolMetaOf(name);
+        const meta = kindOf === undefined && Object.keys(described).length === 0 ? undefined : { ...kindOf, ...described };
         const call: Bag = open !== undefined ? bag(open.toolCall) : {
           toolCallId: id,
           toolName: name,
@@ -1511,6 +1559,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           call.confirmed = 'not-needed';
           delete call.partialInput;
           if (command) call.toolInput = command;
+          if (spawned !== undefined) call._meta = { ...bag(call._meta), ...described };
         }
         if (scope === mainScope) doing(busyWith(name, bag(block.input)));
         /*
@@ -1551,6 +1600,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
           // `pending-confirmation` and draws it as a question nobody put.
           confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
+          // The whole bag, because an action's `_meta` replaces the call's.
+          ...(spawned !== undefined ? { _meta: bag(call._meta) } : {}),
         });
       }
     }
@@ -1606,8 +1657,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * call to point back. The completion action replaces the call's whole
        * content, so the block the host put there when the chat opened has to
        * be carried into the completion or the link is gone the moment the
-       * worker finishes.
+       * worker finishes. A call that asked for the background completes before
+       * its worker says anything, with a result that only says it was
+       * launched, so its worker is opened here and the completion names it.
        */
+      if (id !== undefined && spawning.get(id)?.foreground === false) scopeFor(id);
       const workerContent = id === undefined ? undefined : workerBlock(id);
       const result = {
         success: ok,
@@ -1659,13 +1713,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ...(progressed ? { _meta: call._meta ?? {} } : {}),
       });
       /*
-       * A spawning call's result ends the worker it ran - unless the worker is
-       * background, whose result says only that it was launched. A harness
-       * that omitted `is_backgrounded` is caught by the result's own words.
+       * A spawning call's result ends the worker it ran when the call did not
+       * ask for the background. A call that did gets a result saying only that
+       * the worker was launched, and its worker ends on its notification.
        */
-      if (id !== undefined && spawning.has(id)) {
-        if (!background.has(id) && /async agent launched/i.test(text ?? '')) background.add(id);
-        if (!background.has(id)) endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
+      const info = id === undefined ? undefined : spawning.get(id);
+      if (id !== undefined && info !== undefined) {
+        info.completed = true;
+        if (info.foreground) endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
+        // Ended, or never opened and not running on in the background.
+        if (ended.has(id) || (!scopes.has(id) && info.foreground)) spawning.delete(id);
       }
     }
   };
@@ -1673,18 +1730,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
   /**
    * The `subagent` content for a worker, as the spawning call's result shows it.
    *
-   * Read off the scope the worker was opened in, so a call that never saw a
-   * frame from its worker carries nothing - the chat does not exist and a
-   * link to it would be a link to nowhere.
+   * Read off the call's record, which keeps the worker chat's URI after the
+   * worker has ended. A call whose worker was never opened carries nothing -
+   * the chat does not exist and a link to it would be a link to nowhere.
    */
   const workerBlock = (callId: string): Bag | undefined => {
-    const scope = scopes.get(callId);
-    if (scope?.chat === undefined) return undefined;
     const info = spawning.get(callId);
-    const title = info?.subagentType ?? 'Subagent';
+    if (info?.chat === undefined) return undefined;
+    const title = info.subagentType ?? 'Subagent';
     return {
       type: 'subagent',
-      resource: scope.chat.uri,
+      resource: info.chat,
       title,
       ...(info?.subagentType !== undefined ? { agentName: info.subagentType } : {}),
       ...(info?.description !== undefined ? { description: info.description } : {}),
@@ -2449,18 +2505,15 @@ export function createSession(options: ClaudeSessionOptions): Session {
         /*
          * A worker the harness says is running, and the one that says it ended.
          *
-         * `task_started` carries `is_backgrounded`, and that flag - not the
-         * message's presence - is what decides whether the spawning call's
-         * `tool_result` ends the worker or whether its terminal
-         * `task_notification` does. This harness sends `task_started` for a
-         * foreground worker too, so treating the message itself as the mark
-         * would leave every foreground worker running until its notification.
-         * A background worker's `tool_result` arrives at once, saying only
-         * that it was launched, which is why the result alone cannot end it.
+         * Every call `task_started` names is background, whatever its
+         * `is_backgrounded` says, and ends on its terminal `task_notification`.
+         * A call that did not ask for the background also ends on its own
+         * `tool_result`; whichever of the two arrives first ends the worker,
+         * and the second finds it ended.
          */
         if (type === 'system' && str(message.subtype) === 'task_started') {
           const id = str(message.tool_use_id);
-          if (id !== undefined && message.is_backgrounded === true) background.add(id);
+          if (id !== undefined) background.add(id);
           continue;
         }
         if (type === 'system' && str(message.subtype) === 'task_notification') {
@@ -3198,15 +3251,19 @@ export function createSession(options: ClaudeSessionOptions): Session {
       releaseCalls('The turn was stopped');
       void handle.interrupt().catch(() => {});
       /*
-       * And the workers that turn was running.
+       * And the workers that turn spawned, foreground or background.
        *
        * A worker's turn is a turn of its own, and a main turn stopped halfway
-       * leaves every one of them with nothing left to answer it. Cancelling
-       * them here is what keeps a stopped conversation from showing workers
-       * still thinking for as long as the session is open.
+       * leaves the workers it spawned with nothing left to answer them. A
+       * background worker spawned by an earlier turn is not this turn's, keeps
+       * running and ends on its own `task_notification`. A worker whose call
+       * was never seen has no turn on record and is ended with this one.
        */
+      const cancelling = turnId || str(active?.id);
       for (const scope of [...scopes.values()]) {
-        if (scope.parent !== '' && scope.chat !== undefined) endWorker(scope.parent, 'cancelled');
+        if (scope.parent === '' || scope.chat === undefined) continue;
+        const made = spawning.get(scope.parent)?.turn;
+        if (made === undefined || made === cancelling) endWorker(scope.parent, 'cancelled');
       }
       const turn = active;
       if (turn) {
@@ -3405,6 +3462,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
     close: () => {
       closed = true;
+      ended.clear();
+      spawning.clear();
+      background.clear();
       wake?.();
       for (const one of [...pending.values()]) {
         pending.delete(one.id);

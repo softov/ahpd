@@ -1,6 +1,6 @@
 ---
 title: A nested worker is linked from the worker chat that spawned it, live and restored
-status: todo
+status: implemented
 depends: []
 layer: "sdk, agent-claude"
 refs:
@@ -34,3 +34,9 @@ A worker spawned inside another worker is linked from the call in that worker's 
 - `pnpm typecheck` green.
 
 ## Resume
+
+`openSubagent` writes a nested worker's link through `sendSubagent`, so it lands in the parent worker's reduced state.
+`subagentsOf` sets `parentToolCallId` on a restored worker whose call is in another worker's turns and not in the main ones, and a restored worker's snapshot links the workers it spawned.
+`spelledFor` now respells a chat row's `origin.chat` too, which the restored nested row needed under an aliased session name.
+The nested case in `packages/sdk/test/subagent-chat.test.ts` and the restored nested case in `packages/agent-claude/test/agent-claude-subagent-restore.test.ts` failed first and pass now.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

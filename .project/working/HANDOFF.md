@@ -8,11 +8,9 @@ What is in progress and what is waiting. Plans, decisions and docs say the rest;
 
 ## Now
 
-- `main` is at `1d00d3f`, pushed. 47 commits since `v0.7.0` are unreleased.
-- `@cofold/remote` 0.4.0 is released (cofold tag `release-2026-09-28`); ahpd still depends on `^0.3.1` until daemon/05 task 16 moves it.
-- Two builders are working in worktrees, each awaiting Softov's review and a merge to `main`:
-  - `/github/ahpd-d05t16`, branch `d05-16`: [daemon/05](../plans/daemon/05-an-http-api/plan.md) task 16, the HTTP API on Node, Bun and Deno.
-  - `/github/ahpd-claude04`, branch `claude-04`: [claude/04](../plans/claude/04-a-subagent-has-its-own-chat/plan.md) fix tasks 08 to 16.
+- `origin/main` is at `1d00d3f`; `main` has three commits after it, not pushed. Nothing since `v0.7.0` is released.
+- `@cofold/remote` 0.4.0 is released (cofold tag `release-2026-09-28`), and ahpd depends on `^0.4.0`.
+- On `main`, awaiting Softov's review: [daemon/05](../plans/daemon/05-an-http-api/plan.md) tasks 16 and 35, the HTTP API on Node, Bun and Deno with the SDK free of cofold, and [claude/04](../plans/claude/04-a-subagent-has-its-own-chat/plan.md) fix tasks 08 to 16, whose VS Code checks are his.
 
 ## Waiting on Softov
 

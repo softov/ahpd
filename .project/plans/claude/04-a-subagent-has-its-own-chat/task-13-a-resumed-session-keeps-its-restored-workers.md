@@ -1,6 +1,6 @@
 ---
 title: A resumed session keeps the worker chats it was restored with
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,10 @@ A session read back after a restart and then sent a turn still lists its restore
 - `pnpm typecheck` green.
 
 ## Resume
+
+A live session that was started by resuming a recorded one lists the workers `restoredSubagents` reads for it beside the live ones, each once, and its lead chat's snapshot links them.
+The read happens before the state is taken, so nothing dispatched during it falls between the state and `fromSeq`, and only for sessions spawned with `resume`, so a fresh session never reads the backend's record.
+`restoredSubagents` keeps an answer only when the read succeeded.
+Both cases in `packages/agent-claude/test/agent-claude-subagent-restore.test.ts` failed first and pass; the SDK mock there gained a `query` that answers one turn.
+The live lead chat's link names the worker in the spelling the host holds the session under (`claude:/...`), as a worker opened live already does, so the test checks the call id rather than the aliased URI.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

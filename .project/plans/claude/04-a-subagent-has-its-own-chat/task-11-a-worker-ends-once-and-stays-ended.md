@@ -1,6 +1,6 @@
 ---
 title: A cancelled turn ends its own workers, and an ended worker stays ended
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -40,3 +40,9 @@ Cancelling a turn ends only the workers spawned in it; a frame that arrives for 
 - `pnpm typecheck` green.
 
 ## Resume
+
+`Spawning` records the lead turn a call was made in, `cancel` ends only the workers of the turn being cancelled (and any worker whose call was never seen), and `scopeFor` returns a scope whose chat writes nowhere for an ended worker.
+A `Spawning` record keeps the worker chat's URI and is deleted once the worker has ended and the call's result was emitted, so `workerBlock` still links a worker that ended before its call completed; `close` clears the records.
+The SDK mock in `packages/agent-claude/test/agent-claude-subagent.test.ts` is a pull queue per query; the foreground cancel case failed first (the seam asked twice) and the earlier-turn background case failed first (ended as `cancelled`), and both pass now.
+The background case pushes through line 7, the worker's first frame after the lead `result`, rather than line 6, because through line 6 no worker is open yet and the case passed without the fix.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

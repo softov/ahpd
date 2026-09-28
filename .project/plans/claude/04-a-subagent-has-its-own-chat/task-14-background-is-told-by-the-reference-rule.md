@@ -1,6 +1,6 @@
 ---
 title: Any task_started marks a worker background, and a foreground spawn ends on its result
-status: todo
+status: implemented
 depends: [task-11-a-worker-ends-once-and-stays-ended.md]
 layer: "agent-claude"
 refs:
@@ -38,3 +38,8 @@ A worker is background once `task_started` names its call, and a worker whose ca
 - `pnpm typecheck` green.
 
 ## Resume
+
+`Spawning.foreground` is true unless the call's input says `run_in_background: true`, any `task_started` adds its call to `background`, and the "Async agent launched" text is no longer read.
+A foreground call's `tool_result` ends its worker, a terminal `task_notification` ends any worker in `background`, and `ended` makes the second signal a no-op.
+The notification-first foreground case in `packages/agent-claude/test/agent-claude-subagent.test.ts` failed first and passes, with the completion still linking the worker that ended before it; the case without the notification ends once on the result.
+Gates: `pnpm typecheck` and `pnpm boundary` clean, `pnpm test` 107 files and 1506 tests passed.

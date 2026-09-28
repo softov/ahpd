@@ -16,18 +16,47 @@ import type { Bag, SubagentChat, SubagentRequest } from '@ahpd/sdk';
  * that chat.
  */
 
-const sdk = vi.hoisted(() => ({
-  frames: [] as Record<string, unknown>[],
-  canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
-}));
+/**
+ * The SDK's stream as a queue a test pushes frames into.
+ *
+ * Pulled one frame at a time, so a test can cancel, answer or begin a turn
+ * between two frames the way a live stream allows. Each query reads the feed
+ * that was current when it was made, so a session left over from an earlier
+ * case never takes a later case's frames.
+ */
+const sdk = vi.hoisted(() => {
+  interface Feed { held: Record<string, unknown>[]; wake: (() => void) | undefined }
+  const fresh = (): Feed => ({ held: [], wake: undefined });
+  const state = {
+    canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
+    /** The feed the next query reads, and the one `push` writes to. */
+    feed: fresh(),
+    /** Start a new feed for the next session. */
+    reset() { state.feed = fresh(); },
+    /** Queue frames for the current session to read. */
+    push(...frames: Record<string, unknown>[]) {
+      const feed = state.feed;
+      feed.held.push(...frames);
+      feed.wake?.();
+      feed.wake = undefined;
+    },
+    /** One feed's next frame, once one is queued. */
+    async next(feed: Feed): Promise<Record<string, unknown>> {
+      while (feed.held.length === 0) await new Promise<void>((resolve) => { feed.wake = resolve; });
+      return feed.held.shift() as Record<string, unknown>;
+    },
+  };
+  return state;
+});
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+    const feed = sdk.feed;
     return {
       async *[Symbol.asyncIterator]() {
-        for (const frame of sdk.frames) yield frame;
+        for (;;) yield await sdk.next(feed);
       },
       interrupt: async () => {},
       setPermissionMode: async () => {},
@@ -67,10 +96,17 @@ interface Worker {
 
 /** Replay one fixture through a real session with a recording host seam. */
 async function replay(name: string, frames: Record<string, unknown>[] = fixture(name)) {
-  sdk.frames = frames;
+  sdk.reset();
+  sdk.push(...frames);
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
+  /** Every call id the seam was asked for, once per ask. */
+  const asked: string[] = [];
+  /** How many lead actions had been emitted when each call's worker was asked for. */
+  const askedAt = new Map<string, number>();
   const subagent = (toolCallId: string, request: SubagentRequest): SubagentChat => {
+    asked.push(toolCallId);
+    if (!askedAt.has(toolCallId)) askedAt.set(toolCallId, main.length);
     const uri = `ahp-chat://subagent/fake/${encodeURIComponent(toolCallId)}`;
     const held: Worker = { uri, request, actions: [], ended: [] };
     workers.set(toolCallId, held);
@@ -89,7 +125,7 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     subagent,
   });
   await settle();
-  return { main, workers, session };
+  return { main, workers, session, asked, askedAt };
 }
 
 /** The worker's own actions, flattened in arrival order. */
@@ -149,24 +185,31 @@ it('keeps the spawning call in the lead turn, with the worker linked from it', a
   expect(workers.get('toolu_01SvkwpPC6azWzz1jZ8nEtV6')?.ended).toEqual([{ state: 'complete' }]);
 });
 
-it('ends a foreground worker on the call\'s result, once', async () => {
+it('ends a foreground worker once', async () => {
   const { workers } = await replay('claude-subagent.jsonl');
   const worker = workers.get('toolu_01SvkwpPC6azWzz1jZ8nEtV6');
-  // The harness sends a notification for a foreground worker too, and the
-  // call's result is the one that ends it.
+  // The harness sends a notification for a foreground worker too, before the
+  // call's result, and the two end it once between them.
   expect(worker?.ended).toHaveLength(1);
   expect(worker?.ended[0]?.state).toBe('complete');
 });
 
 it('keeps a background worker running until its task notification', async () => {
-  const { main, workers } = await replay('claude-subagent-background.jsonl');
+  const { main, workers, askedAt } = await replay('claude-subagent-background.jsonl');
   const worker = workers.get('toolu_01Riysq5EgQZGcUE9kDMp6AB');
   expect(worker).toBeDefined();
-  // Its spawning call's result says only that it was launched, so nothing has
-  // ended it yet.
+  // Its spawning call's result says only that it was launched, and it arrives
+  // before any of the worker's frames; the worker is opened for it, so the
+  // completion links the chat.
   const lead = main.map((one) => one.action);
-  expect(lead.some((one) => one.type === 'chat/toolCallComplete'
-    && one.toolCallId === 'toolu_01Riysq5EgQZGcUE9kDMp6AB')).toBe(true);
+  const at = lead.findIndex((one) => one.type === 'chat/toolCallComplete'
+    && one.toolCallId === 'toolu_01Riysq5EgQZGcUE9kDMp6AB');
+  expect(at).toBeGreaterThanOrEqual(0);
+  expect(askedAt.get('toolu_01Riysq5EgQZGcUE9kDMp6AB')).toBeLessThanOrEqual(at);
+  const content = ((lead[at]?.result as Bag).content ?? []) as Bag[];
+  expect(content.find((one) => one.type === 'subagent')).toMatchObject({
+    resource: worker?.uri, title: 'Explore', agentName: 'Explore',
+  });
   expect(worker?.ended).toEqual([{ state: 'complete' }]);
   // Its frames after the lead turn ended are still its own.
   const actions = drew(worker as Worker);
@@ -175,8 +218,9 @@ it('keeps a background worker running until its task notification', async () => 
 
 it('says nothing for a subagent when the host has no seam', async () => {
   // The same fixture, without `subagent`: a worker's frames stay in the turn
-  // that spawned them, which is what every session did before this existed.
-  sdk.frames = fixture('claude-subagent.jsonl');
+  // that spawned them.
+  sdk.reset();
+  sdk.push(...fixture('claude-subagent.jsonl'));
   const main: Bag[] = [];
   createSession({
     uri: 'ahp-session:/plain',
@@ -192,29 +236,101 @@ it('says nothing for a subagent when the host has no seam', async () => {
 });
 
 it('asks about a tool inside a subagent on that subagent\'s chat', async () => {
-  // Up to the subagent's own Bash call, before its result: the permission ask
-  // happens while the call is open.
-  const { main, workers, session } = await replay('claude-subagent.jsonl', fixture('claude-subagent.jsonl').slice(0, 6));
-  const worker = workers.get('toolu_01SvkwpPC6azWzz1jZ8nEtV6') as Worker;
-  const bash = 'toolu_01LvQZ6De9mLFicNEgL4ekC8';
+  /*
+   * A captured turn whose subagent writes a file, with the permission ask
+   * recorded where it arrived: after the worker's own frame naming the call,
+   * with the call's id on `toolUseID` and the worker's on `agentID`.
+   */
+  const lines = fixture('claude-subagent-ask.jsonl');
+  const at = lines.findIndex((one) => one.type === 'canUseTool');
+  const ask = lines[at] as { toolName: string; input: Bag; options: Bag };
+  const { main, workers, session } = await replay('claude-subagent-ask.jsonl', lines.slice(0, at));
+  const worker = workers.get('toolu_01E8tKqC8MnZY1MrcVsb2ho4') as Worker;
+  expect(worker).toBeDefined();
+  const write = String(ask.options.toolUseID);
 
-  const asked = sdk.canUseTool?.('Bash', { command: 'ls -la' }, { toolUseID: bash, agentID: 'agent-abc', title: 'Run the listing' });
+  const asked = sdk.canUseTool?.(ask.toolName, ask.input, ask.options);
   expect(asked).toBeDefined();
   await settle();
 
   // The question is drawn on the worker's chat, against the call already there.
-  const ready = worker.actions.filter((one) => one.type === 'chat/toolCallReady' && one.toolCallId === bash);
-  const confirmation = ready.filter((one) => one.confirmationTitle !== undefined);
-  expect(confirmation).toHaveLength(1);
-  expect(confirmation[0]).toMatchObject({ confirmationTitle: 'Run the listing' });
+  const ready = worker.actions.filter((one) => one.type === 'chat/toolCallReady' && one.toolCallId === write);
+  expect(ready.filter((one) => one.confirmationTitle !== undefined)).toHaveLength(1);
   // And not on the lead chat, where it would read as the parent's own question.
   const lead = main.map((one) => one.action);
-  expect(lead.some((one) => one.type === 'chat/toolCallReady' && one.toolCallId === bash)).toBe(false);
+  expect(lead.some((one) => one.toolCallId === write)).toBe(false);
   const needed = (session.sessionState().inputNeeded as Bag[]) ?? [];
   expect(needed.some((one) => one.chat === worker.uri)).toBe(true);
 
   // Approving it there lets the tool run and is said back where it was asked.
-  session.confirm(bash, true);
+  session.confirm(write, true);
   await expect(asked).resolves.toMatchObject({ behavior: 'allow' });
-  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed' && one.toolCallId === bash)).toBe(true);
+  expect(worker.actions.some((one) => one.type === 'chat/toolCallConfirmed' && one.toolCallId === write)).toBe(true);
+
+  // The rest of the turn: the tool's result on the worker's chat, which ends once.
+  sdk.push(...lines.slice(at + 1));
+  await settle();
+  expect(worker.actions.some((one) => one.type === 'chat/toolCallComplete' && one.toolCallId === write)).toBe(true);
+  expect(worker.ended).toEqual([{ state: 'complete' }]);
+});
+
+it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const { workers, session, asked } = await replay('claude-subagent.jsonl', lines.slice(0, 6));
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  session.cancel('');
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  // The inner tool's result, which the harness sends after the interrupt.
+  sdk.push(lines[6] as Record<string, unknown>);
+  await settle();
+  expect(asked.filter((one) => one === call)).toHaveLength(1);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+});
+
+it('leaves a background worker from an earlier turn running when a later turn is cancelled', async () => {
+  const lines = fixture('claude-subagent-background.jsonl');
+  // Through the lead turn's result and the worker's first frame after it, so
+  // the worker is open when the next turn begins.
+  const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
+  expect(workers.has(call)).toBe(true);
+  session.begin('t2', 'and another thing');
+  await settle();
+  session.cancel('t2');
+  await settle();
+  expect(workers.get(call)?.ended ?? []).toEqual([]);
+  sdk.push(...lines.slice(7));
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+});
+
+it('ends a foreground worker on its notification, and its result ends nothing more', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { main, workers } = await replay('claude-subagent.jsonl', lines.slice(0, 12));
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+  sdk.push(...lines.slice(12));
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+  // The call's completion still carries the link to the worker that ended first.
+  const complete = main.map((one) => one.action).find((one) => one.type === 'chat/toolCallComplete' && one.toolCallId === call);
+  const content = ((complete?.result as Bag | undefined)?.content ?? []) as Bag[];
+  expect(content.some((one) => one.type === 'subagent' && one.resource === workers.get(call)?.uri)).toBe(true);
+});
+
+it('ends a foreground worker on its result when no notification came', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { workers } = await replay('claude-subagent.jsonl', lines.filter((_, index) => index !== 11));
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
+});
+
+it('describes the spawning call in its _meta, on its start and its ready action', async () => {
+  const { main } = await replay('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const lead = main.map((one) => one.action);
+  const described = { toolKind: 'subagent', subagentDescription: 'List files in folder', subagentAgentName: 'Explore' };
+  expect(lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta).toEqual(described);
+  expect(lead.find((one) => one.type === 'chat/toolCallStart' && one.toolCallId === call)?._meta).toEqual(described);
 });

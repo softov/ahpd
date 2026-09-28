@@ -24,6 +24,7 @@ import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { notServed } from './resources.js';
 import { computerId, computerSource, computersFor, openComputer } from './computers.js';
 import { nestedAgent } from './nested.js';
+import { createCallLinks } from './calllinks.js';
 import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { worktreeFor, worktreesOf } from './worktrees.js';
@@ -732,6 +733,12 @@ export function createHost(options: HostOptions): Host {
   /** Live sessions, by their own uri. */
   const sessions = new Map<string, Held>();
   /**
+   * The live sessions started by resuming one the backend recorded, whose
+   * workers from before this process are read back beside the live ones. A
+   * session started fresh has none, and its backend's record is not read.
+   */
+  const resumedSessions = new Set<string>();
+  /**
    * What started a session, for the ones nothing did.
    *
    * Only automations put anything here. A session somebody opened has no
@@ -834,24 +841,8 @@ export function createHost(options: HostOptions): Host {
   }
   const subagents = new Map<string, LiveSubagent>();
 
-  /**
-   * The open turn of each chat, by chat URI.
-   *
-   * Kept so a worker's link can be written onto the spawning call, which is a
-   * `chat/toolCallContentChanged` and carries the turn the call is in. The
-   * host sees every turn start and end through `dispatch`, and the backend's
-   * own state is not readable from here.
-   */
-  const turnsOf = new Map<string, string>();
-  /**
-   * What each tool call's `content` last held, by chat and call.
-   *
-   * The subagent content is *appended* to the spawning call, and the only
-   * thing that knows what the call already had is this host: it dispatched
-   * every action that put it there.
-   */
-  const callContent = new Map<string, Bag[]>();
-  const aboutCall = (chat: string, toolCallId: string): string => `${chat}\u0000${toolCallId}`;
+  /** The open turn of each chat and the content of each spawning call, which a worker's link is written from. */
+  const links = createCallLinks();
 
   /** A worker chat's catalogue row: read-only, and spawned by a tool call. */
   const subagentSummary = (uri: string, ref: LiveSubagent) => ({
@@ -1522,9 +1513,15 @@ export function createHost(options: HostOptions): Host {
       return callId === undefined ? chatUriFor(asked) : subagentChatUri(asked, callId);
     };
     if (Array.isArray(bag.chats))
-      bag.chats = bag.chats.map((chat) => (typeof chat === 'object' && chat !== null && mine((chat as Record<string, unknown>).resource)
-        ? { ...(chat as Record<string, unknown>), resource: respell(String((chat as Record<string, unknown>).resource)) }
-        : chat));
+      bag.chats = bag.chats.map((chat) => {
+        if (typeof chat !== 'object' || chat === null) return chat;
+        const row = chat as Record<string, unknown>;
+        const origin = row.origin as Record<string, unknown> | undefined;
+        // A worker's origin names the chat its call is in, which is one of
+        // this session's too.
+        const from = origin !== undefined && mine(origin.chat) ? { origin: { ...origin, chat: respell(String(origin.chat)) } } : {};
+        return mine(row.resource) ? { ...row, resource: respell(String(row.resource)), ...from } : { ...row, ...from };
+      });
     /*
      * And the link on the call that spawned a worker, so the two ends of it
      * say the same thing under one spelling.
@@ -1544,18 +1541,31 @@ export function createHost(options: HostOptions): Host {
         let touched = false;
         const next = parts.map((part) => {
           const call = part.toolCall as Bag | undefined;
-          if (call === undefined || !Array.isArray(call.content)) return part;
+          if (call === undefined) return part;
           let moved = false;
-          const content = (call.content as Bag[]).map((block) => {
-            if (block.type !== 'subagent') return block;
-            const callId = toolCallOfSubagentChat(String(block.resource ?? ''));
-            if (callId === undefined) return block;
-            moved = true;
-            return { ...block, resource: subagentChatUri(asked, callId) };
-          });
+          const content = Array.isArray(call.content)
+            ? (call.content as Bag[]).map((block) => {
+              if (block.type !== 'subagent') return block;
+              const callId = toolCallOfSubagentChat(String(block.resource ?? ''));
+              if (callId === undefined) return block;
+              moved = true;
+              return { ...block, resource: subagentChatUri(asked, callId) };
+            })
+            : call.content;
+          // The same URI in the reference's `_meta` key.
+          const meta = call._meta as Bag | undefined;
+          const stamped = typeof meta?.subagentChatUri === 'string' ? toolCallOfSubagentChat(meta.subagentChatUri) : undefined;
+          if (stamped !== undefined) moved = true;
           if (!moved) return part;
           touched = true;
-          return { ...part, toolCall: { ...call, content } };
+          return {
+            ...part,
+            toolCall: {
+              ...call,
+              ...(content !== undefined ? { content } : {}),
+              ...(stamped !== undefined ? { _meta: { ...meta, subagentChatUri: subagentChatUri(asked, stamped) } } : {}),
+            },
+          };
         });
         return touched ? { ...turn, responseParts: next } : turn;
       });
@@ -1740,6 +1750,47 @@ export function createHost(options: HostOptions): Host {
     });
   };
 
+  /** The session a chat of this host's belongs to, lead or worker. */
+  const sessionHolding = (chat: string): string | undefined =>
+    byChat.get(chat)?.uri ?? subagents.get(chat)?.session;
+  /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
+  const unstamped = (meta: unknown): meta is Bag =>
+    typeof meta === 'object' && meta !== null && (meta as Bag).toolKind === 'subagent'
+    && (meta as Bag).subagentChatUri === undefined;
+  /**
+   * A tool call action with the worker chat's URI in its `_meta`.
+   *
+   * The reference's `subagentChatUri`, stamped on every tool call action that
+   * carries a `_meta` whose `toolKind` is `subagent`, so a client can open the
+   * worker's chat from the call before the chat is announced. Every such
+   * action and not only the start: an action carrying `_meta` replaces the
+   * call's whole bag. The backend never spells a chat URI; this host does.
+   * Any other action is returned as it is.
+   */
+  const withWorkerUri = (chat: string, action: Bag): Bag => {
+    if (typeof action.type !== 'string' || !action.type.startsWith('chat/toolCall')) return action;
+    if (!unstamped(action._meta) || typeof action.toolCallId !== 'string') return action;
+    const session = sessionHolding(chat);
+    if (session === undefined) return action;
+    return { ...action, _meta: { ...action._meta, subagentChatUri: subagentChatUri(session, action.toolCallId) } };
+  };
+  /**
+   * A chat's state with the same stamp on every spawning call in its turns,
+   * so a client that subscribes late reads what the wire said. A copy where
+   * anything moved; the state passed in is the backend's own.
+   */
+  const stampedCalls = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+    const parts = Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : undefined;
+    if (parts === undefined) return turn;
+    let touched = false;
+    const next = parts.map((part) => {
+      const call = part.toolCall as Bag | undefined;
+      if (call === undefined || !unstamped(call._meta) || typeof call.toolCallId !== 'string') return part;
+      touched = true;
+      return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: subagentChatUri(session, call.toolCallId) } } };
+    });
+    return touched ? { ...turn, responseParts: next } : turn;
+  });
   /** A turn or a tool call moving, as far as telemetry is concerned. */
   const telemetered = (channel: string, action: Record<string, unknown>): void => {
     const type = String(action.type ?? '');
@@ -1814,7 +1865,8 @@ export function createHost(options: HostOptions): Host {
     measured();
   };
 
-  const dispatch = (channel: string, action: Record<string, unknown>, origin = applying): void => {
+  const dispatch = (channel: string, given: Record<string, unknown>, origin = applying): void => {
+    const action = withWorkerUri(channel, given);
     serverSeq += 1;
     const envelope = { channel, action, serverSeq, origin };
     // Kept whether or not anyone was listening: a client that dropped is by
@@ -1831,30 +1883,7 @@ export function createHost(options: HostOptions): Host {
     // tick, so it is the copy in the buffer that has to be frozen.
     telemetered(channel, action);
     asking(channel, action);
-    /*
-     * The small side-index a worker's link is written from.
-     *
-     * A worker's chat is opened while a call in another chat is running, and
-     * the action that links them names the turn that call is in - which this
-     * host otherwise never holds, because the backend keeps its own turns.
-     * Recorded here because `dispatch` is the one funnel every action passes
-     * through, the backend's own emitter included.
-     */
-    if (action.type === 'chat/turnStarted' && typeof action.turnId === 'string') {
-      turnsOf.set(channel, action.turnId);
-    }
-    else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
-      || action.type === 'chat/error') {
-      if (turnsOf.get(channel) === action.turnId) turnsOf.delete(channel);
-    }
-    const named = typeof action.toolCallId === 'string' ? action.toolCallId : undefined;
-    if (named !== undefined && action.type === 'chat/toolCallContentChanged' && Array.isArray(action.content)) {
-      callContent.set(aboutCall(channel, named), action.content as Bag[]);
-    }
-    else if (named !== undefined && action.type === 'chat/toolCallComplete') {
-      const result = action.result as Bag | undefined;
-      if (Array.isArray(result?.content)) callContent.set(aboutCall(channel, named), result.content as Bag[]);
-    }
+    links.observe(channel, action);
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
@@ -2936,9 +2965,10 @@ export function createHost(options: HostOptions): Host {
   const describedSub = new Map<string, string>();
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   const endedWorkers = new Set<string>();
-  const sendSubagent = (uri: string, action: Bag): void => {
+  const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
+    const action = withWorkerUri(uri, given);
     absorb(ref, action);
     dispatch(uri, action);
     const summary = subagentSummary(uri, ref);
@@ -3003,21 +3033,25 @@ export function createHost(options: HostOptions): Host {
        * The protocol keeps the two ends consistent: the chat's origin names
        * the call, and the call's result content names the chat. Written with
        * whatever the call already had, which is why the content is remembered
-       * beside the action that carried it.
+       * beside the action that carried it. Written only while the call's chat
+       * has a turn open: an action naming a turn that has ended lands on no
+       * turn a client holds, and the backend's own completion of the call
+       * carries the link instead. A nested worker's call is in its parent
+       * worker's chat, whose state this host reduces, so the link goes through
+       * `sendSubagent` and lands in that state too.
        */
-      const content = { type: 'subagent', resource: uri, title: request.title,
-        ...(request.agentName !== undefined ? { agentName: request.agentName } : {}),
-        ...(request.description !== undefined ? { description: request.description } : {}) };
-      const key = aboutCall(parentChat, toolCallId);
-      const held = (callContent.get(key) ?? []).filter((one) => !(one.type === 'subagent' && one.resource === uri));
-      const next = [...held, content];
-      callContent.set(key, next);
-      dispatch(parentChat, {
-        type: 'chat/toolCallContentChanged',
-        turnId: turnsOf.get(parentChat) ?? '',
-        toolCallId,
-        content: next,
-      });
+      const parentTurn = links.turnOf(parentChat);
+      if (parentTurn !== undefined) {
+        const content = { type: 'subagent', resource: uri, title: request.title,
+          ...(request.agentName !== undefined ? { agentName: request.agentName } : {}),
+          ...(request.description !== undefined ? { description: request.description } : {}) };
+        const held = (links.contentOf(parentChat, toolCallId) ?? []).filter((one) => !(one.type === 'subagent' && one.resource === uri));
+        const next = [...held, content];
+        links.hold(parentChat, toolCallId, next);
+        const link = { type: 'chat/toolCallContentChanged', turnId: parentTurn, toolCallId, content: next };
+        if (subagents.has(parentChat)) sendSubagent(parentChat, link);
+        else dispatch(parentChat, link);
+      }
     }
     const kept = ref;
     return {
@@ -3068,6 +3102,7 @@ export function createHost(options: HostOptions): Host {
     const used = agent.runsNested === true && computerId(config.computer) !== undefined
       ? nestedAgent(agent)
       : agent;
+    if (resuming?.resume !== undefined) resumedSessions.add(uri);
     const session = used.create({
       uri,
       chatUri,
@@ -3890,6 +3925,7 @@ export function createHost(options: HostOptions): Host {
       chat.close();
       byChat.delete(chatUri);
       drafts.delete(chatUri);
+      links.forgetChat(chatUri);
     }
     /*
      * And the worker chats the session opened.
@@ -3898,13 +3934,14 @@ export function createHost(options: HostOptions): Host {
      * of this session all the same, and one left behind is a channel in the
      * catalogue that nothing will ever answer on again.
      */
+    resumedSessions.delete(uri);
     for (const [chatUri, one] of [...subagents]) {
       if (one.session !== uri) continue;
       subagents.delete(chatUri);
       describedSub.delete(chatUri);
       endedWorkers.delete(chatUri);
-      turnsOf.delete(chatUri);
-      callContent.delete(aboutCall(one.parentChat, one.toolCallId));
+      links.forgetChat(chatUri);
+      links.forget(one.parentChat, one.toolCallId);
       dispatch(uri, { type: 'session/chatRemoved', chat: chatUri });
     }
     /*
@@ -4944,15 +4981,23 @@ export function createHost(options: HostOptions): Host {
    * promise: the read is one directory listing and one file per worker.
    */
   const subHistory = new Map<string, Bag[]>();
+  /** A session's restored workers; an answer is kept only when the read succeeded. */
   const restoredSubagents = async (id: string, owner: Agent, turns?: WireTurn<Turn>[]): Promise<Bag[]> => {
     const held = subHistory.get(id);
     if (held !== undefined) return held;
     if (owner.subagents === undefined) return [];
-    const found = await owner.subagents(id, turns).catch(() => undefined);
+    let found: Awaited<ReturnType<NonNullable<Agent['subagents']>>>;
+    try { found = await owner.subagents(id, turns); }
+    catch { return []; }
     const built = (found ?? []).map((one) => ({ ...one } as unknown as Bag));
     subHistory.set(id, built);
     return built;
   };
+  /** The chat a restored worker's call is in: its parent worker's, or the session's lead chat. */
+  const restoredParentChat = (session: string, lead: string, one: Bag): string =>
+    (one.parentToolCallId !== undefined && String(one.parentToolCallId) !== ''
+      ? subagentChatUri(session, String(one.parentToolCallId))
+      : lead);
   /**
    * A past session's turns, with each worker linked from the call that ran it.
    *
@@ -5201,6 +5246,19 @@ export function createHost(options: HostOptions): Host {
        * the list, which no single chat knows. `IsRead` and `IsArchived` are
        * this host's, and no chat has heard of them.
        */
+      /*
+       * The workers the session ran before this process held it, read back
+       * from the backend's record, beside the ones opened live. One opened
+       * live under the same URI is listed once, as the live one. Read before
+       * anything else here, so no action dispatched during the read falls
+       * between the state and `fromSeq`.
+       */
+      const read = held.agent.subagents === undefined || !resumedSessions.has(channel)
+        ? []
+        : await restoredSubagents(idOf(channel), held.agent, lead.allTurns() as unknown as WireTurn<Turn>[]);
+      const restored = read
+        .map((one) => ({ one, uri: subagentChatUri(channel, String(one.toolCallId ?? '')) }))
+        .filter(({ uri }) => !subagents.has(uri));
       const theirs = lead.sessionState();
       const mine = decided.get(channel);
       const state = {
@@ -5232,6 +5290,11 @@ export function createHost(options: HostOptions): Host {
            */
           ...[...subagents].filter(([, one]) => one.session === channel)
             .map(([uri_, one]) => subagentSummary(uri_, one)),
+          ...restored.map(({ one, uri: uri_ }) => restoredSubagentSummary(
+            uri_,
+            restoredParentChat(channel, held.defaultChat, one),
+            one as unknown as { toolCallId: string; title: string; turns: Bag[] },
+          )),
         ],
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
       };
@@ -5251,12 +5314,28 @@ export function createHost(options: HostOptions): Host {
         fromSeq: serverSeq,
       });
     const talking = byChat.get(channel);
-    if (talking)
-      return value({
-        resource: channel,
-        state: { ...talking.chat.chatState(), ...startedBy(talking.uri) },
-        fromSeq: serverSeq,
-      });
+    if (talking) {
+      /*
+       * The lead chat links the workers read back for its session, as the
+       * restored transcript did before the session went live. Read before the
+       * chat's state, so no action dispatched during the read falls between
+       * the state and `fromSeq`.
+       */
+      const owner = sessions.get(talking.uri);
+      const restored = owner !== undefined && owner.defaultChat === channel && owner.agent.subagents !== undefined
+        && resumedSessions.has(talking.uri)
+        ? (await restoredSubagents(idOf(talking.uri), owner.agent, talking.chat.allTurns() as unknown as WireTurn<Turn>[]))
+          .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
+        : [];
+      const state: Bag = { ...talking.chat.chatState(), ...startedBy(talking.uri) };
+      if (Array.isArray(state.turns)) {
+        state.turns = stampedCalls(talking.uri, linkedTurns(talking.uri, state.turns as Bag[], restored));
+      }
+      if (typeof state.activeTurn === 'object' && state.activeTurn !== null) {
+        state.activeTurn = stampedCalls(talking.uri, [state.activeTurn as Bag])[0];
+      }
+      return value({ resource: channel, state, fromSeq: serverSeq });
+    }
     /*
      * A session in the catalogue that this host is not running.
      *
@@ -5282,9 +5361,7 @@ export function createHost(options: HostOptions): Host {
       if (wanted !== undefined) {
         const one = workers.find((held) => String(held.toolCallId ?? '') === wanted);
         if (one === undefined) throw new RpcError(-32001, `No worker chat at ${channel}`);
-        const parentChat = one.parentToolCallId !== undefined && String(one.parentToolCallId) !== ''
-          ? subagentChatUri(nameOf(id), String(one.parentToolCallId))
-          : chatUriFor(nameOf(id));
+        const parentChat = restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one);
         return value({
           resource: channel,
           state: {
@@ -5294,7 +5371,12 @@ export function createHost(options: HostOptions): Host {
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
             interactivity: 'read-only',
-            ...tail((one.turns ?? []) as Bag[]),
+            // With each worker it spawned linked from the call that ran it.
+            ...tail(stampedCalls(owning, linkedTurns(
+              owning,
+              (one.turns ?? []) as Bag[],
+              workers.filter((held) => String(held.parentToolCallId ?? '') === wanted),
+            ))),
             queuedMessages: [],
           },
           fromSeq: serverSeq,
@@ -5309,7 +5391,7 @@ export function createHost(options: HostOptions): Host {
             status: Status.Idle,
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             ...startedBy(nameOf(id)),
-            ...tail(linkedTurns(owning, turns, workers)),
+            ...tail(stampedCalls(owning, linkedTurns(owning, turns, workers))),
             queuedMessages: [],
             // Held here rather than by a chat, because there is no chat. A
             // client that typed into this row and came back finds what it
@@ -5344,9 +5426,7 @@ export function createHost(options: HostOptions): Host {
             // session's subagents openable rather than lost.
             ...workers.map((one) => restoredSubagentSummary(
               subagentChatUri(nameOf(id), String(one.toolCallId ?? '')),
-              one.parentToolCallId !== undefined && String(one.parentToolCallId) !== ''
-                ? subagentChatUri(nameOf(id), String(one.parentToolCallId))
-                : chatUriFor(nameOf(id)),
+              restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one),
               one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             )),
           ],
@@ -7237,6 +7317,7 @@ export function createHost(options: HostOptions): Host {
           found.chat.close();
           byChat.delete(chatUri);
           drafts.delete(chatUri);
+          links.forgetChat(chatUri);
           held?.chats.delete(chatUri);
           if (held && held.defaultChat === chatUri) {
             held.defaultChat = [...held.chats.keys()][0] as string;
