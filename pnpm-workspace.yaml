@@ -15,7 +15,7 @@ allowBuilds:
   protobufjs: false
 
 minimumReleaseAgeExclude:
-  - '@cofold/agents@0.1.1'
+  - '@cofold/agents@0.1.2'
   - '@cofold/commands@0.2.2'
   - '@cofold/model-openai-compat@0.1.1'
   - '@cofold/remote@0.3.1'

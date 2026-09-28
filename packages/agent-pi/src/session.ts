@@ -26,15 +26,17 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status } from '@ahpd/sdk';
+import { Status, idFor } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import { openPi } from './backend.js';
+import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf, mapEvent } from './mapping.js';
-import { idOf } from './models.js';
+import { activityOf, mapEvent, readyRow, usageOf } from './mapping.js';
+import { listed } from './models.js';
+import { replayed } from './replay.js';
+import type { ReplayPi } from './replay.js';
 import { toPiTool } from './tools.js';
 import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
@@ -44,6 +46,12 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
 
 /** The space characters pi folds to a plain space before it reads a path. */
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * pi's two tools that write a named file. Nothing else reports an edit: a
+ * shell writes without naming one.
+ */
+const EDITS = new Set(['edit', 'write']);
 
 /**
  * How pi is opened for a session.
@@ -63,36 +71,6 @@ const titleFrom = (text: string): string => {
 };
 
 /**
- * What one assistant message used, in the protocol's spelling.
- *
- * The protocol names no field for a cache write, and it is a measurement
- * rather than a guess, so it rides `_meta` as the other sibling's does. A
- * number pi did not report is left out rather than sent as zero.
- */
-function usageOf(message: AssistantMessage | undefined): Bag | undefined {
-  const usage = message?.usage;
-  if (message === undefined || usage === undefined) return undefined;
-  // A call that failed before the provider answered reports every count at
-  // zero, and a zero report is not something the turn used.
-  if (message.stopReason === 'error'
-    && usage.input === 0 && usage.output === 0 && usage.cacheRead === 0 && usage.cacheWrite === 0) {
-    return undefined;
-  }
-  const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
-  const wrote = num(usage.cacheWrite);
-  const info: Bag = {
-    ...(num(usage.input) !== undefined ? { inputTokens: num(usage.input) } : {}),
-    ...(num(usage.output) !== undefined ? { outputTokens: num(usage.output) } : {}),
-    ...(num(usage.cacheRead) !== undefined ? { cacheReadTokens: num(usage.cacheRead) } : {}),
-    ...(message.provider !== undefined && message.model !== undefined
-      ? { model: `${message.provider}/${message.model}` }
-      : {}),
-    ...(wrote !== undefined ? { _meta: { cacheWriteTokens: wrote } } : {}),
-  };
-  return Object.keys(info).length > 0 ? info : undefined;
-}
-
-/**
  * One conversation over one embedded pi.
  *
  * pi is opened lazily, on the first turn, so a session somebody made and never
@@ -102,6 +80,7 @@ export function piSession(
   options: PiOptions,
   start: Start,
   open: OpenPi = openPi,
+  replay: ReplayPi = (id, directory) => replayed(options, id, [directory]),
 ): Session {
   const provider = options.provider ?? 'pi';
   const emit = start.emit;
@@ -152,7 +131,8 @@ export function piSession(
   /** The models pi reported, once it has been asked. */
   let models: { id: string; name: string }[] = [];
   /**
-   * The turns this process watched, kept by reference.
+   * The turns this process watched, after those a resumed session read from
+   * pi's file, kept by reference.
    *
    * The array exists before the record does, because the first turn starts
    * before pi has opened: `begin` returns as soon as the turn is announced and
@@ -168,6 +148,19 @@ export function piSession(
    * and nothing is dropped until `navigateTree` moves it there.
    */
   const ends = new Map<string, string>();
+  /*
+   * A resumed session's earlier turns, as pi's file has them. They open the
+   * watched record, so a transcript read after this session runs a turn still
+   * has them, and they end where the file says, so one can be truncated like a
+   * watched turn. A turn this session watched keeps the end it saw.
+   */
+  if (start.resume !== undefined) {
+    void replay(start.resume, where).then((rebuilt) => {
+      for (const [turnId, end] of rebuilt?.ends ?? []) if (!ends.has(turnId)) ends.set(turnId, end);
+      // Ahead of any turn this session has already run, which came after them.
+      watchedTurns.unshift(...(rebuilt?.turns ?? []));
+    }).catch(() => {});
+  }
   /** The catalogue's record, so a transcript can be read back after the turn. */
   let record: WatchedSession | undefined;
   let watched: WatchedTurn | undefined;
@@ -385,14 +378,7 @@ export function piSession(
       : { contributor: { kind: 'client' as const, clientId: owner } };
     /** Move the row and say where it stands, once. */
     const ready = (extra: Bag): void => {
-      if (row !== undefined) {
-        row.status = extra.confirmed === 'not-needed' ? 'running' : 'pending-confirmation';
-        row.invocationMessage = displayName;
-        row.toolInput = JSON.stringify(input);
-        if (extra.confirmationTitle !== undefined) row.confirmationTitle = extra.confirmationTitle;
-        if (extra.confirmed !== undefined) row.confirmed = extra.confirmed;
-        else delete row.confirmed;
-      }
+      if (row !== undefined) readyRow(row, displayName, input, extra);
       emit('chat', {
         type: 'chat/toolCallReady',
         turnId,
@@ -447,6 +433,29 @@ export function piSession(
   };
 
   /**
+   * The file each open `edit` or `write` call named, by pi's own call id.
+   *
+   * A call is announced with `before` and finished with `after`, and the id is
+   * all `tool_execution_end` carries; an entry still here when the turn
+   * ends is a call that never reported its end.
+   */
+  const editing = new Map<string, string>();
+
+  /** A writing call is about to run: report the file as it is now. */
+  const announceEdit = (callId: string, path: string): void => {
+    editing.set(callId, path);
+    start.onFileEdit?.(String(active?.id ?? ''), path, 'before');
+  };
+
+  /** The `after` a call owes, once. */
+  const settleEdit = (callId: string): void => {
+    const path = editing.get(callId);
+    if (path === undefined) return;
+    editing.delete(callId);
+    start.onFileEdit?.(String(active?.id ?? ''), path, 'after');
+  };
+
+  /**
    * End the running turn, whoever ended it.
    *
    * pi says a run is over twice - `agent_end` and then `agent_settled` - and
@@ -457,6 +466,8 @@ export function piSession(
     const turn = active;
     if (turn === undefined) return;
     const turnId = String(turn.id);
+    // A call cut off before its end still owes the `after` it was announced with.
+    for (const callId of [...editing.keys()]) settleEdit(callId);
     doing(undefined);
     const duration = Date.now() - Date.parse(String(turn.startedAt));
     turn.state = ending;
@@ -534,6 +545,19 @@ export function piSession(
         return;
       }
 
+      /** A file pi's `edit` or `write` is about to change, by the path pi resolves. */
+      case 'tool_execution_start': {
+        const path = bag(event.args).path;
+        if (!EDITS.has(event.toolName) || typeof path !== 'string' || path === '') return;
+        announceEdit(event.toolCallId, resolve(where, piPath(path)));
+        return;
+      }
+
+      case 'tool_execution_end': {
+        settleEdit(event.toolCallId);
+        return;
+      }
+
       /** Nothing more is coming. This is where a turn actually ends. */
       case 'agent_settled': {
         // Recorded before `finish` seals the turn, so a truncation asked for
@@ -571,20 +595,22 @@ export function piSession(
    */
   const build = async (resume: string | undefined, first: boolean): Promise<PiBackend> => {
     const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
-    const tools = offering.flatMap((one) => {
-      const tool = toPiTool(one, ranByClient);
-      return tool === undefined ? [] : [tool];
-    });
     // What this backend is built with, so a turn it runs judges owner and
     // effects against the list pi was handed and not one a client changed
     // while the turn ran.
-    built = [...offering];
+    const building = [...offering];
+    built = building;
+    const tools = (await Promise.all(building.map((one) => toPiTool(one, ranByClient))))
+      .flatMap((tool) => (tool === undefined ? [] : [tool]));
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.
     const instructions = (start.instructions ?? []).filter((one) => one.trim() !== '');
     const backend = await open({
       cwd: where,
       ...(resume !== undefined ? { resume } : {}),
+      // Only the first open forks: a rebuild continues the copy it made.
+      ...(first && resume !== undefined && start.forkAt !== undefined ? { fork: true } : {}),
+      ...(first && resume === undefined && isUuid(idFor(start.uri)) ? { id: idFor(start.uri) } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
       ...(tools.length > 0 ? { tools } : {}),
       ...(instructions.length > 0 ? { instructions } : {}),
@@ -608,7 +634,7 @@ export function piSession(
     // The model list is held for `Session.models()`, which the host reads for
     // a client; pi only knows it once its runtime exists.
     const available = await backend.models();
-    models = available.map((model) => ({ id: idOf(model), name: model.name ?? model.id }));
+    models = available.map(listed);
     if (first) {
       /*
        * The model the configuration names, when nobody has chosen one.
@@ -876,6 +902,9 @@ export function piSession(
       workingDirectories: [`file://${where}`],
       customizations: [...seeds],
       ...(activity !== undefined ? { activity } : {}),
+      // The questions still waiting, each as `session/inputNeededSet` sent it,
+      // so a client that subscribes while one waits can answer it.
+      ...(pending.size > 0 ? { inputNeeded: [...pending.values()].map((one) => one.entry) } : {}),
       /*
        * The host's schema when it gave one, which is the same one every other
        * backend publishes.

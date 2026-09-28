@@ -105,6 +105,8 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | The comment on `urlHost` says what it is, not why it moved. | Softov, 2026-09-27, asked which review findings become fix tasks: "urlHost comment narrates". | 32 |
 | A `--remote` token is trimmed from `--token` and `AHPD_TOKEN` as it is from a file. | Softov, 2026-09-27, asked which earlier findings become tasks: "tokenFor trims every source". | 33 |
 | `docs/DAEMON.md`'s long `--remote` line is wrapped, and the flag row names the update check as declared. | Softov, 2026-09-27, asked which earlier findings become tasks: "DAEMON.md long line and wording". | 34 |
+| The exported `RequestHandler` type keeps its name with the fetch shape. | Softov, 2026-09-27, asked whether the type keeps its name in 0.4.0: "Keep RequestHandler". | 15 |
+| cofold's CI `runtimes` job runs the clerver server on Node, Bun and Deno. | Softov, 2026-09-27, asked whether to add the round trip the Validation names: "Add clerver to runtimes". | 15 |
 
 ## Tasks
 
@@ -124,7 +126,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [12 - http.host binds the API's own listener](task-12-http-host.md) | done | - |
 | [13 - `--remote` needs a token, reads it from a file too, warns on cleartext, keeps its cache private, and its tests prove the daemon answered](task-13-remote-needs-a-token-and-proves-it-is-remote.md) | done | 08 |
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | done | 09, 10, 11, 12, 13 |
-| [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | todo | 06 |
+| [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | implemented | 06 |
 | [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | todo | 07, 15 |
 | [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | implemented | 09 |
 | [18 - The API's guards have no gaps](task-18-the-guards-have-no-gaps.md) | done | 11, 12, 13 |
@@ -153,7 +155,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 ## Resume state
 
 - **Done so far:** tasks 06 to 14, 18, 19, 21 and 22 are done.
-  Tasks 01 to 05, 17, 20 and 23 to 31 are implemented and wait for Softov's review.
+  Tasks 01 to 05, 15, 17, 20 and 23 to 34 are implemented and wait for Softov's review.
   Task 06 is `@cofold/remote` 0.3.1, released, and ahpd depends on `^0.3.1`.
   With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, and a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook.
   A served command reads the daemon's own options, malformed requests and foreign Origins and Hosts are answered, `http.host` binds the API's own listener, `--remote` needs and can read a token, and `docs/DAEMON.md` documents it.
@@ -174,9 +176,10 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
   Task 31 masks a plugin spec URL's userinfo in a served `config` and `plugin list`, the row's other string fields included.
   Task 32 makes `urlHost`'s comment say what the function is and nothing about where it came from.
   Task 33 makes `tokenFor` trim the chosen value once, so `--token`, `--token-file` and `AHPD_TOKEN` share one rule; the case is a behaviour lock, since the HTTP layer already strips the header's surrounding whitespace.
+  Task 15 makes cofold's `serve()` a `Request` handler with a Node adapter, as `@cofold/remote` 0.4.0.
   Task 34 wraps `docs/DAEMON.md`'s `--remote` paragraph at 80 columns and makes the flag row name `--update-check`, `--no-update-check` as `updateCheck` declares them.
-- **Next action:** Softov reviews tasks 01 to 05, 17, 20 and 23 to 34.
-  Task 15 is todo and is in the cofold repository, and task 16 is todo and waits for `@cofold/remote` 0.4.0.
+- **Next action:** Softov reviews tasks 01 to 05, 15, 17, 20 and 23 to 34.
+  Task 15 is built in the cofold repository, uncommitted, and waits for Softov's commit and release of `@cofold/remote` 0.4.0; task 16 is todo and waits for that release.
 - **Open questions:** none.
 - **Watch out for:**
   - Task 15 changes `serve()` to take a `Request` and answer a `Response`, with a Node adapter; task 16 then serves the API on Node, Bun and Deno.

@@ -1,6 +1,6 @@
 ---
 title: A file target an operation names is read decoded
-status: todo
+status: implemented
 depends: [task-03-every-minted-uri-round-trips.md]
 layer: "sdk"
 refs:
@@ -29,3 +29,10 @@ refs:
 - `node_modules/.bin/vitest run packages/sdk/test/changes-uris.test.ts` green.
 
 ## Resume
+
+Pinned, not changed: [`code://packages/sdk/src/changes.ts#L130-L139`](../../../../packages/sdk/src/changes.ts#L130-L139), `pathIn`, already decodes the target with `fileURLToPath` and checks both the path as written and its real path against the directory, since plan host/21.
+
+- `changes-uris.test.ts` runs `discard` on `file:///<dir>/docs/a%20file%20%231.md` in the scratch repository and finds `a file #1.md` as `HEAD` has it, with `docs/AHP.md` left changed.
+- `discard` on `file:///<dir>/../elsewhere.txt` is refused with "That file is not in this directory."
+- Both cases passed on their first run, because of host/21's `pathIn`; there was no failure to record.
+- Gates: `pnpm typecheck` green, `pnpm boundary` green, `pnpm test` 105 files and 1449 tests green.

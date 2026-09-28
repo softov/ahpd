@@ -13,6 +13,7 @@
 
 import type { PluginHost } from '@ahpd/sdk';
 import { piAgent } from './agent.js';
+import { loadPi } from './pi.js';
 import type { PiOptions } from './types.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
@@ -68,7 +69,14 @@ export const optionsOf = (values: Record<string, unknown>): PiOptions => {
   return options;
 };
 
-/** Register one pi backend from the plugin's own options. */
+/**
+ * Register one pi backend from the plugin's own options.
+ *
+ * pi's SDK starts loading here and is not waited for, so the daemon does not
+ * start seconds later for it; the first call that needs pi waits instead. A
+ * load that fails here is tried again by that call.
+ */
 export function apply(host: PluginHost, values: Record<string, unknown>): void {
   host.registerAgent(piAgent(optionsOf(values), host.paths));
+  loadPi().catch(() => {});
 }

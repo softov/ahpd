@@ -547,7 +547,11 @@ spells its own imports `./host.js`, because that is what will be there after a
 build. Bun rewrites those to the `.ts` on disk by itself; Node resolves them
 literally and looks for a `host.js` that does not exist yet, so the Node scripts
 register [scripts/dev-hooks.mjs](../scripts/dev-hooks.mjs) to do the same
-rewrite - about twenty lines, no dependency.
+rewrite - about twenty lines, no dependency. [scripts/dev.mjs](../scripts/dev.mjs)
+registers it with `module.registerHooks`, on the main thread, and with
+`module.register`, on a thread of its own, on a Node older than 22.15 or 23.5
+that lacks it; every module then resolves across threads, so importing pi
+takes about four times as long.
 
 Node also strips types rather than transforming them, so it cannot run the
 TypeScript that *emits* code: enums, namespaces, and constructor parameter

@@ -75,7 +75,7 @@ restart -> list() -> transcript() -> turns (message.model) -> VS Code's model pi
 | --- | --- | --- |
 | [01 - cofold records the model each run used, released by Softov](task-01-cofold-records-the-model-a-run-used.md) | implemented | - |
 | [02 - A live cofold turn carries its model on the message](task-02-a-live-turn-carries-its-model.md) | implemented | - |
-| [03 - A rebuilt cofold turn carries the model it ran on](task-03-a-rebuilt-turn-carries-its-model.md) | todo | 01, 02 |
+| [03 - A rebuilt cofold turn carries the model it ran on](task-03-a-rebuilt-turn-carries-its-model.md) | implemented | 01, 02 |
 | [04 - A turn with no model reaches the person as the sentence that says what to add](task-04-no-model-reaches-the-person.md) | implemented | - |
 
 ## Risks and tradeoffs
@@ -85,8 +85,8 @@ restart -> list() -> transcript() -> turns (message.model) -> VS Code's model pi
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 04 are implemented and wait for Softov's review; task 01 is committed in `/github/cofold` as `5f19a07`, `@cofold/agents` `0.1.2`, untagged.
-- **Next action:** Softov releases `@cofold/agents` `0.1.2`, then [task-03-a-rebuilt-turn-carries-its-model.md](task-03-a-rebuilt-turn-carries-its-model.md).
+- **Done so far:** tasks 01, 02, 03 and 04 are implemented and wait for Softov's review; task 01 is released as `@cofold/agents` `0.1.2`, which agent-cofold now depends on.
+- **Next action:** Softov reviews tasks 01 to 04 and checks by hand that a cofold session reopens in VS Code on its model after a daemon restart.
 - **Open questions:** none.
 - **Watch out for:** the reference a client picks is `<provider>/<model>`, while `ModelAdapter.modelId` has no provider, so the reference reaches the record as a run option and never from the adapter.
   A cofold release goes only through its `release.yml` from a `release-*` tag.

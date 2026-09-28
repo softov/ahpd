@@ -72,7 +72,7 @@ function fakePi() {
 
 it('accepts a truncation through the host and rewinds the restarted session', async () => {
   const pi = fakePi();
-  const base = piAgent({ sessionDir: join(root, 'pi') }, [root]);
+  const base = piAgent({ sessionDir: join(root, 'pi') }, [root], async () => []);
   const agent: Agent = {
     ...base,
     create: (start) => piSession({ sessionDir: join(root, 'pi') }, start, pi.open),

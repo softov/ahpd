@@ -4,16 +4,16 @@
  * pi writes every conversation to a file of its own, so a catalogue row can
  * exist for a session this daemon never ran - one somebody had from the `pi`
  * command in the same directory. Those are read from disk. On top of them sit
- * the sessions this process is watching, which are the only ones with turns
- * anybody here can read back.
+ * the sessions this process is watching, whose turns are read back from what
+ * it watched rather than rebuilt from the file.
  *
  * The registry is process-wide rather than per session, because it has to
  * outlive any one of them: a client asks for a transcript after the session
  * that produced it was closed.
  */
 
-import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { Listed } from '@ahpd/sdk';
+import { loadedPi, loadPi } from './pi.js';
 import type { PiOptions, WatchedSession } from './types.js';
 
 /** What this process watched, by provider and then by pi's own id. */
@@ -47,9 +47,14 @@ export function forget(provider?: string): void {
  * What the reference window's "open session state file" opens. pi writes one
  * per conversation, so this is a real answer rather than the nothing a backend
  * without a record has to give.
+ *
+ * Synchronous, as `Agent.stateFile` is, so it answers from pi only once pi has
+ * loaded, and nothing before that, as for a session with no file.
  */
 export function stateFile(options: PiOptions, id: string, directory: string): string | undefined {
-  try { return SessionManager.findById(directory, id, options.sessionDir); }
+  const pi = loadedPi();
+  if (pi === undefined) return undefined;
+  try { return pi.SessionManager.findById(directory, id, options.sessionDir); }
   // A directory pi has never been run in has no session store, which is not a
   // failure worth raising: the honest answer is that there is no such file.
   catch { return undefined; }
@@ -70,6 +75,7 @@ export async function catalogue(
   directories: readonly string[],
 ): Promise<Listed[]> {
   const rows = new Map<string, Listed>();
+  const { SessionManager } = await loadPi();
 
   for (const directory of directories) {
     let found;

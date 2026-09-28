@@ -69,6 +69,14 @@ const need = <T>(port: T | undefined, method: string): T => {
 };
 
 const ROOT = 'ahp-root://';
+/**
+ * Whether a channel is the root, in either spelling.
+ *
+ * `ahp-root://` is the protocol's, and `ahp-root:` is the same URI after a
+ * client has parsed and printed it, which drops an empty authority's `//`.
+ * VS Code's `isAhpRootChannel` takes both the same way.
+ */
+const isRootChannel = (channel: string): boolean => channel === ROOT || channel.startsWith('ahp-root:');
 /** The automation catalogue, which belongs to the host rather than to a session. */
 const AUTOMATIONS = 'ahp-automations://';
 
@@ -274,7 +282,7 @@ const dispatchNeeds = (channel: string, action?: Record<string, unknown>): Grant
   if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session:write';
   if (channel.startsWith('ahp-terminal:')) return 'terminal:write';
   if (channel.startsWith('ahp-automation')) return 'automation:write';
-  if (channel === ROOT || channel.startsWith('ahp-root')) {
+  if (isRootChannel(channel)) {
     if (action?.type !== 'root/configChanged' || action.replace === true) return 'config:write';
     const config = typeof action.config === 'object' && action.config !== null ? action.config : {};
     return Object.keys(config).every((key) => PER_CONNECTION.has(key)) ? undefined : 'config:write';
@@ -1344,6 +1352,7 @@ export function createHost(options: HostOptions): Host {
     // annotations under that spelling too.
     if (channel.endsWith(MARKS)) return `${heldAs(channel.slice(0, -MARKS.length))}${MARKS}`;
     if (isAutomations(channel)) return AUTOMATIONS;
+    if (isRootChannel(channel)) return ROOT;
     return sessionOfChat(channel) !== undefined ? chatOf(channel) : heldAs(channel);
   };
   /**
@@ -1598,7 +1607,7 @@ export function createHost(options: HostOptions): Host {
     envelope: E,
   ): E => {
     const { action } = envelope;
-    if (envelope.channel !== ROOT) return envelope;
+    if (!isRootChannel(envelope.channel)) return envelope;
     if (action.type === 'root/agentsChanged') {
       return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
     }
@@ -5058,7 +5067,7 @@ export function createHost(options: HostOptions): Host {
     structuredClone(snapshot);
 
   const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}, connection?: Connection): Promise<Record<string, unknown>> => {
-    if (channel === ROOT) {
+    if (isRootChannel(channel)) {
       return value({ resource: ROOT, state: await rootState(mine, connection), fromSeq: serverSeq });
     }
     const terminal = terminals.get(channel);
@@ -5768,7 +5777,7 @@ export function createHost(options: HostOptions): Host {
       const capabilityFor = (method: string, params: Record<string, unknown>): Grant[] | undefined => {
         if (method === 'subscribe') {
           const channel = String(params.channel ?? '');
-          if (channel === ROOT || channel.startsWith('ahp-root')) return undefined;
+          if (isRootChannel(channel)) return undefined;
           if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return ['session:read'];
           if (channel.startsWith('ahp-automations')) return ['automation:read'];
           if (channel.startsWith('ahp-terminal:')) return ['terminal:read'];
@@ -5913,7 +5922,13 @@ export function createHost(options: HostOptions): Host {
             // A handshake that fails because one requested channel is gone is
             // a client that cannot connect at all. Take what can be taken.
             try {
-              snapshots.push(await snapshotOf(channel, connection.config ?? {}, connection));
+              const snapshot = await snapshotOf(channel, connection.config ?? {}, connection);
+              // The root under its other spelling is answered and told under that spelling.
+              if (isRootChannel(channel) && channel !== ROOT) {
+                connection.aliases.set(ROOT, channel);
+                snapshot.resource = channel;
+              }
+              snapshots.push(snapshot);
               connection.watching.add(channel);
             }
             catch { /* not subscribed, and the client will be told if it asks */ }
@@ -7888,7 +7903,7 @@ export function createHost(options: HostOptions): Host {
          * ahp-root://` - the shell it asked for went nowhere, and every
          * terminal opened whatever `$SHELL` happened to be.
          */
-        if (channel === ROOT && type === 'root/configChanged') {
+        if (isRootChannel(channel) && type === 'root/configChanged') {
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
@@ -9174,9 +9189,10 @@ export function createHost(options: HostOptions): Host {
            */
           const fixed = DECLARED[request.method];
           const named = (request.params as { channel?: unknown } | undefined)?.channel;
-          // The catalogue under any of its spellings is still the catalogue.
+          // The catalogue and the root under any of their spellings are still themselves.
           if (fixed !== undefined && typeof named === 'string' && named !== '' && named !== fixed
-            && !(fixed === AUTOMATIONS && isAutomations(named))) {
+            && !(fixed === AUTOMATIONS && isAutomations(named))
+            && !(fixed === ROOT && isRootChannel(named))) {
             throw new RpcError(-32602, `${request.method} is answered on ${fixed}, not on ${named}`);
           }
           if (REVERSE.has(request.method)) {
@@ -9228,4 +9244,4 @@ export function createHost(options: HostOptions): Host {
     },
   };
 }
-export { ROOT, type Summary };
+export { ROOT, isRootChannel, type Summary };

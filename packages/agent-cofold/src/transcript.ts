@@ -180,10 +180,16 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const usage = new Map<string, WireUsage>();
   const ending = new Map<string, WireState>();
   const duration = new Map<string, number>();
+  /** The model reference each turn's run was told to use, by its first message. */
+  const model = new Map<string, string>();
 
   for (const run of runs) {
     if (run.inputMessageId !== undefined) {
-      usage.set(run.inputMessageId, usageOf(run.usage));
+      usage.set(run.inputMessageId, {
+        ...usageOf(run.usage),
+        ...(run.model !== undefined ? { model: run.model } : {}),
+      });
+      if (run.model !== undefined) model.set(run.inputMessageId, run.model);
       // An `awaiting` run has not ended, and AHP's three states have no word
       // for that; the turn reads complete while its open call says the rest.
       ending.set(
@@ -235,10 +241,16 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   /** Open a turn for a message; the previous one is finished by definition. */
   const begin = (message: Message, origin: 'user' | 'agent'): void => {
     if (open !== undefined) turns.push(sealed(open));
+    const ran = model.get(message.id);
     open = {
       id: message.id,
       startedAt: message.createdAt,
-      message: { text: textOf(message), origin: { kind: origin } },
+      message: {
+        text: textOf(message),
+        origin: { kind: origin },
+        // The protocol's `Message.model`, which a client reopens the session on.
+        ...(ran !== undefined ? { model: { id: ran } } : {}),
+      },
       parts: [],
       calls: new Map(),
       usage: usage.get(message.id),

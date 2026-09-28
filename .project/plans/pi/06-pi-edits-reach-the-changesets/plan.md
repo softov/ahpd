@@ -1,7 +1,7 @@
 ---
 title: pi's edits reach the host's changesets
 domain: pi
-status: planned
+status: active
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -38,7 +38,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ```
 pi tool_execution_start (edit | write, args.path) -> [new] editing.set(toolCallId, absolute path) -> onFileEdit(turnId, path, 'before')
 pi tool_execution_end (toolCallId) -> [new] onFileEdit(turnId, path, 'after')
-agent_settled with calls still open -> [new] 'after' for each
+finish (settle, thrown prompt, cancel) with calls still open -> [new] 'after' for each, on the ending turn's id
 ```
 
 ### Gaps
@@ -53,12 +53,13 @@ agent_settled with calls still open -> [new] 'after' for each
 | Named tools only; `bash` is not guessed at | [`code://packages/agent-claude/src/session.ts#L1074-L1079`](../../../../packages/agent-claude/src/session.ts#L1074-L1079) | 01 |
 | A relative `path` is resolved against the session's working directory | the host names files by absolute path; pi's tools resolve against `cwd` | 01 |
 | A call still open when the turn settles gets its `after` then | [`code://packages/agent-cofold/src/session.ts#L262-L275`](../../../../packages/agent-cofold/src/session.ts#L262-L275) | 01 |
+| A call still open when the turn ends, however it ends, gets its `after` in `finish` on that turn's id | Softov, 2026-09-27, asked how a turn ending on a thrown prompt settles its open edits: "Sweep in finish" | 01 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An edit is announced before and after](task-01-an-edit-is-announced-before-and-after.md) | todo | - |
+| [01 - An edit is announced before and after](task-01-an-edit-is-announced-before-and-after.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -67,8 +68,8 @@ agent_settled with calls still open -> [new] 'after' for each
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-edit-is-announced-before-and-after.md](task-01-an-edit-is-announced-before-and-after.md).
+- **Done so far:** task 01 is `implemented`: pi's `edit` and `write` calls send `before` and `after` for the absolute path, and a call still open when the turn ends, however it ends, gets its `after` in `finish` on that turn's id.
+- **Next action:** Softov's review of task 01.
 - **Open questions:** none.
 - **Watch out for:** the session is where `onFileEdit` is called, not `mapping.ts`, which only returns actions.
 

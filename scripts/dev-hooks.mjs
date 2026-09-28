@@ -12,9 +12,11 @@ import { existsSync } from 'node:fs';
  * Only relative specifiers from a TypeScript parent, and only when the `.ts`
  * is really there: a package that ships `.js` beside a same-named `.ts` should
  * still get its `.js`, and anything under `node_modules` is already built.
+ *
+ * Answers the specifier to hand the next resolver, rewritten or as given.
  */
-export async function resolve(specifier, context, next) {
-  const parent = context.parentURL ?? '';
+function rewrite(specifier, parentURL) {
+  const parent = parentURL ?? '';
   if (
     specifier.startsWith('.')
     && specifier.endsWith('.js')
@@ -24,9 +26,19 @@ export async function resolve(specifier, context, next) {
     const asTs = specifier.slice(0, -3);
     for (const ext of ['.ts', '.tsx']) {
       if (existsSync(new URL(asTs + ext, parent))) {
-        return next(asTs + ext, context);
+        return asTs + ext;
       }
     }
   }
-  return next(specifier, context);
+  return specifier;
+}
+
+/** The resolve hook for `module.registerHooks`, synchronous and in-thread. */
+export function resolveSync(specifier, context, next) {
+  return next(rewrite(specifier, context.parentURL), context);
+}
+
+/** The resolve hook for `module.register`, run on the hooks thread. */
+export async function resolve(specifier, context, next) {
+  return next(rewrite(specifier, context.parentURL), context);
 }

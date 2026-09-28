@@ -20,6 +20,7 @@
  */
 
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
@@ -75,6 +76,52 @@ function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
 function append(turn: PiTurn, partId: string, text: string): void {
   const part = partOf(turn, partId);
   if (part !== undefined) part.content = `${String(part.content ?? '')}${text}`;
+}
+
+/**
+ * What one assistant message used, in the protocol's spelling.
+ *
+ * The protocol names no field for a cache write, and it is a measurement
+ * rather than a guess, so it rides `_meta` as the other sibling's does. A
+ * number pi did not report is left out rather than sent as zero.
+ */
+export function usageOf(message: AssistantMessage | undefined): Bag | undefined {
+  const usage = message?.usage;
+  if (message === undefined || usage === undefined) return undefined;
+  // A call that failed before the provider answered reports every count at
+  // zero, and a zero report is not something the turn used.
+  if (message.stopReason === 'error'
+    && usage.input === 0 && usage.output === 0 && usage.cacheRead === 0 && usage.cacheWrite === 0) {
+    return undefined;
+  }
+  const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+  const wrote = num(usage.cacheWrite);
+  const info: Bag = {
+    ...(num(usage.input) !== undefined ? { inputTokens: num(usage.input) } : {}),
+    ...(num(usage.output) !== undefined ? { outputTokens: num(usage.output) } : {}),
+    ...(num(usage.cacheRead) !== undefined ? { cacheReadTokens: num(usage.cacheRead) } : {}),
+    ...(message.provider !== undefined && message.model !== undefined
+      ? { model: `${message.provider}/${message.model}` }
+      : {}),
+    ...(wrote !== undefined ? { _meta: { cacheWriteTokens: wrote } } : {}),
+  };
+  return Object.keys(info).length > 0 ? info : undefined;
+}
+
+/**
+ * A call's row, moved as the `tool_call` hook moves it before the tool runs.
+ *
+ * `extra` is what the hook decided: `confirmed: 'not-needed'` for a call that
+ * runs without asking, which leaves it `running`, or a `confirmationTitle` for
+ * one a person is asked about, which leaves it `pending-confirmation`.
+ */
+export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag): void {
+  row.status = extra.confirmed === 'not-needed' ? 'running' : 'pending-confirmation';
+  row.invocationMessage = displayName;
+  row.toolInput = JSON.stringify(input);
+  if (extra.confirmationTitle !== undefined) row.confirmationTitle = extra.confirmationTitle;
+  if (extra.confirmed !== undefined) row.confirmed = extra.confirmed;
+  else delete row.confirmed;
 }
 
 /**

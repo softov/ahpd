@@ -11,10 +11,9 @@
  * answer.
  */
 
-import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { Type } from '@earendil-works/pi-ai';
 import type { BoundTool } from '@ahpd/sdk';
+import { loadPi } from './pi.js';
 
 /**
  * pi's own tool names.
@@ -48,12 +47,13 @@ const stopped = (signal: AbortSignal | undefined): Promise<never> => new Promise
  * answer is whatever `client` settles with, and a refusal rejects the call with
  * the client's words so the model reads what went wrong.
  */
-export function toPiTool(bound: BoundTool, client: RunByClient): ToolDefinition | undefined {
+export async function toPiTool(bound: BoundTool, client: RunByClient): Promise<ToolDefinition | undefined> {
   const { definition } = bound;
   if (PI_TOOLS.has(definition.name)) {
     console.warn(`@ahpd/agent-pi: dropping tool "${definition.name}", which is one of pi's own`);
     return undefined;
   }
+  const { defineTool, Type } = await loadPi();
   return defineTool({
     name: definition.name,
     label: definition.title ?? definition.name,

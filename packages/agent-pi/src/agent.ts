@@ -16,7 +16,11 @@
  */
 
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
+import { runtimeModels } from './backend.js';
+import type { RuntimeModels } from './backend.js';
 import { catalogue, stateFile, watchedSession } from './catalog.js';
+import { listed } from './models.js';
+import { replayed } from './replay.js';
 import { piSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { PiOptions } from './types.js';
@@ -28,8 +32,15 @@ import { permissionModeProperty } from './types.js';
  * `directories` is where this backend will work, which is the host's answer to
  * "may this client read that file" - so it is the daemon's own list and not
  * pi's, which has no notion of being served from somewhere.
+ *
+ * `models` is how pi's runtime models are read for the probe; the default
+ * reads pi's own agent directory.
  */
-export function piAgent(options: PiOptions, directories: readonly string[]): Agent {
+export function piAgent(
+  options: PiOptions,
+  directories: readonly string[],
+  models: RuntimeModels = runtimeModels,
+): Agent {
   const provider = options.provider ?? 'pi';
   const displayName = options.displayName ?? 'pi';
   const paths = [...directories];
@@ -94,23 +105,33 @@ export function piAgent(options: PiOptions, directories: readonly string[]): Age
     multipleDirectories: false,
 
     /**
-     * What pi offers before a session exists.
+     * What pi offers before a session exists: the models of pi's own runtime.
      *
-     * Nothing, and that is the honest answer rather than a gap. pi's model
-     * list comes from a runtime that is built with a session, against the
-     * credentials and settings resolved for one directory, so a list answered
-     * here would be a different list from the one a session then reports.
-     * `Session.models()` is where it arrives, as soon as a session has opened.
+     * Listed as a session lists them. A provider only a project's extension
+     * registers is not here, and arrives with that session's own list. A
+     * runtime that cannot be built, for a credentials or models file pi cannot
+     * read, answers no models rather than failing the probe.
      */
-    probe: async (): Promise<Offered> => ({ models: [], customizations: [], commands: [] }),
+    probe: async (): Promise<Offered> => {
+      let found: Offered['models'] = [];
+      try { found = (await models()).map(listed); }
+      catch { found = []; }
+      return { models: found, customizations: [], commands: [] };
+    },
 
     directories: () => [...paths],
 
     list: (): Promise<Listed[]> => catalogue(options, provider, paths),
 
+    /*
+     * What this process watched of the session, or else the session rebuilt
+     * from pi's own file; nothing for an id neither has.
+     */
     transcript: async (id) => {
       const found = watchedSession(provider, id);
-      return found === undefined ? undefined : turnsOf(found);
+      if (found !== undefined) return turnsOf(found);
+      const rebuilt = await replayed(options, id, paths);
+      return rebuilt === undefined ? undefined : turnsOf(rebuilt);
     },
 
     /*

@@ -1,16 +1,10 @@
 /**
- * What this process watched of a session, as the turns a client reads.
+ * A session's turns as the turns a client reads.
  *
- * pi does keep a transcript of its own - an append-only tree of entries, on
- * disk, which is what makes a session resumable at all - but those entries are
- * pi's messages and not AHP turns, and rebuilding one from the other would be
- * a second mapping to keep in step with `mapping.ts`.
- *
- * So the record here is the one kept as the turn ran: the same parts array the
- * live turn streamed into, sealed when the turn ended. A session this process
- * never watched has no record, and `Agent.transcript` answers `undefined` for
- * it rather than inventing a conversation - which is the honest answer for a
- * row that came off disk and has never been opened.
+ * Two records give them, sealed the same way: the one kept as this process
+ * watched each turn run, the same parts array the live turn streamed into,
+ * and the one `replay.ts` rebuilds from pi's own file for a session this
+ * process did not watch, through the same `mapEvent`.
  */
 
 import type { Agent } from '@ahpd/sdk';
@@ -26,8 +20,8 @@ import type { WatchedSession } from './types.js';
 type Transcript = NonNullable<Awaited<ReturnType<NonNullable<Agent['transcript']>>>>;
 export type TranscriptTurn = Transcript[number];
 
-/** One watched session's turns, in the order they ran. */
-export function turnsOf(session: WatchedSession): TranscriptTurn[] {
+/** One session's watched or rebuilt turns, in the order they ran. */
+export function turnsOf(session: Pick<WatchedSession, 'turns'>): TranscriptTurn[] {
   return session.turns.map((watched) => ({
     id: watched.turnId,
     startedAt: watched.startedAt,

@@ -389,12 +389,17 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   }
 
   const provisional = manifest?.name ?? said;
+  options.log(`plugin ${provisional} loading`);
+  // When the start line was logged, which every later line measures from.
+  const started = Date.now();
+  // How long since the start line, as the ` in <n> ms` a later line carries.
+  const took = (): string => ` in ${Date.now() - started} ms`;
   let module: unknown;
   try {
     module = await import(url);
   }
   catch (error) {
-    return { problems: [...problems, `plugin ${provisional} could not be imported from ${target ?? url}: ${messageOf(error)}`] };
+    return { problems: [...problems, `plugin ${provisional} could not be imported from ${target ?? url}${took()}: ${messageOf(error)}`] };
   }
 
   const wrong = checkShape(module, target ?? url);
@@ -431,12 +436,12 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   catch (error) {
     // One failure path: whatever the registration check or the plugin itself
     // threw, the whole contribution is discarded and the plugin costs a line.
-    return { problems: [...problems, `plugin ${name} failed: ${messageOf(error)}`] };
+    return { problems: [...problems, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
   }
 
   // The absolute path is logged, so what ran is in the log even when a spec
   // was relative or a bare name resolved somewhere nobody expected.
-  options.log(`plugin ${name} from ${target ?? url}`);
+  options.log(`plugin ${name} from ${target ?? url}${took()}`);
   const loaded: Loaded = {
     spec,
     url,

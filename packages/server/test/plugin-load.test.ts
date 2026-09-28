@@ -86,3 +86,38 @@ describe('loadPlugins', () => {
     expect((globalThis as Record<string, unknown>).__pluginBadManifestImported).toBeUndefined();
   });
 });
+
+describe('loadPlugins log', () => {
+  const logged = async (specs: PluginSpec[]) => {
+    const lines: string[] = [];
+    const result = await loadPlugins(specs, { base: base(), configDir: fixtures, cwd: here, log: (line) => { lines.push(line); } });
+    return { lines, ...result };
+  };
+
+  it('logs each plugin starting, then loaded with its time, one after another', async () => {
+    const { lines, loaded } = await logged(['./fixtures/plugin-hello', './fixtures/plugin-alike']);
+
+    expect(loaded.map((one) => one.name)).toEqual(['hello', 'alike']);
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe('plugin plugin-hello loading');
+    expect(lines[1]).toMatch(new RegExp(`^plugin hello from ${join(fixtures, 'plugin-hello', 'index.ts')} in \\d+ ms$`));
+    expect(lines[2]).toBe('plugin plugin-alike loading');
+    expect(lines[3]).toMatch(new RegExp(`^plugin alike from ${join(fixtures, 'plugin-alike', 'index.ts')} in \\d+ ms$`));
+  });
+
+  it('logs a plugin whose apply throws starting, and says in its problem how long it took', async () => {
+    const { lines, problems } = await logged(['./fixtures/plugin-configurable']);
+
+    expect(lines).toEqual(['plugin plugin-configurable loading']);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^plugin configurable failed in \d+ ms: the configurable fixture must not be loaded without a token$/);
+  });
+
+  it('logs a plugin whose import throws starting, and says in its problem how long it took', async () => {
+    const { lines, problems } = await logged(['./fixtures/plugin-explodes']);
+
+    expect(lines).toEqual(['plugin plugin-explodes loading']);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(new RegExp(`^plugin plugin-explodes could not be imported from ${join(fixtures, 'plugin-explodes', 'index.ts')} in \\d+ ms: .*the explodes fixture throws when imported`));
+  });
+});

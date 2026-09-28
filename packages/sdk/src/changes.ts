@@ -146,7 +146,35 @@ const pathIn = async (dir: string, uri: string): Promise<string | undefined> => 
  * resolves it itself, which is what `ChangesetSource.read` is for.
  */
 const BEFORE = 'ahp-git:';
-const beforeUri = (dir: string, path: string): string => `${BEFORE}//${dir}/${path}`;
+
+/** A path with each of its segments percent-encoded and its slashes kept. */
+const escaped = (path: string): string => path.split('/').map(encodeURIComponent).join('/');
+
+/**
+ * A modified file's `before`, as `ahp-git://head/<absolute path>`.
+ *
+ * `head` is there so the authority is never empty: a client that parses and
+ * re-prints a URI drops an empty authority's `//`.
+ */
+const beforeUri = (dir: string, path: string): string => `${BEFORE}//head${escaped(`${dir}/${path}`)}`;
+
+/**
+ * A URI as its authority and its decoded path segments, or nothing when it does not parse.
+ *
+ * A query or a fragment is rejoined to the path first: a client that parses
+ * `a #1.md` reads `#1.md` as a fragment, and it is still part of the file's
+ * name. A segment that does not decode is kept as it was written.
+ */
+const partsOf = (uri: string): { authority: string; segments: string[] } | undefined => {
+  let url: URL;
+  try { url = new URL(uri); }
+  catch { return undefined; }
+  const segments = `${url.pathname}${url.search}${url.hash}`.split('/').map((segment) => {
+    try { return decodeURIComponent(segment); }
+    catch { return segment; }
+  });
+  return { authority: url.host, segments };
+};
 
 /**
  * The scheme for a side that was *captured* rather than read.
@@ -342,8 +370,10 @@ export function gitChanges(): ChangesetSource {
    */
   const seen = new Map<string, Map<string, Map<string, Captured>>>();
 
-  /** The text held for a captured side, by the URI minted for it. */
+  /** The text held for a captured side, by `sideKey` of its session, turn, phase and path. */
   const kept = new Map<string, string>();
+  const sideKey = (session: string, turn: string, phase: string, path: string): string =>
+    [session, turn, phase, path].join('\u0000');
 
   /**
    * Which files somebody has ticked off, per changeset.
@@ -355,8 +385,48 @@ export function gitChanges(): ChangesetSource {
   const reviewed = new Map<string, Set<string>>();
   const reviewKey = (session: string, scope: string): string => `${session}\u0000${scope}`;
 
+  /**
+   * A captured side, as `ahp-edit://turn/<session>/<turn>/<phase>/<path>`.
+   *
+   * The session is one base64url segment, which holds nothing a client
+   * lowercases, decodes or splits; the turn, the phase and each segment of the
+   * absolute path are percent-encoded.
+   */
   const capturedUri = (session: string, turn: string, path: string, phase: string): string =>
-    `${CAPTURED}//${encodeURIComponent(session)}/${encodeURIComponent(turn)}/${phase}${path}`;
+    `${CAPTURED}//turn/${Buffer.from(session, 'utf8').toString('base64url')}`
+    + `/${encodeURIComponent(turn)}/${encodeURIComponent(phase)}${escaped(path)}`;
+
+  /**
+   * The `kept` key an `ahp-edit:` URI names, or nothing when no side is held under it.
+   *
+   * Under the `turn` authority the session is the first segment, in base64url.
+   * Under any other authority the authority is the session, percent-encoded.
+   * The turn is everything up to the phase: a scope such as `compare/<a>/<b>`
+   * is one encoded segment as minted, and several once a client has decoded
+   * its `%2F`, so each place a phase could start is tried.
+   */
+  const sideOf = (uri: string): string | undefined => {
+    const parts = partsOf(uri);
+    if (parts === undefined) return undefined;
+    let session: string;
+    let rest: string[];
+    if (parts.authority === 'turn') {
+      session = Buffer.from(parts.segments[1] ?? '', 'base64url').toString('utf8');
+      rest = parts.segments.slice(2);
+    }
+    else {
+      try { session = decodeURIComponent(parts.authority); }
+      catch { return undefined; }
+      rest = parts.segments.slice(1);
+    }
+    for (let at = 1; at < rest.length; at++) {
+      const phase = rest[at] as string;
+      if (phase !== 'before' && phase !== 'after') continue;
+      const key = sideKey(session, rest.slice(0, at).join('/'), phase, `/${rest.slice(at + 1).join('/')}`);
+      if (kept.has(key)) return key;
+    }
+    return undefined;
+  };
 
   /**
    * Fold a run of turns into one edit per file.
@@ -417,8 +487,8 @@ export function gitChanges(): ChangesetSource {
       const uri = `file://${path}`;
       const before = capturedUri(session, turn, path, 'before');
       const after = capturedUri(session, turn, path, 'after');
-      if (sides.before !== undefined) kept.set(before, sides.before);
-      if (sides.after !== undefined) kept.set(after, sides.after);
+      if (sides.before !== undefined) kept.set(sideKey(session, turn, 'before', path), sides.before);
+      if (sides.after !== undefined) kept.set(sideKey(session, turn, 'after', path), sides.after);
       return {
         id: uri,
         edit: {
@@ -839,7 +909,7 @@ export function gitChanges(): ChangesetSource {
         if (phase === 'after') sides.after = text ?? '';
         files.set(path, sides);
 
-        kept.set(capturedUri(session, turnId, path, phase), text ?? '');
+        kept.set(sideKey(session, turnId, phase, path), text ?? '');
 
         /*
          * A file that has changed again is not the file that was reviewed.
@@ -868,11 +938,16 @@ export function gitChanges(): ChangesetSource {
     read: async (uri) => {
       // Captured sides are held, not fetched: neither is on disk any more.
       if (uri.startsWith(CAPTURED)) {
-        const text = kept.get(uri);
+        const key = sideOf(uri);
+        const text = key === undefined ? undefined : kept.get(key);
         return text === undefined ? undefined : { data: text, encoding: 'utf-8' };
       }
       if (!uri.startsWith(BEFORE)) return undefined;
-      const rest = uri.slice(`${BEFORE}//`.length);
+      // `head`, or an empty authority, which a client prints as `ahp-git:/<path>`
+      // or `ahp-git:///<path>`.
+      const parts = partsOf(uri);
+      if (parts === undefined || (parts.authority !== 'head' && parts.authority !== '')) return undefined;
+      const rest = parts.segments.join('/');
       // The directory is the longest known one this URI starts with: a path
       // has slashes and so does a directory, and splitting on the first one
       // would name neither.

@@ -18,14 +18,14 @@ importers:
         specifier: ^0.3.278
         version: 0.3.278(@anthropic-ai/sdk@0.124.0(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(zod@4.5.4)
       '@cofold/agents':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.2
+        version: 0.1.2
       '@cofold/model-openai-compat':
         specifier: ^0.1.1
-        version: 0.1.1(@cofold/agents@0.1.1)
+        version: 0.1.1(@cofold/agents@0.1.2)
       '@cofold/store-file':
         specifier: ^0.1.1
-        version: 0.1.1(@cofold/agents@0.1.1)
+        version: 0.1.1(@cofold/agents@0.1.2)
       '@earendil-works/pi-coding-agent':
         specifier: ^0.87.1
         version: 0.87.1(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(ws@8.21.3)(zod@4.5.4)
@@ -83,17 +83,17 @@ importers:
   packages/agent-cofold:
     dependencies:
       '@cofold/agents':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.2
+        version: 0.1.2
       '@cofold/model-openai-compat':
         specifier: ^0.1.1
-        version: 0.1.1(@cofold/agents@0.1.1)
+        version: 0.1.1(@cofold/agents@0.1.2)
       '@cofold/store-file':
         specifier: ^0.1.1
-        version: 0.1.1(@cofold/agents@0.1.1)
+        version: 0.1.1(@cofold/agents@0.1.2)
       '@cofold/tools':
         specifier: ^0.1.1
-        version: 0.1.1(@cofold/agents@0.1.1)
+        version: 0.1.1(@cofold/agents@0.1.2)
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
@@ -307,8 +307,8 @@ packages:
     resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
 
-  '@cofold/agents@0.1.1':
-    resolution: {integrity: sha512-ltSZ18bXCEZiM82Eklj07WWJE4HRwqWSoTbHegb9Ez1xF8g9333dpTzvMyoQvyr9LKS7K6gLNrj7YEtqAEncAw==}
+  '@cofold/agents@0.1.2':
+    resolution: {integrity: sha512-5H5RvcC0EC0IbzSVgZ8UOhFdcaAegtwyWY896rrHy3K81pwlxBGI4XNFb7lcqs7l4CL0CBStLlGrUi8A0Nl9QA==}
     engines: {node: '>=22'}
 
   '@cofold/commands@0.2.2':
@@ -1852,7 +1852,7 @@ snapshots:
 
   '@babel/runtime@7.29.7': {}
 
-  '@cofold/agents@0.1.1':
+  '@cofold/agents@0.1.2':
     dependencies:
       '@cofold/sdk': 0.2.0
 
@@ -1860,9 +1860,9 @@ snapshots:
     dependencies:
       '@cofold/sdk': 0.2.0
 
-  '@cofold/model-openai-compat@0.1.1(@cofold/agents@0.1.1)':
+  '@cofold/model-openai-compat@0.1.1(@cofold/agents@0.1.2)':
     dependencies:
-      '@cofold/agents': 0.1.1
+      '@cofold/agents': 0.1.2
 
   '@cofold/remote@0.3.1':
     dependencies:
@@ -1870,17 +1870,17 @@ snapshots:
 
   '@cofold/sdk@0.2.0': {}
 
-  '@cofold/store-file@0.1.1(@cofold/agents@0.1.1)':
+  '@cofold/store-file@0.1.1(@cofold/agents@0.1.2)':
     dependencies:
-      '@cofold/agents': 0.1.1
+      '@cofold/agents': 0.1.2
 
   '@cofold/terminal@0.2.0':
     dependencies:
       '@cofold/commands': 0.2.2
 
-  '@cofold/tools@0.1.1(@cofold/agents@0.1.1)':
+  '@cofold/tools@0.1.1(@cofold/agents@0.1.2)':
     dependencies:
-      '@cofold/agents': 0.1.1
+      '@cofold/agents': 0.1.2
 
   '@earendil-works/chord@0.87.1':
     dependencies:

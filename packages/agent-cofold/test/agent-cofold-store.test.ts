@@ -322,6 +322,37 @@ it('appends a new run under the same session id when a finished session is resum
   expect(await second.transcript?.('one')).toHaveLength(2);
 });
 
+it('rebuilds a turn with the model it ran on, after a restart', async () => {
+  const { root, sweep } = place();
+  const first = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());
+  const before = open(first, 'one', sweep);
+  before.session.begin('t1', 'hi', { id: 'open_router/x' });
+  await until(() => ended(before.view));
+  before.session.close();
+
+  // The restart: a fresh backend over the same directory reads the store alone.
+  const second = backend(root, createFakeModel({ script: [{ text: 'unused' }], stream: true }), allowAll());
+  const turn = (await second.transcript?.('one'))?.at(-1);
+  expect((turn?.message as { model?: { id?: string } } | undefined)?.model?.id).toBe('open_router/x');
+  expect(turn?.usage?.model).toBe('open_router/x');
+});
+
+it('rebuilds a turn with no model when its run recorded none', async () => {
+  const { root, sweep } = place();
+  const agent = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());
+  const one = open(agent, 'one', sweep);
+  one.session.begin('t1', 'hi');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  const runs = await createFileStore({ root }).runs.list({ sessionId: 'one' });
+  expect(runs[0]?.model).toBeUndefined();
+  const turn = (await agent.transcript?.('one'))?.at(-1);
+  expect((turn?.message as { model?: unknown } | undefined)?.model).toBeUndefined();
+  expect(turn?.usage).toBeDefined();
+  expect(turn?.usage?.model).toBeUndefined();
+});
+
 it('stops listing a session that the store no longer has', async () => {
   const { root, sweep } = place();
   const model = createFakeModel({ script: [{ text: 'gone' }], stream: true });

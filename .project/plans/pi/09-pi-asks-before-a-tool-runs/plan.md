@@ -73,6 +73,7 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 | The `Asking` seam goes and the ask cases drive `permissionMode`; the README and comments are corrected; a wire capture is validated. | Softov, 2026-09-27, asked which review findings in the pi batch become fix tasks: "Drop the Asking seam", "README and comments true", "pnpm wire on a capture" | 07, 08, 09 |
 | The undeclared `session/statusChanged` and `session/modelsChanged` actions are removed, status reaching a client as the declared `session/chatUpdated` and a session's models left to `Session.models()` | Softov, 2026-09-27, answering how the capture should pass `pnpm wire`: "Remove both emits from packages/agent-pi" | 09 |
 | A call pi failed before its hook is readied `not-needed` at its end, so a client can complete it. | Softov, 2026-09-27, asked how to handle the call that stays `streaming`: "I fix it now, then commit" | 10 |
+| `sessionState` carries `inputNeeded`, as claude and cofold do. | Softov, 2026-09-28, approved reproducing the stuck third permission: "Yes, reproduce"; the fix mirrors the siblings. | 11 |
 
 ## Tasks
 
@@ -88,6 +89,7 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 | [08 - The README and the comments say what the code does](task-08-the-readme-and-comments-say-what-is-true.md) | implemented | 07 |
 | [09 - A captured pi session validates against the protocol schema](task-09-a-wire-capture-validates.md) | implemented | 08 |
 | [10 - A call pi failed before its hook still closes in a client](task-10-a-call-pi-failed-first-still-closes.md) | implemented | 04 |
+| [11 - A client that reconnects sees what pi is waiting on](task-11-a-reconnected-client-sees-the-question.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -97,8 +99,8 @@ client confirm(toolCallId, approved) -> chat/toolCallConfirmed + session/inputNe
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 10 are `implemented`: the ask with `pending-confirmation` and `confirm`, the six-value `permissionMode`, the README bullet, the ask reusing the row pi opened, pi's own path resolution with reads outside asking, a cancel answering every question it leaves, no test-only seam, the README and comments brought in line with the code, a scripted wire capture that passes `pnpm wire`, and a call pi failed before its hook readied at its end.
-- **Next action:** none; tasks 01 to 09 were reviewed on 2026-09-27, and task 10 was built in that review and awaits Softov's.
+- **Done so far:** tasks 01 to 11 are `implemented`: the ask with `pending-confirmation` and `confirm`, the six-value `permissionMode`, the README bullet, the ask reusing the row pi opened, pi's own path resolution with reads outside asking, a cancel answering every question it leaves, no test-only seam, the README and comments brought in line with the code, a scripted wire capture that passes `pnpm wire`, a call pi failed before its hook readied at its end, and `inputNeeded` in the session state while a question waits.
+- **Next action:** review of task 11; tasks 01 to 09 were reviewed on 2026-09-27, and task 10 was built in that review and awaits Softov's.
 - **Open questions:** none.
 - **Watch out for:** client-owned tools from plan 02 are the client's to run; asking about them is still ahpd's, before the call goes out to the client.
 

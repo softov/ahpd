@@ -19,7 +19,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | active 2026-09-27, reviewed twice; tasks 01-04, 06, 11, 17, 18 and 20-23 implemented and awaiting review (`@cofold/commands` 0.2.2 taken) | daemon 03 | daemon 05 |
-| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; tasks 01-05, 17, 20 and 23-34 implemented and awaiting review; 15 in the cofold repository, 16 waits for `@cofold/remote` 0.4.0 | daemon 04 | - |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26, reviewed twice; tasks 01-05, 15, 17, 20 and 23-34 implemented and awaiting review; 15 is built in cofold and waits for the `@cofold/remote` 0.4.0 release, 16 waits for it | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 
 Next free number in `daemon`: `07`.
@@ -49,7 +49,7 @@ Reference: [00-host.md](host/00-host.md)
 | [17 - Host configuration has its own grant](host/17-host-configuration-has-its-own-grant/plan.md) | medium | built 2026-09-25 ([implemented.md](host/17-host-configuration-has-its-own-grant/implemented.md)) | host 11 | - |
 | [18 - A session takes any key until its first turn, and shows the fixed ones after](host/18-a-provisional-session-takes-any-key/plan.md) | high | built 2026-09-26 ([implemented.md](host/18-a-provisional-session-takes-any-key/implemented.md)) | host 02 | - |
 | [19 - A fork copies the conversation through the chosen turn](host/19-a-fork-copies-through-the-turn/plan.md) | medium | planned 2026-09-26, tasks 01-03 todo | - | pi 05, and the ACP fork in plugin 18, which must cut at the turn's end |
-| [20 - A changes URI opens in a client that normalises it](host/20-a-changes-uri-survives-a-client/plan.md) | high | planned 2026-09-27; starts after host 21 | host 21 | - |
+| [20 - A changes URI opens in a client that normalises it](host/20-a-changes-uri-survives-a-client/plan.md) | high | active 2026-09-27; tasks 01-04 implemented, awaiting review | host 21 | - |
 | [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | active 2026-09-27; tasks 01 to 08 implemented, review fixes 06 to 08 awaiting review; folds in the uncommitted `changes.ts` draft | - | host 20 |
 | [22 - A file or a folder is staged and unstaged from the session's changeset](host/22-a-file-or-folder-is-staged-from-the-session/plan.md) | high | active 2026-09-27; tasks 01 to 03 implemented and awaiting review | host 21 | - |
 | [23 - A session outside the configured paths has its git facts and its changes without waiting for a turn](host/23-a-session-outside-the-paths-has-its-facts/plan.md) | high | active 2026-09-27; tasks 01 and 02 implemented and awaiting review | - | - |
@@ -107,7 +107,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [20 - A plugin is a client of its own host, as a principal of its own](plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md) | high | planned 2026-09-26, after plugin 17 | plugin 01, host 11 | plugin 21, and every gateway, trigger and facade plugin |
 | [21 - A plugin serves an HTTP route on the daemon's listener](plugin/21-a-plugin-serves-an-http-route/plan.md) | medium | planned 2026-09-26, after plugin 20; task 02 after daemon 05 tasks 15 and 16 | daemon 05, plugin 20 | webhook, callback and facade plugins |
 | [22 - A cofold write lands on the file its check allowed, and not on one that changed since it was read](plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) | medium | draft 2026-09-27; task 01 chooses the approach with Softov | plugin 14 | - |
-| [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | active 2026-09-27; tasks 01, 02 and 04 implemented and awaiting review; task 01 is committed in cofold (`5f19a07`, `@cofold/agents` 0.1.2) and waits for Softov's release, task 03 waits for it | plugin 14 | - |
+| [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | active 2026-09-27; tasks 01 to 04 implemented and awaiting review; task 01 released as `@cofold/agents` 0.1.2 | plugin 14 | - |
+| [24 - The log says when each plugin starts loading and how long it took](plugin/24-the-log-times-each-plugin/plan.md) | medium | active 2026-09-28; task 01 implemented and awaiting review | plugin 01 | - |
+| [25 - A plugin's agent sees every path the daemon serves](plugin/25-a-plugin-agent-sees-every-served-path/plan.md) | high | task 01 implemented and awaiting review | plugin 01 | - |
 
 Next free number in `plugin`: `24`.
 
@@ -139,7 +141,7 @@ Next free number in `container`: `06`.
 
 Reference: [00-pi.md](pi/00-pi.md)
 
-Worked in this order: 01, 02, 09, then problem [a pi transcript opens empty](../problems/a-pi-transcript-opens-empty-for-a-session-this-process-did-not-watch.md), then 03, 04, host 19, 05, 06, 07.
+Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
@@ -148,10 +150,11 @@ Worked in this order: 01, 02, 09, then problem [a pi transcript opens empty](../
 | [03 - The host's instructions reach pi's system prompt](pi/03-the-host-instructions-reach-pi/plan.md) | medium | active 2026-09-26, task 01 implemented and awaiting review | pi 02 | - |
 | [04 - A pi turn reports what it used](pi/04-a-turn-reports-its-usage/plan.md) | medium | active 2026-09-26, tasks 01-02 implemented and reviewed, fixes 03-04 implemented and awaiting review | pi 01 | - |
 | [05 - A pi chat forks from a turn](pi/05-a-chat-forks-from-a-turn/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | pi 01, host 19 | - |
-| [06 - pi's edits reach the host's changesets](pi/06-pi-edits-reach-the-changesets/plan.md) | medium | planned 2026-09-26, task 01 todo | - | - |
+| [06 - pi's edits reach the host's changesets](pi/06-pi-edits-reach-the-changesets/plan.md) | medium | active 2026-09-27, task 01 implemented and awaiting review | - | - |
 | [07 - Input from a client is tagged as not the terminal's](pi/07-remote-input-is-tagged/plan.md) | low | active 2026-09-26, task 01 implemented and awaiting review | - | - |
 | [08 - A pi session store can move between hosts](pi/08-a-session-store-can-move/plan.md) | low | dropped 2026-09-26 | - | - |
-| [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | active 2026-09-26, tasks 01-09 implemented and reviewed, review fix 10 implemented and awaiting review | pi 02 | - |
+| [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | active 2026-09-26, tasks 01-09 implemented and reviewed, review fix 10 implemented and awaiting review, task 11 implemented and awaiting review | pi 02 | - |
+| [10 - pi's models and history outlive the process, and pi loads without holding the daemon](pi/10-pi-outlives-the-process/plan.md) | high | active 2026-09-28; tasks 01-05 implemented and awaiting review, task 06 implemented and awaiting review | pi 01 | - |
 
 Next free number in `pi`: `10`.
 

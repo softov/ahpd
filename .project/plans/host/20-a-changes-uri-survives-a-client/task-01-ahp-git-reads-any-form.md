@@ -1,6 +1,6 @@
 ---
 title: ahp-git is minted with an authority and read in any client's form
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,12 @@ A modified file's `before` resolves from `ahp-git://head/<path>`, from the one-s
 - `node_modules/.bin/vitest run packages/sdk/test/changes-uris.test.ts` green.
 
 ## Resume
+
+Built. `beforeUri` mints `ahp-git://head/<absolute path>` with each path segment percent-encoded through a new `escaped` helper.
+A new `partsOf` parses a URI with `new URL`, rejoins its query and fragment to the path, and decodes each path segment, keeping one that does not decode as written.
+The `ahp-git:` half of `read` takes an authority of `head` or none and matches the longest known directory against the decoded path as before.
+
+- `packages/sdk/test/changes-uris.test.ts` holds a scratch repository with `docs/AHP.md` and `docs/a file #1.md` committed and modified, and checks the minted form, the one-slash form, the three-slash form and `a%20file%20#1.md`.
+- Failing first: the minted `before` did not start with `ahp-git://head/` ("expected false to be true"), and the one-slash form answered `undefined` ("expected undefined to be 'committed ahp\n'").
+- Gates, run after task 02: `pnpm typecheck` green, `pnpm boundary` green, `pnpm test` 105 files and 1443 tests green.
+  Two earlier full runs each had one timing failure in an unrelated file (`agent-cofold-tools.test.ts`, then `changes-refresh.test.ts`) that passed three times alone and in the third full run, with the machine's load average near 7.

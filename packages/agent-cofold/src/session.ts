@@ -738,7 +738,7 @@ export function cofoldSession(
     model?: Chosen,
     from?: MessageFrom,
     queuedMessageId?: string,
-  ): { mapping: TurnMapping; values: Record<string, unknown> } | undefined => {
+  ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
     if (closed || active !== undefined) return undefined;
     cancelRequested = false;
     failed = undefined;
@@ -798,7 +798,7 @@ export function cofoldSession(
       ...(reference !== undefined ? { model: reference } : {}),
     });
     activeMapping = mapping;
-    return { mapping, values };
+    return { mapping, values, reference };
   };
 
   /**
@@ -820,7 +820,14 @@ export function cofoldSession(
     try {
       const agent = agentOf(opened.values);
       liveAgent = agent;
-      live = run({ agent, session: sessionId, workspace: where, input: text });
+      live = run({
+        agent,
+        session: sessionId,
+        workspace: where,
+        input: text,
+        // Kept on the run record, which is where a rebuilt turn reads its model.
+        ...(opened.reference !== undefined ? { model: opened.reference } : {}),
+      });
     }
     catch (error) {
       void apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error), false);

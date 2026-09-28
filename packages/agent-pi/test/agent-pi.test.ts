@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { basename, join } from 'node:path';
+import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { Status } from '../../sdk/src/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
@@ -9,9 +9,11 @@ import { piAgent } from '../src/agent.js';
 import { forget } from '../src/catalog.js';
 import { activityOf, mapEvent, resultText } from '../src/mapping.js';
 import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
+import { loadPi } from '../src/pi.js';
 import { optionsOf } from '../src/plugin.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
+import { resumeOrCreate } from '../src/backend.js';
 import type { BackendOptions, PiBackend } from '../src/backend.js';
 import { toPiTool } from '../src/tools.js';
 import type { PiOptions, PiTurn } from '../src/types.js';
@@ -24,6 +26,10 @@ import type { PiOptions, PiTurn } from '../src/types.js';
  * under test is this package's half - the actions, their order, and the state
  * a client re-subscribing would be served - rather than pi.
  */
+
+// pi's SDK, loaded before any case, so a case that builds pi tools does not
+// wait seconds for the import inside a few milliseconds of settling.
+beforeAll(async () => { await loadPi(); }, 60_000);
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-pi-')); });
@@ -95,7 +101,8 @@ function opened(
     emit: (channel, action) => { sent.push({ channel, action }); },
     ...over,
   } as Start;
-  const session = piSession(options, start, open ?? pi.open);
+  // No file of pi's is read for a resumed session here: the fake has none.
+  const session = piSession(options, start, open ?? pi.open, async () => undefined);
   const types = (channel?: string) => sent
     .filter((one) => channel === undefined || one.channel === channel)
     .map((one) => String(one.action.type));
@@ -235,13 +242,13 @@ it('tells the host once pi has listed its models, and only once', async () => {
 const noClient = async (): Promise<{ text: string; ok: boolean }> => ({ text: '', ok: false });
 
 /** Call a pi tool definition the way pi does. */
-const callTool = async (tool: ReturnType<typeof toPiTool>, params: Record<string, unknown>): Promise<Bag> => {
+const callTool = async (tool: Awaited<ReturnType<typeof toPiTool>>, params: Record<string, unknown>): Promise<Bag> => {
   if (tool === undefined) throw new Error('no tool to call');
   return await tool.execute('c1', params as never, undefined, undefined, undefined as never) as unknown as Bag;
 };
 
-it('converts a bound tool to pi definition, keeping the name, title and schema', () => {
-  const tool = toPiTool({
+it('converts a bound tool to pi definition, keeping the name, title and schema', async () => {
+  const tool = await toPiTool({
     definition: {
       name: 'open_file',
       title: 'Open a file',
@@ -261,7 +268,7 @@ it('converts a bound tool to pi definition, keeping the name, title and schema',
 });
 
 it('answers a host tool with what run returned', async () => {
-  const tool = toPiTool({
+  const tool = await toPiTool({
     definition: { name: 'open_file' },
     run: async (input) => `opened ${String(input.path)}`,
   }, noClient);
@@ -270,15 +277,15 @@ it('answers a host tool with what run returned', async () => {
 });
 
 it('rejects the call when the host tool throws', async () => {
-  const tool = toPiTool({
+  const tool = await toPiTool({
     definition: { name: 'open_file' },
     run: async () => { throw new Error('no such file'); },
   }, noClient);
   await expect(callTool(tool, {})).rejects.toThrow('no such file');
 });
 
-it('drops a tool that would shadow one of pi own', () => {
-  expect(toPiTool({ definition: { name: 'bash' }, run: async () => 'no' }, noClient)).toBeUndefined();
+it('drops a tool that would shadow one of pi own', async () => {
+  expect(await toPiTool({ definition: { name: 'bash' }, run: async () => 'no' }, noClient)).toBeUndefined();
 });
 
 it('hands the host tools to pi as custom tools', async () => {
@@ -431,6 +438,21 @@ it('asks a person before a call runs, and runs it on their answer', async () => 
   expect(last('chat/toolCallConfirmed')?.approved).toBe(true);
   expect(last('chat/toolCallConfirmed')?.confirmed).toBe('user-action');
   expect(session.status()).toBe(Status.InProgress);
+});
+
+it('answers what it is waiting on in its state, so a client that connects late sees the question', async () => {
+  const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  expect(session.sessionState().inputNeeded).toBeUndefined();
+  const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  await settled();
+  const sentEntry = last('session/inputNeededSet')?.request;
+  expect(session.sessionState().inputNeeded).toEqual([sentEntry]);
+  session.confirm('c1', true);
+  await waiting;
+  expect(session.sessionState().inputNeeded).toBeUndefined();
 });
 
 it('blocks a declined call with the reason the model reads', async () => {
@@ -793,7 +815,7 @@ it('judges a running turn with the effects it was built with', async () => {
 });
 
 it('ends a host tool when pi aborts the call', async () => {
-  const tool = toPiTool({ definition: { name: 'slow' }, run: () => new Promise(() => {}) }, noClient);
+  const tool = await toPiTool({ definition: { name: 'slow' }, run: () => new Promise(() => {}) }, noClient);
   const stopping = new AbortController();
   const running = tool!.execute('c1', {} as never, stopping.signal, undefined, undefined as never);
   stopping.abort();
@@ -980,6 +1002,66 @@ it('ends the turn on pi settling, not on the prompt returning', async () => {
   pi.raise({ type: 'agent_settled' });
   await settled();
   expect(types('chat')).toContain('chat/turnComplete');
+});
+
+it('announces an edit before and after, for the absolute path, on the running turn', async () => {
+  const edits: [string, string, string][] = [];
+  const { session, pi } = opened({
+    settings: { permissionMode: 'bypassPermissions' },
+    onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
+  } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'edit', { path: 'src/a.ts', oldText: 'a', newText: 'b' });
+  await driveCall(pi, 'c2', 'read', { path: 'src/b.ts' });
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c2', toolName: 'read', result: 'b', isError: false });
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'edit', result: 'ok', isError: false });
+  expect(edits).toEqual([
+    ['t1', join(root, 'src/a.ts'), 'before'],
+    ['t1', join(root, 'src/a.ts'), 'after'],
+  ]);
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+  expect(edits).toHaveLength(2);
+});
+
+it('settles a write that never ended when the turn does', async () => {
+  const edits: [string, string, string][] = [];
+  const { session, pi } = opened({
+    settings: { permissionMode: 'bypassPermissions' },
+    onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
+  } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  const elsewhere = join(root, 'elsewhere', 'c.ts');
+  await driveCall(pi, 'c1', 'write', { path: elsewhere, content: 'c' });
+  expect(edits).toEqual([['t1', elsewhere, 'before']]);
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+  expect(edits).toEqual([['t1', elsewhere, 'before'], ['t1', elsewhere, 'after']]);
+});
+
+it('settles an open edit on its own turn when the prompt throws, and leaks nothing into the next', async () => {
+  const edits: [string, string, string][] = [];
+  const { session, pi } = opened({
+    settings: { permissionMode: 'bypassPermissions' },
+    onFileEdit: (turnId, path, phase) => { edits.push([turnId, path, phase]); },
+  } as Partial<Start>);
+  const prompt = pi.backend.prompt;
+  pi.backend.prompt = async () => {
+    pi.raise({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'edit', args: { path: 'a.ts' } });
+    throw new Error('provider went away');
+  };
+  session.begin('t1', 'hello');
+  await settled();
+  const path = join(root, 'a.ts');
+  expect(edits).toEqual([['t1', path, 'before'], ['t1', path, 'after']]);
+  pi.backend.prompt = prompt;
+  session.begin('t2', 'again');
+  await settled();
+  expect(edits).toHaveLength(2);
 });
 
 it('moves the finished turn out of active and into the transcript', async () => {
@@ -1348,13 +1430,23 @@ it('claims only the directories the host serves', () => {
   expect(agent.multipleDirectories).toBe(false);
 });
 
-it('offers nothing before a session exists, and says so rather than omitting it', async () => {
-  const agent = piAgent({}, [root]);
+it('offers pi models before a session exists, as a session offers them', async () => {
+  const { session, pi } = opened();
+  session.begin('t1', 'hello');
+  await settled();
+  const agent = piAgent({}, [root], pi.backend.models);
+  const probed = await agent.probe?.();
+  expect(probed).toEqual({ models: session.models(), customizations: [], commands: [] });
+  expect(probed?.models.map((one) => one.id)).toEqual(['anthropic/claude-opus-5', 'openai/gpt-5']);
+});
+
+it('offers no models when pi runtime cannot be built, rather than failing the probe', async () => {
+  const agent = piAgent({}, [root], async () => { throw new Error('auth.json is unreadable'); });
   expect(await agent.probe?.()).toEqual({ models: [], customizations: [], commands: [] });
 });
 
-it('has no transcript for a session this process never watched', async () => {
-  const agent = piAgent({}, [root]);
+it('has no transcript for a session with no file and no record', async () => {
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
   expect(await agent.transcript?.('never-opened')).toBeUndefined();
 });
 
@@ -1362,11 +1454,249 @@ it('reads back the turns of a session it did watch', async () => {
   const { session } = opened();
   session.begin('t1', 'hello');
   await settled();
-  const agent = piAgent({}, [root]);
+  const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
   const turns = await agent.transcript?.('pi-session-1');
   expect(turns?.map((one) => one.id)).toEqual(['t1']);
   expect(turns?.[0]?.message.text).toBe('hello');
   expect(turns?.[0]?.state).toBe('complete');
+});
+
+// A session from disk -------------------------------------------------------
+
+/** What pi stores for one assistant message, with the fields a test varies. */
+const answer = (content: Bag[], stopReason: string, extra: Bag = {}): never => ({
+  role: 'assistant',
+  content,
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  model: 'claude-opus-5',
+  usage: {
+    input: 10,
+    output: 5,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 15,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason,
+  timestamp: Date.now(),
+  ...extra,
+}) as never;
+
+/**
+ * A pi session file, written by pi's own `SessionManager`: a model and a level
+ * set first, pi's leading system message, a turn that thinks, answers and runs
+ * a tool, and a second turn that fails.
+ */
+async function sessionOnDisk(sessionDir: string) {
+  const { SessionManager } = await loadPi();
+  const store = SessionManager.create(root, sessionDir);
+  store.appendModelChange('anthropic', 'claude-opus-5');
+  store.appendThinkingLevelChange('medium');
+  store.appendMessage({ role: 'system', content: '', sections: { preamble: 'You are pi.' }, timestamp: Date.now() } as never);
+  const first = store.appendMessage({ role: 'user', content: [{ type: 'text', text: 'read a.ts' }], timestamp: Date.now() });
+  store.appendMessage(answer([
+    { type: 'thinking', thinking: 'I should read it.' },
+    { type: 'text', text: 'Reading it.' },
+    { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } },
+  ], 'toolUse'));
+  store.appendMessage({
+    role: 'toolResult',
+    toolCallId: 'call-1',
+    toolName: 'read',
+    content: [{ type: 'text', text: 'export {};' }],
+    isError: false,
+    timestamp: Date.now(),
+  } as never);
+  const firstEnd = store.appendMessage(answer([{ type: 'text', text: ' It is empty.' }], 'stop'));
+  const second = store.appendMessage({ role: 'user', content: 'again', timestamp: Date.now() });
+  const secondEnd = store.appendMessage(answer([], 'error', {
+    errorMessage: '429 rate limited',
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  }));
+  return { id: store.getSessionId(), first, firstEnd, second, secondEnd };
+}
+
+it('rebuilds a session it never watched from pi file, with the parts a live turn has', async () => {
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const turns = await piAgent({ sessionDir }, [root]).transcript?.(disk.id);
+  expect(turns?.map((one) => [one.id, one.message.text, one.state]))
+    .toEqual([[disk.first, 'read a.ts', 'complete'], [disk.second, 'again', 'error']]);
+  expect(turns?.[0]?.responseParts).toEqual([
+    { id: `${disk.first}:text`, kind: 'markdown', content: 'Reading it. It is empty.' },
+    { id: `${disk.first}:reasoning`, kind: 'reasoning', content: 'I should read it.' },
+    {
+      id: 'call-1',
+      kind: 'toolCall',
+      toolCall: {
+        toolCallId: 'call-1',
+        toolName: 'read',
+        displayName: 'read',
+        status: 'completed',
+        invocationMessage: 'read',
+        toolInput: JSON.stringify({ path: 'a.ts' }),
+        confirmed: 'not-needed',
+        success: true,
+        pastTenseMessage: 'read',
+      },
+    },
+  ]);
+  expect(turns?.[0]?.usage).toEqual({
+    inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, model: 'anthropic/claude-opus-5', _meta: { cacheWriteTokens: 0 },
+  });
+  expect(turns?.[1]?.responseParts).toEqual([
+    { id: `${disk.second}:text`, kind: 'markdown', content: '' },
+    { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' } },
+  ]);
+
+  // The same turn run live, as pi raises it, reads the same.
+  const { session, pi } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'read a.ts');
+  await settled();
+  const delta = (type: string, text: string): AgentSessionEvent =>
+    ({ type: 'message_update', assistantMessageEvent: { type, delta: text } }) as never;
+  pi.raise(delta('thinking_delta', 'I should read it.'));
+  pi.raise(delta('text_delta', 'Reading it.'));
+  await driveCall(pi, 'call-1', 'read', { path: 'a.ts' });
+  pi.raise({
+    type: 'tool_execution_end',
+    toolCallId: 'call-1',
+    toolName: 'read',
+    result: { content: [{ type: 'text', text: 'export {};' }] },
+    isError: false,
+  });
+  pi.raise(delta('text_delta', ' It is empty.'));
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+  const live = (session.allTurns()[0] as Bag).responseParts;
+  expect(JSON.parse(JSON.stringify(live).replaceAll('t1:', `${disk.first}:`))).toEqual(turns?.[0]?.responseParts);
+});
+
+it('answers where a turn from pi file ended, once the session is resumed', async () => {
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const session = await piAgent({ sessionDir }, [root], async () => []).create({
+    uri: 'ahp-session:/s1',
+    chatUri: 'ahp-chat:/s1',
+    settings: {},
+    workingDirectory: root,
+    schema: () => ({}),
+    emit: () => {},
+    resume: disk.id,
+  } as Start);
+  for (let i = 0; i < 200 && session.endPoint?.(disk.first) === undefined; i++) await settled();
+  expect(session.endPoint?.(disk.first)).toBe(disk.firstEnd);
+  expect(session.endPoint?.(disk.second)).toBe(disk.secondEnd);
+  session.close();
+});
+
+it('keeps the turns from pi file in the record of a session resumed and run again', async () => {
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const pi = fakePi();
+  (pi.backend as { id: string }).id = disk.id;
+  const agent = piAgent({ sessionDir }, [root], async () => []);
+  const resumed = { ...agent, create: (start: Start) => piSession({ sessionDir }, start, pi.open) };
+  const session = await resumed.create({
+    uri: 'ahp-session:/s1',
+    chatUri: 'ahp-chat:/s1',
+    settings: {},
+    workingDirectory: root,
+    schema: () => ({}),
+    emit: () => {},
+    resume: disk.id,
+  } as Start);
+  for (let i = 0; i < 200 && session.endPoint?.(disk.first) === undefined; i++) await settled();
+  session.begin('t3', 'once more');
+  await settled();
+  const turns = await agent.transcript?.(disk.id);
+  expect(turns?.map((one) => one.id)).toEqual([disk.first, disk.second, 't3']);
+  expect(turns?.[2]?.state).toBe('complete');
+  session.close();
+});
+
+it('reads a turn whose last answer was aborted as cancelled, as a stopped live turn is', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const at = new Date().toISOString();
+  const { turns } = replayEntries([
+    { type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } },
+    { type: 'message', id: 'a1', parentId: 'u1', timestamp: at, message: answer([{ type: 'text', text: 'Start' }], 'aborted') },
+  ] as never);
+  expect(turns.map((one) => one.state)).toEqual(['cancelled']);
+  expect(turns[0]?.parts).toEqual([{ id: 'u1:text', kind: 'markdown', content: 'Start' }]);
+});
+
+// The id a session is saved under --------------------------------------------
+
+const CLIENT_ID = '0192f5e0-7c1a-7b3e-9a4d-2f6c8e1b3a57';
+
+it('opens a new session under the UUID its URI names', async () => {
+  const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, chatUri: `ahp-chat:/${CLIENT_ID}` });
+  session.begin('t1', 'hello');
+  await settled();
+  expect(pi.opens[0]?.id).toBe(CLIENT_ID);
+  expect(pi.opens[0]?.resume).toBeUndefined();
+});
+
+it('leaves the id to pi when the URI does not name a UUID', async () => {
+  const { session, pi } = opened();
+  session.begin('t1', 'hello');
+  await settled();
+  expect(pi.opens[0]?.id).toBeUndefined();
+});
+
+it('resumes under the id it was resumed with, not the URI', async () => {
+  const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1' });
+  session.begin('t1', 'hello');
+  await settled();
+  expect(pi.opens[0]?.resume).toBe('pi-session-1');
+  expect(pi.opens[0]?.id).toBeUndefined();
+  expect(pi.opens[0]?.fork).toBeUndefined();
+});
+
+it('opens a fork as a copy of its source rather than the source itself', async () => {
+  const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1', forkAt: 't1' });
+  session.begin('t2', 'hello');
+  await settled();
+  expect(pi.opens[0]?.resume).toBe('pi-session-1');
+  expect(pi.opens[0]?.fork).toBe(true);
+  expect(pi.opens[0]?.id).toBeUndefined();
+});
+
+it('saves a new session under the id it was given, and lists it by that id', async () => {
+  const sdk = await loadPi();
+  const sessionDir = join(root, 'pi');
+  const store = resumeOrCreate(sdk, { cwd: root, sessionDir, id: CLIENT_ID });
+  expect(store.getSessionId()).toBe(CLIENT_ID);
+  store.appendMessage({ role: 'user', content: 'hello', timestamp: Date.now() });
+  store.appendMessage(answer([{ type: 'text', text: 'Hi.' }], 'stop'));
+  expect(basename(store.getSessionFile() ?? '')).toMatch(new RegExp(`_${CLIENT_ID}\\.jsonl$`));
+  const rows = await piAgent({ sessionDir }, [root]).list?.();
+  expect(rows?.map((one) => one.id)).toEqual([CLIENT_ID]);
+});
+
+it('creates a resumed id that has no file under that id', async () => {
+  const sdk = await loadPi();
+  const store = resumeOrCreate(sdk, { cwd: root, sessionDir: join(root, 'pi'), resume: CLIENT_ID });
+  expect(store.getSessionId()).toBe(CLIENT_ID);
+});
+
+it('forks a session from disk under a fresh id and leaves the source as it was', async () => {
+  const sdk = await loadPi();
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const source = sdk.SessionManager.findById(root, disk.id, sessionDir) as string;
+  const before = readFileSync(source, 'utf8');
+  const store = resumeOrCreate(sdk, { cwd: root, sessionDir, resume: disk.id, fork: true, id: CLIENT_ID });
+  expect(store.getSessionId()).not.toBe(disk.id);
+  expect(store.getBranch().map((one) => one.id)).toContain(disk.secondEnd);
+  store.appendMessage({ role: 'user', content: 'after the fork', timestamp: Date.now() });
+  expect(readFileSync(source, 'utf8')).toBe(before);
 });
 
 it('lists an empty directory as no sessions rather than failing', async () => {

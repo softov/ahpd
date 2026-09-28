@@ -34,6 +34,17 @@ export const THINKING_KEY = 'thinkingLevel';
 export const idOf = (model: PiModel): string => `${model.provider}/${model.id}`;
 
 /**
+ * One model as a session's `models()` and the agent's `probe` list it.
+ *
+ * The one shape both answer with, so the list the host holds from boot and the
+ * one a session reports later name every model the same way.
+ */
+export const listed = (model: PiModel): { id: string; name: string } => ({
+  id: idOf(model),
+  name: model.name ?? model.id,
+});
+
+/**
  * The model a wire id names.
  *
  * A qualified id is looked up as itself. A bare one - a draft written before

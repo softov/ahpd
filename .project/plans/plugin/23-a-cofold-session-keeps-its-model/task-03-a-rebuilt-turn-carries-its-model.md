@@ -1,6 +1,6 @@
 ---
 title: A rebuilt cofold turn carries the model it ran on
-status: todo
+status: implemented
 depends: [task-01-cofold-records-the-model-a-run-used.md, task-02-a-live-turn-carries-its-model.md]
 layer: "agent-cofold"
 refs:
@@ -38,3 +38,14 @@ After the daemon restarts, a cofold session's rebuilt turns carry `message.model
 - By hand, for Softov: restart the daemon, reopen a cofold session in VS Code, and the picker shows its model.
 
 ## Resume
+
+Implemented 2026-09-27.
+`packages/agent-cofold` depends on `@cofold/agents` `^0.1.2`, and the lockfile resolves it.
+The root `package.json` is raised to `^0.1.2` too and `minimumReleaseAgeExclude` names only `@cofold/agents@0.1.2`, so the lockfile holds no `@cofold/agents@0.1.1`.
+`openTurn` answers the reference it put on `message.model`, and `startTurn` passes it to `run()` as the `model` option, which cofold keeps on the `RunRecord`.
+`turnsOf` reads each run's `model` by its `inputMessageId` and puts it on the turn it opened, as `message.model.id` and as `usage.model`.
+A run with no `model` leaves its turn with neither.
+Two cases in `packages/agent-cofold/test/agent-cofold-store.test.ts` cover the restart on `open_router/x` and the run recorded without a model.
+The restart case was written first and failed on the rebuilt turn's `message.model.id`: `AssertionError: expected undefined to be 'open_router/x' // Object.is equality`.
+`node_modules/.bin/vitest run packages/agent-cofold`: 11 files, 112 tests passed.
+`pnpm typecheck` and `pnpm boundary` green, and `pnpm test`: 104 files, 1439 tests passed.

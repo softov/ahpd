@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -73,5 +73,15 @@ it('starts when a plugin brought one', async () => {
   expect(said).toContain('ahpd over stdio');
   expect(said).toContain('plugins echo-plugin');
   expect(said).not.toContain('No backend is loaded');
+  expect(code).toBe(0);
+}, 10000);
+
+it('hands a plugin every path the daemon serves', async () => {
+  const first = join(home, 'first');
+  const second = join(home, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  const { code, said } = await run({ paths: [first, second], plugins: ['./packages/server/test/fixtures/plugin-paths'] });
+  expect(said).toContain(`plugin paths ${JSON.stringify([first, second])}`);
   expect(code).toBe(0);
 }, 10000);

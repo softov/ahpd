@@ -1,7 +1,7 @@
 ---
 title: A changes URI opens in a client that normalises it
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-09-27
 revalidated: 2026-09-27
@@ -62,15 +62,17 @@ changeset row (before/after content URI) -> client URI.parse + toString -> resou
 | --- | --- | --- |
 | The fix is a host plan of its own. | Softov, 2026-09-27, asked where the fix goes: "New plan host/20". | - |
 | Each scheme ahpd mints is checked through a client's normal form. | the decision's Consequences | 03 |
+| The host takes `ahp-root://` and `ahp-root:` as the root channel, through one helper, as VS Code's `isAhpRootChannel` does (file:///github/externals/vscode, `src/vs/platform/agentHost/common/state/sessionState.ts` lines 760-777). | Softov, 2026-09-27, asked whether the host takes `ahp-root:`: "Accept both, as VS Code". | 03 |
+| A task plan host/21 already fixed is pinned with a regression test. | Softov, 2026-09-27, asked what happens to a task host/21 already fixed: "Pin it with the test". | 04 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahp-git: is minted with an authority and read in any client's form](task-01-ahp-git-reads-any-form.md) | todo | - |
-| [02 - ahp-edit: keeps the session out of the authority and is read by its parts](task-02-ahp-edit-reads-by-its-parts.md) | todo | 01 |
-| [03 - Every URI ahpd mints opens after a client normalises it](task-03-every-minted-uri-round-trips.md) | todo | 02 |
-| [04 - A file target an operation names is read decoded](task-04-a-file-target-is-read-decoded.md) | todo | 03 |
+| [01 - ahp-git: is minted with an authority and read in any client's form](task-01-ahp-git-reads-any-form.md) | implemented | - |
+| [02 - ahp-edit: keeps the session out of the authority and is read by its parts](task-02-ahp-edit-reads-by-its-parts.md) | implemented | 01 |
+| [03 - Every URI ahpd mints opens after a client normalises it](task-03-every-minted-uri-round-trips.md) | implemented | 02 |
+| [04 - A file target an operation names is read decoded](task-04-a-file-target-is-read-decoded.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -80,11 +82,12 @@ changeset row (before/after content URI) -> client URI.parse + toString -> resou
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-09-27.
-- **Next action:** [task-01-ahp-git-reads-any-form.md](task-01-ahp-git-reads-any-form.md), once plan host/21's tasks are committed.
+- **Done so far:** tasks 01 to 04 implemented, awaiting review.
+  `ahp-git:` and `ahp-edit:` are minted in the new forms and read by their parsed parts, the host takes `ahp-root:` as the root channel through `isRootChannel`, every other minted URI is pinned through the normaliser, and task 04 is pinned by regression cases.
+- **Next action:** review, then Softov's by-hand check in VS Code from task 03's Validation.
 - **Open questions:** none.
-- **Watch out for:** `packages/sdk/test/commit.test.ts` is host/21's; the cases here go in a file of their own.
-  A normaliser in a test must be checked against VS Code's `uri.ts`, not written from memory.
+- **Watch out for:** `packages/sdk/test/commit.test.ts` is host/21's; the cases here are in `packages/sdk/test/changes-uris.test.ts`.
+  The normaliser in that file was ported from VS Code's `uri.ts`; check it against `uri.ts` again if VS Code changes it.
   The VS Code clone is sparse: read `uri.ts` with `git -C /github/externals/vscode show HEAD:src/vs/base/common/uri.ts`, not from its working tree.
 
 ## Final verification checklist

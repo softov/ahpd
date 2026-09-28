@@ -1,6 +1,6 @@
 ---
 title: ahp-edit keeps the session out of the authority and is read by its parts
-status: todo
+status: implemented
 depends: [task-01-ahp-git-reads-any-form.md]
 layer: "sdk"
 refs:
@@ -36,3 +36,13 @@ A turn's captured sides resolve after VS Code has lowercased and decoded the URI
 - `node_modules/.bin/vitest run packages/sdk/test/changes-uris.test.ts` green.
 
 ## Resume
+
+Built. `capturedUri` mints `ahp-edit://turn/<base64url session>/<turn>/<phase>/<path>`, with the turn, the phase and each path segment percent-encoded.
+`kept` is keyed by `sideKey(session, turn, phase, path)`, and `rowsOf` and `observe` both fill it under that key.
+A new `sideOf` parses an `ahp-edit:` URI: under the `turn` authority the first segment is the session in base64url, and under any other authority the authority is the percent-encoded session of the older form.
+The turn is everything before the phase segment, and `sideOf` tries each place a `before` or `after` segment could start, because a `compare/<a>/<b>` scope is one encoded segment as minted and three segments once VS Code has decoded its `%2F`.
+
+- `changes-uris.test.ts` carries a normaliser ported from VS Code's `uri.ts` (`_regexp`, `percentDecode`, `encodeURIComponentFast` and `_asFormatted`) and checks it against the five outputs in the plan's Searches performed.
+- The cases capture both sides of `a file #1.md` for session `cofold:/Abc-123`, turn `t1`, and read them from the minted URI and from the normalised form, read a `compare/t1/t1` side in both forms, and read a side from the older `ahp-edit://<encoded session>/...` form sent back as given.
+- Failing first: the minted side did not start with `ahp-edit://turn/` ("expected false to be true"), and the normalised form of a `compare/t1/t1` side answered `undefined` ("expected undefined to be 'as left\n'").
+- Gates: `pnpm typecheck` green, `pnpm boundary` green, `pnpm test` 105 files and 1443 tests green.

@@ -381,6 +381,7 @@ export async function runForeground(options: Options): Promise<void> {
    */
   const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
     base,
+    paths: options.paths,
     configDir: configDir(),
     cwd: process.cwd(),
     log: stamp,
