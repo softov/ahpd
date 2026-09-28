@@ -1,6 +1,6 @@
 ---
 title: The loader checks a plugin's declared options schema
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

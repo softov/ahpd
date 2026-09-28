@@ -1,7 +1,7 @@
 ---
 title: A plugin declares a schema for its options, and the loader checks it
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -62,8 +62,8 @@ No decision records of its own; the choices below are scope.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The loader checks a declared options schema](task-01-the-loader-checks-the-schema.md) | implemented | - |
-| [02 - Each shipped plugin declares its schema](task-02-each-plugin-declares-its-schema.md) | implemented | 01 |
+| [01 - The loader checks a declared options schema](task-01-the-loader-checks-the-schema.md) | done | - |
+| [02 - Each shipped plugin declares its schema](task-02-each-plugin-declares-its-schema.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -71,14 +71,14 @@ No decision records of its own; the choices below are scope.
 
 ## Resume state
 
-- **Done so far:** tasks [01](task-01-the-loader-checks-the-schema.md) and [02](task-02-each-plugin-declares-its-schema.md) implemented with daemon/08 task 02, in the worktree `/github/.worktrees/ahpd-config-schema` on branch `config-schema` (uncommitted, awaiting review).
-- **Next action:** review both tasks. Then decide what to do about the README and manifest disagreements task 02 lists (computer's undocumented options, `ahpd.options` lists that differ from the schemas).
+- **Done so far:** tasks 01 and 02 done 2026-09-28 (`c3c23d6`), checked by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `ahpd plugin list` imports nothing, so it cannot check options; only a load does.
 
 ## Final verification checklist
 
-- [ ] `{ "name": "@ahpd/agent-acp", "options": { "command": 3 } }` is reported naming the plugin and `command`, and the daemon starts with its other backends.
-- [ ] `docs/PLUGINS.md` documents `optionsSchema`.
-- [ ] `pnpm typecheck`, `pnpm boundary` and the full `pnpm test` clean.
-- [ ] `plans/index.md` updated.
+- [x] `{ "name": "@ahpd/agent-acp", "options": { "command": 3 } }` is reported naming the plugin and `command`, and the daemon starts with its other backends.
+- [x] `docs/PLUGINS.md` documents `optionsSchema`.
+- [x] `pnpm typecheck`, `pnpm boundary` and the full `pnpm test` clean.
+- [x] `plans/index.md` updated.

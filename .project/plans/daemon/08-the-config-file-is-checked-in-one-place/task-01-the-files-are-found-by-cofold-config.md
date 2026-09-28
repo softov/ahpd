@@ -1,6 +1,6 @@
 ---
 title: The configuration files are found and merged by @cofold/config
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

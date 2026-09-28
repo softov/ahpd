@@ -18,7 +18,8 @@ What is in progress and what is waiting. Plans, decisions and docs say the rest;
 
 ## Waiting on Softov
 
-- Uncommitted on 2026-09-28, gates green in main's tree: the README and `package.json` pass over all 8 packages and the root README; [daemon/08](../plans/daemon/08-the-config-file-is-checked-in-one-place/plan.md) and [plugin/26](../plans/plugin/26-a-plugin-declares-its-options-schema/plan.md) implemented, awaiting review, on `@cofold/config` ^0.3.0 (released 2026-09-28, cofold `c7835d6`, tag `release-2026-09-28-2`). The `docs/` prose pass is next.
+- Committed on main 2026-09-28 (`8e54c94`, `c3c23d6`, `d0e9714`), not pushed: the README pass, [daemon/08](../plans/daemon/08-the-config-file-is-checked-in-one-place/plan.md) (built, Softov checked) and [plugin/26](../plans/plugin/26-a-plugin-declares-its-options-schema/plan.md) (built, Softov checked). The `docs/` prose pass is next.
+- After 0.8.0 is published, Softov checks the upgrade from his installed 0.7.0.
 - Found by plugin/26, not fixed: the computer README lists 9 of 18 options; `ahpd.options` manifests disagree with the code in tunnel-devtunnel, agent-acp, agent-pi, computer, and agent-cofold has none; cofold's README says `apiKey` may be a function.
 
 - [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on Softov choosing the approach (task 01).

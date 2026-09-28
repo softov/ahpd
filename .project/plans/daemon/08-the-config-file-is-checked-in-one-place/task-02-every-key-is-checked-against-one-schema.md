@@ -1,6 +1,6 @@
 ---
 title: Every configuration key is checked against one schema
-status: implemented
+status: done
 depends: [task-01-the-files-are-found-by-cofold-config.md]
 layer: "server"
 refs:

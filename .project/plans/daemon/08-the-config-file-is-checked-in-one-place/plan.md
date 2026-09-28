@@ -1,7 +1,7 @@
 ---
 title: The configuration is read through cofold and checked against one schema
 domain: daemon
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -79,8 +79,8 @@ ahpd [flags] -> @cofold/commands checks the flags against serverFields -> option
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The files are found and merged by @cofold/config](task-01-the-files-are-found-by-cofold-config.md) | implemented | - |
-| [02 - Every key is checked against one schema](task-02-every-key-is-checked-against-one-schema.md) | implemented | 01 |
+| [01 - The files are found and merged by @cofold/config](task-01-the-files-are-found-by-cofold-config.md) | done | - |
+| [02 - Every key is checked against one schema](task-02-every-key-is-checked-against-one-schema.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -88,18 +88,18 @@ ahpd [flags] -> @cofold/commands checks the flags against serverFields -> option
 
 ## Resume state
 
-- **Done so far:** tasks [01](task-01-the-files-are-found-by-cofold-config.md) and [02](task-02-every-key-is-checked-against-one-schema.md) implemented in the worktree `/github/.worktrees/ahpd-config-schema` on branch `config-schema` (uncommitted, awaiting review). Task 01 depends on the unreleased `@cofold/config` through `link:/github/.worktrees/cofold-config-layers/packages/config` in `packages/server/package.json` and its `pnpm-lock.yaml` entry, a placeholder.
-- **Next action:** review both tasks. After Softov approves and publishes `@cofold/config` with cofold commands/02, replace the link with `^<version>` and run `pnpm install`, then run the gates again. Then tick the checklist and update `plans/index.md`.
+- **Done so far:** tasks 01 and 02 done 2026-09-28 (`c3c23d6`, `d0e9714`), checked by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `@cofold/config` is a new dependency of `@ahpd/server`; `pnpm boundary` must list it. The plugin options half is [plugin/26](../../plugin/26-a-plugin-declares-its-options-schema/plan.md).
 
 ## Final verification checklist
 
-- [ ] `"port": "8080"` in `config.json` refuses the start naming the file and `port`.
-- [ ] `"plugin": [...]` prints a warning naming the file and `plugin`, and the daemon starts.
-- [ ] `$AHPD_CONFIG` is merged over the user file, and `ahpd config` names both files.
-- [ ] An `ahpd.json` or `.ahpd.json` in the working directory is not read.
-- [ ] `--config-file` reads that file only, with `$AHPD_CONFIG` set.
-- [ ] `pnpm typecheck`, `pnpm boundary` and the full `pnpm test` clean.
-- [ ] `docs/DAEMON.md` describes the layers and the checks.
-- [ ] `plans/index.md` updated.
+- [x] `"port": "8080"` in `config.json` refuses the start naming the file and `port`.
+- [x] `"plugin": [...]` prints a warning naming the file and `plugin`, and the daemon starts.
+- [x] `$AHPD_CONFIG` is merged over the user file, and `ahpd config` names both files.
+- [x] An `ahpd.json` or `.ahpd.json` in the working directory is not read.
+- [x] `--config-file` reads that file only, with `$AHPD_CONFIG` set.
+- [x] `pnpm typecheck`, `pnpm boundary` and the full `pnpm test` clean.
+- [x] `docs/DAEMON.md` describes the layers and the checks.
+- [x] `plans/index.md` updated.

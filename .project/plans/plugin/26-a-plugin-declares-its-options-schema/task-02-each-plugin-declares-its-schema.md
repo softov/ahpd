@@ -1,6 +1,6 @@
 ---
 title: Each shipped plugin declares its options schema
-status: implemented
+status: done
 depends: [task-01-the-loader-checks-the-schema.md]
 layer: "agent-acp, agent-claude, agent-cofold, agent-pi, computer, tunnel-devtunnel"
 refs:
