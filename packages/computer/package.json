@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/computer",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "A computer: resource provider for ahpd: machines reported read-only from a runtime, and host tools that make, use and release one",
   "keywords": [
@@ -54,7 +54,7 @@
     "test": "cd ../.. && vitest run packages/computer/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.7"
+    "@ahpd/sdk": "^0.8"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

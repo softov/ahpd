@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-cofold",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "An AHP backend over the cofold agent runtime: every model it can reach is a model inside one provider",
   "keywords": [
@@ -56,7 +56,7 @@
     "test": "cd ../.. && vitest run packages/agent-cofold/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.7"
+    "@ahpd/sdk": "^0.8"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

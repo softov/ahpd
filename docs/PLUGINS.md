@@ -273,7 +273,7 @@ else. There is no `manifest.json`.
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
-  "peerDependencies": { "@ahpd/sdk": "^0.7" },
+  "peerDependencies": { "@ahpd/sdk": "^0.8" },
   "ahpd": { "entry": "./dist/index.js", "title": "Mine" }
 }
 ```
@@ -286,7 +286,7 @@ else. There is no `manifest.json`.
 | `peerDependencies["@ahpd/sdk"]` | The compatibility range, checked **before** the module is imported |
 
 Compatibility supports `*`, an exact version, `^`, `~`, `>=`, `<=`, `>`, `<`,
-`=`, and a space-separated conjunction such as `>=0.7 <0.8`. Anything it cannot
+`=`, and a space-separated conjunction such as `>=0.8 <0.9`. Anything it cannot
 read is refused by name rather than passed, so a misspelled range fails loudly
 instead of loading unchecked. A package with no `peerDependencies` loads, because
 absent is not incompatible.
