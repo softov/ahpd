@@ -14,7 +14,7 @@ export { acpAgent } from './agent.js';
 export { catalogueOf, stateFile, watchedRows, watchSession } from './catalog.js';
 export { connectAcp } from './connection.js';
 export { mapUpdate } from './mapping.js';
-export { apply, name, title } from './plugin.js';
+export { apply, name, optionsSchema, title } from './plugin.js';
 export { acpSession } from './session.js';
 export { turnsOf } from './transcript.js';
 export type { TranscriptTurn } from './transcript.js';

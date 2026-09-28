@@ -1,10 +1,10 @@
 /**
  * The plugin entry: what the daemon imports when the package is named.
  *
- * `index.ts` re-exports `name` and `apply` from here, so the module the
- * manifest names is the plugin. There is deliberately no default export: the
- * loader refuses a module without a named `apply` rather than guessing which
- * export is the plugin.
+ * `index.ts` re-exports `name`, `apply` and `optionsSchema` from here, so the
+ * module the manifest names is the plugin. There is deliberately no default
+ * export: the loader refuses a module without a named `apply` rather than
+ * guessing which export is the plugin.
  *
  * One spec is one pi backend. Two specs with two providers would be two
  * backends on two sets of defaults rather than a collision, which is what
@@ -35,39 +35,36 @@ export const defaults = {
   projectTrust: 'trust',
 } as const;
 
-/** One non-empty string, or nothing for a value this package cannot use. */
-const str = (value: unknown): string | undefined =>
-  (typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined);
+/**
+ * The options `apply` receives, as a JSON Schema the daemon checks them against
+ * before `apply` runs.
+ *
+ * `projectTrust` has no `ask`, pi's third answer: there is nobody at a
+ * terminal, and a prompt nothing can answer is a session that never starts.
+ */
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    provider: { type: 'string', description: 'The id a client names in createSession. pi by default.' },
+    displayName: { type: 'string', description: 'What a person reads instead of the id. pi by default.' },
+    description: { type: 'string', description: 'One line about this backend.' },
+    model: { type: 'string', description: 'The model a new session runs on, as provider/modelId.' },
+    projectTrust: {
+      type: 'string',
+      enum: ['trust', 'deny'],
+      description: "Whether a project's own pi extensions, skills and prompts are loaded. trust by default.",
+    },
+    sessionDir: { type: 'string', description: "Where pi keeps its sessions. pi's own by default." },
+  },
+};
 
 /**
- * The package's own options, out of whatever the configuration named.
+ * The package's own options, out of values `optionsSchema` has checked.
  *
- * Every key is taken only when it has the type `PiOptions` declares for it, so
- * a misspelled value costs its own setting rather than the plugin. There is no
- * required option: pi needs a directory and a model provider, and both are
- * already its own to resolve.
+ * There is no required option: pi needs a directory and a model provider, and
+ * both are already its own to resolve.
  */
-export const optionsOf = (values: Record<string, unknown>): PiOptions => {
-  const options: PiOptions = {};
-  const provider = str(values.provider);
-  if (provider !== undefined) options.provider = provider;
-  const displayName = str(values.displayName);
-  if (displayName !== undefined) options.displayName = displayName;
-  const description = str(values.description);
-  if (description !== undefined) options.description = description;
-  const model = str(values.model);
-  if (model !== undefined) options.model = model;
-  const sessionDir = str(values.sessionDir);
-  if (sessionDir !== undefined) options.sessionDir = sessionDir;
-  /*
-   * `ask` is pi's third answer and not one a daemon can give: there is nobody
-   * at a terminal, and a prompt nothing can answer is a session that never
-   * starts. Anything but `deny` is `trust`, which is pi's own default.
-   */
-  const trust = str(values.projectTrust);
-  if (trust !== undefined) options.projectTrust = trust === 'deny' ? 'deny' : 'trust';
-  return options;
-};
+export const optionsOf = (values: Record<string, unknown>): PiOptions => values as PiOptions;
 
 /**
  * Register one pi backend from the plugin's own options.

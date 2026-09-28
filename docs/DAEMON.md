@@ -279,7 +279,15 @@ Writing one is [PLUGINS.md](PLUGINS.md).
 
 ## Configuration
 
-XDG: `$XDG_CONFIG_HOME/ahpd/config.json`, or `~/.config/ahpd/config.json`.
+The daemon reads two files, in this order, each merged over the one before it key by key:
+
+1. The user file: `$XDG_CONFIG_HOME/ahpd/config.json`, or `~/.config/ahpd/config.json`. Not there is not an error.
+2. The file `$AHPD_CONFIG` names, when it is set. It must exist. A relative `$AHPD_CONFIG` is taken from the working directory.
+
+A later file wins a key it sets, and an object such as `http` merges key by key; a list such as `paths` or `plugins` is replaced whole. No file in the working directory is read: starting `ahpd` inside a repository never picks up an `ahpd.json` or `.ahpd.json` from it, so per-project settings go through `$AHPD_CONFIG` or `--config-file`. `--config-file PATH` reads that file and nothing else, with `$AHPD_CONFIG` and the user file both left out.
+
+A relative path in a file - an entry of `paths`, `users`, `connectionTokenFile`, or a plugin spec starting with `.` - is taken from the directory of the file that set it, not from where the daemon was started. The startup block has a `config` line naming every file read, and `none` when there were none.
+
 Every flag can be a key instead, spelled without the dashes:
 
 ```json
@@ -324,11 +332,12 @@ A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
 `--path` or a `--plugin` on the command line **replaces** its list rather than
 adding to it, so a file naming two and a flag naming a third loads one, not
-three. `updateCheck` is the one key with no value to give: `false` is
-`--no-update-check`, and anything else is the default. `--no-plugins` is the one
+three. `"updateCheck": false` is `--no-update-check`. `--no-plugins` is the one
 flag with no key: leaving `plugins` out is already the off.
 
-`ahpd config` prints the path it read and what was in it.
+The merged files are checked against the same schema the flags are, before anything starts. A wrong value on a key ahpd knows refuses the start with exit code 2 and a line naming the file that set the key, and the key: `"port": "8080"` is `/home/you/.config/ahpd/config.json: port must be an integer`, and `"http": { "port": 70000 }` is `...: http.port must be an integer between 0 and 65535`. A key ahpd does not know, such as `"plugin"` for `"plugins"` or one a newer version added, is one line in the log, `/home/you/.config/ahpd/config.json: plugin is not a setting ahpd knows; ignored`, and the daemon starts without it. `stdio`, `configFile` and `noPlugins` mean something only when typed, so the file warns about them the same way.
+
+`ahpd config` prints every file it read, then each key and its value; with more than one file, each key also names the file that set it. `ahpd config --json` answers `files`, `config` and `sources`, the file per key.
 
 ## Who may connect
 

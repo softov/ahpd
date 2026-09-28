@@ -1,4 +1,4 @@
-export { apply, defaults, name, title } from './plugin.js';
+export { apply, defaults, name, optionsSchema, title } from './plugin.js';
 export { computerProvider } from './provider.js';
 export type { ComputerProvider, ProviderOptions } from './provider.js';
 export { cliOf, devContainer, DEVCONTAINER_FOLDER, hasDefinition, idLabels, parseUp, runCli } from './devcontainer.js';

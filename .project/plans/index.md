@@ -22,8 +22,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/05-an-http-api/implemented.md)) | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | daemon 03 | - |
+| [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | active 2026-09-28, tasks 01-02 implemented, awaiting review | cofold commands/02 | plugin 26 |
 
-Next free number in `daemon`: `08`.
+Next free number in `daemon`: `09`.
 
 ## host
 
@@ -118,8 +119,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/23-a-cofold-session-keeps-its-model/implemented.md)) | plugin 14 | - |
 | [24 - The log says when each plugin starts loading and how long it took](plugin/24-the-log-times-each-plugin/plan.md) | medium | built 2026-09-28 ([implemented.md](plugin/24-the-log-times-each-plugin/implemented.md)) | plugin 01 | - |
 | [25 - A plugin's agent sees every path the daemon serves](plugin/25-a-plugin-agent-sees-every-served-path/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/25-a-plugin-agent-sees-every-served-path/implemented.md)) | plugin 01 | - |
+| [26 - A plugin declares a schema for its options, and the loader checks it](plugin/26-a-plugin-declares-its-options-schema/plan.md) | medium | active 2026-09-28, tasks 01-02 implemented, awaiting review | daemon 08 | - |
 
-Next free number in `plugin`: `26`.
+Next free number in `plugin`: `27`.
 
 ## container
 

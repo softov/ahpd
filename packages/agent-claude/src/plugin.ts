@@ -1,10 +1,10 @@
 /**
  * The plugin entry: what the daemon imports when the package is named.
  *
- * `index.ts` re-exports `name` and `apply` from here, so the module the
- * manifest names is the plugin. There is deliberately no default export: the
- * loader refuses a module without a named `apply` rather than guessing which
- * export is the plugin.
+ * `index.ts` re-exports `name`, `apply` and `optionsSchema` from here, so the
+ * module the manifest names is the plugin. There is deliberately no default
+ * export: the loader refuses a module without a named `apply` rather than
+ * guessing which export is the plugin.
  *
  * The daemon has no backend of its own - decision `the-daemon-bundles-no-agent`
  * - so this is how Claude Code reaches a host: one entry in `plugins`, with
@@ -27,43 +27,35 @@ export const name = '@ahpd/agent-claude';
  */
 export const title = 'Claude';
 
-/** One non-empty string, or nothing for a value this package cannot use. */
-const str = (value: unknown): string | undefined =>
-  (typeof value === 'string' && value.trim() !== '' ? value : undefined);
-
-/** A list of strings with something in it, or nothing. */
-const words = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const out = value.filter((one): one is string => typeof one === 'string' && one !== '');
-  return out.length === 0 ? undefined : out;
+/**
+ * The options `apply` receives, as a JSON Schema the daemon checks them against
+ * before `apply` runs.
+ */
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    paths: { type: 'array', items: { type: 'string' }, description: "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
+    provider: { type: 'string', description: 'The id clients name. claude unless something else already is.' },
+    computerExecutable: { type: 'string', description: "Where the CLI is inside a machine. claude on the image's PATH by default." },
+    computerConfigDir: {
+      anyOf: [{ type: 'string' }, { const: false }],
+      description: "The configuration directory the CLI reads inside a machine. /ahpd/claude by default; false leaves the image's own.",
+    },
+    workerStop: { type: 'string', enum: ['worker', 'session'], description: "What a stop given in a subagent's chat stops. worker by default." },
+  },
 };
 
 /**
- * The package's own options, out of whatever the configuration named.
+ * The package's own options, out of values `optionsSchema` has checked.
  *
  * `paths` defaults to the host's, which is the whole configuration in the
  * ordinary install: the directories the daemon was started on are the ones
  * this backend lists. A deployment that wants the catalogue narrower than the
  * host names its own.
- *
- * `computerConfigDir` takes `false` as itself, because `false` is a value with
- * a meaning here - leave the image's own configuration directory alone - and
- * not the absence of one.
  */
 const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOptions => {
-  const options: ClaudeOptions = { paths: words(values.paths) ?? host.paths };
-  const provider = str(values.provider);
-  if (provider !== undefined) options.provider = provider;
-  const executable = str(values.computerExecutable);
-  if (executable !== undefined) options.computerExecutable = executable;
-  if (values.computerConfigDir === false) {
-    options.computerConfigDir = false;
-  } else {
-    const configDir = str(values.computerConfigDir);
-    if (configDir !== undefined) options.computerConfigDir = configDir;
-  }
-  if (values.workerStop === 'worker' || values.workerStop === 'session') options.workerStop = values.workerStop;
-  return options;
+  const said = values as Partial<ClaudeOptions>;
+  return { ...said, paths: said.paths ?? host.paths };
 };
 
 /** Register the Claude backend over the directories the host serves. */

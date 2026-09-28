@@ -90,7 +90,7 @@ it('names the command with the file the daemon was started with', async () => {
 });
 
 it('starts when a plugin brought one', async () => {
-  const { code, said } = await run({ plugins: ['./packages/server/test/fixtures/plugin-echo'] });
+  const { code, said } = await run({ plugins: [join(REPO, 'packages/server/test/fixtures/plugin-echo')] });
   // It got as far as announcing itself, which is past the refusal, and then
   // ended the way a host on stdio ends: the peer at the other end left.
   expect(said).toContain('ahpd over stdio');
@@ -104,7 +104,7 @@ it('hands a plugin every path the daemon serves', async () => {
   const second = join(home, 'second');
   mkdirSync(first);
   mkdirSync(second);
-  const { code, said } = await run({ paths: [first, second], plugins: ['./packages/server/test/fixtures/plugin-paths'] });
+  const { code, said } = await run({ paths: [first, second], plugins: [join(REPO, 'packages/server/test/fixtures/plugin-paths')] });
   expect(said).toContain(`plugin paths ${JSON.stringify([first, second])}`);
   expect(code).toBe(0);
 }, 10000);

@@ -21,7 +21,7 @@ export { claude } from './claude.js';
 export type { ClaudeOptions } from './claude.js';
 export { createSession, EFFORTS, EFFORT_LABELS } from './session.js';
 export type { Published } from './session.js';
-export { apply, name, title } from './plugin.js';
+export { apply, name, optionsSchema, title } from './plugin.js';
 export { probe } from './probe.js';
 export { turnsOf } from './transcript.js';
 export { protectedResource, urlOf } from './mcp.js';

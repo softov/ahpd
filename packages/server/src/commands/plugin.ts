@@ -15,7 +15,7 @@ import { installPlugins, removePlugins, run as runProgram } from '../install.js'
 import { describePlugin, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
 import { withoutSpecSecrets, withoutUserinfoIn } from './config.js';
-import { optionsFrom, pluginWriteFields, serverFields, servedPluginWriteFields, stop } from './options.js';
+import { optionsFrom, pluginWriteFields, flagFields, servedPluginWriteFields, stop } from './options.js';
 import type { ServedFacts } from './served.js';
 
 export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
@@ -26,7 +26,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     surfaces: { cli: { pattern: ['plugin', 'list'] }, http: { method: 'GET', path: '/plugin/list' } },
     scopes: ['config:read'],
     // Served, the list is the daemon's own, so no field could name another.
-    ...(served === undefined ? { input: serverFields } : {}),
+    ...(served === undefined ? { input: flagFields } : {}),
     run: async (context) => {
       const options = served === undefined
         ? optionsFrom(context.input as Readonly<Record<string, unknown>>)

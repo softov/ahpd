@@ -64,7 +64,7 @@ function people(
   }
   const input = context.input;
   const named = typeof input['users'] === 'string' ? input['users'] : undefined;
-  const from = loadConfig(typeof input['configFile'] === 'string' ? input['configFile'] : undefined);
+  const from = loadConfig(typeof input['configFile'] === 'string' ? input['configFile'] : undefined).values;
   const path = named ?? from.users;
   if (path === undefined) stop('No user file. Pass --users <file> or set "users" in the configuration.');
   const where = {

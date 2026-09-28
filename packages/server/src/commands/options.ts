@@ -1,10 +1,12 @@
 /**
  * The daemon's flags as one declaration, and the file underneath them.
  *
- * Every flag is a field here and every field is a flag: `@cofold/commands`
- * spells each one for the terminal, for help, for completion and for the JSON
- * input a command is run with. `optionsFrom` takes the canonical input a
- * surface produced and folds `config.json` under it.
+ * Every flag is a field here: `@cofold/commands` spells each one for the
+ * terminal, for help, for completion and for the JSON input a command is run
+ * with. `http` is the one field that is not a flag, because only the file sets
+ * it. `configSchema` is the same fields as the file writes them, and
+ * `optionsFrom` checks `config.json` against it and folds the canonical input a
+ * surface produced over it.
  *
  * The fields carry no `default`, deliberately: a value that came from the
  * configuration file has to be told apart from one that came from a flag, and
@@ -13,9 +15,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { ArgumentError, CofoldError, type Field, type OptionSpec } from '@cofold/commands';
+import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
-import type { HttpSetting } from '../config.js';
+import type { Config, HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
 
 /** What this daemon was told, after argv and the configuration file were folded. */
@@ -67,6 +69,10 @@ export interface Options {
   noPlugins: boolean;
   /** Ask npm, in the background, whether a newer version exists. */
   updateCheck: boolean;
+  /** One line for each key the configuration holds that this daemon does not know. */
+  warnings: string[];
+  /** The configuration files read, in the order they were merged. */
+  configFiles: string[];
 }
 
 /*
@@ -186,6 +192,14 @@ export const serverFields = {
     description: 'Append every frame, both directions, to this file as JSON lines.',
     cli: { value: 'FILE' },
   },
+  http: {
+    type: ['object', 'boolean'],
+    properties: {
+      port: { type: 'integer', minimum: 0, maximum: 65535 },
+      host: { type: 'string', pattern: '^\\S+$' },
+    },
+    description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
+  },
   plugins: {
     type: 'array',
     items: { type: 'string' },
@@ -203,6 +217,50 @@ export const serverFields = {
     cli: { negatable: true },
   },
 } satisfies Record<string, Field>;
+
+/** The fields only the configuration file sets, which have no flag. */
+const FILE_ONLY = ['http'] as const;
+
+/** The flags that mean something only when typed, which the file does not set. */
+const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins'] as const;
+
+/** A copy of `fields` without the keys named. */
+const without = <T extends Record<string, Field>, K extends keyof T>(fields: T, keys: readonly K[]): Omit<T, K> =>
+  Object.fromEntries(Object.entries(fields).filter(([key]) => !(keys as readonly string[]).includes(key))) as Omit<T, K>;
+
+/** Every flag a run takes: `serverFields` less the ones only the file sets. */
+export const flagFields = without(serverFields, FILE_ONLY);
+
+/** A key `config.json` may hold. */
+export type ConfigKey = Exclude<keyof typeof serverFields, typeof TYPED_ONLY[number]>;
+
+/** A field as a plain schema, without its terminal spelling and environment variable. */
+const schemaOf = ({ cli: _cli, env: _env, ...schema }: Field): JsonSchema => schema;
+
+/** One `plugins` entry as the file writes it: a spec, or an object naming one. */
+const pluginEntry: JsonSchema = {
+  type: ['string', 'object'],
+  properties: {
+    name: { type: 'string' },
+    options: { type: 'object' },
+    enabled: { type: 'boolean' },
+  },
+  required: ['name'],
+};
+
+/**
+ * What `config.json` may hold, as one object schema.
+ *
+ * Built from `serverFields`, so a flag added there is checked in the file too.
+ * `plugins` takes objects as well as the strings `--plugin` does.
+ */
+export const configSchema: { type: 'object'; properties: Record<ConfigKey, JsonSchema> } = {
+  type: 'object',
+  properties: {
+    ...Object.fromEntries(Object.entries(without(serverFields, TYPED_ONLY)).map(([key, field]) => [key, schemaOf(field)])) as Record<ConfigKey, JsonSchema>,
+    plugins: { ...schemaOf(serverFields.plugins), items: pluginEntry },
+  },
+};
 
 /** The fields a person is managed with, which every `user` sub-command accepts. */
 export const userFields = {
@@ -259,68 +317,64 @@ export const servedPluginWriteFields = {
   keep: pluginWriteFields.keep,
 } satisfies Record<string, Field>;
 
-/** A string that was actually given, which a canonical input may not have. */
-const said = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-
-/** A value from the flags, or the file under them, or nothing. */
-const under = (input: Readonly<Record<string, unknown>>, key: string, file: unknown): string | undefined =>
-  said(input[key]) ?? said(file);
-
-const isOneOf = (value: unknown, ...allowed: readonly string[]): boolean =>
-  typeof value === 'string' && allowed.includes(value);
+/**
+ * The merged configuration, held to `configSchema`.
+ *
+ * A key the schema names with a value it refuses stops the start with
+ * `<file>: <key> must be ...`, naming the file `source` says set it. A key it
+ * does not name answers one line, and the caller carries on without it.
+ */
+export function checkConfig(file: object, source: (key: string) => string): string[] {
+  const warnings: string[] = [];
+  for (const [key, value] of Object.entries(file)) {
+    if (!Object.hasOwn(configSchema.properties, key)) {
+      warnings.push(`${source(key)}: ${key} is not a setting ahpd knows; ignored`);
+      continue;
+    }
+    try {
+      check(value, configSchema.properties[key as ConfigKey], key);
+    }
+    catch (error) {
+      stop(`${source(key)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return warnings;
+}
 
 /**
- * `http` as the configuration may spell it.
- *
- * `true` and an object are both on; `false` and absent are off. A value that is
- * neither refuses the start rather than being guessed at, because a person who
- * wrote `"port": "8080"` meant something and a daemon that quietly dropped it
- * would serve the API where they were not looking. `host` binds the API's own
- * listener and has none to bind without a `port`, so it is refused on its own -
- * decision `http-host-binds-the-apis-own-listener`.
+ * `http` as a run takes it: `true` is the daemon's own listener, `false` and
+ * absent are off. `host` binds the API's own listener and has none to bind
+ * without a `port`, so it is refused on its own.
  */
-const httpOf = (value: unknown): HttpSetting | undefined => {
+const httpOf = (value: Config['http'], source: string): HttpSetting | undefined => {
   if (value === undefined || value === false) return undefined;
   if (value === true) return {};
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return stop(`"http" must be true, false, or an object with "port" and "host", not ${JSON.stringify(value)}.`);
+  if (value.host !== undefined && value.port === undefined) {
+    return stop(`${source}: http.host names the API's own listener, so it needs an http.port to bind.`);
   }
-  const held = value as { port?: unknown; host?: unknown };
-  if (held.host !== undefined && typeof held.host !== 'string') {
-    return stop(`http.host must be a string, not ${JSON.stringify(held.host)}.`);
-  }
-  if (typeof held.host === 'string' && (held.host === '' || held.host.trim() !== held.host)) {
-    return stop(`http.host must name an address, not ${JSON.stringify(held.host)}.`);
-  }
-  if (held.host !== undefined && held.port === undefined) {
-    return stop('http.host names the API\'s own listener, so it needs an http.port to bind.');
-  }
-  if (held.port === undefined) return {};
-  if (typeof held.port !== 'number' || !Number.isInteger(held.port) || held.port < 0 || held.port > 65535) {
-    return stop(`http.port must be a number from 0 to 65535, not ${JSON.stringify(held.port)}.`);
-  }
-  return { port: held.port, ...(held.host === undefined ? {} : { host: held.host }) };
+  return value;
 };
 
 /**
- * The canonical input and the configuration file, as the options a run takes.
+ * The canonical input and the configuration files, as the options a run takes.
  *
- * The order is what was typed, then the file, then the default, because a flag
- * is this run and a file is every run until somebody edits it; the defaults
- * live here, after the file, rather than on the fields.
+ * The merged files are checked first, then the order is what was typed, then
+ * the files, then the default, because a flag is this run and a file is every
+ * run until somebody edits it; the defaults live here, after the files, rather
+ * than on the fields. The canonical input has already been checked against the
+ * same fields.
  */
 export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
-  const configFile = said(input['configFile']);
-  const file = loadConfig(configFile);
+  const configFile = input['configFile'] as string | undefined;
+  const loaded = loadConfig(configFile);
+  const file = loaded.values;
+  /** The file that set a key, which every sentence about that key names. */
+  const source = (key: string): string => loaded.sourceOf(key) ?? configFile ?? configPath();
+  const warnings = checkConfig(file, source);
   const noPlugins = input['noPlugins'] === true;
 
-  const namedPlugins = Array.isArray(input['plugins']) ? input['plugins'] as string[] : [];
-  const plugins: PluginSpec[] = [];
-  for (const named of namedPlugins) {
-    const spec = asSpec(named);
-    if (spec === undefined) stop(`--plugin takes a name or a path, not ${named}.`);
-    plugins.push(spec);
-  }
+  /** A key as the flag gave it, or the file under it. */
+  const given = <K extends ConfigKey>(key: K): Config[K] => (input[key] as Config[K] | undefined) ?? file[key];
 
   /*
    * The plugins, under the flags.
@@ -331,59 +385,57 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
    * explicit off, and passing it beside a `--plugin` is refused rather than
    * resolved, because nobody means both.
    */
-  if (noPlugins && plugins.length > 0) {
+  const typed = input['plugins'] as string[] | undefined;
+  if (noPlugins && typed !== undefined && typed.length > 0) {
     stop('--no-plugins contradicts the --plugin you also passed.');
   }
-  if (plugins.length === 0 && !noPlugins && Array.isArray(file.plugins)) {
-    file.plugins.forEach((entry, index) => {
+  const plugins: PluginSpec[] = [];
+  if (!noPlugins) {
+    (given('plugins') ?? []).forEach((entry, index) => {
       const spec = asSpec(entry);
       if (spec === undefined) {
-        stop(`${configFile ?? configPath()} has plugins[${String(index)}] = ${JSON.stringify(entry)}, which is not a plugin spec.`);
+        stop(typed === undefined
+          ? `${source('plugins')} has plugins[${String(index)}] = ${JSON.stringify(entry)}, which is not a plugin spec.`
+          : `--plugin takes a name or a path, not ${String(entry)}.`);
       }
       plugins.push(spec);
     });
   }
 
-  const paths = Array.isArray(input['paths'])
-    ? [...input['paths'] as string[]]
-    : Array.isArray(file.paths) ? [...file.paths] : [];
+  const paths = [...given('paths') ?? []];
   if (paths.length === 0) paths.push(process.cwd());
 
-  const port = typeof input['port'] === 'number' ? input['port'] : file.port;
-  const host = under(input, 'host', file.host);
-  const token = under(input, 'connectionToken', file.connectionToken);
-  const tokenFile = under(input, 'connectionTokenFile', file.connectionTokenFile);
-  const users = under(input, 'users', file.users);
-  const resource = under(input, 'resource', file.resource);
-  const issuer = under(input, 'issuer', file.issuer);
-  const wire = under(input, 'wire', file.wire);
-  const http = httpOf(file.http);
-  const automations = isOneOf(input['automations'], 'file', 'memory') ? input['automations'] as 'file' | 'memory'
-    : isOneOf(file.automations, 'file', 'memory') ? file.automations as 'file' | 'memory' : 'file';
-  const sessions = isOneOf(input['sessions'], 'file', 'memory') ? input['sessions'] as 'file' | 'memory'
-    : isOneOf(file.sessions, 'file', 'memory') ? file.sessions as 'file' | 'memory' : 'file';
+  const token = given('connectionToken');
+  const tokenFile = given('connectionTokenFile');
+  const users = given('users');
+  const resource = given('resource');
+  const issuer = given('issuer');
+  const wire = given('wire');
+  const http = httpOf(file.http, source('http'));
 
   return {
-    port: typeof port === 'number' ? port : 9187,
-    host: host ?? '127.0.0.1',
+    port: given('port') ?? 9187,
+    host: given('host') ?? '127.0.0.1',
     stdio: input['stdio'] === true,
     paths,
     ...(token === undefined ? {} : { token }),
     ...(tokenFile === undefined ? {} : { tokenFile }),
-    open: input['withoutConnectionToken'] === true || file.withoutConnectionToken === true,
+    open: given('withoutConnectionToken') ?? false,
     ...(configFile === undefined ? {} : { configFile }),
     ...(users === undefined ? {} : { users }),
     ...(resource === undefined ? {} : { resource }),
     ...(issuer === undefined ? {} : { issuer }),
-    trustToken: input['trustToken'] === true || file.trustToken === true,
-    advancedTools: input['advancedTools'] === true || file.advancedTools === true,
-    automations,
-    sessions,
+    trustToken: given('trustToken') ?? false,
+    advancedTools: given('advancedTools') ?? false,
+    automations: given('automations') ?? 'file',
+    sessions: given('sessions') ?? 'file',
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
     plugins,
     noPlugins,
-    updateCheck: typeof input['updateCheck'] === 'boolean' ? input['updateCheck'] : file.updateCheck !== false,
+    updateCheck: given('updateCheck') ?? true,
+    warnings,
+    configFiles: loaded.files,
   };
 }
 

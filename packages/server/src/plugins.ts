@@ -26,6 +26,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { check, type JsonSchema } from '@cofold/commands';
 import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
 import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
@@ -186,6 +187,10 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
 /** One error, as the one line a person reads. */
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** Whether a value is a plain object, which is what a schema and its `properties` are. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 /** What a plugin's own `package.json` says, read without judging it. */
 export interface Manifest {
   /** The `package.json` it was read from, for every message about it. */
@@ -333,9 +338,10 @@ export interface OneResult {
  *
  * The order is the point: the manifest is read and the range checked before
  * `import()` is reached, so an incompatible or malformed plugin is never
- * executed. Everything after that - the import, the shape of the module and
- * `apply` itself - is caught and turned into a problem line, because a plugin
- * that throws must cost a line in the log rather than the daemon.
+ * executed. Everything after that - the import, the shape of the module, its
+ * options held to the `optionsSchema` it exports, and `apply` itself - is
+ * caught and turned into a problem line, because a plugin that throws must cost
+ * a line in the log rather than the daemon.
  */
 export async function loadOne(resolved: Resolved, options: LoadOneOptions): Promise<OneResult> {
   const problems: string[] = [];
@@ -416,11 +422,29 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     : undefined;
   const named = typeof spec === 'object' && spec !== null ? spec.options : undefined;
   const values: Record<string, unknown> = { ...(defaults ?? {}), ...(named ?? {}) };
+  const optionsSchema = isRecord(held.optionsSchema) ? held.optionsSchema : undefined;
+  if (held.optionsSchema !== undefined && optionsSchema === undefined) {
+    return { problems: [...problems, `plugin ${name} skipped: its optionsSchema is not an object`] };
+  }
+  if (optionsSchema !== undefined) {
+    const label = `plugins.${name}.options`;
+    try {
+      check(values, optionsSchema as JsonSchema, label);
+    }
+    catch (error) {
+      return { problems: [...problems, `plugin ${name} skipped: ${messageOf(error)}`] };
+    }
+    const known = isRecord(optionsSchema.properties) ? optionsSchema.properties : {};
+    for (const key of Object.keys(named ?? {})) {
+      if (!Object.hasOwn(known, key)) problems.push(`plugin ${name}: ${label}.${key} is not an option ${name} knows; passed through`);
+    }
+  }
   const plugin: Plugin = {
     name,
     apply,
     ...(title === undefined ? {} : { title }),
     ...(defaults === undefined ? {} : { defaults }),
+    ...(optionsSchema === undefined ? {} : { optionsSchema }),
   };
 
   const { host, contribution } = pluginHost(name, {

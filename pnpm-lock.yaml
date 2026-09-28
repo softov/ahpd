@@ -136,6 +136,9 @@ importers:
       '@cofold/commands':
         specifier: ^0.2.2
         version: 0.2.2
+      '@cofold/config':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@cofold/remote':
         specifier: ^0.4.0
         version: 0.4.0
@@ -314,6 +317,10 @@ packages:
 
   '@cofold/commands@0.2.2':
     resolution: {integrity: sha512-dmZp+tRQsB+59MkkfB1+lu+6r2a5VEUC4KxqkS3wL0wdUyXhaOwzhLzZZjR/tKjuPkkJnA9qjOgcP7iiDqh1yw==}
+    engines: {node: '>=22'}
+
+  '@cofold/config@0.3.0':
+    resolution: {integrity: sha512-VikCUhM9iC4EHQ01bjXpXkl1g0C+kVY3kaoXLWVkP8sKoEdXEpygMEpNYM0QQeKes71vLJ+CIsZjh+ADECTuNA==}
     engines: {node: '>=22'}
 
   '@cofold/model-openai-compat@0.1.1':
@@ -1860,6 +1867,10 @@ snapshots:
   '@cofold/commands@0.2.2':
     dependencies:
       '@cofold/sdk': 0.2.0
+
+  '@cofold/config@0.3.0':
+    dependencies:
+      '@cofold/commands': 0.2.2
 
   '@cofold/model-openai-compat@0.1.1(@cofold/agents@0.1.2)':
     dependencies:

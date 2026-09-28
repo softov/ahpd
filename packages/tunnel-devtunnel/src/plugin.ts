@@ -63,11 +63,18 @@ export interface Options {
   anonymous?: boolean;
 }
 
-const word = (value: unknown): string | undefined =>
-  (typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined);
-
-const flag = (value: unknown, fallback: boolean): boolean =>
-  (typeof value === 'boolean' ? value : fallback);
+/**
+ * `Options` as a JSON Schema, which the daemon checks what the configuration
+ * named against before `apply` runs.
+ */
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', description: "What the tunnel is called in a client's list. This machine's hostname by default." },
+    keep: { type: 'boolean', description: 'Whether the tunnel outlives the daemon. true by default.' },
+    anonymous: { type: 'boolean', description: 'Whether somebody not signed in to this account may reach it. false by default.' },
+  },
+};
 
 /** What was stood up, so `stopping` can take it back down. */
 interface Held {
@@ -91,9 +98,9 @@ export interface Seams {
 export const apply: Plugin['apply'] = (plugin, options) => {
   const asked: Options = options;
   const seams = options as Seams;
-  const keep = flag(asked.keep, defaults.keep);
-  const anonymous = flag(asked.anonymous, defaults.anonymous);
-  const wanted = word(asked.name);
+  const keep = asked.keep ?? defaults.keep;
+  const anonymous = asked.anonymous ?? defaults.anonymous;
+  const wanted = asked.name;
 
   let held: Held | undefined;
 

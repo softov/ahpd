@@ -1,8 +1,9 @@
 /**
  * `ahpd config`: say where the configuration is, and what it says.
  *
- * The file is read as it stands and printed as JSON values, so what a person
- * sees is what the daemon will fold - no key is interpreted here.
+ * The files are read as the daemon reads them, merged and with relative paths
+ * made absolute, and printed as JSON values beside the file that set each key -
+ * no key is checked or interpreted here.
  */
 
 import { existsSync } from 'node:fs';
@@ -10,7 +11,7 @@ import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
 import { configPath, loadConfig, type Config } from '../config.js';
-import { serverFields } from './options.js';
+import { flagFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /**
@@ -74,26 +75,31 @@ const withoutSecrets = (found: Config): Config => {
 export const declareConfig = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({
   id: 'daemon.config',
   summary: 'Say where the configuration is, and what it says',
-  description: 'The path the daemon reads, then every key it holds.',
+  description: 'Every file the daemon reads, then every key they hold and which file set it.',
   surfaces: { cli: { pattern: ['config'] }, http: { method: 'GET', path: '/config' } },
   // Served, the file is the daemon's own, so no field could name another.
-  ...(served === undefined ? { input: serverFields } : {}),
+  ...(served === undefined ? { input: flagFields } : {}),
   scopes: ['config:write'],
   run: (context) => {
     /*
-     * Served, the file is the daemon's own: one that is gone is a daemon that
-     * never wrote it, and the path it would have read is still the answer. The
-     * terminal's own `--config-file` that names nothing is worth complaining
-     * about, so `loadConfig` still refuses it.
+     * Served, the files are the daemon's own: a named one that is gone is a
+     * daemon that never wrote it, and the path it would have read is still the
+     * answer. The terminal's own `--config-file` that names nothing is worth
+     * complaining about, so `loadConfig` still refuses it.
      */
-    const asked = served === undefined ? context.optional<string>('configFile') : served.configFile;
+    const asked = served === undefined ? context.optional<string>('configFile') : served.options.configFile;
     const at = asked ?? configPath();
-    const found = served !== undefined && !existsSync(at) ? {} : loadConfig(asked);
-    const answer = served === undefined ? found : withoutSecrets(found);
+    const loaded = served !== undefined && asked !== undefined && !existsSync(asked)
+      ? { values: {}, files: [], sourceOf: () => undefined }
+      : loadConfig(asked);
+    const answer = served === undefined ? loaded.values : withoutSecrets(loaded.values);
     const rows = Object.entries(answer);
-    const text = `${at}\n${rows.length === 0
+    const sources = Object.fromEntries(rows.map(([key]) => [key, loaded.sourceOf(key) ?? at]));
+    // Which file set a key is worth a column only when there is more than one.
+    const from = (key: string): string => (loaded.files.length > 1 ? ` (${sources[key] ?? at})` : '');
+    const text = `${(loaded.files.length === 0 ? [at] : loaded.files).join('\n')}\n${rows.length === 0
       ? '  (nothing set)\n'
-      : `${rows.map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`).join('\n')}\n`}`;
-    return output({ path: at, config: answer }, text);
+      : `${rows.map(([key, value]) => `  ${key}: ${JSON.stringify(value)}${from(key)}`).join('\n')}\n`}`;
+    return output({ path: at, files: loaded.files, config: answer, sources }, text);
   },
 });

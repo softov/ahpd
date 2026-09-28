@@ -40,7 +40,7 @@ import { loadPlugins } from '../plugins.js';
 import { pty } from '../pty.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
-import { optionsFrom, secret, serverFields, stop } from './options.js';
+import { optionsFrom, secret, flagFields, stop } from './options.js';
 import type { Options } from './options.js';
 
 /**
@@ -100,6 +100,7 @@ export async function runForeground(options: Options): Promise<void> {
    * the two are separate programs and the only thing they share is a clock.
    */
   const stamp = (line: string): void => { process.stderr.write(`${new Date().toISOString()} ${line}\n`); };
+  for (const warning of options.warnings) stamp(warning);
 
   /*
    * What this host calls its own sign-in resource.
@@ -523,6 +524,8 @@ export async function runForeground(options: Options): Promise<void> {
     // Its own line for the same reason: a client that only needs the names reads
     // one line, and `daemon.ts` keeps matching the two above unchanged.
     + `plugins ${loaded.length === 0 ? 'none' : loaded.map((one) => one.name).join(', ')}\n`
+    // Every configuration file read, in the order they were merged.
+    + `config ${options.configFiles.length === 0 ? 'none' : options.configFiles.join(', ')}\n`
     // Where the secret came from, never the secret: stdout is a log, and a log
     // is the one place a credential should not end up.
     + `${from}\n`
@@ -594,7 +597,7 @@ export const declareRun = (registry: Registry<object>): Command => registry.acti
   description: 'One host, one working directory, one port. `ahpd` with no command is this.',
   hidden: true,
   surfaces: { cli: { pattern: ['run'] } },
-  input: serverFields,
+  input: flagFields,
   run: async (context) => {
     await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>));
   },

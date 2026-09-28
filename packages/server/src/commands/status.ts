@@ -12,7 +12,7 @@ import type { Command, Registry } from '@cofold/commands';
 import { running, statusLine } from '../daemon.js';
 import { checkingUpdates, updateLine } from '../update.js';
 import { manifest } from '../version.js';
-import { conflict, optionsFrom, serverFields } from './options.js';
+import { conflict, optionsFrom, flagFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
 export const declareStatus = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({
@@ -22,7 +22,7 @@ export const declareStatus = (registry: Registry<object>, served?: ServedFacts):
   surfaces: { cli: { pattern: ['status'] }, http: { method: 'GET', path: '/status' } },
   scopes: ['config:read'],
   // Served, every fact is the process answering, so no field could name another.
-  ...(served === undefined ? { input: serverFields } : {}),
+  ...(served === undefined ? { input: flagFields } : {}),
   run: (context) => {
     const found = served === undefined ? running() : served.running();
     if (found === undefined) {

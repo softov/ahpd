@@ -225,6 +225,16 @@ export interface Plugin {
   title?: string;
   /** This plugin's own option defaults, under whatever the configuration said. */
   defaults?: Record<string, unknown>;
+  /**
+   * A JSON Schema for the options `apply` receives.
+   *
+   * An object schema whose `properties` are the option keys. The daemon checks
+   * the configured options, with `defaults` merged under them, against it
+   * before `apply` runs: options that fail it are reported and the plugin is
+   * not applied, and a key it does not name is reported and passed through.
+   * Absent, the options reach `apply` unchecked.
+   */
+  optionsSchema?: Record<string, unknown>;
   /** Contribute to the host. Whatever it registers on `host` is folded in. */
   apply(host: PluginHost, options: Record<string, unknown>): void | Promise<void>;
 }

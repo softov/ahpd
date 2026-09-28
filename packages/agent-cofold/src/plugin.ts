@@ -1,10 +1,11 @@
 /**
  * The plugin entry: what the daemon imports when the package is named.
  *
- * `index.ts` re-exports `name` and `apply` from here, so the module the
- * manifest names is the plugin. There is deliberately no default export: the
- * loader refuses a module without a named `apply` rather than guessing which
- * export is the plugin, and a silent guess is worse than a refusal.
+ * `index.ts` re-exports `name`, `apply` and `optionsSchema` from here, so the
+ * module the manifest names is the plugin. There is deliberately no default
+ * export: the loader refuses a module without a named `apply` rather than
+ * guessing which export is the plugin, and a silent guess is worse than a
+ * refusal.
  *
  * The model adapter is not a configuration option in practice. A configuration
  * file is JSON and cannot carry a function or an object with methods, so the
@@ -14,11 +15,9 @@
  * a client sends.
  */
 
-import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { PluginHost } from '@ahpd/sdk';
 import { cofoldAgent } from './agent.js';
 import type { CofoldOptions } from './agent.js';
-import { toolsOf } from './capabilities.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = '@ahpd/agent-cofold';
@@ -32,68 +31,55 @@ export const name = '@ahpd/agent-cofold';
  */
 export const title = 'Cofold';
 
-/** One non-empty string, or nothing for a value this package cannot use. */
-const str = (value: unknown): string | undefined =>
-  (typeof value === 'string' && value.trim() !== '' ? value : undefined);
+/** A search provider that takes a key. */
+const keyed = { type: 'object', properties: { apiKey: { type: 'string' } }, required: ['apiKey'] };
 
 /**
- * The package's own options, out of whatever the configuration named.
+ * The options `apply` receives, as a JSON Schema the daemon checks them against
+ * before `apply` runs.
  *
- * Every key is taken only when it has the type `cofoldAgent` declared for it,
- * so a value the configuration misspelled is dropped rather than thrown over:
- * `apply` must not fail over an option it does not understand. A key this
- * does not name is ignored the same way, which leaves any option cofold adds
- * later to cofold's own handling instead of this file's.
+ * `apiKey`, `adapter` and `policy` are also what an embedder calling `apply`
+ * passes: a key function and a model adapter are things JSON cannot carry, so
+ * the schema describes the configuration file's spelling of them.
  */
-const optionsOf = (values: Record<string, unknown>): CofoldOptions => {
-  const options: CofoldOptions = {};
-
-  const provider = str(values.provider);
-  if (provider !== undefined) options.provider = provider;
-  const displayName = str(values.displayName);
-  if (displayName !== undefined) options.displayName = displayName;
-  const description = str(values.description);
-  if (description !== undefined) options.description = description;
-  const baseUrl = str(values.baseUrl);
-  if (baseUrl !== undefined) options.baseUrl = baseUrl;
-  const model = str(values.model);
-  if (model !== undefined) options.model = model;
-  const instructions = str(values.instructions);
-  if (instructions !== undefined) options.instructions = instructions;
-  const store = str(values.store);
-  if (store !== undefined) options.store = store;
-  const resource = str(values.resource);
-  if (resource !== undefined) options.resource = resource;
-
-  if (typeof values.memory === 'boolean') options.memory = values.memory;
-
-  // Which of the four capabilities run, and where `web_search` gets its
-  // providers. Only what the configuration actually named is taken, so an
-  // absent key keeps the default (on) rather than being turned off.
-  const tools = toolsOf(values.tools);
-  if (tools !== undefined) options.tools = tools;
-
-  // A key is either a literal or a function asked once per request, so an
-  // expired one is not cached; both are things JSON cannot carry.
-  const apiKey = values.apiKey;
-  if (typeof apiKey === 'string') options.apiKey = apiKey;
-  else if (typeof apiKey === 'function') options.apiKey = apiKey as () => string | Promise<string>;
-
-  /*
-   * The two seams an embedder has and a configuration does not: a model
-   * adapter to use instead of the OpenAI-compatible one, and the run-level
-   * policy an approval comes from. Both are checked only for being objects,
-   * because the contracts are structural and cofold is what will use them.
-   */
-  if (typeof values.adapter === 'object' && values.adapter !== null) {
-    options.adapter = values.adapter as ModelAdapter;
-  }
-  if (typeof values.policy === 'object' && values.policy !== null && !Array.isArray(values.policy)) {
-    options.policy = values.policy as Partial<Policy>;
-  }
-
-  return options;
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    provider: { type: 'string', description: 'The id a client names in createSession. cofold by default.' },
+    displayName: { type: 'string', description: 'What a person reads instead of the id. Cofold by default.' },
+    description: { type: 'string', description: 'One line about this backend.' },
+    model: { type: 'string', description: 'The model id a session that names none runs on.' },
+    baseUrl: { type: 'string', description: 'The OpenAI-compatible endpoint a session that names none uses.' },
+    instructions: { type: 'string', description: 'The system prompt the agent is created with.' },
+    store: { type: 'string', description: 'Where the cofold file store lives.' },
+    memory: { type: 'boolean', description: 'true to hold the store in memory, for a test.' },
+    tools: {
+      type: 'object',
+      properties: {
+        files: { type: 'boolean' },
+        shell: { type: 'boolean' },
+        memory: { type: 'boolean' },
+        web: {
+          type: ['boolean', 'object'],
+          properties: {
+            search: {
+              type: 'object',
+              properties: { brave: keyed, tavily: keyed, duckduckgo: { type: 'boolean' } },
+            },
+          },
+        },
+      },
+      description: 'Which capabilities a session runs, and where web_search gets its providers.',
+    },
+    apiKey: { type: 'string', description: "The daemon's own key." },
+    resource: { type: 'string', description: 'The protected resource a client authenticates against.' },
+    adapter: { type: 'object', description: 'A cofold ModelAdapter used instead of the HTTP one.' },
+    policy: { type: 'object', description: 'The run-level policy a pause comes from.' },
+  },
 };
+
+/** The package's own options, out of values `optionsSchema` has checked. */
+const optionsOf = (values: Record<string, unknown>): CofoldOptions => values as CofoldOptions;
 
 /**
  * Register provider `cofold` from the plugin's own options.

@@ -12,7 +12,7 @@ import { globalOptions } from '@cofold/terminal';
 import { start } from '../daemon.js';
 import { checkingUpdates, updateLine } from '../update.js';
 import { manifest } from '../version.js';
-import { optionsFrom, programGlobals, secret, serverFields, stop, conflict } from './options.js';
+import { optionsFrom, programGlobals, secret, flagFields, stop, conflict } from './options.js';
 
 /** The options that belong to the process typing the line, never to the child. */
 const PARENT_OPTIONS = new Set(
@@ -79,7 +79,7 @@ export const declareStart = (registry: Registry<object>): Command => registry.ac
   summary: 'Run it in the background and let go of it',
   description: 'Detached, with its output in the daemon log and a record of where it is listening.',
   surfaces: { cli: { pattern: ['start'] } },
-  input: serverFields,
+  input: flagFields,
   run: async (context) => {
     const options = optionsFrom(context.input as Readonly<Record<string, unknown>>);
     // A detached process has no pipe to answer on, so it would read an
@@ -105,7 +105,8 @@ export const declareStart = (registry: Registry<object>): Command => registry.ac
     const rest = forwardedLine(argv, at, table);
     try {
       const begun = await start(rest, process.argv[1] as string, token);
-      let text = `ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`;
+      let text = options.warnings.map((warning) => `${warning}\n`).join('');
+      text += `ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`;
       if (begun.automations !== undefined) text += `automations ${begun.automations}\n`;
       if (checkingUpdates(options.updateCheck)) text += updateLine(manifest()) ?? '';
       return output({

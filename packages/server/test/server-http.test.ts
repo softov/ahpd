@@ -26,7 +26,7 @@ import { apiHandler, withoutApi } from '../src/http.js';
 const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
 /** A plugin that contributes a backend, which is what lets a run get to its announcement. */
-const BACKEND = './packages/server/test/fixtures/plugin-echo';
+const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
 /** A directory holding an `npm` that can wait before it answers. */
 const FAKE_NPM = join(import.meta.dirname, 'fixtures', 'npm-fake');
 const fakeNpm = (extra: Record<string, string> = {}): Record<string, string> => ({

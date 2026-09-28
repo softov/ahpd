@@ -1,4 +1,4 @@
-export { apply, defaults, name, optionsOf, title } from './plugin.js';
+export { apply, defaults, name, optionsOf, optionsSchema, title } from './plugin.js';
 export { piAgent } from './agent.js';
 export { piSession } from './session.js';
 export type { OpenPi } from './session.js';

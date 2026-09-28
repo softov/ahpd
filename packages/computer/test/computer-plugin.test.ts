@@ -223,7 +223,7 @@ it('reports a runtime it does not have at load, rather than failing later', asyn
   const { loaded, problems } = await load({ runtime: 'kvm' });
   expect(loaded).toEqual([]);
   expect(problems).toHaveLength(1);
-  expect(problems[0]).toContain('kvm');
+  expect(problems[0]).toContain('runtime must be one of docker');
 });
 
 it('lists its manifest and title without importing the entry', async () => {

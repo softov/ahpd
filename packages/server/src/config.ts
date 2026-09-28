@@ -1,9 +1,10 @@
 /** What this daemon was told before anybody typed a flag, and where it is. */
 
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { resolveConfig, type ResolvedConfig } from '@cofold/config';
 import { issuerKind, type PluginSpec } from '@ahpd/sdk';
 
 /**
@@ -24,7 +25,10 @@ export interface HttpSetting {
   host?: string;
 }
 
-/** What a config file may say. Every key is what a flag would have said. */
+/**
+ * What a config file may say. Every key is what a flag would have said, or
+ * `http`; the keys are `configSchema`'s, which the file is checked against.
+ */
 export interface Config {
   /** TCP port to bind. 0 lets the OS choose. */
   port?: number;
@@ -193,35 +197,75 @@ export const updatePath = (): string => join(configDir(), 'update.json');
 /** Make sure the directory is there, so a write into it can succeed. */
 export const ensureConfigDir = (): void => { mkdirSync(configDir(), { recursive: true }); };
 
+/** The configuration as it was read: the merged values, the files and who set what. */
+export interface LoadedConfig {
+  /** Every file merged, later winning, with relative paths made absolute. Unchecked. */
+  values: Config;
+  /** The files read, in the order they were merged. Empty when there were none. */
+  files: string[];
+  /** The file that set a key, or nothing when no file did. */
+  sourceOf(key: string): string | undefined;
+}
+
+/** Whether a plugin spec names a path relative to somewhere, rather than a package or a URL. */
+const isRelativeSpec = (name: string): boolean => name.startsWith('.');
+
 /**
- * Read it, or answer that there was nothing to read.
- *
- * A file that is not there is not an error - most people have none. One that
- * is there and is broken *is* one, and says so rather than starting on
- * defaults nobody chose: silently ignoring a configuration somebody wrote is
- * worse than refusing to start.
+ * `values` with every relative path made absolute against the directory of the
+ * file that set it: `paths`, `users`, `connectionTokenFile` and a plugin spec
+ * that is a relative path. A value of the wrong type is left as it is for the
+ * schema to refuse.
  */
-export function loadConfig(named?: string): Config {
-  const path = named ?? configPath();
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
+const anchored = (values: Record<string, unknown>, sourceOf: (key: string) => string | undefined): Config => {
+  const out: Record<string, unknown> = { ...values };
+  const at = (key: string, path: string): string => {
+    const file = sourceOf(key);
+    return file === undefined || isAbsolute(path) ? path : resolve(dirname(file), path);
+  };
+  for (const key of ['users', 'connectionTokenFile']) {
+    const value = out[key];
+    if (typeof value === 'string') out[key] = at(key, value);
   }
-  catch {
-    // Only a file asked for *by name* is worth complaining about.
-    if (named === undefined) return {};
-    throw new Error(`No configuration at ${named}`);
+  if (Array.isArray(out.paths)) {
+    out.paths = out.paths.map((one: unknown) => (typeof one === 'string' ? at('paths', one) : one));
   }
+  if (Array.isArray(out.plugins)) {
+    out.plugins = out.plugins.map((one: unknown) => {
+      if (typeof one === 'string') return isRelativeSpec(one) ? at('plugins', one) : one;
+      if (typeof one === 'object' && one !== null && !Array.isArray(one)) {
+        const named = (one as { name?: unknown }).name;
+        if (typeof named === 'string' && isRelativeSpec(named)) return { ...one, name: at('plugins', named) };
+      }
+      return one;
+    });
+  }
+  return out as Config;
+};
+
+/**
+ * Read the configuration, or answer that there was nothing to read.
+ *
+ * Without a name: the user file, then the file `$AHPD_CONFIG` names merged over
+ * it, and no project file. With one: that file alone. A user file that is not
+ * there is not an error - most people have none; a file that was named and is
+ * not there, or one that is there and broken, is one.
+ */
+export function loadConfig(named?: string): LoadedConfig {
+  let resolved: ResolvedConfig;
   try {
-    const found: unknown = JSON.parse(text);
-    if (typeof found !== 'object' || found === null || Array.isArray(found)) {
-      throw new Error('it is not an object');
-    }
-    return found as Config;
+    resolved = resolveConfig(named === undefined
+      ? { name: 'ahpd', env: { ...process.env, XDG_CONFIG_HOME: configHome() } }
+      : { name: 'ahpd', path: named, user: false, environment: false });
   }
   catch (error) {
-    throw new Error(`${path} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(error instanceof Error ? error.message : String(error));
   }
+  const sourceOf = (key: string): string | undefined => resolved.sourceOf(key);
+  return {
+    values: anchored(resolved.values as Record<string, unknown>, sourceOf),
+    files: resolved.layers.map((layer) => layer.path),
+    sourceOf,
+  };
 }
 
 /**

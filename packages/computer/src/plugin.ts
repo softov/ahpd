@@ -17,8 +17,9 @@ import { computerTools } from './tools.js';
  * an option rather than a package of its own because a host serves one provider
  * per scheme - decision `one-computer-provider-with-runtimes-as-options`.
  *
- * As the cofold and ACP entries do, an option that is not understood is dropped
- * rather than fatal: a misspelled key costs its own setting and not the plugin.
+ * The options are checked against `optionsSchema` before `apply` runs. The
+ * values of a map - `env`, `needs`, a profile - are what the schema cannot
+ * describe, so an entry there that cannot be used is dropped rather than fatal.
  */
 
 /** The plugin's id, unique among the plugins a daemon loads. */
@@ -40,6 +41,52 @@ export const defaults = {
   host: ['ahpd'],
 } as const;
 
+/** A string field. */
+const text = { type: 'string' } as const;
+
+/** A list of strings. */
+const list = { type: 'array', items: { type: 'string' } } as const;
+
+/**
+ * The options `apply` receives, as a JSON Schema the daemon checks them against
+ * before `apply` runs.
+ */
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    runtime: { type: 'string', enum: ['docker'], description: 'Which runtime to use. docker, the only one today.' },
+    command: { ...text, description: 'The program to run. docker.' },
+    args: { ...list, description: 'Arguments before its own, for a wrapper or a context.' },
+    env: { type: 'object', description: "Environment variables merged over the daemon's." },
+    image: { ...text, description: 'The image a machine is made from when a call names none.' },
+    cpus: { ...text, description: 'A CPU limit for every machine this host makes.' },
+    memory: { ...text, description: 'A memory limit for every machine this host makes.' },
+    max: { type: 'integer', minimum: 1, description: 'How many may exist at once.' },
+    label: { ...text, description: 'The label every machine carries.' },
+    prefix: { ...text, description: 'What the name of every machine this host makes starts with.' },
+    sessionSetting: { type: 'boolean', description: 'Whether a session setting names the machine a session runs in.' },
+    sessionDefault: { ...text, description: "That setting's default." },
+    needs: { type: 'object', description: "Values for any agent's machine needs, by need name." },
+    mounts: { ...list, description: 'What every machine this plugin makes can see.' },
+    profiles: { type: 'object', description: 'The named sets a person picks from when making a machine.' },
+    bodyMounts: { type: 'boolean', description: 'Whether a person making a machine may name mounts of their own.' },
+    images: { ...list, description: 'The image patterns a machine may be made from.' },
+    devcontainer: {
+      type: ['object', 'boolean'],
+      properties: {
+        command: text,
+        args: list,
+        host: list,
+        env: { type: 'object' },
+        plugins: { type: 'array' },
+        docker: text,
+        install: { type: ['string', 'boolean'] },
+      },
+      description: 'The Dev Container CLI, as a launcher and as a machine maker; false switches the launcher off.',
+    },
+  },
+};
+
 const words = (value: unknown): string[] | undefined =>
   (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : undefined);
 
@@ -49,9 +96,6 @@ const named = (value: unknown): Record<string, string> | undefined => {
     .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
   return held.length > 0 ? Object.fromEntries(held) : undefined;
 };
-
-const line = (value: unknown, fallback: string): string =>
-  (typeof value === 'string' && value.trim() !== '' ? value : fallback);
 
 /**
  * The profiles an option named, with anything unusable dropped.
@@ -149,20 +193,16 @@ const within = (held: Record<string, unknown>, path: string): string | undefined
 };
 
 export const apply: Plugin['apply'] = (host, options) => {
-  const runtime = line(options.runtime, defaults.runtime);
-  if (runtime !== 'docker') {
-    throw new Error(`plugin ${name}: runtime ${runtime} is not one this package has; it has docker`);
-  }
-
-  const command = line(options.command, defaults.command);
-  const args = words(options.args);
+  const runtime = options.runtime as 'docker' | undefined ?? defaults.runtime;
+  const command = options.command as string | undefined ?? defaults.command;
+  const args = options.args as string[] | undefined;
   const env = named(options.env);
-  const cpus = typeof options.cpus === 'string' && options.cpus.trim() !== '' ? options.cpus : undefined;
-  const memory = typeof options.memory === 'string' && options.memory.trim() !== '' ? options.memory : undefined;
-  const image = line(options.image, defaults.image);
-  const max = whole(options.max, defaults.max);
-  const label = line(options.label, defaults.label);
-  const prefix = line(options.prefix, defaults.prefix);
+  const cpus = options.cpus as string | undefined;
+  const memory = options.memory as string | undefined;
+  const image = options.image as string | undefined ?? defaults.image;
+  const max = options.max as number | undefined ?? defaults.max;
+  const label = options.label as string | undefined ?? defaults.label;
+  const prefix = options.prefix as string | undefined ?? defaults.prefix;
   /*
    * The session setting, which is how a person names the machine a session
    * runs in. Contributed unless the option switches it off, and its default is
@@ -170,7 +210,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * decision `a-plugin-may-contribute-a-session-key`.
    */
   const sessionSetting = options.sessionSetting !== false;
-  const sessionDefault = line(options.sessionDefault, '');
+  const sessionDefault = options.sessionDefault as string | undefined ?? '';
 
   /*
    * What any agent's machine needs are given, by need name.
@@ -188,7 +228,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * every machine rather than every manifest repeating it. A body's own
    * mounts are added to these.
    */
-  const mounts = words(options.mounts);
+  const mounts = options.mounts as string[] | undefined;
   /*
    * The named sets a person picks from when making a machine.
    *
@@ -216,7 +256,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * will not read is fatal here rather than a rule that silently matches
    * nothing - an operator who wrote one meant something by it.
    */
-  const images = words(options.images);
+  const images = options.images as string[] | undefined;
   for (const one of images ?? []) {
     try { patternOf(one); }
     catch (error) {
@@ -234,14 +274,14 @@ export const apply: Plugin['apply'] = (host, options) => {
    * switches the launcher off, and the runtime keeps the default program so a
    * session can still ask for a `devcontainer://<folder>`.
    */
-  const container = options.devcontainer;
-  const held = (typeof container === 'object' && container !== null ? container : {}) as Record<string, unknown>;
-  const cliArgs = words(held.args);
-  const hostCommand = words(held.host);
+  const container = options.devcontainer as boolean | Record<string, unknown> | undefined;
+  const held = typeof container === 'object' ? container : {};
+  const cliArgs = held.args as string[] | undefined;
+  const hostCommand = held.host as string[] | undefined;
   const containerEnv = named(held.env);
-  const containerPlugins = Array.isArray(held.plugins) ? held.plugins as PluginSpec[] : undefined;
+  const containerPlugins = held.plugins as PluginSpec[] | undefined;
   const cliOptions: CliOptions = {
-    ...(typeof held.command === 'string' ? { command: held.command } : {}),
+    ...(held.command === undefined ? {} : { command: held.command as string }),
     ...(cliArgs === undefined ? {} : { args: cliArgs }),
     ...(containerEnv === undefined ? {} : { env: containerEnv }),
   };
@@ -604,8 +644,8 @@ export const apply: Plugin['apply'] = (host, options) => {
     host.registerContainers(devContainer({
       ...cliOptions,
       ...(hostCommand === undefined ? {} : { host: hostCommand }),
-      ...(typeof held.docker === 'string' ? { docker: held.docker } : {}),
-      ...(held.install === false ? { install: false } : typeof held.install === 'string' ? { install: held.install } : {}),
+      ...(held.docker === undefined ? {} : { docker: held.docker as string }),
+      ...(held.install === undefined || held.install === true ? {} : { install: held.install as string | false }),
       ...(containerPlugins === undefined ? {} : { plugins: containerPlugins }),
       // The same label the computers carry, so the CLI finds the folder's own
       // container rather than making a second one beside it.

@@ -9,14 +9,14 @@
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import { stop as stopDaemon } from '../daemon.js';
-import { conflict, serverFields } from './options.js';
+import { conflict, flagFields } from './options.js';
 
 export const declareStop = (registry: Registry<object>): Command => registry.action({
   id: 'daemon.stop',
   summary: 'Stop the one running in the background',
   description: 'Sends SIGTERM to the process the record names, and forgets where it was.',
   surfaces: { cli: { pattern: ['stop'] } },
-  input: serverFields,
+  input: flagFields,
   run: (context) => {
     const stopped = stopDaemon();
     if (stopped === undefined) {

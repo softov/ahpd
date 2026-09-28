@@ -24,6 +24,7 @@ A plugin is a module with named exports, in the same idiom as an `Agent`:
 export const name = '@acme/agent-mine';       // required by convention, the identity
 export const title = 'Mine';                  // optional, what a listing prints
 export const defaults = { model: 'fast' };    // optional, under the configuration's values
+export const optionsSchema = { /* ... */ };   // optional, a JSON Schema the options are checked against
 export function apply(host: PluginHost, options: Record<string, unknown>): void | Promise<void>;
 ```
 
@@ -34,6 +35,31 @@ function`, because which export is the plugin cannot be guessed at.
 
 `apply` may be async. It runs once, before the host exists, in the daemon's own
 process.
+
+### Declaring the options
+
+`optionsSchema` is a plain JSON Schema object for the options `apply` receives, with one property per option key. The daemon merges `defaults` under the configured options and checks the result against it before `apply` runs, so a default satisfies a `required` key and `apply` reads values that are already the type the schema says:
+
+```ts
+export const defaults = { model: 'fast' };
+
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    command: { type: 'string', description: 'The program to run.' },
+    model: { type: 'string', enum: ['fast', 'careful'] },
+    retries: { type: 'integer', minimum: 0 },
+  },
+  required: ['command'],
+};
+
+export function apply(host: PluginHost, options: Record<string, unknown>): void {
+  const command = options.command as string;
+  // ...
+}
+```
+
+Options that fail the schema are reported and the plugin is skipped, like any other plugin failure: `{ "name": "@acme/agent-mine", "options": { "command": 3 } }` logs `plugin @acme/agent-mine skipped: plugins.@acme/agent-mine.options.command must be text`, and the daemon starts with its other plugins. An option key the schema does not name is logged as `plugin @acme/agent-mine: plugins.@acme/agent-mine.options.extra is not an option @acme/agent-mine knows; passed through` and still reaches `apply`. A plugin that exports no `optionsSchema` gets its options unchecked. The schema is plain data and needs no import: `@ahpd/sdk` types it as `Record<string, unknown>`.
 
 ## What you can register
 
@@ -282,7 +308,7 @@ else. There is no `manifest.json`.
 | --- | --- |
 | `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported |
 | `ahpd.title` | What `ahpd plugin list` prints, unless the module exports its own `title` |
-| `ahpd.options` | A required option the configuration must set before the plugin is `ready`. `true` or `{ "required": true }` means required. Today this is only reported by `ahpd plugin list`; it does not yet stop `apply` |
+| `ahpd.options` | A required option the configuration must set before the plugin is `ready`. `true` or `{ "required": true }` means required. It is only reported by `ahpd plugin list`, which imports nothing; a load holds the options to the module's `optionsSchema` instead |
 | `peerDependencies["@ahpd/sdk"]` | The compatibility range, checked **before** the module is imported |
 
 Compatibility supports `*`, an exact version, `^`, `~`, `>=`, `<=`, `>`, `<`,
@@ -339,9 +365,8 @@ A plugin is code in the daemon's process with the daemon's permissions, so
 naming one is the trust decision. The configuration file is the trust boundary
 here the way the connection token is the port's.
 
-- A plugin that does not resolve, whose manifest is wrong, that throws on
-  import, that has no `apply`, or that throws out of `apply` is **reported on
-  stdout and skipped**. The daemon starts without it and the next plugin is
+- A plugin that does not resolve, whose manifest is wrong, that throws on import, that has no `apply`, whose options fail its `optionsSchema`, or that throws out of `apply` is **reported on stdout and skipped**.
+  The daemon starts without it and the next plugin is
   still tried. A bad registration loses that plugin's whole contribution rather
   than the part it registered before the mistake.
 - Two plugins claiming the same agent `provider` is the one failure that

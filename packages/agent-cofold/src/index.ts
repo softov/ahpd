@@ -34,4 +34,4 @@ export { cofoldTool, cofoldTools } from './tools.js';
 export type { ClientToolCall, ClientToolRelay } from './tools.js';
 export { turnsOf } from './transcript.js';
 export type { TranscriptTurn } from './transcript.js';
-export { apply, name } from './plugin.js';
+export { apply, name, optionsSchema } from './plugin.js';

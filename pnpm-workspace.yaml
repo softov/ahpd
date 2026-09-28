@@ -22,3 +22,4 @@ minimumReleaseAgeExclude:
   - '@cofold/sdk@0.2.0'
   - '@cofold/store-file@0.1.1'
   - '@cofold/tools@0.1.1'
+  - '@cofold/config@0.3.0'

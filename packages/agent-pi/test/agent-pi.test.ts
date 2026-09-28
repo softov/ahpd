@@ -1921,13 +1921,7 @@ it('needs no option, because pi resolves its own directory and credentials', () 
   expect(optionsOf({})).toEqual({});
 });
 
-it('drops a misspelled option rather than the whole plugin', () => {
-  expect(optionsOf({ provider: 'pi-two', displayName: 42, model: '  ' }))
-    .toEqual({ provider: 'pi-two' });
-});
-
-it('has no third answer for project trust, because a daemon has nobody to ask', () => {
-  expect(optionsOf({ projectTrust: 'deny' }).projectTrust).toBe('deny');
-  expect(optionsOf({ projectTrust: 'ask' }).projectTrust).toBe('trust');
+it('takes the options the schema checked as they are', () => {
+  expect(optionsOf({ provider: 'pi-two', projectTrust: 'deny' })).toEqual({ provider: 'pi-two', projectTrust: 'deny' });
 });
 

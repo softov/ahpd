@@ -23,7 +23,7 @@ import { version } from '../src/version.js';
 const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
 /** A plugin that contributes a backend, which is what lets a run get to its announcement. */
-const BACKEND = './packages/server/test/fixtures/plugin-echo';
+const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
 /** A directory holding an `npm` that says one line and leaves the code `FAKE_NPM_EXIT` names. */
 const FAKE_NPM = join(import.meta.dirname, 'fixtures', 'npm-fake');
 const fakeNpm = (code: number): Record<string, string> => ({
@@ -345,13 +345,13 @@ describe('the flags of a run', () => {
   it('refuses an http.host that names no address', async () => {
     const said = await cli(['--config-file', config, '--connection-token', 't'], { config: { http: { port: 0, host: '' } } });
     expect(said.code).toBe(2);
-    expect(said.stderr).toContain('http.host must name an address, not ""');
+    expect(said.stderr).toContain(`${config}: http.host must be text matching ^\\S+$`);
   }, 20000);
 
   it('refuses an http.host with space around the address', async () => {
     const said = await cli(['--config-file', config, '--connection-token', 't'], { config: { http: { port: 0, host: ' 127.0.0.1 ' } } });
     expect(said.code).toBe(2);
-    expect(said.stderr).toContain('http.host must name an address, not " 127.0.0.1 "');
+    expect(said.stderr).toContain(`${config}: http.host must be text matching ^\\S+$`);
   }, 20000);
 });
 

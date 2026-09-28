@@ -28,7 +28,13 @@ const REPO = join(import.meta.dirname, '../../..');
 // the example's, arriving the way any plugin's backend does. A daemon
 // configured with none refuses to start, which is what this relay would then
 // be relaying to.
-const CONFIG = '{"paths":[],"withoutConnectionToken":true,"sessions":"memory","automations":"memory","plugins":["./packages/server/test/fixtures/plugin-echo"]}';
+const CONFIG = JSON.stringify({
+  paths: [],
+  withoutConnectionToken: true,
+  sessions: 'memory',
+  automations: 'memory',
+  plugins: [join(REPO, 'packages/server/test/fixtures/plugin-echo')],
+});
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-relay-')); });

@@ -1,4 +1,4 @@
-export { apply, defaults, name, title } from './plugin.js';
+export { apply, defaults, name, optionsSchema, title } from './plugin.js';
 export type { Options, Seams } from './plugin.js';
 export {
   deriveConnectionToken, displayLabel, nameLabel,
