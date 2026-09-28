@@ -1249,6 +1249,9 @@ export function createHost(options: HostOptions): Host {
   const subagentChatUri = (session: string, toolCallId: string): string =>
     `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
+  /** The client actions a worker's chat takes: answers to what it asked, and a stop. */
+  const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputCompleted', 'chat/turnCancelled']);
+
   /** The tool call a worker chat was opened for, or nothing when it is not one. */
   const toolCallOfSubagentChat = (uri: string): string | undefined => {
     const prefix = 'ahp-chat://subagent/';
@@ -1321,8 +1324,16 @@ export function createHost(options: HostOptions): Host {
     // A worker's chat is its own conversation, never the session's default:
     // resolving one to the other would send its actions to the lead chat.
     // Judged by the authority rather than by what is held, because a worker
-    // read back from a transcript is a real chat this host serves too.
-    if (toolCallOfSubagentChat(uri) !== undefined) return uri;
+    // read back from a transcript is a real chat this host serves too. A
+    // running session's worker is named the way that session is held, as its
+    // default chat is below, so a worker chat spelt from a client's alias of
+    // it is the same chat.
+    const callId = toolCallOfSubagentChat(uri);
+    if (callId !== undefined) {
+      const owning = sessionOfChat(uri);
+      const named = owning === undefined ? undefined : heldAs(owning);
+      return named !== undefined && sessions.has(named) ? subagentChatUri(named, callId) : uri;
+    }
     const session = sessionOfChat(uri);
     if (session === undefined) return uri;
     return sessions.get(heldAs(session))?.defaultChat ?? chatUriFor(session);
@@ -1521,6 +1532,14 @@ export function createHost(options: HostOptions): Host {
         // this session's too.
         const from = origin !== undefined && mine(origin.chat) ? { origin: { ...origin, chat: respell(String(origin.chat)) } } : {};
         return mine(row.resource) ? { ...row, resource: respell(String(row.resource)), ...from } : { ...row, ...from };
+      });
+    // The chat each waiting request is answered on, which a client dispatches
+    // to as it reads it.
+    if (Array.isArray(bag.inputNeeded))
+      bag.inputNeeded = bag.inputNeeded.map((one) => {
+        if (typeof one !== 'object' || one === null) return one;
+        const request = one as Record<string, unknown>;
+        return mine(request.chat) ? { ...request, chat: respell(String(request.chat)) } : request;
       });
     /*
      * And the link on the call that spawned a worker, so the two ends of it
@@ -8247,13 +8266,31 @@ export function createHost(options: HostOptions): Host {
           return;
         }
         /*
+         * A worker's chat is read-only, whichever side of a restart it is on.
+         *
+         * Nobody types into a subagent: its conversation is the harness's work
+         * inside somebody else's call. What a client may still send on one is
+         * an answer to what the worker asked there and a stop, and those are
+         * the lead chat's backend's to act on, since that backend runs the
+         * worker. Anything else is refused here rather than falling into the
+         * resume below, which would start an agent for a chat the client
+         * cannot write to anyway.
+         */
+        const worker = toolCallOfSubagentChat(channel) !== undefined;
+        if (worker && !WORKER_ACTIONS.has(type)) {
+          refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
+          return;
+        }
+        /*
          * Which chat a client action is about.
          *
          * A chat channel names one; a session channel names the default,
          * because that is what a client talking to a session without having
-         * asked for a chat means.
+         * asked for a chat means. A worker's chat names its session's lead,
+         * whose backend runs the worker.
          */
-        const holding = sessions.get(channel);
+        const owning = worker ? sessionFor(channel) : channel;
+        const holding = sessions.get(owning);
         const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
         /*
          * Config for a session with no agent yet: remembered, not refused.
@@ -8281,18 +8318,6 @@ export function createHost(options: HostOptions): Host {
          * a subprocess. Resumed rather than replayed - the agent gets the
          * context it built before, not a transcript it has been shown.
          */
-        /*
-         * A worker's chat is read-only, whichever side of a restart it is on.
-         *
-         * Nobody types into a subagent: its conversation is the harness's work
-         * inside somebody else's call. Refused here rather than falling into
-         * the resume below, which would start an agent for a chat the client
-         * cannot write to anyway.
-         */
-        if (type === 'chat/turnStarted' && toolCallOfSubagentChat(channel) !== undefined) {
-          refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
-          return;
-        }
         if (!held && type === 'chat/turnStarted') {
           // The session the chat belongs to, which is not the chat's own name:
           // a chat URI carries its session rather than being derived from it.
@@ -8354,7 +8379,7 @@ export function createHost(options: HostOptions): Host {
          * action that waited on it with its own failure, which is the same
          * thing a refused action reads.
          */
-        const running = restarting.get(holding !== undefined ? channel : byChat.get(channel)?.uri ?? '');
+        const running = restarting.get(holding !== undefined ? owning : byChat.get(channel)?.uri ?? '');
         if (running !== undefined) {
           void running.then(
             () => { applyDispatch(params, origin); },
@@ -8803,9 +8828,23 @@ export function createHost(options: HostOptions): Host {
             }
             break;
           }
-          case 'chat/turnCancelled':
-            session.cancel(String(action.turnId ?? ''));
+          /*
+           * On a worker's chat, the lead turn that runs the worker: the action
+           * names the worker's own turn, which the backend has no turn under.
+           */
+          case 'chat/turnCancelled': {
+            if (!worker) {
+              session.cancel(String(action.turnId ?? ''));
+              break;
+            }
+            const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+            if (current === undefined) {
+              no(`Nothing is running on ${session.chatUri} to stop`);
+              break;
+            }
+            session.cancel(String(current.id ?? ''));
             break;
+          }
           /**
            * Say it after the turn that is running.
            *

@@ -94,6 +94,7 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 | The backend opens a background worker's chat when its spawning call's `tool_result` arrives, so the completion carries the `subagent` content, and the host stamps `_meta.subagentChatUri` on the call; the host writes no `chat/toolCallContentChanged` when the spawning call's chat has no open turn. | Softov chose both halves, 2026-09-26, asked "The background link: (a) put the link on the completion when the `tool_result` arrives, (b) stamp `_meta.subagentChatUri` like VS Code and accept the gap, or (c) both?": "both". | 09, 10 |
 | Cancelling a turn ends only the workers spawned in that turn, foreground or background; a background worker from an earlier turn ends on its own `task_notification`. | Softov, 2026-09-26: "End only the workers spawned in the cancelled turn; background workers from earlier turns keep running." | 11 |
 | Any `task_started` marks its call background, as the reference does; a call whose input says `run_in_background: false` still ends its worker's turn on its `tool_result`, and whichever arrives first ends it once. | Softov, 2026-09-26, asked "Which rule decides background?": "VS Code's rule, but a call with run_in_background: false still ends on its tool_result". | 14 |
+| A worker chat takes `chat/toolCallConfirmed`, `chat/inputCompleted` and `chat/turnCancelled`, which stops the lead turn, and refuses every other action as read-only. | Softov, 2026-09-28, asked which client actions a worker chat takes after the approval failed in ahpapp: "Answers, plus stop"; and how to build it: "claude/04 task 17, build now". | 17 |
 
 ## Tasks
 
@@ -115,6 +116,7 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 | [14 - Any task_started marks a worker background, and a foreground spawn ends on its result](task-14-background-is-told-by-the-reference-rule.md) | implemented | 11 |
 | [15 - A permission ask inside a subagent, seen on a real stream](task-15-an-ask-inside-a-subagent-on-a-real-stream.md) | implemented | - |
 | [16 - A worker's own actions are schema-checked, and its comments document](task-16-worker-actions-checked-and-comments-document.md) | implemented | 09, 10, 11, 12, 13 |
+| [17 - An answer given in a worker chat reaches its session, and a stop there stops the lead turn](task-17-an-answer-in-a-worker-chat-reaches-its-session.md) | implemented | 05 |
 
 ## Risks and tradeoffs
 
@@ -125,8 +127,8 @@ tool_result for the call (foreground) or task_notification (background) -> [new]
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 16 are `implemented`: the captures, `Start.subagent`, the routing, the endings, the ask routing, the restore, the docs, and the review fixes 08 to 16 (the call-content index, the background link on completion, the reference `_meta`, cancel and late frames, the nested link live and restored, the resumed session's workers, the reference background rule, the captured ask, the worker channel check and the comments).
-- **Next action:** review of tasks 08 to 16, then the VS Code checks in the checklist below.
+- **Done so far:** tasks 01 to 17 are `implemented`: the captures, `Start.subagent`, the routing, the endings, the ask routing, the restore, the docs, and the review fixes 08 to 16 (the call-content index, the background link on completion, the reference `_meta`, cancel and late frames, the nested link live and restored, the resumed session's workers, the reference background rule, the captured ask, the worker channel check and the comments), and fix 17 (an answer or a stop given on a worker chat reaches its session).
+- **Next action:** review of tasks 08 to 17, Softov approving a permission asked inside a subagent in ahpapp or VS Code, then the VS Code checks in the checklist below.
 - **Open questions:** none.
 - **Watch out for:** a call whose input does not say `run_in_background` is foreground and ends on its result, so a worker the CLI backgrounds without being asked would end on its "launched" result; and a live chat's `subagent` links name the session in the spelling the host holds it under, not the alias a client subscribed with.
 

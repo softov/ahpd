@@ -371,3 +371,179 @@ it('links a nested worker from the call in the worker chat that spawned it', asy
   release.end();
   await settle();
 });
+
+/** What the asking fake's backend was told, in order. */
+const told: { what: 'confirm' | 'answer' | 'cancel' | 'draft'; id: string; value?: unknown }[] = [];
+
+/**
+ * A backend whose worker is waiting on a person: a permission for one call and
+ * a question, each named by `inputNeeded` as answered on the worker's chat, the
+ * way the Claude backend names an ask made inside a subagent. The lead turn
+ * stays open until it is cancelled.
+ */
+function askingInWorker(): Agent {
+  return {
+    provider: 'fake',
+    displayName: 'Fake',
+    schema: () => ({ type: 'object', properties: {} }),
+    defaults: () => ({}),
+    list: async (): Promise<Listed[]> => [],
+    create: (start: Start): Session => {
+      let active: Bag | undefined;
+      const turns: Bag[] = [];
+      const needed: Bag[] = [];
+      return {
+        uri: start.uri,
+        chatUri: start.chatUri,
+        models: () => [],
+        agentId: () => start.uri,
+        customizations: () => [],
+        allTurns: () => turns,
+        activity: () => undefined,
+        status: () => (active ? 8 : 1),
+        title: () => 'Fake session',
+        modifiedAt: () => new Date().toISOString(),
+        workingDirectories: () => ['file:///tmp'],
+        settings: () => ({}),
+        sessionState: () => ({
+          resource: start.uri, provider: 'fake', title: 'Fake session', status: active ? 8 : 1, lifecycle: 'ready',
+          defaultChat: start.chatUri, chats: [{ resource: start.chatUri, title: 'Fake session' }], workingDirectories: ['file:///tmp'],
+          customizations: [], config: { schema: start.schema(), values: {} },
+          ...(needed.length > 0 ? { inputNeeded: needed } : {}),
+        }),
+        chatState: () => ({
+          resource: start.chatUri, title: 'Fake session', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
+          turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
+        }),
+        begin: (turnId, text) => {
+          active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
+          start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
+          start.emit('chat', {
+            type: 'chat/toolCallStart', turnId, toolCallId: 'toolu_agent', toolName: 'Agent', displayName: 'Agent',
+            _meta: { toolKind: 'subagent' },
+          });
+          start.emit('chat', {
+            type: 'chat/toolCallReady', turnId, toolCallId: 'toolu_agent', invocationMessage: 'Agent', confirmed: 'not-needed',
+          });
+          const worker = start.subagent?.('toolu_agent', { title: 'general-purpose', prompt: 'write on /github/scratch' });
+          if (!worker) return;
+          worker.emit({ type: 'chat/toolCallStart', turnId: worker.turnId, toolCallId: 'toolu_bash', toolName: 'Bash', displayName: 'Bash' });
+          worker.emit({
+            type: 'chat/toolCallReady', turnId: worker.turnId, toolCallId: 'toolu_bash',
+            invocationMessage: 'Create scratch directory', toolInput: 'mkdir -p /github/scratch',
+          });
+          const confirmation: Bag = {
+            id: 'toolu_bash', chat: worker.uri, kind: 'toolConfirmation', turnId: worker.turnId,
+            toolCall: {
+              toolCallId: 'toolu_bash', toolName: 'Bash', displayName: 'Bash', status: 'pending-confirmation',
+              invocationMessage: 'Create scratch directory', toolInput: 'mkdir -p /github/scratch',
+            },
+          };
+          const question: Bag = {
+            id: 'toolu_ask', chat: worker.uri, kind: 'chatInput',
+            request: { id: 'toolu_ask', message: 'Which one?', questions: [] },
+          };
+          needed.push(confirmation, question);
+          start.emit('session', { type: 'session/inputNeededSet', request: confirmation });
+          start.emit('session', { type: 'session/inputNeededSet', request: question });
+        },
+        cancel: (turnId) => {
+          told.push({ what: 'cancel', id: turnId });
+          const turn = active;
+          if (!turn) return;
+          active = undefined;
+          turns.push({ ...turn, state: 'cancelled', duration: 1 });
+          start.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || String(turn.id), duration: 1 });
+        },
+        queue: () => {},
+        unqueue: () => {},
+        setDraft: (draft) => { told.push({ what: 'draft', id: '', value: draft }); },
+        reorder: () => {},
+        confirm: (toolCallId, approved) => { told.push({ what: 'confirm', id: toolCallId, value: approved }); },
+        answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); },
+        setCustomizationEnabled: async () => false,
+        startMcpServer: async () => false,
+        stopMcpServer: async () => false,
+        close: () => {},
+      };
+    },
+  };
+}
+
+/**
+ * A host running the asking fake, its session subscribed under `as`, with the
+ * worker's asks on the wire. `worker` is the worker chat in the spelling the
+ * client was given for it.
+ */
+async function waiting(as = 'ahp-session:/ask') {
+  wire.length = 0;
+  told.length = 0;
+  const host = createHost({ path: '/tmp', agents: [askingInWorker()] });
+  const client = host.accept(peer());
+  const ask = asking(client);
+  await ask('initialize', {
+    channel: 'ahp-root://', clientId: 'ask', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
+  });
+  await ask('createSession', { channel: 'ahp-session:/ask', provider: 'fake' });
+  await ask('subscribe', { channel: as });
+  const lead = `ahp-chat://default/${Buffer.from(as, 'utf8').toString('base64url')}`;
+  await ask('subscribe', { channel: lead });
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run a subagent' } } });
+  await settle();
+  const worker = `ahp-chat://subagent/${Buffer.from(as, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  await ask('subscribe', { channel: worker });
+  wire.length = 0;
+  /** Dispatch one action on a channel and let the host act on it. */
+  const send = async (channel: string, action: Bag): Promise<void> => {
+    await ask('dispatchAction', { channel, action });
+    await settle();
+  };
+  /** Every refusal the host put on the wire since the asks. */
+  const refusals = (): string[] => wire
+    .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+    .map((one) => String(one.params.rejectionReason));
+  return { ask, lead, worker, send, refusals };
+}
+
+it('takes an approval given on a worker chat to the session\'s backend', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, confirmed: 'user-action' });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: true }]);
+});
+
+it('takes an approval given on a worker chat spelt from a session alias', async () => {
+  const { ask, worker, send, refusals } = await waiting('fake:/ask');
+  expect(worker.startsWith(`ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/`)).toBe(true);
+  // The chat the snapshot tells this client to answer on is spelt the way it
+  // subscribed.
+  const answer = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { state: Bag } };
+  const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
+  expect(needed.map((one) => one.chat)).toEqual([worker, worker]);
+  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: false }]);
+});
+
+it('takes an answer to a question given on a worker chat to the session\'s backend', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/inputCompleted', requestId: 'toolu_ask', response: 'accept', answers: {} });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'answer', id: 'toolu_ask', value: true }]);
+});
+
+it('cancels the lead turn when a worker chat is stopped', async () => {
+  const { lead, worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'cancel', id: 't1' }]);
+  expect(on(lead).some((one) => one.type === 'chat/turnCancelled' && one.turnId === 't1')).toBe(true);
+});
+
+it('refuses anything else on a worker chat as read-only', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });
+  expect(told).toEqual([]);
+  expect(refusals()).toHaveLength(1);
+  expect(refusals()[0]).toContain('read-only');
+});
