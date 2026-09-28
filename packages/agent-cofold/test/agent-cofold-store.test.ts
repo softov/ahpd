@@ -22,10 +22,15 @@ import { cofoldAgent } from '../src/index.js';
  * finished - under the cofold session id it already had.
  */
 
-/** Let the run's zero-delay work finish, up to a point; no wall-clock waiting on a real model. */
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
-    if (check()) return;
+/**
+ * Waits for `check` to hold, turning the event loop, and throws once `ms` of
+ * wall-clock time has passed, inside the case's own limit so a wait that runs
+ * out fails on its own message rather than letting the case read on.
+ */
+const until = async (check: () => boolean, ms = 4000): Promise<void> => {
+  const limit = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > limit) throw new Error('timed out waiting');
     await new Promise((r) => { setTimeout(r, 0); });
   }
 };
@@ -55,11 +60,13 @@ function channels(onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Ba
  * `awaiting`, so a test that restarts on the action alone can read a run that
  * is still `running`.
  */
-const pausedRun = async (root: string, sessionId: string): Promise<void> => {
+const pausedRun = async (root: string, sessionId: string, ms = 4000): Promise<void> => {
   const store = createFileStore({ root });
-  for (let i = 0; i < 400; i++) {
+  const limit = Date.now() + ms;
+  for (;;) {
     const runs = await store.runs.list({ sessionId });
     if (runs[0]?.status === 'awaiting') return;
+    if (Date.now() > limit) throw new Error('timed out waiting for the run to be awaiting');
     await new Promise((r) => { setTimeout(r, 0); });
   }
 };
@@ -449,7 +456,7 @@ it('answers a request the replay announced before the resumed run had a handle',
   });
   answer = () => after.session.confirm('call-1', true);
 
-  await until(() => ended(after.view), 2000);
+  await until(() => ended(after.view));
   expect(ended(after.view)).toBe(true);
   expect(ran).toEqual(['x']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');

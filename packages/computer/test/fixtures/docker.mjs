@@ -9,13 +9,44 @@
  * Docker.
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 
 const state = process.env.DOCKER_FAKE_STATE;
 if (state === undefined) {
   process.stderr.write('DOCKER_FAKE_STATE is not set\n');
   process.exit(2);
 }
+
+/*
+ * One call at a time over the state file.
+ *
+ * Each call reads the whole file and writes the whole file back, so two calls
+ * that overlap - a provider's startup `ps` beside a session's `run` - would
+ * have the later writer drop what the earlier one recorded. A real daemon
+ * serialises them; this directory does the same, and is let go on exit. A
+ * lock older than `STALE` belongs to a call that died holding it.
+ */
+const lock = `${state}.lock`;
+const STALE = 10_000;
+const pause = new Int32Array(new SharedArrayBuffer(4));
+for (;;) {
+  try {
+    mkdirSync(lock);
+    break;
+  }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > STALE) rmdirSync(lock);
+    }
+    catch {}
+    Atomics.wait(pause, 0, 0, 2);
+  }
+}
+process.on('exit', () => {
+  try { rmdirSync(lock); }
+  catch {}
+});
 
 const args = process.argv.slice(2);
 const held = existsSync(state)

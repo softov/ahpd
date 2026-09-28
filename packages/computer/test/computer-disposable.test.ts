@@ -233,6 +233,7 @@ it('keeps the machine for a restart before the first turn, and starts no timer',
   }), [agentWith()]);
   const { client, open, dispose } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+  await until(() => held(state).machines.length === 1);
 
   const made = held(state);
   const box = made.machines[0]?.name as string;
@@ -346,7 +347,9 @@ it('removes the machine after the delay, and a session that picks it again cance
   }), [agentWith()]);
   const { open, dispose } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+  await until(() => held(state).machines.length === 1);
   const box = held(state).machines[0]?.name as string;
+  expect(box).toBeDefined();
 
   // The last session is gone, so the delay is running.
   await dispose('ahp-session:/one');

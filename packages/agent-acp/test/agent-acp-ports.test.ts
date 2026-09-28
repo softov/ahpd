@@ -69,14 +69,21 @@ afterEach(async () => {
   for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-/** The `clientCapabilities` the bridge advertised, out of the fixture's log. */
+/**
+ * The `clientCapabilities` the bridge advertised to the session's server, out
+ * of the fixture's log.
+ *
+ * The host also reads the catalogue, which spawns a server of its own that
+ * handshakes with no ports and logs to the same file, in whichever order the
+ * two processes get there. The session's server is the one that was sent
+ * `session/new`, so its handshake is picked by pid.
+ */
 const capabilitiesOf = (log: string): unknown => {
-  const lines = readFileSync(log, 'utf8').trim().split('\n').filter((one) => one !== '');
-  for (const line of lines) {
-    const held = JSON.parse(line) as { method?: string; params?: { clientCapabilities?: unknown } };
-    if (held.method === 'initialize') return held.params?.clientCapabilities;
-  }
-  return undefined;
+  const held = readFileSync(log, 'utf8').trim().split('\n').filter((one) => one !== '')
+    .map((line) => JSON.parse(line) as { pid?: number; method?: string; params?: { clientCapabilities?: unknown } });
+  const session = held.find((one) => one.method === 'session/new')?.pid;
+  if (session === undefined) return undefined;
+  return held.find((one) => one.pid === session && one.method === 'initialize')?.params?.clientCapabilities;
 };
 
 /** A connected client with one ACP session, watching both its channels. */

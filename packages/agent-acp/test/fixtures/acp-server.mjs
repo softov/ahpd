@@ -41,7 +41,9 @@
  * When `ACP_LOG` names a file, every request and notification that arrives is
  * appended to it as one JSON line, so a test can prove what the bridge actually
  * asked for - including the `clientCapabilities` it advertised - rather than
- * inferring it from state the bridge keeps.
+ * inferring it from state the bridge keeps. Each line carries this process's
+ * pid, because a catalogue read spawns a server of its own that logs to the
+ * same file.
  */
 
 import { appendFileSync } from 'node:fs';
@@ -351,7 +353,7 @@ const onLine = (line) => {
     return;
   }
 
-  if (LOG !== undefined) appendFileSync(LOG, `${JSON.stringify({ method: message.method, params: message.params })}\n`);
+  if (LOG !== undefined) appendFileSync(LOG, `${JSON.stringify({ pid: process.pid, method: message.method, params: message.params })}\n`);
 
   /*
    * The answer to something this server asked, which has an id and no method.
