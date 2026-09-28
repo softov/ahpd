@@ -124,9 +124,6 @@ importers:
         specifier: ^0.9.0
         version: 0.9.0
     optionalDependencies:
-      node-pty:
-        specifier: ^1.1.0-beta40
-        version: 1.1.0
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -140,14 +137,18 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2
       '@cofold/remote':
-        specifier: ^0.3.1
-        version: 0.3.1
+        specifier: ^0.4.0
+        version: 0.4.0
       '@cofold/terminal':
         specifier: ^0.2.0
         version: 0.2.0
       '@microsoft/agent-host-protocol':
         specifier: ^0.9.0
         version: 0.9.0
+    optionalDependencies:
+      node-pty:
+        specifier: ^1.1.0-beta40
+        version: 1.1.0
 
   packages/tunnel-devtunnel:
     devDependencies:
@@ -321,8 +322,8 @@ packages:
     peerDependencies:
       '@cofold/agents': ^0.1
 
-  '@cofold/remote@0.3.1':
-    resolution: {integrity: sha512-C31p3RnRtV8peRbuh3MMiB20ptE7a6Fs4ZIvHhaZguKrf1aV9i4c509Y0qAEX/Nlphau7K7EUQp8dngKhnQ6zA==}
+  '@cofold/remote@0.4.0':
+    resolution: {integrity: sha512-VS+qMYGqlEeUA/oX/GoyD7IB+p3tC65NurVttLc4cTwQXIfztpAg5Yes5DlcYC3k5Nl9oHZQL+qc6bvsUEaxGQ==}
     engines: {node: '>=22'}
 
   '@cofold/sdk@0.2.0':
@@ -1864,7 +1865,7 @@ snapshots:
     dependencies:
       '@cofold/agents': 0.1.2
 
-  '@cofold/remote@0.3.1':
+  '@cofold/remote@0.4.0':
     dependencies:
       '@cofold/commands': 0.2.2
 

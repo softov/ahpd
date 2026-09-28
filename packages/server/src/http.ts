@@ -11,11 +11,9 @@
  * keeps the answer it always had.
  */
 
-import { createServer } from 'node:http';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { serve, type RequestHandler } from '@cofold/remote';
+import { serve, toNodeListener, type RequestHandler } from '@cofold/remote';
 import type { Runner } from '@cofold/commands';
-import type { Users } from '@ahpd/sdk';
+import { serveRequests, type NodeRequestListener, type Users } from '@ahpd/sdk';
 import { authorizeOverHttp } from './commands/authorize.js';
 
 /** The path the API is served under, on whichever listener carries it. */
@@ -69,12 +67,12 @@ export interface ApiOptions {
  * could be, so it is refused with the same sentence. Neither is a credential
  * question, so all three are refused before a route or a grant is looked at.
  */
-function foreign(request: IncomingMessage, allowed: ApiOrigins): string | undefined {
-  const host = request.headers.host;
-  if (host === undefined) return 'This API does not answer to a request with no Host';
+function foreign(request: Request, allowed: ApiOrigins): string | undefined {
+  const host = request.headers.get('host');
+  if (host === null) return 'This API does not answer to a request with no Host';
   if (!allowed.authorities.includes(host)) return `This API does not answer to ${host}`;
-  const origin = request.headers.origin;
-  if (origin !== undefined && !allowed.origins.includes(origin)) return `This API does not answer to ${origin}`;
+  const origin = request.headers.get('origin');
+  if (origin !== null && !allowed.origins.includes(origin)) return `This API does not answer to ${origin}`;
   return undefined;
 }
 
@@ -94,15 +92,12 @@ export function apiHandler(options: ApiOptions): RequestHandler {
       ...(options.users === undefined ? {} : { users: options.users }),
     }),
   });
-  return guarded((request, response, path) => {
+  return guarded((request, path) => {
     if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) {
       const refusal = foreign(request, options.origins());
-      if (refusal !== undefined) {
-        sendJson(response, 403, { message: refusal });
-        return;
-      }
+      if (refusal !== undefined) return Promise.resolve(json(403, { message: refusal }));
     }
-    api(request, response);
+    return api(request);
   });
 }
 
@@ -114,13 +109,11 @@ export function apiHandler(options: ApiOptions): RequestHandler {
  * protocol and a plain request is not one.
  */
 export function withoutApi(): RequestHandler {
-  return guarded((request, response, path) => {
+  return guarded((_request, path) => {
     if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) {
-      sendJson(response, 404, { message: `No API at ${path}` });
-      return;
+      return Promise.resolve(json(404, { message: `No API at ${path}` }));
     }
-    response.writeHead(426, { 'content-type': 'text/plain', 'content-length': Buffer.byteLength(SPEAKS_AHP) });
-    response.end(SPEAKS_AHP);
+    return Promise.resolve(new Response(SPEAKS_AHP, { status: 426, headers: { 'content-type': 'text/plain' } }));
   });
 }
 
@@ -130,37 +123,47 @@ const REQUEST_UNREADABLE = 'The request path or Host is not valid';
 /**
  * A handler no malformed request can throw out of.
  *
- * The URL is built and every path segment decoded before a route looks at
- * either: a `Host` that does not parse and a path that is not a valid
- * percent-encoding are nobody's route, and a daemon that ended on one would
- * take every other connection with it. The handler is called outside that check
- * and its own failure is answered rather than allowed to escape.
+ * The URL is read and every path segment decoded before a route looks at
+ * either: a path that is not a valid percent-encoding is nobody's route, and a
+ * daemon that ended on one would take every other connection with it. The
+ * handler is called outside that check and its own failure is answered rather
+ * than allowed to escape.
  */
-function guarded(handler: (request: IncomingMessage, response: ServerResponse, path: string) => void): RequestHandler {
-  return (request, response) => {
+function guarded(handler: (request: Request, path: string) => Promise<Response>): RequestHandler {
+  return async (request) => {
     let path: string;
     try {
       path = pathOf(request);
       for (const part of path.split('/')) decodeURIComponent(part);
     }
     catch {
-      sendJson(response, 400, { message: REQUEST_UNREADABLE });
-      return;
+      return json(400, { message: REQUEST_UNREADABLE });
     }
     try {
-      handler(request, response, path);
+      return await handler(request, path);
     }
     catch {
-      if (response.headersSent) response.destroy();
-      else sendJson(response, 500, { message: 'Failed' });
+      return json(500, { message: 'Failed' });
     }
   };
 }
 
+/** One handler in both shapes a listener takes: as it is for Bun and Deno, and as a `node:http` listener for Node. */
+export interface PlainRequests {
+  request: RequestHandler;
+  nodeRequest: NodeRequestListener;
+}
+
+/** `handler` in both shapes, for `listen` and `serveRequests` to mount whichever the runtime takes. */
+export const plainRequests = (handler: RequestHandler): PlainRequests => ({
+  request: handler,
+  nodeRequest: toNodeListener(handler),
+});
+
 /** A listener of the API's own, and the port it actually bound. */
 export interface ApiListener {
   readonly port: number;
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 /**
@@ -168,31 +171,21 @@ export interface ApiListener {
  *
  * Bound before the daemon announces itself, so a port that is taken refuses the
  * start rather than leaving a daemon whose API is missing. `port: 0` is the OS
- * choosing, and the answer is the port it chose.
+ * choosing, and the answer is the port it chose. Served on whichever runtime
+ * this is, the same way the daemon's own listener is.
  */
-export function listenApi(handler: RequestHandler, options: { port: number; host: string }): Promise<ApiListener> {
-  return new Promise((resolve, reject) => {
-    const server = createServer(handler);
-    const failed = (error: unknown): void => { reject(error instanceof Error ? error : new Error(String(error))); };
-    server.once('error', failed);
-    server.listen(options.port, options.host, () => {
-      server.removeListener('error', failed);
-      server.on('error', () => { /* a later error is the socket's, not the start's */ });
-      const bound = server.address();
-      resolve({
-        port: typeof bound === 'object' && bound !== null ? bound.port : options.port,
-        close: () => { server.close(); },
-      });
-    });
-  });
+export async function listenApi(handler: RequestHandler, options: { port: number; host: string }): Promise<ApiListener> {
+  const served = await serveRequests(
+    { port: options.port, host: options.host, nodeRequest: plainRequests(handler).nodeRequest },
+    handler,
+  );
+  return { port: served.port, close: () => served.close() };
 }
 
-/** The pathname a request asked for, host header and all. */
-const pathOf = (request: IncomingMessage): string =>
-  new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+/** The pathname a request asked for. */
+const pathOf = (request: Request): string => new URL(request.url).pathname;
 
-function sendJson(response: ServerResponse, status: number, value: unknown): void {
-  const body = JSON.stringify(value, null, 2);
-  response.writeHead(status, { 'content-type': 'application/json' });
-  response.end(`${body}\n`);
+/** A JSON answer, in the shape `serve()` gives its own. */
+function json(status: number, value: unknown): Response {
+  return new Response(`${JSON.stringify(value, null, 2)}\n`, { status, headers: { 'content-type': 'application/json' } });
 }

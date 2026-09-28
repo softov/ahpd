@@ -19,7 +19,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [02 - The ready connect URL lives in the daemon record and never on stdout](daemon/02-connect-url-in-record/plan.md) | medium | built 2026-09-20 ([implemented.md](daemon/02-connect-url-in-record/implemented.md)) | - | - |
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/04-commands-declared-once/implemented.md)) | daemon 03 | daemon 05 |
-| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26; every task but 16 done, reviewed 2026-09-28; 16 is being built on `@cofold/remote` 0.4.0 | daemon 04 | - |
+| [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | active 2026-09-26; every task but 16 and 35 done, reviewed 2026-09-28; 16 and 35 implemented and awaiting review: the API on Node, Bun and Deno over `@cofold/remote` 0.4.0, with the SDK free of cofold | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
 
 Next free number in `daemon`: `07`.

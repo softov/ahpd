@@ -25,6 +25,7 @@ decisions:
   - decisions/remote-warns-when-its-token-travels-in-cleartext.md
   - decisions/remote-reads-its-token-from-a-file-too.md
   - decisions/cofold-serve-is-fetch-style-with-a-node-adapter.md
+  - decisions/the-sdk-mounts-the-node-listener-the-server-adapts.md
   - decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md
   - decisions/a-caller-gives-only-the-grants-it-holds.md
 refs:
@@ -84,6 +85,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [`--remote` to plain http on a host that is not loopback sends the token, with a warning](../../../decisions/remote-warns-when-its-token-travels-in-cleartext.md) | 13 |
 | [`--remote` reads its token from a file too, with --token-file](../../../decisions/remote-reads-its-token-from-a-file-too.md) | 13 |
 | [cofold's serve() takes a Request and answers a Response, and Node gets an adapter](../../../decisions/cofold-serve-is-fetch-style-with-a-node-adapter.md) | 15, 16 |
+| [The SDK mounts the Node listener the server adapts, and depends on no cofold package](../../../decisions/the-sdk-mounts-the-node-listener-the-server-adapts.md) | 35 |
 | [The HTTP API checks Origin and Host, and takes only JSON bodies](../../../decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md) | 06, 11, 18 |
 | [A user command gives, mints for and removes only what its caller holds](../../../decisions/a-caller-gives-only-the-grants-it-holds.md) | 17 |
 
@@ -107,6 +109,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | `docs/DAEMON.md`'s long `--remote` line is wrapped, and the flag row names the update check as declared. | Softov, 2026-09-27, asked which earlier findings become tasks: "DAEMON.md long line and wording". | 34 |
 | The exported `RequestHandler` type keeps its name with the fetch shape. | Softov, 2026-09-27, asked whether the type keeps its name in 0.4.0: "Keep RequestHandler". | 15 |
 | cofold's CI `runtimes` job runs the clerver server on Node, Bun and Deno. | Softov, 2026-09-27, asked whether to add the round trip the Validation names: "Add clerver to runtimes". | 15 |
+| `node-pty` is declared by `@ahpd/server`, which imports it, and not by the SDK. | Softov, 2026-09-28, asked whether to move it: "Move it, with task 35". | 35 |
 
 ## Tasks
 
@@ -127,7 +130,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [13 - `--remote` needs a token, reads it from a file too, warns on cleartext, keeps its cache private, and its tests prove the daemon answered](task-13-remote-needs-a-token-and-proves-it-is-remote.md) | done | 08 |
 | [14 - Docs for the API's grants, guards and --remote](task-14-docs-for-the-amendments.md) | done | 09, 10, 11, 12, 13 |
 | [15 - `serve()` takes a Request and answers a Response, with a Node adapter (cofold repository)](task-15-serve-takes-a-request.md) | done | 06 |
-| [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | todo | 07, 15 |
+| [16 - The HTTP API is served on Node, Bun and Deno](task-16-the-api-on-bun-and-deno.md) | implemented | 07, 15 |
 | [17 - A user command gives, mints for and removes only what its caller holds](task-17-a-caller-gives-only-what-it-holds.md) | done | 09 |
 | [18 - The API's guards have no gaps](task-18-the-guards-have-no-gaps.md) | done | 11, 12, 13 |
 | [19 - The API's tests prove what their tasks' Validation says](task-19-the-tests-prove-their-validation.md) | done | 08, 10, 12, 13 |
@@ -146,6 +149,7 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 | [32 - The comment on urlHost says what it is](task-32-urlhost-says-what-it-is.md) | done | 28 |
 | [33 - A --remote token is trimmed whichever of the three it came from](task-33-a-remote-token-is-trimmed-from-every-source.md) | done | 27 |
 | [34 - DAEMON.md is wrapped where it is prose, and its flag table names the update check as declared](task-34-daemon-md-is-wrapped-and-names-the-update-flag.md) | done | - |
+| [35 - The SDK mounts the Node listener the server adapts, and node-pty is the server's](task-35-the-sdk-mounts-what-the-server-adapts.md) | implemented | 16 |
 
 ## Risks and tradeoffs
 
@@ -154,13 +158,14 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 
 ## Resume state
 
-- **Done so far:** every task but 16 is `done`, reviewed by Softov on 2026-09-28.
+- **Done so far:** every task but 16 and 35 is `done`, reviewed by Softov on 2026-09-28.
   With `http` on, the daemon serves its own declarations under `/api` on its own listener or on `http.port`, a request signs in with `Authorization: Bearer` and is checked in the registry's `authorize` hook, and `ahpd --remote <url>` runs the same commands against it.
-  Task 15 is `@cofold/remote` 0.4.0, released on 2026-09-28 (cofold tag `release-2026-09-28`); ahpd still depends on `^0.3.1` until task 16 moves it.
-- **Next action:** task 16, the API on Node, Bun and Deno over 0.4.0, is being built in the worktree `/github/ahpd-d05t16` on branch `d05-16`, then Softov's review; the plan closes after it.
+  Task 16 serves the API on Node, Bun and Deno over `@cofold/remote` 0.4.0: `ListenOptions.request` is a `Request` handler, `apiHandler` and `withoutApi` answer a `Request`, and `http.port`'s listener is `serveRequests` in the SDK.
+  Task 35 takes `@cofold/remote` out of the SDK: the server builds the Node listener with `toNodeListener` and hands it to `listen` and `serveRequests` as `nodeRequest`, and `node-pty` is the server's optional dependency.
+- **Next action:** Softov reviews tasks 16 and 35; the plan closes after it.
 - **Open questions:** none.
 - **Watch out for:**
-  - Task 15 made `serve()` take a `Request` and answer a `Response`, with a Node adapter; task 16 serves the API on Node, Bun and Deno with it.
+  - `@ahpd/sdk` depends on no `@cofold/*` package: a host that serves plain requests on Node passes `nodeRequest` beside `request`, and `listen` refuses it without one.
   - A command added to the API later must take no path from the request, must not reach `stop`, and must declare a grant pair.
   - The dispatch gate and `PER_CONNECTION` have no staleness test, so a command reachable over HTTP must be classified the way a WebSocket method is.
   - A cofold release is staged by cofold's `release.yml` from a `release-*` tag and approved by Softov on npm; nobody runs `npm publish`.
@@ -184,7 +189,8 @@ ahpd --remote URL plugin list -> [new] manifest from URL/api/cli-manifest -> com
 - [x] `http.host` binds the API's own listener.
 - [x] `--remote` with no token exits 2, `--token-file` supplies one, plain `http://` to a host that is not loopback warns on stderr, its cache is 0700 in the user's cache directory, and its tests fail when the daemon does not answer.
 - [x] Grants are checked in the registry's `authorize` hook, and `authorizeOverHttp` checks none.
-- [x] `@cofold/remote@0.3.1`, released by Softov, is the version `packages/server/package.json` names.
+- [x] `@cofold/remote@0.4.0`, released by Softov, is the version `packages/server/package.json` names.
+- [x] The API starts and answers on Node, Bun and Deno, on the daemon's port and on `http.port` (task 16).
 - [x] A caller with `users:write` cannot give, mint for or remove a role or person holding a grant it lacks (task 17).
 - [x] A request with no `Host` is refused, an IPv6 bind answers to `[addr]:port`, an empty `http.host` is refused, no actor is 401, and `HTTP://` warns (task 18).
 - [x] The bind, sentence, cache and plugin-list cases fail when their behaviour breaks, and the cache is 0700 even when it existed (task 19).

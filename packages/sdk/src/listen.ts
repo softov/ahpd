@@ -1,5 +1,7 @@
 import { createPeer, receive } from './rpc.js';
-import type { Connected, Listener, ListenOptions, OnConnect, Runtime, StdioOptions, Tap } from './types/listen.js';
+import type {
+  Connected, Listener, ListenOptions, NodeRequestListener, OnConnect, RequestHandler, RequestsListener, RequestsOptions, Runtime, StdioOptions, Tap,
+} from './types/listen.js';
 import type { Principal } from './types/users.js';
 
 /**
@@ -81,15 +83,7 @@ const tapping = (tap: Tap | undefined, peer: number): {
 
 export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
   const here = runtime();
-  /*
-   * A plain request handler is `node:http`'s own request and response, which
-   * Bun and Deno do not have. Refused here rather than dropped, because a host
-   * that asked for an HTTP surface and silently got none would be a host whose
-   * API answers 426 on one runtime and not another.
-   */
-  if (here !== 'node' && options.request !== undefined) {
-    throw new Error('A plain HTTP request handler is served on Node, where a request is an IncomingMessage.');
-  }
+  if (here === 'node' && options.request !== undefined) mountable(options.nodeRequest);
   const host = options.host ?? '127.0.0.1';
   let accepted = 0;
   const token = options.token;
@@ -142,7 +136,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     const server = Bun.serve({
       port: options.port,
       hostname: host,
-      async fetch(request: Request_, server_: { upgrade(r: Request_, options?: { data?: unknown }): boolean }) {
+      async fetch(request: Request, server_: { upgrade(r: Request, options?: { data?: unknown }): boolean }) {
+        // A plain request is the host's own HTTP surface when it has one,
+        // answered in full there and never signed in at this door.
+        if (options.request !== undefined && !upgrading(request)) return options.request(request);
         // Refused before the upgrade, so an unauthorised client is told in
         // HTTP rather than handed a socket that closes on its first message.
         const identity = await identityOf(request.url, request.headers.get('authorization'));
@@ -187,18 +184,19 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
 
   if (here === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
-      serve(options: { port: number; hostname: string }, handler: (r: Request_) => Response | Promise<Response>): {
+      serve(options: { port: number; hostname: string }, handler: (r: Request) => Response | Promise<Response>): {
         shutdown(): Promise<void>;
         addr: { port: number };
       };
-      upgradeWebSocket(r: Request_): { socket: DenoSocket; response: Response };
+      upgradeWebSocket(r: Request): { socket: DenoSocket; response: Response };
     } }).Deno;
     const server = Deno.serve({ port: options.port, hostname: host }, async (request) => {
+      if (options.request !== undefined && !upgrading(request)) return options.request(request);
       const identity = await identityOf(request.url, request.headers.get('authorization'));
       if (!identity.admitted) {
         return new Response('A connection token is required', { status: 401 });
       }
-      if ((request.headers.get('upgrade') ?? '').toLowerCase() !== 'websocket') {
+      if (!upgrading(request)) {
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       }
       const { socket, response } = Deno.upgradeWebSocket(request);
@@ -276,10 +274,11 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
    *
    * `ws` builds its own `http` server when it is given a port, and that server
    * answers everything that is not an upgrade with 426. A host with an HTTP
-   * surface on the same port brings its own server through `request`, which
-   * `ws` attaches to; the upgrade itself is decided by the same `verifyClient`
-   * either way. With no handler the port path is `ws`'s own server, so a host
-   * that wants no HTTP surface carries nothing extra.
+   * surface on the same port brings `nodeRequest`, served on a `node:http`
+   * server of this module's own that `ws` attaches to; the upgrade
+   * itself is decided by the same `verifyClient` either way. With no handler
+   * the port path is `ws`'s own server, so a host that wants no HTTP surface
+   * carries nothing extra.
    */
   let server: NodeServer;
   if (options.request === undefined) {
@@ -287,7 +286,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   }
   else {
     const { createServer } = await import('node:http');
-    const plain = createServer((request, response) => { options.request?.(request, response); });
+    const plain = createServer(mountable(options.nodeRequest));
     server = new WebSocketServer({ server: plain, verifyClient });
     plain.listen(options.port, host);
   }
@@ -322,6 +321,76 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     close: () => { server.close(); },
   };
 }
+
+/**
+ * Serves plain HTTP requests on a port of their own, with no WebSocket.
+ *
+ * The same three runtimes `listen` answers on, through the same servers: the
+ * handler is handed straight to `Bun.serve` and `Deno.serve`, and Node serves
+ * `options.nodeRequest` on a `node:http` server. A port that cannot be bound
+ * rejects, so a caller that must have it refuses to start.
+ */
+export async function serveRequests(options: RequestsOptions, handler: RequestHandler): Promise<RequestsListener> {
+  const here = runtime();
+  const host = options.host ?? '127.0.0.1';
+  if (here === 'bun') {
+    const Bun = (globalThis as unknown as { Bun: {
+      serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void; port: number };
+    } }).Bun;
+    const server = Bun.serve({ port: options.port, hostname: host, fetch: handler });
+    return { runtime: here, host, port: server.port, close: () => server.stop(true) };
+  }
+  if (here === 'deno') {
+    const Deno = (globalThis as unknown as { Deno: {
+      serve(options: { port: number; hostname: string }, handler: RequestHandler): {
+        shutdown(): Promise<void>;
+        addr: { port: number };
+      };
+    } }).Deno;
+    const server = Deno.serve({ port: options.port, hostname: host }, handler);
+    return { runtime: here, host, port: server.addr.port, close: () => server.shutdown() };
+  }
+  const listener = mountable(options.nodeRequest);
+  const { createServer } = await import('node:http');
+  const server = createServer(listener);
+  await new Promise<void>((resolve, reject) => {
+    const failed = (error: unknown): void => { reject(error instanceof Error ? error : new Error(String(error))); };
+    server.once('error', failed);
+    server.listen(options.port, host, () => {
+      server.removeListener('error', failed);
+      // A later error is one connection's, not the bind's.
+      server.on('error', () => undefined);
+      resolve();
+    });
+  });
+  const bound = server.address();
+  return {
+    runtime: here,
+    host,
+    port: typeof bound === 'object' && bound !== null ? bound.port : options.port,
+    close: () => { server.close(); },
+  };
+}
+
+/** Whether a request asks for the WebSocket upgrade. */
+const upgrading = (request: Request): boolean =>
+  (request.headers.get('upgrade') ?? '').toLowerCase() === 'websocket';
+
+/**
+ * The Node listener a host handed in, or a refusal that says it is missing.
+ *
+ * Node's `node:http` takes a request and a response rather than a `Request`,
+ * and this package has no adapter between the two: the host builds one.
+ */
+const mountable = (listener: NodeRequestListener | undefined): NodeRequestListener => {
+  if (listener === undefined) {
+    throw new Error(
+      'Serving plain HTTP requests on Node needs `nodeRequest`, the handler as a `node:http` listener,\n'
+      + 'for example `toNodeListener(handler)` from `@cofold/remote`. Bun and Deno serve the handler as it is.',
+    );
+  }
+  return listener;
+};
 
 /**
  * Serves one client over this process's own stdin and stdout.
@@ -416,8 +485,6 @@ export async function overStdio(options: StdioOptions, onConnect: OnConnect): Pr
 }
 
 // --- the shapes each runtime hands back, named so the code above reads ------
-
-type Request_ = { url: string; headers: { get(name: string): string | null } };
 
 interface BunSocket { send(text: string): unknown; close(): void; readyState: number; data?: unknown }
 

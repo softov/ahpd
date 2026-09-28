@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { listen } from '../src/listen.js';
+import { listen, serveRequests } from '../src/listen.js';
 import type { Listener } from '../src/types/listen.js';
 
 /*
@@ -100,4 +100,20 @@ it('hands a tap every frame in both directions, numbered by connection', async (
   expect(JSON.parse(seen[0]?.text ?? '{}')).toMatchObject({ id: 1, method: 'ping' });
   expect(JSON.parse(seen[1]?.text ?? '{}')).toMatchObject({ id: 1, result: { pong: true } });
   expect(JSON.parse(seen[3]?.text ?? '{}')).toMatchObject({ id: 7, result: { pong: true } });
+});
+
+it('refuses plain requests on Node without the Node listener they are served through', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  await expect(listen({ port: 0, request: handler }, nothing)).rejects.toThrow(/nodeRequest/u);
+  await expect(serveRequests({ port: 0 }, handler)).rejects.toThrow(/nodeRequest/u);
+});
+
+it('serves plain requests on Node through the Node listener it was handed', async () => {
+  running = await listen({
+    port: 0,
+    request: async () => new Response('fetch'),
+    nodeRequest: (_request, response) => { response.end('node'); },
+  }, nothing);
+  expect(await (await fetch(`http://127.0.0.1:${running.port}/`)).text()).toBe('node');
+  expect(await knock(`ws://127.0.0.1:${running.port}`)).toBe('open');
 });

@@ -54,8 +54,7 @@
     "test": "cd ../.. && node tools/schema.mjs && vitest run packages/sdk/test"
   },
   "optionalDependencies": {
-    "ws": "^8.18.0",
-    "node-pty": "^1.1.0-beta40"
+    "ws": "^8.18.0"
   },
   "peerDependencies": {
     "@microsoft/agent-host-protocol": "^0.9.0"

@@ -29,13 +29,12 @@ import {
   memorySessions,
   overStdio,
   raise,
-  runtime,
   scheduledAutomations,
   shellTerminals,
   signInRecord,
 } from '@ahpd/sdk';
 import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier, urlHost } from '../config.js';
-import { API_PREFIX, apiHandler, listenApi, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
 import { pty } from '../pty.js';
@@ -174,9 +173,6 @@ export async function runForeground(options: Options): Promise<void> {
    */
   if (options.http !== undefined && options.stdio) {
     stop('http needs a listening port, and --stdio serves one connection on this process\'s own pipes.');
-  }
-  if (options.http !== undefined && runtime() !== 'node') {
-    stop(`The HTTP API is served on Node, and this is ${runtime()}.`);
   }
   /*
    * A host with no gate is not one the API may be served from.
@@ -468,9 +464,8 @@ export async function runForeground(options: Options): Promise<void> {
             root: true,
           }),
         ...(tap ? { tap } : {}),
-        // The plain requests beside the upgrade, on Node, where a request is
-        // an `IncomingMessage` this daemon can hand to `serve()`.
-        ...(runtime() === 'node' ? { request: daemonRequest } : {}),
+        // The plain requests beside the upgrade.
+        ...plainRequests(daemonRequest),
       },
       (peer, principal, root) => host.accept(peer, principal, root),
     );

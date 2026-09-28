@@ -1,7 +1,7 @@
 /** Accepting connections, on whichever JavaScript runtime is running. */
 
-import type { Readable, Writable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Readable, Writable } from 'node:stream';
 import type { Peer, Request } from './rpc.js';
 import type { Principal } from './users.js';
 
@@ -99,13 +99,50 @@ export interface ListenOptions {
    * here and the handler answers it in full. Left out, this listener answers a
    * plain request the way it always has - 426, because it speaks AHP over
    * WebSocket - which is what keeps every host that never asked for an HTTP
-   * surface exactly as it was.
-   *
-   * Node only, because the handler takes `node:http`'s own request and response
-   * rather than a `Request` and a `Response`. A listener on Bun or Deno with
-   * one passed is refused at startup rather than silently answering 426.
+   * surface exactly as it was. Bun and Deno serve this handler as it is; Node
+   * serves `nodeRequest`, and refuses to start without it.
    */
-  request?: (request: IncomingMessage, response: ServerResponse) => void;
+  request?: RequestHandler;
+  /** The same plain requests as a `node:http` listener, which is what Node serves. */
+  nodeRequest?: NodeRequestListener;
+}
+
+/**
+ * A plain HTTP request handler: one `Request` in, one `Response` out.
+ *
+ * The shape `Bun.serve` and `Deno.serve` take. Its promise resolves with every
+ * answer, a refusal included.
+ */
+export type RequestHandler = (request: globalThis.Request) => Promise<Response>;
+
+/**
+ * A plain HTTP request handler as `node:http` takes one.
+ *
+ * The host builds it from its `RequestHandler`, so the two answer alike; this
+ * package mounts it on Node and has no adapter of its own.
+ */
+export type NodeRequestListener = (request: IncomingMessage, response: ServerResponse) => void;
+
+/** Where to serve plain HTTP requests, and nothing else. */
+export interface RequestsOptions {
+  /** TCP port to bind; 0 is the OS choosing. */
+  port: number;
+  /** Address to bind, loopback by default. */
+  host?: string;
+  /** The handler as a `node:http` listener, which is what Node serves and requires. */
+  nodeRequest?: NodeRequestListener;
+}
+
+/** A running plain HTTP server. */
+export interface RequestsListener {
+  /** Which runtime was detected. */
+  readonly runtime: Runtime;
+  /** The address it bound. */
+  readonly host: string;
+  /** The port it bound. */
+  readonly port: number;
+  /** Stop accepting and drop open connections. */
+  close(): void | Promise<void>;
 }
 
 /**

@@ -27,7 +27,7 @@ export { createHost, ROOT, refusalReason } from './host.js';
 export { foldHostOptions, pluginHost, raise, AGENT_CLASH } from './plugins.js';
 export type { FoldedOptions, HostRecording } from './plugins.js';
 export { sdkVersion } from './version.js';
-export { listen, overStdio, runtime } from './listen.js';
+export { listen, overStdio, runtime, serveRequests } from './listen.js';
 export {
   createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,

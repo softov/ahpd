@@ -18,7 +18,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { fileUsers } from '@ahpd/sdk';
+import type { Options } from '../src/commands/options.js';
 import { apiOrigins } from '../src/commands/run.js';
+import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
+import { apiHandler, withoutApi } from '../src/http.js';
 
 const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
@@ -427,6 +430,49 @@ describe('the names the API answers to', () => {
     const names = apiOrigins('192.0.2.7', undefined, 9187);
     expect(names.authorities).toContain('192.0.2.7:9187');
     expect(names.origins).toContain('http://192.0.2.7:9187');
+  });
+});
+
+describe('the handlers, called with a Request', () => {
+  /** The authority every request below names, as a client on loopback would. */
+  const AUTHORITY = '127.0.0.1:9350';
+
+  /** A request to the API at `path`, with the `Host` a client sends and the token when there is one. */
+  const request = (path: string, token?: string): Request => new Request(`http://${AUTHORITY}${path}`, {
+    headers: { host: AUTHORITY, ...(token === undefined ? {} : { authorization: `Bearer ${token}` }) },
+  });
+
+  it('answers user list for the deployment token', async () => {
+    writeFileSync(usersFile, JSON.stringify({ roles: {}, users: [] }));
+    const users = fileUsers({ path: usersFile });
+    await users.add('ada', ['member']);
+    const facts: ServedFacts = {
+      options: { users: usersFile } as Options,
+      configFile: config,
+      users,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      users,
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+    const answered = await handler(request('/api/user/list', 'root-secret'));
+    expect(answered.status).toBe(200);
+    expect(await answered.text()).toContain('ada');
+    expect((await handler(request('/api/user/list'))).status).toBe(401);
+  });
+
+  it('answers 404 under /api and 426 elsewhere with no API', async () => {
+    const handler = withoutApi();
+    const missing = await handler(request('/api/x'));
+    expect(missing.status).toBe(404);
+    expect((await missing.json() as { message: string }).message).toBe('No API at /api/x');
+    const plain = await handler(request('/'));
+    expect(plain.status).toBe(426);
+    expect(await plain.text()).toBe('ahpd speaks the Agent Host Protocol over WebSocket');
   });
 });
 

@@ -40,9 +40,7 @@ export const SIGN_IN = 'Sign in to use this host';
 
 /** The bearer a request presented, or nothing. */
 const bearer = (headers: ServeRequest['headers']): string | undefined => {
-  const raw = headers.authorization;
-  const held = Array.isArray(raw) ? raw[0] : raw;
-  return /^Bearer\s+(.+)$/iu.exec(held ?? '')?.[1];
+  return /^Bearer\s+(.+)$/iu.exec(headers.get('authorization') ?? '')?.[1];
 };
 
 /**

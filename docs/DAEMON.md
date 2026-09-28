@@ -386,9 +386,8 @@ administration on the machine while AHP is on the network:
 
 The startup line says where it went: `http on http://127.0.0.1:9187/api`.
 Without `http`, `/api` answers 404 and a request anywhere else keeps the answer
-it always had. The handler is `node:http`'s own request and response, so the API
-is served on Node; a daemon elsewhere starts with a sentence rather than a
-half-served surface.
+it always had. The API is served on Node, Bun and Deno alike, on the daemon's
+own port or on `http.port`.
 
 The same commands under the same grants. A request carries
 `Authorization: Bearer <token>`: the deployment's connection token is root,
@@ -516,7 +515,9 @@ deno run -A packages/server/dist/main.js --port 9187 --path /work    # Deno
 
 The runtime is detected at startup and named in the first line of output. Node
 needs the optional `ws` dependency, having no WebSocket server of its own; Bun
-and Deno use their built-in servers and need nothing.
+and Deno use their built-in servers and need nothing. The HTTP API is the same
+on all three: Bun and Deno hand its requests to their built-in servers, and Node
+serves them through `@cofold/remote`'s `node:http` adapter.
 [packages/sdk/src/listen.ts](../packages/sdk/src/listen.ts) is the only file that knows which one it is on.
 
 All three are run. Deno was proved on **2.9.6** against the built output,
