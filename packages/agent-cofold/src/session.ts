@@ -292,6 +292,29 @@ export function cofoldSession(
    * nothing left to receive it.
    */
   let paused: { runId: string; seq: number } | undefined;
+  /**
+   * The pause a live run owes once it has announced a request, until the run
+   * says how it ended.
+   *
+   * cofold announces a request before it records the run as waiting, and the
+   * handle of a run that has not paused takes no answer, so an answer or a
+   * stop that arrives in between waits on `settled`: true once the run has
+   * paused, false when it ended any other way.
+   */
+  let pausing: { settled: Promise<boolean>; resolve: (didPause: boolean) => void } | undefined;
+  /** Start owing a pause, unless one is already owed. */
+  const owePause = (): void => {
+    if (pausing !== undefined) return;
+    let resolve: (didPause: boolean) => void = () => {};
+    const settled = new Promise<boolean>((done) => { resolve = done; });
+    pausing = { settled, resolve };
+  };
+  /** Settle the owed pause, if there is one, with whether the run paused. */
+  const payPause = (didPause: boolean): void => {
+    const owed = pausing;
+    pausing = undefined;
+    owed?.resolve(didPause);
+  };
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   let cancelRequested = false;
   /** What the last turn failed with, or nothing. Cleared when a turn starts. */
@@ -488,6 +511,7 @@ export function cofoldSession(
     liveAgent = undefined;
     activeMapping = undefined;
     paused = undefined;
+    payPause(false);
     // An ending turn cannot still be waiting on an answer; a request left
     // here would keep the session reporting `InputNeeded` over nothing.
     pending.clear();
@@ -548,8 +572,19 @@ export function cofoldSession(
     }
     let settled = false;
     const mapped = mapping.actions(event);
+    /*
+     * A request is held before it is announced, so a client that answers
+     * inside the emit that carries it finds it; a live run that announced one
+     * owes the pause its answer waits for.
+     */
+    const hold = (): void => {
+      if (mapped.opened === undefined) return;
+      pending.set(mapped.opened.requestId, mapped.opened);
+      if (!replaying) owePause();
+    };
     for (const action of mapped.actions) {
       const type = str(action.type) ?? '';
+      if (type === 'session/inputNeededSet') hold();
       const ending = type === 'chat/turnComplete' ? 'complete'
         : type === 'chat/turnCancelled' ? 'cancelled'
           : type === 'chat/error' ? 'error'
@@ -568,7 +603,7 @@ export function cofoldSession(
       // ending, so the next turn starts after the last one ended.
       if (ended && ending !== 'cancelled') startNext();
     }
-    if (mapped.opened !== undefined) pending.set(mapped.opened.requestId, mapped.opened);
+    hold();
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
     /*
      * The awaiting outcome is a pause, not an ending: the handle is closed
@@ -580,6 +615,7 @@ export function cofoldSession(
       settled = true;
       paused = { runId: event.runId, seq: event.seq };
     }
+    if (!replaying && event.type === 'run.finished') payPause(event.outcome.status === 'awaiting');
     return settled;
   };
 
@@ -642,11 +678,17 @@ export function cofoldSession(
    * Send a decision back into the run that is waiting on it.
    *
    * A run that has not paused still holds a live handle and takes the command
-   * directly; one that paused is rejoined first. The answer is fire and
-   * forget, the way a steer is: whether it was taken is known here, and a
-   * refusal is cofold's to log rather than a turn to fail.
+   * directly; one that paused is rejoined first, and one that has announced a
+   * request but not yet paused is waited for and then rejoined. The answer is
+   * fire and forget, the way a steer is: whether it was taken is known here,
+   * and a refusal is cofold's to log rather than a turn to fail.
    */
   const route = (command: RunCommand): void => {
+    const owed = pausing;
+    if (owed !== undefined && paused === undefined) {
+      void owed.settled.then((didPause) => { if (didPause) route(command); });
+      return;
+    }
     const live = paused === undefined ? handle : rejoin();
     if (live !== undefined) {
       void live.submit(command).catch(() => {});
@@ -676,10 +718,16 @@ export function cofoldSession(
    * A paused run has already closed its handle, so stopping it means
    * rejoining it and cancelling that: cofold's own cancel denies the open
    * request and ends the run, which is the one path that leaves no promise
-   * nobody can settle.
+   * nobody can settle. A run that has announced a request but not yet paused
+   * is waited for, and then stopped the same way.
    */
   /** The half of `stop` that needs a handle, once the opening has settled. */
   const stopNow = (reason: string): void => {
+    const owed = pausing;
+    if (owed !== undefined && paused === undefined) {
+      void owed.settled.then((didPause) => { if (didPause) stopNow(reason); });
+      return;
+    }
     if (paused !== undefined) {
       for (const held of [...pending.values()]) {
         const removal = activeMapping?.settle(held.requestId);

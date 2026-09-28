@@ -40,21 +40,20 @@ const when = async (check: () => boolean, ms = 5000): Promise<void> => {
 /** A case's own limit, above `when`'s budget so a wait that runs out fails on its own message. */
 vi.setConfig({ testTimeout: 30_000 });
 
-/** A fixed number of turns of the event loop, so a run can settle into its pause. */
-const settle = async (times = 20): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
-};
-
 type Note = { channel: 'session' | 'chat' | 'terminal'; action: Bag };
 
+/** Called with each action as it is emitted, before the emit returns. */
+type OnEmit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
+
 /** One session's channels, collected the way the host would dispatch them. */
-function view(trace?: string[]) {
+function view(trace?: string[], onEmit?: OnEmit) {
   const notes: Note[] = [];
   return {
     notes,
     emit: (channel: 'session' | 'chat' | 'terminal', action: Bag): void => {
       notes.push({ channel, action });
       trace?.push(`action:${String(action.type)}`);
+      onEmit?.(channel, action);
     },
     of: (channel: string, type: string): Bag[] =>
       notes.filter((one) => one.channel === channel && one.action.type === type).map((one) => one.action),
@@ -85,6 +84,8 @@ async function open(args: {
   settings?: Record<string, unknown>;
   /** An ordered log of the actions emitted and the edits reported, for the order cases. */
   trace?: string[];
+  /** A client that acts on an action inside the emit that carries it. */
+  onEmit?: OnEmit;
 }) {
   const model = createFakeModel({ script: args.script, stream: true });
   const options: CofoldOptions = {
@@ -93,7 +94,7 @@ async function open(args: {
     ...(args.tools === undefined ? {} : { tools: args.tools }),
   };
   const agent = cofoldAgent(options);
-  const v = view(args.trace);
+  const v = view(args.trace, args.onEmit);
   const edits: Edit[] = [];
   const session: Session = agent.create({
     uri: 'ahp-session:/tools',
@@ -321,10 +322,8 @@ it('still sends the after when the person declines the edit', async () => {
   });
   session.begin('t1', 'write it');
   await when(() => asked(v));
-  // Announced as changing, and the tool has not run. The pause is given a
-  // moment so the answer reaches a run that has really stopped waiting.
+  // Announced as changing, and the tool has not run.
   expect(edits).toEqual([{ turnId: 't1', path: join(dir, 'b.txt'), phase: 'before' }]);
-  await settle();
 
   session.confirm('c1', false);
   await when(() => ended(v));
@@ -348,7 +347,6 @@ it('sends a declined edit its after before the next ask', async () => {
   });
   session.begin('t1', 'write it');
   await when(() => asked(v));
-  await settle();
 
   session.confirm('c1', false);
   /*
@@ -362,6 +360,78 @@ it('sends a declined edit its after before the next ask', async () => {
   expect(ended(v)).toBe(false);
 
   session.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A client that answers inside the emit that asks it.
+ *
+ * cofold announces a request before it records the run as paused, so these
+ * answers arrive while the run that asked has not yet said it is waiting.
+ */
+it('takes an approval given inside the emit that asks for it, and runs the tool', async () => {
+  const dir = place();
+  let session: Session | undefined;
+  const opened = await open({
+    script: [{ toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+    onEmit: (channel, action) => {
+      if (channel === 'session' && action.type === 'session/inputNeededSet') session?.confirm('c1', true);
+    },
+  });
+  session = opened.session;
+  session.begin('t1', 'write it');
+  await when(() => ended(opened.v));
+
+  expect(opened.v.of('chat', 'chat/turnComplete')).toHaveLength(1);
+  expect(completeFor(opened.v, 'c1')?.result).toMatchObject({ success: true });
+  expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('new');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+it('takes a decline given inside the emit that asks for it, and sends the after', async () => {
+  const dir = place();
+  let session: Session | undefined;
+  const opened = await open({
+    script: [{ toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+    onEmit: (channel, action) => {
+      if (channel === 'session' && action.type === 'session/inputNeededSet') session?.confirm('c1', false);
+    },
+  });
+  session = opened.session;
+  session.begin('t1', 'write it');
+  await when(() => ended(opened.v));
+
+  expect(opened.v.of('chat', 'chat/turnComplete')).toHaveLength(1);
+  expect(opened.edits.map((one) => one.phase)).toEqual(['before', 'after']);
+  expect(readdirSync(dir)).not.toContain('b.txt');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+it('takes a cancel given inside the emit that asks, and ends the turn cancelled', async () => {
+  const dir = place();
+  let session: Session | undefined;
+  const opened = await open({
+    script: [{ toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+    onEmit: (channel, action) => {
+      if (channel === 'session' && action.type === 'session/inputNeededSet') session?.cancel('t1');
+    },
+  });
+  session = opened.session;
+  session.begin('t1', 'write it');
+  await when(() => ended(opened.v));
+
+  expect(opened.v.of('chat', 'chat/turnCancelled')).toHaveLength(1);
+  expect(opened.edits.map((one) => one.phase)).toEqual(['before', 'after']);
+  expect(readdirSync(dir)).not.toContain('b.txt');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -465,8 +535,6 @@ it('sends the after for an edit still waiting when the turn is cancelled', async
   session.begin('t1', 'write it');
   await when(() => asked(v));
   expect(edits.map((one) => one.phase)).toEqual(['before']);
-  // The pause is given a moment so the cancel reaches a run that has really stopped waiting.
-  await settle();
 
   session.cancel('t1');
   await when(() => ended(v));
