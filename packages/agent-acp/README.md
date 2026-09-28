@@ -6,17 +6,42 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-The [Agent Client Protocol](https://agentclientprotocol.com) backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
+An [Agent Client Protocol](https://agentclientprotocol.com) backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and a plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon.
 
-Any program that speaks ACP over its stdio is one configured command rather than a package of its own, so `copilot --acp`, `codex-acp`, `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` share one bridge.
+Any program that speaks ACP over its stdio is one configured command, not a package of its own, so `copilot --acp`, `codex-acp`, `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` all run through this one package.
 
-## Install
+Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-acp`](https://github.com/softov/ahpd/tree/main/packages/agent-acp).
+
+## In the daemon
+
+```bash
+ahpd plugin install @ahpd/agent-acp
+```
+
+Then add one entry per ACP server to `plugins` in the daemon's `config.json`:
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@ahpd/agent-acp",
+      "options": { "provider": "copilot", "displayName": "Copilot", "command": "copilot", "args": ["--acp"] }
+    },
+    {
+      "name": "@ahpd/agent-acp",
+      "options": { "provider": "codex", "displayName": "Codex", "command": "codex-acp" }
+    }
+  ]
+}
+```
+
+The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. A command that is missing fails that provider's turns with a message and leaves the daemon running.
+
+## In your own host
 
 ```bash
 pnpm add @ahpd/agent-acp @ahpd/sdk @microsoft/agent-host-protocol
 ```
-
-## Use
 
 ```ts
 import { createHost, listen } from '@ahpd/sdk';
@@ -51,14 +76,13 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 It spawns the command, completes the ACP handshake over its stdio, opens one session, and turns each `session/update` into the `chat/*` action a client already knows. A turn ends as `chat/turnComplete` or `chat/turnCancelled` from the server's own stop reason, and `cancel` reaches the server as its notification.
 
-A `session/request_permission` is a confirmation offering the server's own options, approvals first, and the one the person picks is the `optionId` the server receives; an answer that picked none selects the server's once option of that kind, never an `always`.
-
-The package is both an embeddable `Agent` and a plugin. An embedder passes `acpAgent(options)` to `createHost`; the daemon loads the same package to register one provider per configured command.
+A `session/request_permission` is a confirmation offering the server's own options, approvals first, and the one the person picks is the `optionId` the server receives. An answer that picked none selects the server's once option of that kind, never an `always`.
 
 ## Documentation
 
 | | |
 | --- | --- |
+| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md) | The ACP options in the daemon, and what the server may ask the host for |
 | [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | The `Agent` and `Session` contracts this implements |
 | [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Which actions are served, which are refused, and why |
 

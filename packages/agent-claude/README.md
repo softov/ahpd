@@ -6,7 +6,9 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-The Claude backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and the backend [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) loads as a plugin. The daemon bundles no agent, so this package is how `ahpd` runs Claude Code.
+Claude Code as a backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and the plugin that lets the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon run it.
+
+Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-claude`](https://github.com/softov/ahpd/tree/main/packages/agent-claude).
 
 ## In the daemon
 
@@ -48,7 +50,7 @@ const host = createHost({ path, agents: [claude({ paths: [path] })] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-`createHost` takes a list of agents, so this can run alongside other backends. The plugin entry is a wrapper over the same `claude()`, so neither path is the special one.
+`createHost` takes a list of agents, so this can run alongside other backends. The plugin entry wraps the same `claude()`.
 
 ## What it does
 
@@ -68,9 +70,9 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 
 Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, session titles, token usage, and context compaction.
 
-An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call; the "always" choice is labelled by what the suggestions do and returns them to the SDK as `updatedPermissions`, and with no suggestion the approval is approve or deny.
+An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call. The "always" choice is labelled by what the suggestions do, and picking it returns them to the SDK as `updatedPermissions`. With no suggestion, the approval is approve or deny.
 
-A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent` seam, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking and tool calls are drawn there rather than in the turn that spawned them - `forwardSubagentText` is on for exactly that. A permission ask from inside the subagent is drawn in its chat too. A stop given in the subagent's chat stops that subagent through the SDK's `stopTask`, and the turn that started it goes on and sees the call end; with `workerStop: "session"`, or before the harness has named the subagent's task, it cancels that turn instead. On a host without the seam the frames stay inline, which is what a session did before this existed, and a session read back from disk rebuilds each subagent's chat from the CLI's own `subagents/*.meta.json` and `.jsonl`.
+A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent`, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking, tool calls and permission asks are drawn there instead of in the turn that spawned it. A stop given in the subagent's chat stops that subagent through the SDK's `stopTask`, and the turn that started it goes on and sees the call end. With `workerStop: "session"`, or before Claude has named the subagent's task, it cancels that turn instead. On a host without `Start.subagent` the subagent's output stays inline. A session read back from disk rebuilds each subagent's chat from the CLI's `subagents/*.meta.json` and `.jsonl` files.
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 
@@ -82,6 +84,7 @@ Sessions use whatever the Claude CLI is signed in with. A client can push a toke
 
 | | |
 | --- | --- |
+| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md) | Loading a plugin into the daemon |
 | [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | The `Agent` and `Session` contracts this implements |
 | [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Which actions are served, which are refused, and why |
 

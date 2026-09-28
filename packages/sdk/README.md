@@ -6,9 +6,9 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-A server library for the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol).
+A server library for the [Agent Host Protocol](https://github.com/microsoft/agent-host-protocol). It has no agent in it: you pass one in when you create the host.
 
-It has no agent in it. You pass one in when you create the host.
+Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/sdk`](https://github.com/softov/ahpd/tree/main/packages/sdk), and the daemon built on it is [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server).
 
 ## Install
 
@@ -16,11 +16,11 @@ It has no agent in it. You pass one in when you create the host.
 pnpm add @ahpd/sdk @microsoft/agent-host-protocol
 ```
 
-The protocol package is a peer dependency. This package uses runtime values from it, so there should only be one copy in the dependency tree.
+The protocol package is a peer dependency. This package uses runtime values from it, so keep one copy in the dependency tree.
 
 ## Use
 
-A small host using the Claude backend looks like this:
+A small host with the Claude backend:
 
 ```ts
 import { createHost, listen } from '@ahpd/sdk';
@@ -35,43 +35,37 @@ const listener = await listen({ port: 9187 }, (peer) => host.accept(peer));
 console.log(`on ws://${listener.host}:${listener.port} (${listener.runtime})`);
 ```
 
-`createHost()` creates the AHP host.
+`createHost()` creates the host. Once a client connects, it handles version negotiation, snapshots, subscriptions, sequence numbers, transcript paging, completions, queued messages, shared drafts, read and archived flags, several chats per session, and turns.
 
-`listen()` is the WebSocket listener included for Node, Bun and Deno. The host itself is not tied to WebSockets.
-
-Once a client is connected, the host takes care of version negotiation, snapshots, subscriptions, sequence numbers, transcript paging, completions, queued messages, shared drafts, read and archived flags, multiple chats per session, and turns.
-
-`accept(peer)` takes anything that can `send`, `notify` and `close`, and returns a handler. `listen` is a WebSocket implementation for Node, Bun and Deno. Tests supply their own, which is why the test suite runs without a network.
+`accept(peer)` takes anything that can `send`, `notify` and `close`, and returns a handler. `listen()` is the WebSocket listener for Node, Bun and Deno; the host itself is not tied to WebSockets, and the tests pass their own peer.
 
 ## Options
 
-`path` and `agents` are required. The rest are optional. If you leave one out, the host returns an error for the commands it cannot serve instead of an empty result.
-
+`path` and `agents` are required. Leave out any other option and the host answers the commands that need it with an error, not an empty result.
 
 ```ts
-import { 
-  createHost, 
-  fileResources, 
-  shellTerminals, 
-  gitChanges, 
-  gitBranches, 
-  gitWorktrees, 
-  hostTools, 
+import {
+  createHost,
+  fileResources,
+  shellTerminals,
+  gitChanges,
+  gitBranches,
+  gitWorktrees,
+  hostTools,
   scheduledAutomations,
-} from '@ahpd/sdk'; 
+} from '@ahpd/sdk';
 
-const host = createHost({ 
-  path, 
-  agents, 
-  resources: fileResources(), 
-  terminals: shellTerminals(), 
-  changes: gitChanges(), 
-  directories: gitBranches(), 
-  worktrees: gitWorktrees(), 
-  tools: hostTools(), 
-  automations: scheduledAutomations({ file: './automations.json', }),
+const host = createHost({
+  path,
+  agents,
+  resources: fileResources(),
+  terminals: shellTerminals(),
+  changes: gitChanges(),
+  directories: gitBranches(),
+  worktrees: gitWorktrees(),
+  tools: hostTools(),
+  automations: scheduledAutomations({ file: './automations.json' }),
 });
-
 ```
 
 | option | |
@@ -88,7 +82,7 @@ const host = createHost({
 | `resourceProviders` | one provider per URI scheme beside `file:`; an optional `describe()` is what the host advertises in `_meta['ahpd.resourceProviders']` |
 | `onEvent` | called with one line per notable event, for logging |
 
-None of these are imported by the host itself. `fileResources` reads files, `shellTerminals` spawns shells, and `gitBranches` runs `git`, and you pass them in.
+The host imports none of these itself. `fileResources` reads files, `shellTerminals` spawns shells and `gitBranches` runs `git`, and you decide which to pass in.
 
 ## Writing a backend
 
@@ -108,15 +102,11 @@ export function parrot(): Agent {
 }
 ```
 
-`provider` is the id a client names in `createSession`. It has to be unique among the agents one host was given.
+`provider` is the id a client names in `createSession`, unique among one host's agents. `schema()` says what a session can be configured with and `defaults()` says where those keys start; both can be empty. `create()` returns the session, which holds the session and chat state and calls `start.emit('chat', ...)` as things happen.
 
-`schema()` says what a session of this kind can be configured with, and `defaults()` says where those keys start. Both can be empty.
+Pass it to the host like any other backend: `createHost({ path, agents: [parrot()] })`. It registers the same way as [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude), and the two can run side by side.
 
-`create()` returns the session. The session holds the state of the session and chat channels, and calls `start.emit('chat', ...)` as things happen.
-
-Pass it to the host like any other backend: `createHost({ path, agents: [parrot()] })`. Your backend and [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) register identically and can run side by side.
-
-See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) for the contract, and [examples/echo](https://github.com/softov/ahpd/tree/main/examples/echo) for a working backend in about two hundred lines.
+[docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) has the contract, and [examples/echo](https://github.com/softov/ahpd/tree/main/examples/echo) is a working backend in about two hundred lines.
 
 ## Types
 
@@ -126,21 +116,21 @@ All types are exported. Nothing under `types/` imports a runtime value, so you c
 
 | | |
 | --- | --- |
-| [src/types/](src/types/)                 | Every shape, importing no runtime value. The contract. |
-| [src/rpc.ts](src/rpc.ts)                 | JSON-RPC framing. Holds no socket. |
-| [src/listen.ts](src/listen.ts)           | Accepts connections on Node, Bun or Deno. |
-| [src/host.ts](src/host.ts)               | Channels, subscriptions, requests and state actions. Imports no backend. |
-| [src/resources.ts](src/resources.ts)     | The `resources` port: files, reads and writes. |
-| [src/terminals.ts](src/terminals.ts)     | The `terminals` port: a shell over pipes. |
-| [src/changes.ts](src/changes.ts)         | The `changes` port: a changeset out of git. |
-| [src/git.ts](src/git.ts)                 | The `directories` port: which branch a directory is on. |
-| [src/automations.ts](src/automations.ts) | The `automations` port, without a clock. |
-| [src/scheduled.ts](src/scheduled.ts)     | The same, with one. |
-| [src/sessiontools.ts](src/sessiontools.ts) | The tools a session's agent is given. |
-| [src/users.ts](src/users.ts)             | The user directory, the roles and the grants. |
-| [src/catalog.ts](src/catalog.ts)         | How a session is named, and what its status bits are worth. |
-| [src/paging.ts](src/paging.ts)           | A long list of turns, served a page at a time. |
-| [src/index.ts](src/index.ts)             | The library entry point. |
+| [src/types/](https://github.com/softov/ahpd/tree/main/packages/sdk/src/types) | Every shape, importing no runtime value |
+| [src/rpc.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/rpc.ts) | JSON-RPC framing, with no socket |
+| [src/listen.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/listen.ts) | Accepts connections on Node, Bun or Deno |
+| [src/host.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/host.ts) | Channels, subscriptions, requests and state actions |
+| [src/resources.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/resources.ts) | The `resources` port: files, reads and writes |
+| [src/terminals.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/terminals.ts) | The `terminals` port: a shell over pipes |
+| [src/changes.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/changes.ts) | The `changes` port: a changeset from git |
+| [src/git.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/git.ts) | The `directories` port: which branch a directory is on |
+| [src/automations.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/automations.ts) | The `automations` port, without a clock |
+| [src/scheduled.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/scheduled.ts) | The `automations` port, with a clock |
+| [src/sessiontools.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/sessiontools.ts) | The tools a session's agent is given |
+| [src/users.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/users.ts) | The user directory, roles and grants |
+| [src/catalog.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/catalog.ts) | Session names and status bits |
+| [src/paging.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/paging.ts) | A long list of turns, served a page at a time |
+| [src/index.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/index.ts) | The entry point |
 
 ## Documentation
 
@@ -148,9 +138,8 @@ All types are exported. Nothing under `types/` imports a runtime value, so you c
 | --- | --- |
 | [LIBRARY.md](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md) | `createHost` and the ports in full |
 | [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | The `Agent` and `Session` contracts |
-| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Protocol coverage action by action |
+| [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Protocol coverage, action by action |
 
 ## License
 
 MIT © Softov
-

@@ -618,6 +618,10 @@ One spec is one server, so `copilot --acp`, `codex-acp`,
 lines and not four packages. The command is the only thing that tells them
 apart, which is why it is the one option with no default.
 
+The `codex` CLI has no ACP mode of its own; `codex-acp` is Codex behind an
+adapter, installed with `npm i -g @agentclientprotocol/codex-acp`. The
+`@zed-industries/codex-acp` package it replaced no longer gets updates.
+
 GitHub Copilot CLI 1.0.87 is the one driven end to end through this bridge, by
 [`scripts/acp-smoke.mts`](../scripts/acp-smoke.mts): it handshook, registered
 provider `copilot`, mapped Copilot's three mode ids into the approvals control,

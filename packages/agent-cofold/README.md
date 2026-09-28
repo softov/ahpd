@@ -1,10 +1,18 @@
 # @ahpd/agent-cofold
 
-The cofold agent runtime as a backend for [`ahpd`](https://github.com/softov/ahpd), registered under the provider `cofold`, so every model an OpenAI-compatible endpoint serves is a model inside one provider rather than a package of its own.
+[![npm](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
+[![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
+![license MIT](https://img.shields.io/badge/license-MIT-blue)
+![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
+![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-A session can reach the models and keys cofold already knows about, and it runs cofold's own files, shell, web and memory tools in the daemon's process, the way a Claude session runs its tools in the Claude CLI.
+The cofold agent runtime as a backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and a plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. It registers the provider `cofold`, and every model an OpenAI-compatible endpoint serves is a model inside it.
 
-## Use
+A session uses the models and keys cofold already knows about, and runs cofold's file, shell, web and memory tools in the daemon's process.
+
+Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-cofold`](https://github.com/softov/ahpd/tree/main/packages/agent-cofold).
+
+## In the daemon
 
 ```bash
 ahpd plugin install @ahpd/agent-cofold
@@ -28,7 +36,24 @@ Or in the configuration file, with the backend's own options as defaults for eve
 }
 ```
 
-With no model named anywhere, the cofold configuration file at `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json` is read for the providers, the keys and the model, so a person who has already pointed cofold at a provider does not say it again here.
+With no model named anywhere, the providers, keys and model come from cofold's own configuration file, `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`.
+
+## In your own host
+
+```bash
+pnpm add @ahpd/agent-cofold @ahpd/sdk @microsoft/agent-host-protocol
+```
+
+```ts
+import { createHost, listen } from '@ahpd/sdk';
+import { cofoldAgent } from '@ahpd/agent-cofold';
+
+const host = createHost({
+  path: process.cwd(),
+  agents: [cofoldAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' })],
+});
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
 
 ## Options
 
@@ -70,8 +95,14 @@ A shell call is drawn as a terminal with its bare command, and a turn with no mo
 
 The named providers are tried in the order the configuration lists them, and a failing one is skipped.
 
-See [`docs/PLUGINS.md`](../../docs/PLUGINS.md) for the whole backend, the session settings and the harness configuration.
+## Documentation
+
+| | |
+| --- | --- |
+| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md) | The whole backend, the session settings and the cofold configuration |
+| [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | The `Agent` and `Session` contracts this implements |
+| [cofold](https://github.com/softov/cofold) | The agent runtime this runs |
 
 ## License
 
-MIT
+MIT © Softov

@@ -24,7 +24,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd#readme",
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/agent-acp#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/softov/ahpd.git",

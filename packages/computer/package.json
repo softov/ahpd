@@ -2,7 +2,7 @@
   "name": "@ahpd/computer",
   "version": "0.8.0",
   "type": "module",
-  "description": "A computer: resource provider for ahpd: machines reported read-only from a runtime, and host tools that make, use and release one",
+  "description": "Disposable Docker machines for the ahpd daemon: a computer: resource provider and the tools that make, use and release one",
   "keywords": [
     "ahp",
     "agent-host-protocol",
@@ -21,7 +21,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd#readme",
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/computer#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/softov/ahpd.git",

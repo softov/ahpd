@@ -20,7 +20,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd#readme",
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/tunnel-devtunnel#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/softov/ahpd.git",

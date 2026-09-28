@@ -2,7 +2,7 @@
   "name": "@ahpd/agent-claude",
   "version": "0.8.0",
   "type": "module",
-  "description": "The Claude backend for @ahpd/sdk",
+  "description": "Claude Code as an Agent Host Protocol backend: a plugin for the ahpd daemon and an Agent for @ahpd/sdk",
   "keywords": [
     "ahp",
     "agent-host-protocol",
@@ -23,7 +23,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/softov/ahpd#readme",
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/agent-claude#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/softov/ahpd.git",

@@ -12,6 +12,8 @@
 [![@ahpd/agent-cofold](https://img.shields.io/npm/v/%40ahpd%2Fagent-cofold?label=%40ahpd%2Fagent-cofold)](https://www.npmjs.com/package/@ahpd/agent-cofold)
 [![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
 [![@ahpd/agent-pi](https://img.shields.io/npm/v/%40ahpd%2Fagent-pi?label=%40ahpd%2Fagent-pi)](https://www.npmjs.com/package/@ahpd/agent-pi)
+[![@ahpd/computer](https://img.shields.io/npm/v/%40ahpd%2Fcomputer?label=%40ahpd%2Fcomputer)](https://www.npmjs.com/package/@ahpd/computer)
+[![@ahpd/tunnel-devtunnel](https://img.shields.io/npm/v/%40ahpd%2Ftunnel-devtunnel?label=%40ahpd%2Ftunnel-devtunnel)](https://www.npmjs.com/package/@ahpd/tunnel-devtunnel)
 
 An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, SDK and Plugins.
 
@@ -121,7 +123,6 @@ Via VS Code (`settings.json`):
 ]
 ```
 
-That's enough to run an agent session through AHP.
 
 
 ## What ahpd provides
@@ -140,11 +141,11 @@ Everything past the protocol is a plugin, named in the configuration and loaded 
 * **Tunnels** - a public address for the port this host bound;
 * **Ports, tools and URI schemes** - anything a host can be handed, a plugin can contribute.
 
-A new capability is a package and a `--plugin` line rather than a change to the daemon.
+A new capability is a package and a `--plugin` line, not a change to the daemon.
 
 ### Host capabilities
 
-Capabilities are modular; hosts omit unused ports without breaking client compatibility:
+Each capability is optional, and a host without one still works with every client:
 
 * **Resources** - read, write, create and delete filesystem paths;
 * **Terminals** - run shell sessions;
@@ -158,8 +159,6 @@ Capabilities are modular; hosts omit unused ports without breaking client compat
 * **Computers** - create disposable and isolated execution environments;
 * **Containers** - run a whole host inside a dev container and carry its frames;
 * **Tools** - register host-provided tools into sessions.
-
-Capabilities are independent. A host without terminal support, for example, is still a valid AHP host.
 
 ## CLI & Daemon Configuration
 
@@ -175,9 +174,7 @@ ahpd config
 ahpd stop
 ```
 
-`start` detaches the process from the shell.
-
-That means the host - and any agent work it owns - can continue after the terminal that launched it has closed.
+`start` detaches the process from the shell, so the host and its sessions keep running after the terminal closes.
 
 ### Serving multiple projects
 
@@ -200,10 +197,10 @@ To listen on another interface, configure a connection token:
 ```bash
 ahpd \
   --host 0.0.0.0 \
-  --connection-token-file ~/.ahpd/token
+  --connection-token-file ~/.config/ahpd/token
 ```
 
-`ahpd` refuses to bind outside loopback without an explicit connection-token configuration unless that protection is deliberately disabled.
+`ahpd` refuses to bind outside loopback without a connection token, unless you pass `--without-connection-token`.
 
 The token controls access to the host. Agent providers may additionally use their own authentication.
 
@@ -242,7 +239,7 @@ The same list goes in `~/.config/ahpd/config.json`, where an entry can carry opt
 
 `--plugin` is repeatable and plugins apply in the order named. A command-line `--plugin` **replaces** the file's list rather than adding to it, the way `--path` replaces `paths`.
 
-A plugin executes **inside the daemon process with the daemon's permissions**. Installing and enabling one is therefore a trust decision, and the configuration file is the trust boundary here the way the connection token is the port's.
+A plugin runs **inside the daemon process with the daemon's permissions**, so only install one you trust. Whoever can edit the configuration file can run code as the daemon.
 
 One that does not resolve, whose manifest is wrong, or that throws on import or out of `apply` is reported and skipped: the daemon starts without it and the next one is still tried.
 
@@ -260,12 +257,12 @@ See [docs/PLUGINS.md](docs/PLUGINS.md) for writing one and [docs/DAEMON.md](docs
 
 This repository is a pnpm workspace containing the AHP host, SDK, agent integrations and some plugins.
 
-| Package                                           | Purpose                                |
-| ------------------------------------------------- | -------------------------------------- |
-| [`@ahpd/server`](packages/server/)                | Standalone `ahpd` daemon               |
-| [`@ahpd/sdk`](packages/sdk/)                      | AHP host library                       |
-| [`@ahpd/computer`](packages/computer/)            | Disposable computer support            |
-| [`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/) | A Dev Tunnel to the port this host bound |
+| Package | npm | Purpose |
+| --- | --- | --- |
+| [`@ahpd/server`](packages/server/) | [npm](https://www.npmjs.com/package/@ahpd/server) | The `ahpd` daemon |
+| [`@ahpd/sdk`](packages/sdk/) | [npm](https://www.npmjs.com/package/@ahpd/sdk) | The AHP host library |
+| [`@ahpd/computer`](packages/computer/) | [npm](https://www.npmjs.com/package/@ahpd/computer) | Disposable Docker machines |
+| [`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/) | [npm](https://www.npmjs.com/package/@ahpd/tunnel-devtunnel) | A Dev Tunnel to the daemon's port |
 
 ---
 
@@ -273,12 +270,12 @@ This repository is a pnpm workspace containing the AHP host, SDK, agent integrat
 
 A new harness is a package and a `--plugin` line.
 
-| Package                                      | Backend                                                                 |
-| -------------------------------------------- | ----------------------------------------------------------------------- |
-| [@ahpd/agent-claude](packages/agent-claude) | Claude Code through the Claude Agent SDK                                |
-| [@ahpd/agent-cofold](packages/agent-cofold) | OpenAI-compatible models through cofold                                 |
-| [@ahpd/agent-acp](packages/agent-acp)       | Agent Client Protocol servers such as Copilot, Codex ACP and Gemini ACP |
-| [@ahpd/agent-pi](packages/agent-pi)         | The pi coding agent, embedded in the daemon                             |
+| Package | npm | Backend |
+| --- | --- | --- |
+| [`@ahpd/agent-claude`](packages/agent-claude/) | [npm](https://www.npmjs.com/package/@ahpd/agent-claude) | Claude Code through the Claude Agent SDK |
+| [`@ahpd/agent-cofold`](packages/agent-cofold/) | [npm](https://www.npmjs.com/package/@ahpd/agent-cofold) | OpenAI-compatible models through cofold |
+| [`@ahpd/agent-acp`](packages/agent-acp/) | [npm](https://www.npmjs.com/package/@ahpd/agent-acp) | Agent Client Protocol servers such as Copilot, Codex and Gemini |
+| [`@ahpd/agent-pi`](packages/agent-pi/) | [npm](https://www.npmjs.com/package/@ahpd/agent-pi) | The pi coding agent, embedded in the daemon |
 
 Name one by package, by directory, or by file:
 
@@ -312,11 +309,9 @@ The same list goes in the configuration, where an entry can carry options:
 
 What each one is and the options it takes live with the package. `@ahpd/agent-acp` is one provider per configured command, so `copilot --acp`, `codex-acp` and `gemini --experimental-acp` are three entries rather than three packages.
 
-A custom agent implements the same `Agent` interface and is named the same way. Nothing about it is different from the three above.
+A custom agent implements the same `Agent` interface and is named the same way as the four above. A client speaks only AHP and depends on no agent SDK.
 
-Nothing above the seam is reached any other way: a client speaks AHP and depends on no agent SDK at all.
-
-The important dependency direction is:
+The dependencies point this way:
 
 ```mermaid
 flowchart LR
@@ -389,7 +384,7 @@ Summarised by area rather than by method, one row per area:
 
 The implementation currently covers **31 of 32 declared commands** and **95 of 96 state actions**.
 
-Unsupported operations return `-32601` rather than an empty success. This is intentional: reporting a missing capability is preferable to leaving a client waiting for state that will never arrive.
+An unsupported operation returns `-32601`, not an empty success, so a client is never left waiting for state that will not arrive.
 
 For the command-by-command compatibility matrix, see [`docs/AHP.md`](docs/AHP.md).
 
@@ -452,9 +447,7 @@ const host = createHost({
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-This is already a working AHP conversation host.
-
-`createHost()` handles the protocol machinery:
+`createHost()` handles the protocol:
 
 * negotiation;
 * channels and subscriptions;
@@ -505,7 +498,7 @@ const host = createHost({
 
 Only `path` and `agents` are required.
 
-Ports deliberately remain optional. If a capability is absent, the corresponding protocol operation reports that it is unsupported instead of pretending to succeed.
+Leave a port out and the operations that need it answer that they are unsupported.
 
 See [`docs/LIBRARY.md`](docs/LIBRARY.md) for full SDK reference.
 
@@ -582,7 +575,7 @@ See [DEVELOPER.md](DEVELOPER.md) for development guidelines, instructions and re
 
 # License
 
-MIT.
+MIT © Softov
 
 
 

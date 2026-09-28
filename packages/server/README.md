@@ -6,19 +6,18 @@
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
 ![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
 
-[`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) is a ready-to-run [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server. It installs the `ahpd` command.
+A ready-to-run [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server. It installs the `ahpd` command, runs agent sessions, and serves them over a WebSocket, so several clients can watch and drive the same session at once.
 
-It runs agent sessions and serves them over a WebSocket, so several clients can watch and drive the same session at once.
+Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/server`](https://github.com/softov/ahpd/tree/main/packages/server), and it is built on [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk).
 
-It is built on [@ahpd/sdk](https://www.npmjs.com/package/@ahpd/sdk) and bundles no agent. Every backend it serves is a plugin's, so which agent you run is an install rather than a version of this package:
+It bundles no agent. Every backend is a plugin you install beside it:
 
-- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude) is Claude Code, through the Claude Agent SDK.
-- [`@ahpd/agent-acp`](https://www.npmjs.com/package/@ahpd/agent-acp) is any [Agent Client Protocol](https://agentclientprotocol.com/) server, one provider per configured command.
-- [`@ahpd/agent-cofold`](https://www.npmjs.com/package/@ahpd/agent-cofold) is any OpenAI-compatible endpoint, through the cofold runtime.
+- [`@ahpd/agent-claude`](https://www.npmjs.com/package/@ahpd/agent-claude): Claude Code, through the Claude Agent SDK.
+- [`@ahpd/agent-acp`](https://www.npmjs.com/package/@ahpd/agent-acp): any [Agent Client Protocol](https://agentclientprotocol.com/) server, one provider per configured command.
+- [`@ahpd/agent-cofold`](https://www.npmjs.com/package/@ahpd/agent-cofold): any OpenAI-compatible endpoint, through the cofold runtime.
+- [`@ahpd/agent-pi`](https://www.npmjs.com/package/@ahpd/agent-pi): the pi coding agent, embedded in the daemon.
 
-A daemon that was configured with none refuses to start and says so, rather than serving clients it could never answer.
-
-To serve an agent none of those reach, write an `Agent` and load it the same way. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) and [docs/PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md).
+A daemon with no backend refuses to start and says how to install one. To serve another agent, write an `Agent` and load it the same way: see [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) and [docs/PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md).
 
 ## Install
 
@@ -32,7 +31,7 @@ ahpd --plugin @ahpd/agent-claude --path /work/project
 
 `ahpd plugin install` runs `npm install` in the configuration directory, where a bare plugin name is resolved from, and adds the name to `plugins` in `config.json` so the next run loads it. A plugin installed with `npm i -g` is not seen.
 
-npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's own global install, or run `npm config set allow-scripts=node-pty --location=user` once.
+npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
 It listens on `ws://127.0.0.1:9187`. Run it with no arguments to serve the directory you are in.
 
@@ -46,9 +45,11 @@ ahpd start [options]        run it in the background
 ahpd stop                   stop the background one
 ahpd status                 say whether one is running, and where
 ahpd config                 print the config file path and its contents
+ahpd plugin install <name>  install a plugin and add it to the config
+ahpd plugin list            list the configured plugins
 ```
 
-`start` re-runs the same program detached. It writes its output to `daemon.log` and records the pid and URL in `daemon.json`, both next to the config, which is where `status` reads from and how you find out what happened after the fact.
+`start` runs the same program detached. It writes its output to `daemon.log` and its pid and URL to `daemon.json`, both next to the config, which is where `status` reads from.
 
 ## Options
 
@@ -57,6 +58,7 @@ ahpd config                 print the config file path and its contents
 | `--port <n>` | Default `9187`. Use `0` for a free port |
 | `--host <addr>` | Default `127.0.0.1`. Use `0.0.0.0` to accept remote connections, which requires a token |
 | `--path <dir>` | A directory to serve. Repeatable. Defaults to the working directory |
+| `--plugin <name>` | A plugin to load. Repeatable, and replaces the config file's list |
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file. Writes a new one if the file is missing |
 | `--without-connection-token` | Accept any connection |
@@ -66,7 +68,7 @@ ahpd config                 print the config file path and its contents
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
 
-`--version` and `--help` are the two that are not configuration; every other flag also has a key in `config.json` under `$XDG_CONFIG_HOME/ahpd`, spelled the same way without the dashes. A flag beats the file. Run `ahpd config` to see the path and the current values.
+Every flag except `--version` and `--help` also has a key in `config.json` under `$XDG_CONFIG_HOME/ahpd`, spelled the same way without the dashes. A flag beats the file. Run `ahpd config` to see the path and the current values.
 
 ## Directories
 
@@ -76,7 +78,7 @@ ahpd config                 print the config file path and its contents
 ahpd --path ~/src/project-a --path ~/src/project-b
 ```
 
-The first is the default, and it is what a client gets when it names no directory. A directory that was not named is refused rather than served, so one daemon serves exactly the paths you gave it.
+The first is the default, and it is what a client gets when it names no directory. A directory that was not named is refused.
 
 ## Remote connections
 
@@ -94,15 +96,11 @@ ahpd --host 0.0.0.0 --connection-token-file ~/.config/ahpd/token
 
 Clients present it as `?tkn=<secret>` on the URL or as an `Authorization: Bearer <secret>` header.
 
-`--without-connection-token` binds without one. Only do that when something else is already keeping the port to yourself.
+`--without-connection-token` binds without one. Only use it when something else already keeps the port private.
 
 ## What it serves
 
-Sessions, chats and turns with streaming responses, tool calls and approvals, questions from the agent, file reads and writes, a shell as a terminal channel, git branches and changesets, sessions in their own worktree, scheduled automations, and OTLP telemetry.
-
-The Claude backend adds what Claude has: models and effort, permission modes, skills and slash commands, MCP servers, and OAuth sign-in.
-
-With the Claude backend, past sessions are read from Claude's transcript files. Opening one does not start anything. The agent process starts when you send a turn.
+Sessions, chats and turns with streaming responses, tool calls and approvals, questions from the agent, file reads and writes, a shell as a terminal channel, git branches and changesets, sessions in their own worktree, scheduled automations, and OTLP telemetry. Each backend adds its own: models, permission modes, commands, and past sessions read from its own files.
 
 ## Connecting
 
@@ -112,14 +110,9 @@ Any AHP client works. [`ahpc`](https://github.com/softov/ahpc) is one:
 ahpc --host ws://127.0.0.1:9187
 ```
 
-## Packages
+## Embedding
 
-`@ahpd/server` is a thin wrapper over one library and a loader:
-
-- [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk) is the protocol and the ports. It has no backend in it, and neither does this package.
-- Whatever `plugins` names contributes the rest, a backend first among them.
-
-Embedded, the daemon is the library, a backend and a socket:
+The daemon is `@ahpd/sdk`, the plugins its config names, and a socket. The same host in your own program:
 
 ```ts
 import { createHost, listen } from '@ahpd/sdk';
@@ -129,24 +122,24 @@ const host = createHost({ path, agents: [claude({ paths: [path] })] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-That is the library path and it is unchanged: `claude()` is an `Agent` you pass in. The daemon reaches the same object through the package's plugin entry instead, so nothing is compiled into `ahpd`.
-
-If you want a host of a different shape, build it from `@ahpd/sdk` and skip this package. To serve a different agent, write an `Agent` and add it to `agents`. See [docs/AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md).
+For a host of a different shape, build it from `@ahpd/sdk` and skip this package.
 
 ## Layout
 
 | | |
 | --- | --- |
-| [src/main.ts](src/main.ts)     | argv, the filesystem and stdout. The only file that reads any of the three. |
-| [src/daemon.ts](src/daemon.ts) | Running detached, and finding the one that is. |
-| [src/config.ts](src/config.ts) | The config file, and where this tool keeps its things. |
-| [src/update.ts](src/update.ts) | Asking npm whether a newer version exists, in the background. |
+| [src/main.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/main.ts) | argv, the filesystem and stdout; the only file that reads any of the three |
+| [src/daemon.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/daemon.ts) | Running detached, and finding the one that is |
+| [src/config.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/config.ts) | The config file, and where this tool keeps its files |
+| [src/plugins.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/plugins.ts) | Resolving, loading and applying plugins |
+| [src/update.ts](https://github.com/softov/ahpd/blob/main/packages/server/src/update.ts) | Asking npm whether a newer version exists, in the background |
 
 ## Documentation
 
 | | |
 | --- | --- |
 | [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md) | The CLI, config file, connection tokens, and Node/Bun/Deno |
+| [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md) | Loading and writing plugins |
 | [LIBRARY.md](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md) | Building a host with `@ahpd/sdk` |
 | [AGENT.md](https://github.com/softov/ahpd/blob/main/docs/AGENT.md) | Writing another agent backend |
 | [AHP.md](https://github.com/softov/ahpd/blob/main/docs/AHP.md) | Protocol coverage, and every action it emits |
@@ -155,4 +148,3 @@ If you want a host of a different shape, build it from `@ahpd/sdk` and skip this
 ## License
 
 MIT © Softov
-
