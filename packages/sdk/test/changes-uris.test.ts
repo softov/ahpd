@@ -213,6 +213,34 @@ describe('ahp-edit:, a turn\'s captured sides', () => {
   });
 });
 
+describe('a turn\'s line counts', () => {
+  /** The session row's counts for `file`, taken from `from` to `to` in one turn; `undefined` is no file. */
+  const counts = async (from: string | undefined, to: string) => {
+    const file = join(scratch(), 'a.txt');
+    const source = gitChanges();
+    if (from !== undefined) writeFileSync(file, from);
+    source.observe?.(dirOf(file), 'ahp-session:/s', 't1', file, 'before');
+    await settle();
+    writeFileSync(file, to);
+    source.observe?.(dirOf(file), 'ahp-session:/s', 't1', file, 'after');
+    await settle();
+    const state = await source.state?.(dirOf(file), 'ahp-session:/s', 'session');
+    return state?.files[0]?.edit.diff;
+  };
+
+  it('counts a created file ending in a newline by its lines', async () => {
+    expect(await counts(undefined, 'a\nb\n')).toEqual({ added: 2, removed: 0 });
+  });
+
+  it('counts a created file with no final newline by its lines', async () => {
+    expect(await counts(undefined, 'a\nb')).toEqual({ added: 2, removed: 0 });
+  });
+
+  it('counts a changed line once on each side', async () => {
+    expect(await counts('a\nb\n', 'a\nc\n')).toEqual({ added: 1, removed: 1 });
+  });
+});
+
 /** A host with an automation store, and one client introduced on `root`, the spelling it subscribes with. */
 const introduced = async (root: string) => {
   const host = createHost({ path: '/tmp/ahpd-uris', agents: [echo({ path: '/tmp/ahpd-uris' })], automations: memoryAutomations() });

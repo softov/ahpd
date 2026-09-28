@@ -172,7 +172,7 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
 });
 
 it('a permission ask answered outside is seen inside', async () => {
-  const answered: { id: string; approved: boolean }[] = [];
+  const answered: { id: string; approved: boolean; option?: string }[] = [];
   const asking: Agent = {
     provider: PROVIDER,
     displayName: 'Cofold',
@@ -200,7 +200,9 @@ it('a permission ask answered outside is seen inside', async () => {
           request: { id: 'req-1', message: 'May I run it?', questions: [{ id: 'q1', kind: 'text', message: 'Allow?', required: true }] },
         });
       },
-      confirm: (toolCallId: string, approved: boolean) => { answered.push({ id: toolCallId, approved }); },
+      confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
+        answered.push({ id: toolCallId, approved, ...(optionId === undefined ? {} : { option: optionId }) });
+      },
       cancel: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
       answer: () => {}, setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}), close: () => {},
@@ -224,6 +226,10 @@ it('a permission ask answered outside is seen inside', async () => {
   session.confirm('req-1', true);
   await until(() => answered.length > 0);
   expect(answered).toEqual([{ id: 'req-1', approved: true }]);
+  // And the option the person picked outside is the one the inner backend gets.
+  session.confirm('req-1', true, 'always');
+  await until(() => answered.length > 1);
+  expect(answered[1]).toStrictEqual({ id: 'req-1', approved: true, option: 'always' });
   session.close();
 });
 

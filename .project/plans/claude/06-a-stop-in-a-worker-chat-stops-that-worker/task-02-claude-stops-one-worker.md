@@ -1,6 +1,6 @@
 ---
 title: Claude stops one worker with stopTask, or the session under the option
-status: todo
+status: implemented
 depends: [task-01-the-host-asks-to-stop-one-worker.md]
 layer: "agent-claude"
 refs:
@@ -33,3 +33,24 @@ agent-claude's `stopWorker(call)` calls `stopTask` with the worker's task id, an
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+Built, in `packages/agent-claude/src/session.ts`.
+`task_started` records its `task_id` in `tasks`, keyed by the call's `tool_use_id`, unless that worker has already ended, and `endWorker` forgets it.
+`stopWorker(toolCallId)` calls `handle.stopTask(taskId)` and leaves the lead turn alone; the worker ends as `cancelled` when the harness's `stopped` notification arrives, through the existing `task_notification` path, which ends a worker once.
+With `workerStop: 'session'`, or when no task id has been named for the call yet, it calls the session's own `cancel('')`, which stops the running lead turn and ends its workers.
+To call `cancel` from `stopWorker`, the returned object is now held as `const self: Session` and returned at the end; nothing else about it changed.
+`workerStop?: 'worker' | 'session'` is on `ClaudeSessionOptions` and `ClaudeOptions`, passed through by `claude()`, read by the plugin's `optionsOf` when it is one of the two values, and declared in the package's `ahpd.options`.
+
+Tests, in `packages/agent-claude/test/agent-claude-subagent.test.ts`, with the SDK mock now recording `stopTask` and `interrupt`:
+
+- `stops one foreground worker with its task id, and leaves the lead turn running`: over `claude-subagent.jsonl` through its sixth frame, `stopTask('a39214c163af9a96a')`, no interrupt, no `chat/turnCancelled`, the worker open until two `stopped` notifications end it once as `cancelled`.
+- `stops one background worker with its task id`: over `claude-subagent-background.jsonl` through its seventh frame, `stopTask('af279e8136cb23ae9')`, and the `stopped` notification ends it as `cancelled`.
+- `cancels the lead turn instead when configured to stop the session`: `workerStop: 'session'`, no `stopTask`, one interrupt, the worker ended as `cancelled`.
+- `cancels the lead turn when the worker has no task id yet`: the first two frames only, before `task_started`, one interrupt and no `stopTask`.
+
+Failed first: all four, the first two with `stopTask` never called and the last two with no interrupt, because the backend had no `stopWorker`.
+
+Not tested: `claude()` and the plugin passing `workerStop` through; each is a single conditional spread or assignment, and no existing test drives the plugin's options.
+The stopped notification in the tests is written by hand in the shape of the captured ones (`status: 'stopped'`), because no capture of a real `stopTask` exists; `stopTask` failing is caught and ignored, and the question of whether it should fall back to cancelling the lead turn is open for review.
+
+Gates: `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 107 files, 1549 tests passed.

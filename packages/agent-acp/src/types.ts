@@ -67,6 +67,20 @@ export interface AcpOptions {
 export type PermissionAnswer = { optionId: string } | 'cancelled';
 
 /**
+ * One choice offered on a call awaiting confirmation, in the shape of the
+ * protocol's `ConfirmationOption`.
+ *
+ * `id` is the server's own `optionId`, which is what a client sends back as
+ * `selectedOptionId`; `group` is 1 for approvals and 2 for refusals.
+ */
+export interface ConfirmationOption {
+  id: string;
+  label: string;
+  kind: 'approve' | 'deny';
+  group: number;
+}
+
+/**
  * What a session answers for the server.
  *
  * `update` is the only one always wired. Everything else is optional and each

@@ -116,9 +116,9 @@ session channel. A session never needs to know either URI to do it.
 | --- | --- |
 | identity | `uri`, `chatUri`, `agentId()` |
 | state for a snapshot | `sessionState()`, `chatState()`, `allTurns()`, `status()`, `activity()`, `title()`, `modifiedAt()`, `workingDirectories()`, `models()`, `customizations()` |
-| the turn | `begin(turnId, text, model?)`, `cancel(turnId)` |
+| the turn | `begin(turnId, text, model?)`, `cancel(turnId)`, `stopWorker?(toolCallId)` |
 | the queue and the draft | `queue(id, text, model?)`, `unqueue(id)`, `reorder(order)`, `setDraft(text)` |
-| being asked | `confirm(toolCallId, approved)`, `answer(requestId, accepted, answers)` |
+| being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
 | the end | `close()` |
@@ -154,8 +154,12 @@ methods:
 
 | | `Session` method | announced by |
 | --- | --- | --- |
-| a tool call waiting to be allowed | `confirm(toolCallId, approved)` | `session/inputNeededSet` with `kind: 'toolConfirmation'` |
+| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `session/inputNeededSet` with `kind: 'toolConfirmation'` |
 | a question that is not about a tool | `answer(requestId, accepted, answers)` | `session/inputNeededSet` with `kind: 'chatInput'` |
+
+A confirmation may offer the agent's own choices as `options` on the call's `chat/toolCallReady` and on the entry's `toolCall`.
+`optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.
+Say it back as `selectedOptionId` on the `chat/toolCallConfirmed` the backend emits, so the call records which choice was made.
 
 Hold them in a **map keyed by id**, never in one slot. A backend that can ask
 twice will: an agent firing two tools in parallel asks twice before either is

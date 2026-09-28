@@ -82,6 +82,9 @@
       },
       "computerConfigDir": {
         "required": false
+      },
+      "workerStop": {
+        "required": false
       }
     }
   }

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { checker } from '../../../tools/wire.mjs';
 
 /**
  * This checkout, as an absolute path.
@@ -1071,6 +1072,80 @@ describe('driving a turn', () => {
     });
     expect(await decision).toMatchObject({ behavior: 'allow' });
     expect(actions(p, uri).map((e) => e.action.type)).toContain('session/inputNeededRemoved');
+  });
+
+  describe('an approval that can be kept', () => {
+    const rule = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }], behavior: 'allow', destination: 'localSettings' }];
+
+    /** A Bash call asked about with these suggestions, and the frames that describe it. */
+    const asking = async (suggestions?: unknown[]) => {
+      const { client, peer: p, uri, chatUri } = await running();
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      const decision = sdk.canUseTool?.('Bash', { command: 'ls' }, {
+        toolUseID: 'c9', ...(suggestions === undefined ? {} : { suggestions }),
+      });
+      await settle();
+      const frames = p.notes.filter((n) => n.method === 'action');
+      const ready = frames.find((n) => {
+        const action = (n.params as { action: Record<string, unknown> }).action;
+        return action.type === 'chat/toolCallReady' && action.toolCallId === 'c9';
+      });
+      const needed = frames.find((n) => (n.params as { action: Record<string, unknown> }).action.type === 'session/inputNeededSet');
+      const answer = (action: Record<string, unknown>) => client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'c9', ...action } },
+      });
+      return { p, chatUri, decision, ready, needed, answer };
+    };
+    const actionOf = (frame: { params: unknown } | undefined) => (frame?.params as { action: Record<string, unknown> } | undefined)?.action;
+
+    it('offers allow once, always allow and deny, and returns the suggestions when always is picked', async () => {
+      const { p, chatUri, decision, ready, needed, answer } = await asking(rule);
+      const offered = [
+        { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
+        { id: 'allow-always', label: 'Always allow Bash(ls:*), kept in local settings', kind: 'approve', group: 1 },
+        { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+      ];
+      expect(actionOf(ready)?.options).toEqual(offered);
+      expect((actionOf(needed)?.request as { toolCall: { options?: unknown } }).toolCall.options).toEqual(offered);
+      // Checked as sent: the entry holds the live call, which the answer moves on.
+      const check = checker();
+      expect([ready, needed].flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`))
+        .toEqual([]);
+
+      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-always' });
+      expect(await decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' }, updatedPermissions: rule });
+      const echoed = p.notes.find((n) => n.method === 'action'
+        && (n.params as { channel: string }).channel === chatUri && actionOf(n)?.type === 'chat/toolCallConfirmed');
+      expect(actionOf(echoed)?.selectedOptionId).toBe('allow-always');
+
+      expect(check.frame(echoed).map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
+    });
+
+    it('keeps nothing when the approval picked no option, or allow once', async () => {
+      const plain = await asking(rule);
+      await plain.answer({ approved: true, confirmed: 'user-action' });
+      expect(await plain.decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+
+      const once = await asking(rule);
+      await once.answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once' });
+      expect(await once.decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+    });
+
+    it('says what a mode suggestion does', async () => {
+      const { ready } = await asking([{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]);
+      const options = actionOf(ready)?.options as { id: string; label: string }[];
+      expect(options.find((one) => one.id === 'allow-always')?.label).toBe('Allow edits for the rest of the session');
+    });
+
+    it('offers no options when the SDK suggested nothing', async () => {
+      const { ready } = await asking();
+      expect(actionOf(ready)?.options).toBeUndefined();
+    });
   });
 
   it('answers a question keyed by its text, not by an id', async () => {
@@ -2542,9 +2617,17 @@ describe('one tool call, one row', () => {
     // `pending-confirmation` and draws it as a question nobody put.
     const ready = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady');
     expect(ready?.action.confirmed).toBe('not-needed');
-    // And the intention is not the input: a client draws one above the other.
-    expect(ready?.action.invocationMessage).toBe('Bash');
+    // Drawn by what it runs on, as the same call read back from its transcript is.
+    expect(ready?.action.invocationMessage).toBe('ls');
     expect(ready?.action.toolInput).toBe('ls');
+  });
+
+  it('says what a finished call ran, as its transcript does', async () => {
+    const { peer: p, chatUri } = await calling();
+    await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a b' }] } });
+    await settle();
+    const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+    expect((done?.action.result as Record<string, unknown>).pastTenseMessage).toBe('ls');
   });
 
   it('says the same on the call as it says in the action', async () => {
@@ -2561,7 +2644,7 @@ describe('one tool call, one row', () => {
      * calls was a transcript full of rows with no sentence to draw and no
      * answer to whether anybody had approved them.
      */
-    expect(call.invocationMessage).toBe('Bash');
+    expect(call.invocationMessage).toBe('ls');
     expect(call.confirmed).toBe('not-needed');
   });
 
@@ -5550,6 +5633,126 @@ describe('a chat made out of another', () => {
     }).snapshot.state;
     expect(state.turns).toEqual([]);
     expect(state.activeTurn?.message.text).toBe('and tomorrow?');
+  });
+
+  /**
+   * A chat's first turn, finished, with the prompt id the CLI echoed for it.
+   *
+   * What a fork resumes at, so a chat made out of this one has a turn to name.
+   */
+  const oneTurn = async (client: ReturnType<ReturnType<typeof serving>['accept']>, chatUri: string, turnId = 't1'): Promise<void> => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'user', session_id: 'sdk-1', uuid: `sdk-prompt-${turnId}`, message: { role: 'user', content: 'hi' } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  };
+
+  /** Every frame a peer was sent, with the subscribe answers given, against the protocol schema. */
+  const defectsOf = (p: ReturnType<typeof peer>, answers: unknown[]): string[] => {
+    const check = checker();
+    return [...p.notes, ...answers.map((result) => ({ result }))]
+      .flatMap((frame) => check.frame(frame))
+      .map((one) => `${one.def} ${one.at} ${one.what}`);
+  };
+
+  it('says a fork came from that chat at that turn, wherever the chat is described', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await oneTurn(client, chatUri);
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    });
+    const origin = { kind: 'fork', chat: chatUri, turnId: 't1' };
+
+    const added = actions(p, uri).find((e) => e.action.type === 'session/chatAdded');
+    expect((added?.action.summary as { origin?: unknown }).origin).toEqual(origin);
+
+    // A full summary is re-sent when the chat moves, and it must not say
+    // `user` over what the chat was made from.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/forked', action: { type: 'session/titleChanged', title: 'Forked' } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    });
+    await settle();
+    const updated = actions(p, uri)
+      .filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === 'ahp-chat:/forked')
+      .map((e) => e.action.changes as { origin?: unknown; resource?: unknown });
+    expect(updated.some((one) => one.resource !== undefined)).toBe(true);
+    for (const one of updated) if (one.origin !== undefined) expect(one.origin).toEqual(origin);
+
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string; origin?: unknown }[] } };
+    };
+    expect(session.snapshot.state.chats.find((c) => c.resource === 'ahp-chat:/forked')?.origin).toEqual(origin);
+    // The chat it came from is still one somebody opened.
+    expect(session.snapshot.state.chats.find((c) => c.resource === chatUri)?.origin).toEqual({ kind: 'user' });
+
+    const own = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
+      snapshot: { state: { origin?: unknown } };
+    };
+    expect(own.snapshot.state.origin).toEqual(origin);
+
+    expect(defectsOf(p, [session, own])).toEqual([]);
+  });
+
+  it('says a side chat came from that chat at that turn, with the selection it was given', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await oneTurn(client, chatUri);
+    const selection = { text: 'the weather' };
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/side', source: { kind: 'sideChat', chat: chatUri, turnId: 't1', selection } },
+    });
+    const origin = { kind: 'sideChat', chat: chatUri, turnId: 't1', selection };
+
+    const added = actions(p, uri).find((e) => e.action.type === 'session/chatAdded');
+    expect((added?.action.summary as { origin?: unknown }).origin).toEqual(origin);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string; origin?: unknown }[] } };
+    };
+    expect(session.snapshot.state.chats.find((c) => c.resource === 'ahp-chat:/side')?.origin).toEqual(origin);
+    const own = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/side' } }) as {
+      snapshot: { state: { origin?: unknown } };
+    };
+    expect(own.snapshot.state.origin).toEqual(origin);
+
+    expect(defectsOf(p, [session, own])).toEqual([]);
+  });
+
+  it('names a secondary chat it was forked from as that chat, under any spelling of the session', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await oneTurn(client, chatUri);
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/other' } });
+    await oneTurn(client, 'ahp-chat:/other');
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: 'ahp-chat:/other', turnId: 't1' } },
+    });
+    await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/lead-fork', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    });
+
+    const alias = `claude:/${uri.slice(uri.indexOf(':/') + 2)}`;
+    const aliased = await client.handle({ method: 'subscribe', params: { channel: alias } }) as {
+      snapshot: { state: { defaultChat: string; chats: { resource: string; origin?: unknown }[] } };
+    };
+    const rows = aliased.snapshot.state.chats;
+    // Not the default chat: the chat it was made from is a peer of it.
+    expect(rows.find((c) => c.resource === 'ahp-chat:/forked')?.origin)
+      .toEqual({ kind: 'fork', chat: 'ahp-chat:/other', turnId: 't1' });
+    // The default chat, in the spelling this client gave the session.
+    expect(rows.find((c) => c.resource === 'ahp-chat:/lead-fork')?.origin)
+      .toEqual({ kind: 'fork', chat: aliased.snapshot.state.defaultChat, turnId: 't1' });
+    expect(aliased.snapshot.state.defaultChat).not.toBe(chatUri);
+    expect(defectsOf(p, [aliased])).toEqual([]);
   });
 
   it('refuses a source it does not know, and one from another session', async () => {

@@ -31,8 +31,12 @@ const sdk = vi.hoisted(() => {
     canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
     /** The feed the next query reads, and the one `push` writes to. */
     feed: fresh(),
+    /** The task ids `stopTask` was called with, in order. */
+    stopped: [] as string[],
+    /** How many times the query was interrupted. */
+    interrupted: 0,
     /** Start a new feed for the next session. */
-    reset() { state.feed = fresh(); },
+    reset() { state.feed = fresh(); state.stopped = []; state.interrupted = 0; },
     /** Queue frames for the current session to read. */
     push(...frames: Record<string, unknown>[]) {
       const feed = state.feed;
@@ -58,7 +62,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       async *[Symbol.asyncIterator]() {
         for (;;) yield await sdk.next(feed);
       },
-      interrupt: async () => {},
+      interrupt: async () => { sdk.interrupted += 1; },
+      stopTask: async (taskId: string) => { sdk.stopped.push(taskId); },
       setPermissionMode: async () => {},
       setModel: async () => {},
       applyFlagSettings: async () => {},
@@ -95,7 +100,7 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name)) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), extra: { workerStop?: 'worker' | 'session' } = {}) {
   sdk.reset();
   sdk.push(...frames);
   const main: { channel: string; action: Bag }[] = [];
@@ -123,6 +128,7 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-sub-')),
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
+    ...extra,
   });
   await settle();
   return { main, workers, session, asked, askedAt };
@@ -333,4 +339,113 @@ it('describes the spawning call in its _meta, on its start and its ready action'
   const described = { toolKind: 'subagent', subagentDescription: 'List files in folder', subagentAgentName: 'Explore' };
   expect(lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta).toEqual(described);
   expect(lead.find((one) => one.type === 'chat/toolCallStart' && one.toolCallId === call)?._meta).toEqual(described);
+});
+
+/** The harness's word that one task was stopped, as `stopTask` makes it send. */
+const stoppedNotice = (call: string, task: string): Record<string, unknown> => ({
+  type: 'system', subtype: 'task_notification', tool_use_id: call, task_id: task, status: 'stopped', summary: 'stopped',
+});
+
+it('stops one foreground worker with its task id, and leaves the lead turn running', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { main, workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6));
+  session.stopWorker?.(call);
+  await settle();
+  expect(sdk.stopped).toEqual(['a39214c163af9a96a']);
+  expect(sdk.interrupted).toBe(0);
+  expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
+  // Ended by the harness's own word that it stopped, once.
+  expect(workers.get(call)?.ended).toEqual([]);
+  sdk.push(stoppedNotice(call, 'a39214c163af9a96a'), stoppedNotice(call, 'a39214c163af9a96a'));
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+});
+
+it('stops one background worker with its task id', async () => {
+  const lines = fixture('claude-subagent-background.jsonl');
+  const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
+  const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  session.stopWorker?.(call);
+  await settle();
+  expect(sdk.stopped).toEqual(['af279e8136cb23ae9']);
+  expect(sdk.interrupted).toBe(0);
+  sdk.push(stoppedNotice(call, 'af279e8136cb23ae9'));
+  await settle();
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+});
+
+it('cancels the lead turn instead when configured to stop the session', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { workers, session } = await replay('claude-subagent.jsonl', lines.slice(0, 6), { workerStop: 'session' });
+  session.stopWorker?.(call);
+  await settle();
+  expect(sdk.stopped).toEqual([]);
+  expect(sdk.interrupted).toBe(1);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+});
+
+it('cancels the lead turn when the worker has no task id yet', async () => {
+  const lines = fixture('claude-subagent.jsonl');
+  const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
+  const { session } = await replay('claude-subagent.jsonl', lines.slice(0, 2));
+  session.stopWorker?.(call);
+  await settle();
+  expect(sdk.stopped).toEqual([]);
+  expect(sdk.interrupted).toBe(1);
+});
+
+/** A session with a lead turn open, and the asks and frames a test drives it with. */
+async function leadTurn() {
+  const { main, workers, session } = await replay('none', []);
+  session.begin('t1', 'hi');
+  await settle();
+  return { main, workers, session };
+}
+
+/** The tool call a chat's newest ended turn holds under an id. */
+const keptCall = (session: Awaited<ReturnType<typeof leadTurn>>['session'], id: string): Bag | undefined => {
+  const turns = (session.chatState().turns ?? []) as Bag[];
+  const parts = (turns.at(-1)?.responseParts ?? []) as Bag[];
+  return parts.map((one) => one.toolCall as Bag | undefined).find((call) => call?.toolCallId === id);
+};
+
+const done: Record<string, unknown> = { type: 'result', subtype: 'success', is_error: false, duration_ms: 1 };
+
+it('settles an ask no scope claimed as skipped when the lead turn completes', async () => {
+  const { session } = await leadTurn();
+  // Neither the call nor the agent is one this session has seen, so the ask
+  // lands on the lead turn, where no result for it will ever arrive.
+  const asked = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_orphan', agentID: 'agent-unknown' });
+  await settle();
+  expect(((session.sessionState().inputNeeded ?? []) as Bag[]).length).toBe(1);
+  sdk.push(done);
+  await settle();
+  expect(keptCall(session, 'toolu_orphan')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+  expect((session.sessionState().inputNeeded ?? []) as Bag[]).toEqual([]);
+  await expect(asked).resolves.toMatchObject({ behavior: 'deny' });
+});
+
+it('settles a call still running as skipped when the lead turn completes', async () => {
+  const { session } = await leadTurn();
+  sdk.push({
+    type: 'assistant', parent_tool_use_id: null,
+    message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_open', name: 'Bash', input: { command: 'sleep 9' } }] },
+  }, done);
+  await settle();
+  const call = keptCall(session, 'toolu_open');
+  expect(call).toMatchObject({ status: 'cancelled', reason: 'skipped', toolCallId: 'toolu_open', toolName: 'Bash' });
+  expect(call?.confirmed).toBeUndefined();
+});
+
+it('settles an ask no scope claimed as skipped when the lead turn is cancelled', async () => {
+  const { session } = await leadTurn();
+  const asked = sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_orphan', agentID: 'agent-unknown' });
+  await settle();
+  session.cancel('t1');
+  await settle();
+  expect(keptCall(session, 'toolu_orphan')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+  expect((session.sessionState().inputNeeded ?? []) as Bag[]).toEqual([]);
+  await expect(asked).resolves.toMatchObject({ behavior: 'deny' });
 });

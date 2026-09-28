@@ -1,6 +1,6 @@
 ---
 title: The docs say what a stop in a worker chat does
-status: todo
+status: implemented
 depends: [task-02-claude-stops-one-worker.md]
 layer: "docs"
 refs:
@@ -25,3 +25,13 @@ refs:
 - Every sentence re-read against the code; every relative link resolves.
 
 ## Resume
+
+Written.
+
+- `docs/PLUGINS.md`, in `A backend's worker chats`: what a client may still send on a worker chat, that a stop there calls `Session.stopWorker(toolCallId)` and leaves the lead turn running, that without it the lead chat's running turn is cancelled, and that the Claude backend's `workerStop: "session"` makes it cancel the lead turn.
+- `packages/agent-claude/README.md`: `workerStop` in the options table, and one sentence in the subagent paragraph on what a stop in a subagent's chat does, the option, and the fallback before the harness has named the task.
+- `docs/AGENT.md`: `stopWorker?(toolCallId)` in the `Session` table's turn row; not in the task's Files, but it is where the `Session` contract is listed.
+
+No em dash; no relative link added.
+
+Gates: `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 107 files, 1549 tests passed.

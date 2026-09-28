@@ -191,10 +191,32 @@ function callsIn(turns: Bag[]): Set<string> {
   return ids;
 }
 
+/**
+ * The tags the CLI opens a user frame with when it records a slash command
+ * (`<command-name>`, `<command-message>`, `<command-args>`), its local
+ * handler's output (`<local-command-stdout>`, `<local-command-stderr>`) or
+ * the caveat it puts before such output (`<local-command-caveat>`). These
+ * frames do not reliably carry `isMeta`, so the content is what tells them.
+ */
+const CLI_ECHO = /^<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+
+/** A user frame's content is a CLI echo when its first text starts with one of its tags. */
+function isCliEcho(content: unknown): boolean {
+  if (typeof content === 'string') return CLI_ECHO.test(content);
+  const first = list(content).map(bag).find((block) => str(block.type) === 'text');
+  return first !== undefined && CLI_ECHO.test(str(first.text) ?? '');
+}
+
 /** One session's history, from the frames a reader already parsed. */
 function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
+  /*
+   * Each turn's usage by API message. The CLI writes one message as a frame
+   * per content block, each repeating that message's usage, so a message is
+   * counted once however many frames carry it.
+   */
+  const spentBy = new Map<WireTurn<Turn>, Map<string, Bag>>();
 
   for (const entry of messages) {
     const frame = bag(entry);
@@ -238,6 +260,9 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         if (!ok) call.error = { message: text ?? 'The tool failed' };
       }
       if (!said) continue;
+      // Written by the CLI rather than said by anybody: it neither shows as a
+      // prompt nor ends the exchange it sits in.
+      if (frame.isCompactSummary === true || isCliEcho(message.content)) continue;
 
       built.push({
         id: str(frame.uuid) ?? `u${built.length}`,
@@ -249,8 +274,8 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         // complete by definition. `Turn.state` is required and used to be
         // left off, which put every past turn on the wire without one.
         state: 'complete',
-        // Required too, and meaning "not measured" rather than "none": the
-        // transcript does not record token counts.
+        // Required too, and meaning "not measured" rather than "none" until
+        // an assistant frame answering it records what it cost.
         usage: undefined,
       });
       continue;
@@ -277,8 +302,6 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         : {}),
       ...(str(message.model) !== undefined ? { model: str(message.model) as string } : {}),
     };
-    const used = Object.keys(spent).length > 0 ? spent : undefined;
-
     const parts: Bag[] = [];
     const blocks = list(message.content);
     for (let index = 0; index < blocks.length; index++) {
@@ -339,27 +362,47 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         parts.push({ id, kind: 'toolCall', toolCall: call });
       }
     }
-    if (parts.length === 0) continue;
-
-    // The agent answering the message just above it, if that is what this is.
-    // A history where every reply is its own turn reads as a monologue with
-    // the questions removed.
-    const previous = built[built.length - 1];
-    if (previous && (previous.responseParts as Bag[]).length === 0) {
-      previous.responseParts = parts;
-      previous.usage = used as WireTurn<Turn>['usage'];
-      continue;
+    /*
+     * Every frame up to the next prompt is part of the turn that prompt
+     * opened, as it was live: a round after a tool result answers the same
+     * prompt. Only a transcript that starts with the agent, as a worker's
+     * does, has no turn to join, and opens one in the agent's voice.
+     */
+    let turn = built[built.length - 1];
+    if (turn === undefined) {
+      if (parts.length === 0) continue;
+      turn = {
+        id: str(frame.uuid) ?? `a${built.length}`,
+        startedAt: at,
+        message: { text: '', origin: { kind: 'agent' } },
+        responseParts: [],
+        state: 'complete',
+        usage: undefined,
+      };
+      built.push(turn);
     }
-    built.push({
-      id: str(frame.uuid) ?? `a${built.length}`,
-      startedAt: at,
-      // The agent's own turn: there is no user message in front of it.
-      message: { text: '', origin: { kind: 'agent' } },
-      responseParts: parts,
-      state: 'complete',
-      usage: used as WireTurn<Turn>['usage'],
-    });
+    turn.responseParts = [...(turn.responseParts as Bag[]), ...parts];
+
+    if (Object.keys(spent).length > 0) {
+      const byMessage = spentBy.get(turn) ?? new Map<string, Bag>();
+      spentBy.set(turn, byMessage);
+      // The last frame of a message wins; a frame naming no message is its own.
+      byMessage.set(str(message.id) ?? `frame:${byMessage.size}:${str(frame.uuid) ?? ''}`, spent);
+      turn.usage = summed([...byMessage.values()]) as WireTurn<Turn>['usage'];
+    }
   }
 
   return built;
+}
+
+/** The usage of several API messages as one: token counts added, the last model named. */
+function summed(messages: Bag[]): Bag {
+  const out: Bag = {};
+  for (const one of messages) {
+    for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens']) {
+      if (typeof one[key] === 'number') out[key] = ((out[key] as number | undefined) ?? 0) + (one[key] as number);
+    }
+    if (typeof one.model === 'string') out.model = one.model;
+  }
+  return out;
 }

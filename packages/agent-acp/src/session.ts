@@ -50,8 +50,8 @@ import { machineAsked, Status } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
-import { mapUpdate } from './mapping.js';
-import type { AcpConnection, AcpOptions, AcpTurn, PermissionAnswer, WatchedSession, WatchedTurn } from './types.js';
+import { confirmationOptions, mapUpdate } from './mapping.js';
+import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
@@ -136,10 +136,12 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   const permissions = new Map<string, {
     /** The input-needed entry id a client answers by. */
     requestId: string;
-    /** The option an approval selects, when the server offered a once option. */
+    /** The option an approval with no option picked selects, when the server offered a once option. */
     allow?: string;
-    /** The option a refusal selects, when it offered one. */
+    /** The option a refusal with no option picked selects, when it offered a once option. */
     reject?: string;
+    /** Every option the server offered, as the call offers them to a person. */
+    offered: ConfirmationOption[];
     settle(answer: PermissionAnswer): void;
   }>();
   /** The terminals this session opened for the server, by the server's own id. */
@@ -387,17 +389,20 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   /**
    * A permission the server is blocked on, put to a person.
    *
-   * AHP's confirmation is two-valued, so an approval selects the server's
-   * `allow_once` and a refusal its `reject_once` - never an `always`, which
-   * would change this session's policy from a single answer. A server that
-   * offers no once option is refused instead, because selecting `allow_always`
-   * is a decision the person did not make.
+   * Every option the server lists is offered on the call, approvals before
+   * refusals, and the one the person picks is the one the server is sent. An
+   * answer that picked none selects the server's `allow_once` or
+   * `reject_once` - never an `always`, which would change this session's
+   * policy from a single answer - and a server with no once option of that
+   * kind is answered `cancelled`, because selecting an `always` is a decision
+   * the person did not make.
    */
   const askPermission = (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
     const option = (kind: PermissionOptionKind): string | undefined =>
       request.options.find((one) => one.kind === kind)?.optionId;
     const allow = option('allow_once');
-    const reject = option('reject_once') ?? option('reject_always');
+    const reject = option('reject_once');
+    const offered = confirmationOptions(request.options);
     const toolCallId = request.toolCall.toolCallId;
     const requestId = `${toolCallId}:permission`;
 
@@ -406,6 +411,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         requestId,
         ...(allow === undefined ? {} : { allow }),
         ...(reject === undefined ? {} : { reject }),
+        offered,
         settle: resolve,
       });
     });
@@ -427,6 +433,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     } as Bag : bag(bag(existing).toolCall);
     call.status = 'pending-confirmation';
     call.invocationMessage = request.toolCall.title ?? call.toolName;
+    call.confirmationTitle = request.toolCall.title ?? call.displayName;
+    if (offered.length > 0) call.options = offered;
     delete call.confirmed;
     if (existing === undefined && mapping !== undefined) {
       mapping.parts.push({ id: toolCallId, kind: 'toolCall', toolCall: call });
@@ -435,6 +443,21 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         toolName: call.toolName, displayName: call.displayName,
       });
     }
+    /*
+     * The call put back to `pending-confirmation`, with the choices on it.
+     *
+     * Sent even when the call was announced as running: a ready with no
+     * `confirmed` is what moves a running call back to a question, and a
+     * client that saw only the input-needed entry would draw the row as
+     * running while the server waits.
+     */
+    emit('chat', {
+      type: 'chat/toolCallReady', turnId, toolCallId,
+      invocationMessage: call.invocationMessage,
+      ...(call.toolInput === undefined ? {} : { toolInput: call.toolInput }),
+      confirmationTitle: call.confirmationTitle,
+      ...(offered.length > 0 ? { options: offered } : {}),
+    });
     emit('session', {
       type: 'session/inputNeededSet',
       request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: call },
@@ -1043,20 +1066,25 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      *
      * Found by the tool call the entry names rather than assumed to be the one
      * held, because two calls can be waiting at once and answering the wrong
-     * one is worse than answering none. Nothing is allowed without a once
-     * option to select: the request is refused instead, with the person's
-     * answer standing as the reason.
+     * one is worse than answering none. The option picked is sent when the
+     * server offered it and it is of the answer's kind; otherwise the once
+     * option of that kind, and with none the request is refused instead, with
+     * the person's answer standing as the reason.
      */
-    confirm: (toolCallId, approved) => {
+    confirm: (toolCallId, approved, optionId) => {
       const held = permissions.get(toolCallId);
       if (held === undefined) return;
       permissions.delete(toolCallId);
       emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
+      const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = mapping?.parts.find((one) => one.id === toolCallId);
       if (part !== undefined) {
         const call = bag(bag(part).toolCall);
         call.status = approved ? 'running' : 'cancelled';
         if (approved) call.confirmed = 'user-action';
+        delete call.options;
+        delete call.confirmationTitle;
+        if (picked !== undefined) call.selectedOption = picked;
       }
       emit('chat', {
         type: 'chat/toolCallConfirmed',
@@ -1064,10 +1092,10 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         toolCallId,
         approved,
         ...(approved ? { confirmed: 'user-action' } : {}),
+        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
       });
-      held.settle(approved
-        ? (held.allow === undefined ? 'cancelled' : { optionId: held.allow })
-        : (held.reject === undefined ? 'cancelled' : { optionId: held.reject }));
+      const chosen = picked?.id ?? (approved ? held.allow : held.reject);
+      held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });
       doing(approved ? 'Running' : 'Thinking');
       touch();
     },

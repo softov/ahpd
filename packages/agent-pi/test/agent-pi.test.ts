@@ -536,6 +536,44 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   expect((parts.find((part) => part.id === 'c2')?.toolCall as Bag).status).toBe('cancelled');
 });
 
+it.each([
+  ['bash', { command: 'ls -la' }, 'ls -la'],
+  ['powershell', { command: 'Get-ChildItem' }, 'Get-ChildItem'],
+  ['read', { path: 'a.ts' }, 'a.ts'],
+  ['edit', { path: 'a.ts', edits: [] }, 'a.ts'],
+  ['write', { path: 'b.ts', content: '' }, 'b.ts'],
+  ['grep', { pattern: 'TODO' }, 'TODO'],
+  ['find', { pattern: '*.ts' }, '*.ts'],
+  ['ls', { path: 'src' }, 'src'],
+  ['ls', {}, '.'],
+  ['mystery', { anything: 1 }, 'mystery'],
+])('draws a live %s call by what it runs on, while it runs and once it is done', async (name, input, said) => {
+  const { session, pi, last } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', name, input);
+  expect(last('chat/toolCallReady')?.invocationMessage).toBe(said);
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError: false });
+  expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(said);
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(parts.find((one) => one.id === 'c1')?.toolCall).toMatchObject({ invocationMessage: said, pastTenseMessage: said });
+});
+
+it('draws an asked call by what it runs on, and keeps the tool in its question', async () => {
+  const { session, pi, last } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls -la' });
+  await settled();
+  expect(last('chat/toolCallReady')).toMatchObject({ invocationMessage: 'ls -la', confirmationTitle: 'Run bash?' });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(parts.find((one) => one.id === 'c1')?.toolCall).toMatchObject({ invocationMessage: 'ls -la' });
+  session.confirm('c1', false);
+  await waiting;
+});
+
 it('opens one row for an asked call, starts it once and readies it once', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
@@ -1707,11 +1745,11 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         toolName: 'read',
         displayName: 'read',
         status: 'completed',
-        invocationMessage: 'read',
+        invocationMessage: 'a.ts',
         toolInput: JSON.stringify({ path: 'a.ts' }),
         confirmed: 'not-needed',
         success: true,
-        pastTenseMessage: 'read',
+        pastTenseMessage: 'a.ts',
       },
     },
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },

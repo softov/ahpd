@@ -53,11 +53,12 @@ Reference: [00-host.md](host/00-host.md)
 | [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | built 2026-09-28 ([implemented.md](host/21-commit-asks-and-takes-what-is-staged/implemented.md)) | - | host 20 |
 | [22 - A file or a folder is staged and unstaged from the session's changeset](host/22-a-file-or-folder-is-staged-from-the-session/plan.md) | high | built 2026-09-28 ([implemented.md](host/22-a-file-or-folder-is-staged-from-the-session/implemented.md)) | host 21 | - |
 | [23 - A session outside the configured paths has its git facts and its changes without waiting for a turn](host/23-a-session-outside-the-paths-has-its-facts/plan.md) | high | built 2026-09-28 ([implemented.md](host/23-a-session-outside-the-paths-has-its-facts/implemented.md)) | - | - |
-| [24 - An approval offers the agent's own options, and the one picked reaches the agent](host/24-an-approval-offers-the-agents-own-options/plan.md) | high | planned 2026-09-28, tasks 01-05 todo; takes over acp 07 | - | - |
-| [25 - A forked chat says which chat and turn it came from](host/25-a-forked-chat-says-where-it-came-from/plan.md) | medium | planned 2026-09-28, task 01 todo | - | - |
-| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | planned 2026-09-28, tasks 01-04 todo | - | - |
+| [24 - An approval offers the agent's own options, and the one picked reaches the agent](host/24-an-approval-offers-the-agents-own-options/plan.md) | high | active 2026-09-28; tasks 01-05 implemented, awaiting review | - | - |
+| [25 - A forked chat says which chat and turn it came from](host/25-a-forked-chat-says-where-it-came-from/plan.md) | medium | active 2026-09-28; task 01 implemented, awaiting review | - | - |
+| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | active 2026-09-28; tasks 02-04 implemented, awaiting review; task 01 blocked: the `D` did not reproduce | - | - |
+| [27 - A session reads as running while any of its chats runs, a worker chat included](host/27-a-session-reads-running-while-any-chat-runs/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | - | - |
 
-Next free number in `host`: `27`.
+Next free number in `host`: `28`.
 
 ## claude
 
@@ -69,10 +70,11 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | built 2026-09-20 ([implemented.md](claude/02-round-ended/implemented.md)) | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification; the gap is in [deferred.md](claude/02-round-ended/deferred.md) |
 | [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | built 2026-09-26 ([implemented.md](claude/03-an-empty-round-is-announced/implemented.md)) | claude 02 | - |
 | [04 - A subagent has its own chat, linked from the call that started it](claude/04-a-subagent-has-its-own-chat/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/04-a-subagent-has-its-own-chat/implemented.md)) | claude 03 | - |
-| [05 - A replayed Claude exchange is one turn, as it was live](claude/05-a-replayed-exchange-is-one-turn/plan.md) | high | planned 2026-09-28, tasks 01-02 todo | - | - |
-| [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | planned 2026-09-28, tasks 01-03 todo | claude 04 | - |
+| [05 - A replayed Claude exchange is one turn, as it was live](claude/05-a-replayed-exchange-is-one-turn/plan.md) | high | active 2026-09-28; tasks 01-02 implemented, awaiting review | - | - |
+| [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | active 2026-09-28; tasks 01-03 implemented, awaiting review | claude 04 | - |
+| [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | - | - |
 
-Next free number in `claude`: `07`.
+Next free number in `claude`: `08`.
 
 ## documentation
 
@@ -161,7 +163,7 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | built 2026-09-28 ([implemented.md](pi/09-pi-asks-before-a-tool-runs/implemented.md)) | pi 02 | - |
 | [10 - pi's models and history outlive the process, and pi loads without holding the daemon](pi/10-pi-outlives-the-process/plan.md) | high | built 2026-09-28 ([implemented.md](pi/10-pi-outlives-the-process/implemented.md)) | pi 01 | - |
 | [11 - A turn's parts come in the order the model wrote them, one part per block](pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) | high | built 2026-09-28 ([implemented.md](pi/11-a-turns-parts-come-in-the-order-they-were-written/implemented.md)) | pi 10 | - |
-| [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | planned 2026-09-28, tasks 01-03 todo | - | - |
+| [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | active 2026-09-28; tasks 01-03 implemented, awaiting review | - | - |
 
 Next free number in `pi`: `13`.
 

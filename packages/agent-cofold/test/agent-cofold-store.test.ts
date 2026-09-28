@@ -186,10 +186,10 @@ const idOf = (part: Bag): unknown => (part.kind === 'toolCall' ? (part.toolCall 
  * One turn run to its end on a scripted model: the chat actions sent, what a
  * client drew from them, and what the transcript reads back.
  */
-const played = async (steps: Step[]): Promise<{ said: Bag[]; live: Bag[]; read: Bag[] }> => {
+const played = async (steps: Step[], tools: BoundTool[] = [lookup([])]): Promise<{ said: Bag[]; live: Bag[]; read: Bag[] }> => {
   const { root, sweep } = place();
   const agent = backend(root, scripted(steps), allowAll());
-  const one = open(agent, 'one', sweep, { tools: [lookup([])] });
+  const one = open(agent, 'one', sweep, { tools });
   one.session.begin('t1', 'hello there');
   await until(() => ended(one.view));
   one.session.close();
@@ -200,6 +200,36 @@ const played = async (steps: Step[]): Promise<{ said: Bag[]; live: Bag[]; read: 
     read: (turns?.[0]?.responseParts ?? []) as Bag[],
   };
 };
+
+/** A tool under one of cofold's own names, answering `ran` whatever it is given. */
+const stub = (name: string): BoundTool => ({
+  definition: { name, description: name, inputSchema: { type: 'object' } },
+  run: () => 'ran',
+});
+
+it.each([
+  ['shell_exec', { command: 'ls' }, 'ls'],
+  ['read_file', { path: 'a.ts' }, 'a.ts'],
+  ['write_file', { path: 'b.ts', content: '' }, 'b.ts'],
+  ['edit_file', { path: 'c.ts', edits: [] }, 'c.ts'],
+  ['memory_write', { path: 'notes.md', content: '' }, 'notes.md'],
+  ['search_files', { pattern: 'TODO' }, 'TODO'],
+  ['list_files', { pattern: '*.ts' }, '*.ts'],
+  ['web_fetch', { url: 'https://example.com/' }, 'https://example.com/'],
+  ['web_search', { query: 'cofold' }, 'cofold'],
+  ['lookup', { query: 'x' }, 'lookup'],
+])('draws a %s call by what it runs on, live and read back', async (name, input, described) => {
+  const { said, live, read } = await played([
+    { deltas: [], parts: [{ type: 'toolCall', callId: 'c1', name, input, raw: JSON.stringify(input) }] },
+    { deltas: [{ type: 'text.delta', text: 'done' }], parts: [{ type: 'text', text: 'done' }] },
+  ], [stub(name)]);
+  expect(said.find((action) => action.type === 'chat/toolCallReady')?.invocationMessage).toBe(described);
+  expect((said.find((action) => action.type === 'chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(described);
+  const drew = live.find((part) => part.kind === 'toolCall')?.toolCall as Bag;
+  const readBack = read.find((part) => part.kind === 'toolCall')?.toolCall as Bag;
+  expect(drew).toMatchObject({ invocationMessage: described, pastTenseMessage: described });
+  expect(readBack).toMatchObject({ invocationMessage: described, pastTenseMessage: described });
+});
 
 it('shows live the parts its transcript rebuilds, in the order the model wrote them', async () => {
   // A model that thinks, calls a tool, thinks again and answers.

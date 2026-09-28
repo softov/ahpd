@@ -21,6 +21,7 @@
 import { textOf } from '@cofold/agents';
 import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
+import { describe } from './tools.js';
 
 /**
  * The turns `Agent.transcript` answers with.
@@ -77,12 +78,11 @@ const usageOf = (usage: Usage): WireUsage => {
 /**
  * What a call asks the model to say, in one line.
  *
- * The live mapping draws this from the call's own name until an approval
- * supplies a better sentence, so a transcript read back says the same thing
- * rather than inventing a summary from an argument shape it does not know.
+ * The live mapping draws this from what the call runs on until an approval
+ * supplies a better sentence, so a transcript read back says the same thing.
  */
 const invocationOf = (call: ToolCallPart, waiting: Waiting | undefined): string =>
-  waiting?.prompt ?? call.name;
+  waiting?.prompt ?? describe(call.name, call.input);
 
 /** The call's arguments as the wire carries them, which is the JSON the model produced. */
 const inputOf = (call: ToolCallPart): string | undefined => {
@@ -140,10 +140,10 @@ const callPartOf = (call: ToolCallPart, timing: Timing | undefined, waiting: Wai
  * subscription already holds. `content` and `error` are where a client looks
  * for what happened, and a failed call keeps both.
  */
-const completeCall = (held: Bag, result: ToolResultPart): void => {
+const completeCall = (held: Bag, result: ToolResultPart, said: string): void => {
   held.status = 'completed';
   held.success = !result.isError;
-  held.pastTenseMessage = result.name;
+  held.pastTenseMessage = said;
   held.confirmed = held.confirmed ?? 'not-needed';
   if (result.content !== '') held.content = [{ type: 'text', text: result.content }];
   if (result.isError) held.error = { message: result.content === '' ? 'The tool failed' : result.content };
@@ -157,6 +157,8 @@ interface Building {
   parts: Bag[];
   /** The calls of this turn, by call id, so a result finds the part it closes. */
   calls: Map<string, Bag>;
+  /** What each of those calls runs on, by call id, which its result is titled by too. */
+  said: Map<string, string>;
   usage: WireUsage | undefined;
   state: WireState;
   duration: number | undefined;
@@ -253,6 +255,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
       },
       parts: [],
       calls: new Map(),
+      said: new Map(),
       usage: usage.get(message.id),
       state: ending.get(message.id) ?? 'complete',
       duration: duration.get(message.id),
@@ -307,6 +310,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
+          live.said.set(part.callId, describe(part.name, part.input));
           live.parts.push({ id: part.callId, kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
@@ -333,7 +337,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         live.parts.push({ kind: 'systemNotification', content: part.content });
         continue;
       }
-      completeCall(held, part);
+      completeCall(held, part, live.said.get(part.callId) ?? part.name);
     }
   }
 

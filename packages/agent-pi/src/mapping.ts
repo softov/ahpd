@@ -162,6 +162,21 @@ export function usageOf(message: AssistantMessage | undefined): Bag | undefined 
 }
 
 /**
+ * What a call runs on, as its row is titled: the command of `bash` and
+ * `powershell`, the path of `read`, `edit` and `write`, the pattern of `grep`
+ * and `find`, and the path of `ls`, which is `.` when it names none. Any
+ * other tool, or one missing the argument, is titled by its name.
+ */
+export function describe(name: string, input: Bag): string {
+  const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+  if (name === 'bash' || name === 'powershell') return text(input.command) ?? name;
+  if (name === 'read' || name === 'edit' || name === 'write') return text(input.path) ?? name;
+  if (name === 'grep' || name === 'find') return text(input.pattern) ?? name;
+  if (name === 'ls') return text(input.path) ?? '.';
+  return name;
+}
+
+/**
  * A call's row, moved as the `tool_call` hook moves it before the tool runs.
  *
  * `extra` is what the hook decided: `confirmed: 'not-needed'` for a call that
@@ -170,7 +185,7 @@ export function usageOf(message: AssistantMessage | undefined): Bag | undefined 
  */
 export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag): void {
   row.status = extra.confirmed === 'not-needed' ? 'running' : 'pending-confirmation';
-  row.invocationMessage = displayName;
+  row.invocationMessage = describe(displayName, input);
   row.toolInput = JSON.stringify(input);
   if (extra.confirmationTitle !== undefined) row.confirmationTitle = extra.confirmationTitle;
   if (extra.confirmed !== undefined) row.confirmed = extra.confirmed;
@@ -261,8 +276,12 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
      * readied `not-needed` and one that is asked about is readied
      * `pending-confirmation`, both from the hook, which sees the same id.
      */
-    case 'tool_execution_start':
-      return startCall(turn, event.toolCallId, event.toolName);
+    case 'tool_execution_start': {
+      const opened = startCall(turn, event.toolCallId, event.toolName);
+      const call = turn.calls.get(event.toolCallId);
+      if (call !== undefined) call.said = describe(event.toolName, bag(event.args));
+      return opened;
+    }
 
     /** Output while it is still running, which is what a long command gives. */
     case 'tool_execution_update': {
@@ -283,6 +302,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(partOf(turn, call.toolCallId)?.toolCall);
+      const said = call.said ?? call.displayName;
       /*
        * A call still `streaming` was never readied: pi failed it before its
        * `tool_call` hook, for a tool it does not have, arguments that do not
@@ -300,9 +320,9 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
       if (held.status !== 'cancelled') {
         held.status = 'completed';
         held.success = success;
-        held.pastTenseMessage = call.displayName;
+        held.pastTenseMessage = said;
         if (unreadied) {
-          held.invocationMessage = call.displayName;
+          held.invocationMessage = said;
           held.confirmed = 'not-needed';
         }
       }
@@ -310,7 +330,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
         type: 'chat/toolCallReady',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
-        invocationMessage: call.displayName,
+        invocationMessage: said,
         confirmed: 'not-needed' as const,
         ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
       }] : []), {
@@ -319,7 +339,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
         toolCallId: call.toolCallId,
         result: {
           success,
-          pastTenseMessage: call.displayName,
+          pastTenseMessage: said,
           ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
           ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
         },

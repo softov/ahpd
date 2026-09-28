@@ -1,6 +1,6 @@
 ---
 title: A pi call says what it runs on, live and replayed
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi"
 refs:
@@ -33,3 +33,12 @@ A pi call's `invocationMessage` and `pastTenseMessage` are its command, path or 
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+- **Done:** `describe(name, input)` in `packages/agent-pi/src/mapping.ts` per the plan's table; an empty or missing argument falls back to the name, except `ls`, which falls back to `.`.
+- `readyRow` sets `invocationMessage` from `describe`, so the hook's ready, the asked call's row and replay all follow.
+- `askBefore` in `session.ts` sends `invocationMessage: describe(displayName, input)` on `chat/toolCallReady`; the confirmation title stays `Run <name>?`.
+- `PiCall.said` holds the description; `tool_execution_end` uses `call.said ?? call.displayName` for `pastTenseMessage` and for the ready it sends an unreadied call.
+- **Departure:** `said` is set in `mapEvent`'s `tool_execution_start`, which carries pi's `args` live and in replay, rather than in `readyRow`, which is handed the row and not the `PiCall`. The effect is the same for every call pi runs; a call pi fails before `tool_execution_start` has no arguments to describe and keeps its name.
+- **Tests:** in `packages/agent-pi/test/agent-pi.test.ts`: "draws a live %s call by what it runs on, while it runs and once it is done" (10 cases: `bash`, `powershell`, `read`, `edit`, `write`, `grep`, `find`, `ls` with a path, `ls` with none, an unknown tool), "draws an asked call by what it runs on, and keeps the tool in its question"; "rebuilds a session it never watched from pi file, with the parts a live turn has" now expects `a.ts` for both messages.
+- **Failed first:** the nine described cases, the asked case and the replay case failed with the tool name where the argument was expected; the unknown-tool case passed before and after.
+- **Gates:** `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 1550 passed of 1550 in 108 files.

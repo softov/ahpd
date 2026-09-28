@@ -51,6 +51,8 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 It spawns the command, completes the ACP handshake over its stdio, opens one session, and turns each `session/update` into the `chat/*` action a client already knows. A turn ends as `chat/turnComplete` or `chat/turnCancelled` from the server's own stop reason, and `cancel` reaches the server as its notification.
 
+A `session/request_permission` is a confirmation offering the server's own options, approvals first, and the one the person picks is the `optionId` the server receives; an answer that picked none selects the server's once option of that kind, never an `always`.
+
 The package is both an embeddable `Agent` and a plugin. An embedder passes `acpAgent(options)` to `createHost`; the daemon loads the same package to register one provider per configured command.
 
 ## Documentation

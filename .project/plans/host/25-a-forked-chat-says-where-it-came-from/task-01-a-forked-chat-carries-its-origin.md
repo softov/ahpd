@@ -1,6 +1,6 @@
 ---
 title: A forked or side chat carries its origin
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -35,3 +35,28 @@ A chat made with a `fork` or `sideChat` source carries that origin wherever the 
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+Built.
+`createChat` records the new chat's origin in `madeFrom`, a map keyed by chat URI beside `byChat`, as `{ kind: 'fork', chat, turnId }` or `{ kind: 'sideChat', chat, turnId, selection? }`, naming the source chat by `chatOf` so it is the chat as this host holds it.
+`startedBy(session, chat?)` reads that map first, so `chatSummary` (used by `session/chatAdded`, the full `session/chatUpdated` a moving chat re-sends, and the session snapshot) and the chat channel's own state all carry it.
+The entry is removed where a chat is disposed and where a session is removed; a chat restart keeps it, because the chat is the same one.
+A side chat's `selection` is kept only when it has a non-empty `text`, copying `text` and a string `responsePartId`, which is what `SideChatSelection` declares.
+
+Tests, in `a chat made out of another` in `packages/sdk/test/host.test.ts`:
+
+- `says a fork came from that chat at that turn, wherever the chat is described`: `session/chatAdded`, every `session/chatUpdated` for the fork that carries an origin (after a title change and a turn start), the session snapshot and a subscribe to the fork; the source chat still says `user`.
+- `says a side chat came from that chat at that turn, with the selection it was given`: the same for `sideChat`, with `selection`.
+- `names a secondary chat it was forked from as that chat, under any spelling of the session`: a fork of `ahp-chat:/other` and a fork of the default chat, read through a `claude:/` alias of the session; the first names `ahp-chat:/other`, the second names the default chat in the alias spelling.
+- Each checks every frame the peer was sent and the subscribe answers with `checker` from `tools/wire.mjs`: no defects.
+
+Failed first: all three new cases, each with `expected { kind: 'user' } to deeply equal { kind: 'fork' | 'sideChat', ... }`, because every chat was described as `user`.
+
+Departure: `respell` in `spelledFor` was not changed.
+Its `mine` test is true only for a chat URI derived from the session (the `default` authority, the `ahp-chat:/<session id>` spelling, or a worker's), and a secondary chat's URI is the client's own, so a fork of a secondary chat already keeps that chat's URI and a fork of the default chat is respelled to the default chat in the client's spelling.
+The third test pins both.
+Question for review: the plan expected a change there; confirm none is wanted.
+
+Also found: actions sent to a connection watching a session alias are not respelled (only snapshots are), so a live `session/chatAdded` for a fork of the default chat names it in the held spelling, as worker `tool` origins already do.
+Left as it is, since it applies to every chat URI in an action and is outside this task.
+
+Gates: `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 107 files, 1532 tests passed.

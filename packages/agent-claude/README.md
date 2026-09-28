@@ -31,6 +31,7 @@ It takes no options in the ordinary install: it catalogues whatever directories 
 | `provider` | the id clients name. `claude` unless something else already is |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
 | `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
+| `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
 
 ## In your own host
 
@@ -67,7 +68,9 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 
 Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, session titles, token usage, and context compaction.
 
-A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent` seam, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking and tool calls are drawn there rather than in the turn that spawned them - `forwardSubagentText` is on for exactly that. A permission ask from inside the subagent is drawn in its chat too. On a host without the seam the frames stay inline, which is what a session did before this existed, and a session read back from disk rebuilds each subagent's chat from the CLI's own `subagents/*.meta.json` and `.jsonl`.
+An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call; the "always" choice is labelled by what the suggestions do and returns them to the SDK as `updatedPermissions`, and with no suggestion the approval is approve or deny.
+
+A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent` seam, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking and tool calls are drawn there rather than in the turn that spawned them - `forwardSubagentText` is on for exactly that. A permission ask from inside the subagent is drawn in its chat too. A stop given in the subagent's chat stops that subagent through the SDK's `stopTask`, and the turn that started it goes on and sees the call end; with `workerStop: "session"`, or before the harness has named the subagent's task, it cancels that turn instead. On a host without the seam the frames stay inline, which is what a session did before this existed, and a session read back from disk rebuilds each subagent's chat from the CLI's own `subagents/*.meta.json` and `.jsonl`.
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 

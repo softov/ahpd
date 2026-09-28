@@ -205,6 +205,25 @@ export const toolInputOf = (name: string, input: unknown): string | undefined =>
 };
 
 /**
+ * What a call runs on, as its row is titled: the command of `shell_exec`, the
+ * path of `read_file`, `write_file`, `edit_file` and `memory_write`, the
+ * pattern of `search_files` and `list_files`, the URL of `web_fetch` and the
+ * query of `web_search`. Any other tool, or one missing the argument, is
+ * titled by its name.
+ */
+export const describe = (name: string, input: unknown): string => {
+  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
+  const field = name === 'shell_exec' ? 'command'
+    : name === 'read_file' || name === 'write_file' || name === 'edit_file' || name === 'memory_write' ? 'path'
+      : name === 'search_files' || name === 'list_files' ? 'pattern'
+        : name === 'web_fetch' ? 'url'
+          : name === 'web_search' ? 'query'
+            : undefined;
+  const value = field === undefined ? undefined : held[field];
+  return typeof value === 'string' && value !== '' ? value : name;
+};
+
+/**
  * The response part a tool call holds in a snapshot.
  *
  * The client's reducer builds the same part from `chat/toolCallStart`, so
@@ -270,7 +289,7 @@ export const toolReadyAction = (turnId: string, callId: string, name: string, in
     type: 'chat/toolCallReady',
     turnId,
     toolCallId: callId,
-    invocationMessage: name,
+    invocationMessage: describe(name, input),
     confirmed: 'not-needed',
     ...contributorOf(owner),
     ...(written !== undefined ? { toolInput: written } : {}),
@@ -284,13 +303,20 @@ export const toolReadyAction = (turnId: string, callId: string, name: string, in
  * reads. A failed call keeps its content in `error.message` as well, because
  * that is where a client looks for the reason.
  */
-export const toolCompleteAction = (turnId: string, callId: string, name: string, content: string, isError: boolean): Bag => ({
+export const toolCompleteAction = (
+  turnId: string,
+  callId: string,
+  name: string,
+  content: string,
+  isError: boolean,
+  input?: unknown,
+): Bag => ({
   type: 'chat/toolCallComplete',
   turnId,
   toolCallId: callId,
   result: {
     success: !isError,
-    pastTenseMessage: name,
+    pastTenseMessage: describe(name, input),
     ...(content !== '' ? { content: [{ type: 'text', text: content }] } : {}),
     ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
   },

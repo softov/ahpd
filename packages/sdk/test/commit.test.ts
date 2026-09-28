@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -101,6 +101,69 @@ describe('staging, as the changeset reports it', () => {
     const rows = state?.files ?? [];
     expect(rows.map((one) => one.id)).toEqual([`file://${dir}/new.txt`]);
     expect(rows[0]?._meta).toEqual({ staged: true, unstaged: false });
+  });
+
+  it('keeps a working-tree rename as one row under its new name', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'Data.txt'), 'data\n');
+    git(dir, 'add', 'Data.txt');
+    git(dir, 'commit', '-q', '-m', 'data');
+    renameSync(join(dir, 'Data.txt'), join(dir, 'new.txt'));
+    git(dir, 'add', '-N', 'new.txt');
+    // Git's own view: the rename is in the working-tree column.
+    expect(porcelain(dir)).toBe(' R Data.txt -> new.txt');
+    const source = gitChanges();
+    const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
+    const rows = state?.files ?? [];
+    expect(rows.map((one) => one.id)).toEqual([`file://${dir}/new.txt`]);
+    expect(rows[0]?.edit.after).toBeDefined();
+  });
+});
+
+describe('a session in a subfolder of its repository', () => {
+  /** A repository with a committed `sub/kept.txt`, a new `sub/new.txt` and a new file at the root. */
+  const nested = (): { dir: string; sub: string } => {
+    const dir = repository();
+    const sub = join(dir, 'sub');
+    mkdirSync(sub);
+    writeFileSync(join(sub, 'kept.txt'), 'kept\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'sub');
+    writeFileSync(join(sub, 'new.txt'), 'one\ntwo\nthree\n');
+    writeFileSync(join(dir, 'root.txt'), 'root\n');
+    return { dir, sub };
+  };
+
+  it('lists a new file under its real path, and nothing outside the folder', async () => {
+    const { dir, sub } = nested();
+    const state = await gitChanges().state?.(sub, 'ahp-session:/s', 'uncommitted');
+    const rows = state?.files ?? [];
+    expect(rows.map((one) => one.id)).toEqual([`file://${dir}/sub/new.txt`]);
+    expect(rows[0]?.edit.after?.uri).toBe(`file://${dir}/sub/new.txt`);
+    expect(rows[0]?.edit.diff).toEqual({ added: 3, removed: 0 });
+  });
+
+  it('reads a changed file\'s before from the commit, and counts it', async () => {
+    const { dir, sub } = nested();
+    writeFileSync(join(sub, 'kept.txt'), 'kept\nmore\n');
+    const source = gitChanges();
+    await source.refresh?.(sub);
+    const state = await source.state?.(sub, 'ahp-session:/s', 'uncommitted');
+    const row = (state?.files ?? []).find((one) => one.id === `file://${dir}/sub/kept.txt`);
+    expect(row?.edit.diff).toEqual({ added: 1, removed: 0 });
+    const before = row?.edit.before?.content?.uri;
+    expect(before).toBeDefined();
+    expect((await source.read?.(before as string))?.data).toBe('kept\n');
+  });
+
+  it('stages and unstages a file from its row', async () => {
+    const { dir, sub } = nested();
+    const state = await gitChanges().state?.(sub, 'ahp-session:/s', 'uncommitted');
+    const id = state?.files?.[0]?.id as string;
+    await operate(sub, 'stage', id);
+    expect(porcelain(dir)).toContain('A  sub/new.txt');
+    await operate(sub, 'unstage', id);
+    expect(porcelain(dir)).toContain('?? sub/new.txt');
   });
 });
 

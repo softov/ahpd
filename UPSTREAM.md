@@ -32,6 +32,10 @@ VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commit
 
 - [x] **Plugins as top-level containers, their contributions out of the per-scope lists, and builtins in a container with real URIs.** `packages/agent-claude/src/session.ts`. Plugins built in `claude/01`; builtins were not needed, since neither the SDK nor this repository has an attributable builtin source.
 
+### Approvals
+
+- [x] **Confirmation options, and the one picked reaching the agent.** VS Code's host offers one set for every agent and keeps "Allow in this Session" itself (`sessionPermissions.ts`); here each backend offers its own agent's choices as `options` on `chat/toolCallReady`, and the `selectedOptionId` a client sends reaches `Session.confirm` as `optionId`. Claude offers "always allow" from the SDK's suggestions, an ACP server its own options, cofold "allow for this session"; pi offers none. Built in `host/24`.
+
 ### Read and not taken, triaged 2026-09-26
 
 - [x] **Dev Containers as an extension surface.** Built in `container/01`, except its ahpapp half.

@@ -8,6 +8,7 @@ import { fileResources } from '../../sdk/src/resources.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { checker } from '../../../tools/wire.mjs';
 
 /*
  * The ports an ACP server reaches for.
@@ -187,6 +188,96 @@ it('asks the person, and answers with the once option they chose', async () => {
   await endedTurn(p, chatUri, 1);
   // `allow_once`, never `allow_always`: the server offered both, and approving
   // one call is not agreeing to every call.
+  expect(prose(p, chatUri)).toContain('perm=yes-once');
+});
+
+/** The fixture's three options, as the protocol offers them: approve before deny, in the server's order. */
+const OFFERED = [
+  { id: 'yes-once', label: 'Allow once', kind: 'approve', group: 1 },
+  { id: 'yes-always', label: 'Always allow', kind: 'approve', group: 1 },
+  { id: 'no-once', label: 'Reject once', kind: 'deny', group: 2 },
+];
+
+it('offers every option the server listed, on the call and on the ask', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  const ready = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-perm')
+    .at(-1)?.action;
+  // A ready with no `confirmed`, so a call the server announced as running
+  // goes back to `pending-confirmation` with the choices on it.
+  expect(ready?.confirmed).toBeUndefined();
+  expect(ready?.options).toEqual(OFFERED);
+  expect(ready?.confirmationTitle).toBe('Remove a file');
+  const entry = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet')?.action.request as {
+    toolCall?: { options?: unknown };
+  };
+  expect(entry?.toolCall?.options).toEqual(OFFERED);
+
+  const snapshot = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { activeTurn?: { responseParts: { toolCall?: { toolCallId: string; status: string; options?: unknown } }[] } } };
+  };
+  const call = snapshot.snapshot.state.activeTurn?.responseParts.find((one) => one.toolCall?.toolCallId === 'call-perm')?.toolCall;
+  expect(call?.status).toBe('pending-confirmation');
+  expect(call?.options).toEqual(OFFERED);
+
+  // The two frames that carry the options, as the protocol declares them.
+  const check = checker();
+  const carrying = p.notes.filter((n) => n.method === 'action' && (
+    ((n.params as Note).action.type === 'chat/toolCallReady' && (n.params as Note).action.options !== undefined)
+    || (n.params as Note).action.type === 'session/inputNeededSet'));
+  expect(carrying).toHaveLength(2);
+  const defects = carrying.flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`);
+  expect(defects).toEqual([]);
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm', approved: true, confirmed: 'user-action' } },
+  });
+  await endedTurn(p, chatUri, 1);
+});
+
+it('answers with the option the person picked, and says which', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm',
+        approved: true, confirmed: 'user-action', selectedOptionId: 'yes-always',
+      },
+    },
+  });
+  await endedTurn(p, chatUri, 1);
+  expect(prose(p, chatUri)).toContain('perm=yes-always');
+  const echoed = p.notes.find((n) => n.method === 'action' && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === 'chat/toolCallConfirmed');
+  expect((echoed?.params as Note | undefined)?.action.selectedOptionId).toBe('yes-always');
+  expect(checker().frame(echoed)).toEqual([]);
+});
+
+it('answers once when the option picked is not one the server offered', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm',
+        approved: true, confirmed: 'user-action', selectedOptionId: 'forever',
+      },
+    },
+  });
+  await endedTurn(p, chatUri, 1);
   expect(prose(p, chatUri)).toContain('perm=yes-once');
 });
 

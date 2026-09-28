@@ -210,6 +210,8 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
   // And the spawning call in the main transcript carries the link.
   const main = await client.handle({ method: 'subscribe', params: { channel: `ahp-chat://default/${Buffer.from(`ahp-session:/${SESSION}`, 'utf8').toString('base64url')}` } }) as { snapshot: { state: Bag } };
   const turns = (main.snapshot.state.turns as Bag[]) ?? [];
+  // One prompt and its three rounds: one turn, as it was live.
+  expect(turns).toHaveLength(1);
   const link = turns.flatMap((turn) => (turn.responseParts as Bag[]) ?? [])
     .map((part) => (part.toolCall as Bag | undefined)?.content as Bag[] | undefined)
     .flatMap((content) => content ?? [])

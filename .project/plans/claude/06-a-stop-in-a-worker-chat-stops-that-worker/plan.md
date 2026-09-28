@@ -1,7 +1,7 @@
 ---
 title: A stop in a worker chat stops that worker, unless configured to stop the session
 domain: claude
-status: planned
+status: active
 priority: medium
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -65,9 +65,9 @@ worker chat Stop -> chat/turnCancelled on ahp-chat://subagent/<session>/<call>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host asks a backend to stop one worker](task-01-the-host-asks-to-stop-one-worker.md) | todo | - |
-| [02 - Claude stops one worker with stopTask, or the session under the option](task-02-claude-stops-one-worker.md) | todo | 01 |
-| [03 - Docs](task-03-docs.md) | todo | 02 |
+| [01 - The host asks a backend to stop one worker](task-01-the-host-asks-to-stop-one-worker.md) | implemented | - |
+| [02 - Claude stops one worker with stopTask, or the session under the option](task-02-claude-stops-one-worker.md) | implemented | 01 |
+| [03 - Docs](task-03-docs.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -75,9 +75,9 @@ worker chat Stop -> chat/turnCancelled on ahp-chat://subagent/<session>/<call>
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-asks-to-stop-one-worker.md](task-01-the-host-asks-to-stop-one-worker.md).
-- **Open questions:** none.
+- **Done so far:** tasks 01 to 03 implemented, awaiting review.
+- **Next action:** review tasks 01 to 03; then the by-hand check in ahpapp that Stop inside a subagent stops it and the lead turn goes on, and that `workerStop: "session"` cancels the lead turn.
+- **Open questions:** whether a failed `stopTask` should fall back to cancelling the lead turn (it is ignored now); see task 02's Resume.
 - **Watch out for:** the worker's call id is read from the worker chat URI with `toolCallOfSubagentChat`; a nested worker's chat stops only that worker.
 
 ## Final verification checklist

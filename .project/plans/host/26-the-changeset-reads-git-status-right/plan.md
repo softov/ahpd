@@ -1,7 +1,7 @@
 ---
 title: The session's changes read git's status right, from any folder
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -63,10 +63,10 @@ Claude Bash `git add` -> watch -> refreshWatched -> look() -> uncommitted rows -
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A file Claude created, edited and staged through Bash is listed as added](task-01-a-staged-new-file-is-listed-as-added.md) | todo | - |
-| [02 - A rename in the working tree is one row](task-02-a-working-tree-rename-is-one-row.md) | todo | - |
-| [03 - A session in a subfolder lists its rows by their real paths](task-03-a-subfolder-session-has-real-paths.md) | todo | - |
-| [04 - A trailing newline is not counted as a line](task-04-a-trailing-newline-is-not-a-line.md) | todo | - |
+| [01 - A file Claude created, edited and staged through Bash is listed as added](task-01-a-staged-new-file-is-listed-as-added.md) | blocked | - |
+| [02 - A rename in the working tree is one row](task-02-a-working-tree-rename-is-one-row.md) | implemented | - |
+| [03 - A session in a subfolder lists its rows by their real paths](task-03-a-subfolder-session-has-real-paths.md) | implemented | - |
+| [04 - A trailing newline is not counted as a line](task-04-a-trailing-newline-is-not-a-line.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -74,9 +74,9 @@ Claude Bash `git add` -> watch -> refreshWatched -> look() -> uncommitted rows -
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-staged-new-file-is-listed-as-added.md](task-01-a-staged-new-file-is-listed-as-added.md).
-- **Open questions:** none.
+- **Done so far:** tasks 02, 03 and 04 implemented, awaiting review; task 01 blocked, the `D` not reproduced in six real Claude sessions.
+- **Next action:** review 02, 03 and 04; for 01, the answer to the question in its Resume.
+- **Open questions:** which client and scope showed the `D`, and whether the daemon restarted or the session was reopened between the write and the `git add` ([task 01](task-01-a-staged-new-file-is-listed-as-added.md)); whether `git rev-parse --show-prefix` in place of `--show-toplevel` is acceptable ([task 03](task-03-a-subfolder-session-has-real-paths.md)).
 - **Watch out for:** the `session` scope reads no git at all; a `D` there means a `before` was captured and no `after` ever was.
 
 ## Final verification checklist

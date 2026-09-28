@@ -1,6 +1,6 @@
 ---
 title: A live Claude call says what it runs on
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -29,3 +29,12 @@ A live Claude call's `invocationMessage` is `summarize(name, input) ?? name`, as
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+- **Done:** the three places `packages/agent-claude/src/session.ts` readies a call from the assistant message (the new call's literal, the streamed call moved to `running`, and the `chat/toolCallReady` action) set `invocationMessage` to `command ?? name`, where `command` is `summarize(name, input)`; `pastTenseMessage` already follows `invocationMessage`.
+- The permission path (`canUseTool`) is untouched: an asked call keeps the CLI's title when it has one.
+- The comment on the ready action said the intention is the tool's name and never its input, so the command is not drawn twice beside `toolInput`; it now says what the plan decided.
+- **Tests:** in `packages/sdk/test/host.test.ts`, under "one tool call, one row": new "says what a finished call ran, as its transcript does" (`pastTenseMessage` `ls`); "says the transcript is not asking anything" and "says the same on the call as it says in the action" now expect `invocationMessage` `ls` where they asserted `Bash`. The fixture's command is `ls`, not `ls -la`.
+- **Failed first:** all three with `Bash` where `ls` was expected.
+- **Departures:** the two existing assertions that the intention is not the input were reversed, as the plan's first decision requires; a client now shows the command both as the intention and as `toolInput`, as a replayed Claude call already did.
+- `packages/sdk/test/fixtures/wire.jsonl`, which `wire.test.ts` writes on every run, changed with it: its live `Read` call now says `/home/softov/a` where it said `Read`, in three lines.
+- **Gates:** `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 1561 passed of 1561 in 108 files.

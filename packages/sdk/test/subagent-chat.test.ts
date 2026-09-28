@@ -373,7 +373,7 @@ it('links a nested worker from the call in the worker chat that spawned it', asy
 });
 
 /** What the asking fake's backend was told, in order. */
-const told: { what: 'confirm' | 'answer' | 'cancel' | 'draft'; id: string; value?: unknown }[] = [];
+const told: { what: 'confirm' | 'answer' | 'cancel' | 'draft' | 'stop'; id: string; value?: unknown; option?: string | undefined }[] = [];
 
 /**
  * A backend whose worker is waiting on a person: a permission for one call and
@@ -381,7 +381,7 @@ const told: { what: 'confirm' | 'answer' | 'cancel' | 'draft'; id: string; value
  * way the Claude backend names an ask made inside a subagent. The lead turn
  * stays open until it is cancelled.
  */
-function askingInWorker(): Agent {
+function askingInWorker(stoppable = false): Agent {
   return {
     provider: 'fake',
     displayName: 'Fake',
@@ -459,8 +459,9 @@ function askingInWorker(): Agent {
         unqueue: () => {},
         setDraft: (draft) => { told.push({ what: 'draft', id: '', value: draft }); },
         reorder: () => {},
-        confirm: (toolCallId, approved) => { told.push({ what: 'confirm', id: toolCallId, value: approved }); },
+        confirm: (toolCallId, approved, optionId) => { told.push({ what: 'confirm', id: toolCallId, value: approved, option: optionId }); },
         answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); },
+        ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
         stopMcpServer: async () => false,
@@ -475,10 +476,10 @@ function askingInWorker(): Agent {
  * worker's asks on the wire. `worker` is the worker chat in the spelling the
  * client was given for it.
  */
-async function waiting(as = 'ahp-session:/ask') {
+async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   wire.length = 0;
   told.length = 0;
-  const host = createHost({ path: '/tmp', agents: [askingInWorker()] });
+  const host = createHost({ path: '/tmp', agents: [askingInWorker(stoppable)] });
   const client = host.accept(peer());
   const ask = asking(client);
   await ask('initialize', {
@@ -512,6 +513,24 @@ it('takes an approval given on a worker chat to the session\'s backend', async (
   expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: true }]);
 });
 
+it('takes the option picked on a worker chat to the session\'s backend', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, selectedOptionId: 'always', confirmed: 'user-action' });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: true, option: 'always' }]);
+});
+
+it('takes the option picked on the lead chat to its backend, and none when none was picked', async () => {
+  const { lead, send, refusals } = await waiting();
+  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, selectedOptionId: 'always', confirmed: 'user-action' });
+  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  expect(refusals()).toEqual([]);
+  expect(told.map(({ what, id, value, option }) => ({ what, id, value, option }))).toStrictEqual([
+    { what: 'confirm', id: 'c1', value: true, option: 'always' },
+    { what: 'confirm', id: 'c1', value: true, option: undefined },
+  ]);
+});
+
 it('takes an approval given on a worker chat spelt from a session alias', async () => {
   const { ask, worker, send, refusals } = await waiting('fake:/ask');
   expect(worker.startsWith(`ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/`)).toBe(true);
@@ -540,10 +559,164 @@ it('cancels the lead turn when a worker chat is stopped', async () => {
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled' && one.turnId === 't1')).toBe(true);
 });
 
+it('asks a backend that can stop one worker to stop that worker, and leaves the lead turn running', async () => {
+  const { lead, worker, send, refusals } = await waiting('ahp-session:/ask', true);
+  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'stop', id: 'toolu_agent' }]);
+  expect(on(lead).some((one) => one.type === 'chat/turnCancelled')).toBe(false);
+});
+
 it('refuses anything else on a worker chat as read-only', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });
   expect(told).toEqual([]);
   expect(refusals()).toHaveLength(1);
   expect(refusals()[0]).toContain('read-only');
+});
+
+/** Lets the busy fake's background worker end. */
+let finishWorker = (): void => {};
+
+/**
+ * A backend whose chats each run until told otherwise, by what they are sent.
+ *
+ * `spawn` opens a worker that says what it is doing and goes on after the lead
+ * turn completes, until `finishWorker`; `ask` opens a worker that waits on a
+ * person while the lead turn runs; anything else runs and does not end.
+ */
+function busy(): Agent {
+  return {
+    provider: 'fake',
+    displayName: 'Fake',
+    schema: () => ({ type: 'object', properties: {} }),
+    defaults: () => ({}),
+    list: async (): Promise<Listed[]> => [],
+    create: (start: Start): Session => {
+      let active: Bag | undefined;
+      const turns: Bag[] = [];
+      return {
+        uri: start.uri,
+        chatUri: start.chatUri,
+        models: () => [],
+        agentId: () => start.uri,
+        customizations: () => [],
+        allTurns: () => turns,
+        activity: () => (active ? 'Leading' : undefined),
+        status: () => (active ? 8 : 1),
+        title: () => 'Busy',
+        modifiedAt: () => new Date().toISOString(),
+        workingDirectories: () => ['file:///tmp'],
+        settings: () => ({}),
+        sessionState: () => ({
+          resource: start.uri, provider: 'fake', title: 'Busy', status: active ? 8 : 1, lifecycle: 'ready',
+          defaultChat: start.chatUri, chats: [{ resource: start.chatUri, title: 'Busy' }], workingDirectories: ['file:///tmp'],
+          customizations: [], config: { schema: start.schema(), values: {} },
+        }),
+        chatState: () => ({
+          resource: start.chatUri, title: 'Busy', status: active ? 8 : 1, modifiedAt: new Date().toISOString(),
+          turns, ...(active ? { activeTurn: active } : {}), queuedMessages: [], interactivity: 'full',
+        }),
+        begin: (turnId, text) => {
+          active = { id: turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } }, responseParts: [] };
+          start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message });
+          if (text !== 'spawn' && text !== 'ask') return;
+          start.emit('chat', {
+            type: 'chat/toolCallStart', turnId, toolCallId: 'toolu_bg', toolName: 'Agent', displayName: 'Agent',
+            _meta: { toolKind: 'subagent' },
+          });
+          start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'toolu_bg', invocationMessage: 'Agent', confirmed: 'not-needed' });
+          const worker = start.subagent?.('toolu_bg', { title: 'Explore', prompt: 'look around' });
+          if (!worker) return;
+          if (text === 'ask') {
+            worker.emit({ type: 'chat/toolCallStart', turnId: worker.turnId, toolCallId: 'toolu_bash', toolName: 'Bash', displayName: 'Bash' });
+            worker.emit({ type: 'chat/toolCallReady', turnId: worker.turnId, toolCallId: 'toolu_bash', invocationMessage: 'ls', toolInput: 'ls' });
+            return;
+          }
+          worker.emit({ type: 'chat/activityChanged', activity: 'Reading files' });
+          start.emit('chat', {
+            type: 'chat/toolCallComplete', turnId, toolCallId: 'toolu_bg',
+            result: { success: true, pastTenseMessage: 'Agent', content: [{ type: 'text', text: 'launched' }] },
+          });
+          const done = active;
+          active = undefined;
+          turns.push({ ...done, state: 'complete', duration: 1, usage: undefined });
+          start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
+          finishWorker = () => {
+            worker.emit({ type: 'chat/activityChanged', activity: undefined });
+            worker.end('complete');
+          };
+        },
+        cancel: () => {},
+        queue: () => {},
+        unqueue: () => {},
+        setDraft: () => {},
+        reorder: () => {},
+        confirm: () => {},
+        answer: () => {},
+        setCustomizationEnabled: async () => false,
+        startMcpServer: async () => false,
+        stopMcpServer: async () => false,
+        close: () => {},
+      };
+    },
+  };
+}
+
+/** A host running the busy fake, with one session subscribed from the root. */
+async function busyHost() {
+  wire.length = 0;
+  const host = createHost({ path: '/tmp', agents: [busy()] });
+  const client = host.accept(peer());
+  const ask = asking(client);
+  await ask('initialize', {
+    channel: 'ahp-root://', clientId: 'busy', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
+  });
+  const uri = 'ahp-session:/busy';
+  await ask('createSession', { channel: uri, provider: 'fake' });
+  await ask('subscribe', { channel: uri });
+  const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
+  await ask('subscribe', { channel: lead });
+  await settle();
+  /** The session's catalogue row as the root has announced it so far, one change at a time. */
+  const row = (): Bag[] => wire
+    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === uri)
+    .map((one) => one.params.changes as Bag);
+  /** The activity bits of a status, without the read and archived flags. */
+  const activity = (status: unknown): number => Number(status) & 31;
+  return { ask, uri, lead, row, activity };
+}
+
+it('reads a session as running while its worker runs after the lead turn, and idle once it ends', async () => {
+  const { ask, lead, row, activity } = await busyHost();
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await settle();
+  const running = row().at(-1);
+  expect(activity(running?.status)).toBe(8);
+  expect(running?.activity).toBe('Reading files');
+
+  finishWorker();
+  await settle();
+  const ended = row().at(-1);
+  expect(activity(ended?.status)).toBe(1);
+  expect(ended?.activity).toBeNull();
+});
+
+it('reads a session as waiting while its worker asks, though the lead is running', async () => {
+  const { ask, lead, row, activity } = await busyHost();
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'ask' } } });
+  await settle();
+  expect(activity(row().at(-1)?.status)).toBe(24);
+});
+
+it('reads a session as running while a second chat runs and the lead is idle', async () => {
+  const { ask, uri, row, activity } = await busyHost();
+  const second = 'ahp-chat:/busy-second';
+  await ask('createChat', { channel: uri, chat: second });
+  await ask('subscribe', { channel: second });
+  await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'work' } } });
+  await settle();
+  const moved = row().at(-1);
+  expect(activity(moved?.status)).toBe(8);
+  expect(moved?.activity).toBe('Leading');
 });

@@ -33,7 +33,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf, mapEvent, readyRow, usageOf } from './mapping.js';
+import { activityOf, describe, mapEvent, readyRow, usageOf } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -384,7 +384,7 @@ export function piSession(
         type: 'chat/toolCallReady',
         turnId,
         toolCallId: id,
-        invocationMessage: displayName,
+        invocationMessage: describe(displayName, input),
         toolInput: JSON.stringify(input),
         ...contributor,
         ...extra,

@@ -1,6 +1,6 @@
 ---
 title: The host asks a backend to stop one worker
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -30,3 +30,17 @@ A `chat/turnCancelled` on a worker chat calls the backend's `stopWorker(toolCall
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+Built.
+`Session` has an optional `stopWorker?(toolCallId)`, its comment saying it stops one worker by the call that spawned it and leaves the turn running, and that without it a worker chat's stop cancels the lead turn.
+In the host's `chat/turnCancelled` branch for a worker chat, the call id is read from the chat URI with `toolCallOfSubagentChat` and handed to `stopWorker` when the backend has it; otherwise the lead turn is cancelled as before, and the refusal `Nothing is running on <lead> to stop` stays on that path only.
+A nested worker's chat names its own call, so only that worker is asked to stop.
+
+Tests, in `packages/sdk/test/subagent-chat.test.ts`:
+
+- `asks a backend that can stop one worker to stop that worker, and leaves the lead turn running`: the fake, given `stopWorker`, receives `toolu_agent`; nothing is refused, `cancel` is not called and no `chat/turnCancelled` reaches the lead chat.
+- `cancels the lead turn when a worker chat is stopped`: unchanged, on the fake without `stopWorker`, still cancels lead turn `t1`.
+
+Failed first: the new case, with `[ { what: 'cancel', id: 't1' } ]` where `[ { what: 'stop', id: 'toolu_agent' } ]` was expected.
+
+Gates: `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 107 files, 1545 tests passed.

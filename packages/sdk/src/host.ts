@@ -781,16 +781,25 @@ export function createHost(options: HostOptions): Host {
    */
   const beside = new Map<string, string[]>();
   /**
+   * The chats made out of another, by URI: the `fork` or `sideChat` origin
+   * each was created with, naming the source chat as this host holds it.
+   */
+  const madeFrom = new Map<string, Bag>();
+  /**
    * How a chat came to exist.
    *
-   * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool` - and
-   * this host only ever makes the first: a chat here is one somebody opened,
-   * or one read back from a transcript somebody typed. There is no kind for a
-   * session an automation started, so that one gets none rather than a wrong
-   * one, and absent is what the protocol says when a host has nothing to say.
+   * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool`. A
+   * chat made out of another says which, from `madeFrom`; any other chat here
+   * is one somebody opened, or one read back from a transcript somebody typed.
+   * Workers say `tool` in their own rows. There is no kind for a session an
+   * automation started, so that one gets none rather than a wrong one, and
+   * absent is what the protocol says when a host has nothing to say.
    */
-  const startedBy = (session: string): Bag =>
-    (origins.has(session) ? {} : { origin: { kind: 'user' } });
+  const startedBy = (session: string, chat?: string): Bag => {
+    const made = chat === undefined ? undefined : madeFrom.get(chat);
+    if (made !== undefined) return { origin: made };
+    return origins.has(session) ? {} : { origin: { kind: 'user' } };
+  };
   /**
    * One chat, as its session's catalogue lists it.
    *
@@ -800,7 +809,7 @@ export function createHost(options: HostOptions): Host {
    */
   const chatSummary = (session: string, uri: string, chat: Session) => ({
     resource: uri,
-    ...startedBy(session),
+    ...startedBy(session, uri),
     title: chat.title(),
     status: chat.status(),
     modifiedAt: chat.modifiedAt(),
@@ -1178,35 +1187,47 @@ export function createHost(options: HostOptions): Host {
     const held = sessions.get(uri);
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
-    /*
-     * The default chat's activity, promoted by any other chat that needs
-     * something.
-     *
-     * The protocol's own rule: a session waiting on a person is waiting
-     * whichever of its chats is doing the waiting, and a catalogue that only
-     * looked at the default one would show a session as idle while another
-     * chat in it is blocked.
-     */
-    let activity = leadOf(held)?.status() ?? Status.Idle;
-    for (const chat of held.chats.values()) {
-      const its = chat.status();
-      if (its === Status.InputNeeded) activity = Status.InputNeeded;
-      else if (its === Status.Error && activity !== Status.InputNeeded) activity = Status.Error;
+    return drivingOf(held).status | kept.flags(idOf(uri));
+  };
+  /** How far a chat's status outranks idle when a session's status is decided. */
+  const urgency = (status: number): number => {
+    const activity = status & (Status.IsRead - 1);
+    return activity === Status.InputNeeded ? 3 : activity === Status.Error ? 2 : activity === Status.InProgress ? 1 : 0;
+  };
+  /**
+   * The chat that decides a session's status and activity.
+   *
+   * The default chat's, promoted by any other chat of the session, a worker
+   * chat included, that is waiting on a person, failed or running, in that
+   * order: a session is waiting whichever of its chats is doing the waiting,
+   * and is running while any of them runs. The activity is the deciding
+   * chat's, so a row says what the busy chat is doing.
+   */
+  const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
+    const lead = leadOf(held);
+    let driving = { status: lead?.status() ?? Status.Idle, activity: lead?.activity() };
+    const others = [
+      ...[...held.chats.values()].map((chat) => ({ status: chat.status(), activity: chat.activity() })),
+      ...[...subagents.values()]
+        .filter((ref) => sessions.get(ref.session) === held)
+        .map((ref) => ({
+          status: Number(ref.state.status ?? Status.Idle),
+          activity: typeof ref.state.activity === 'string' ? ref.state.activity : undefined,
+        })),
+    ];
+    for (const other of others) {
+      if (urgency(other.status) > urgency(driving.status))
+        driving = { status: other.status & (Status.IsRead - 1), activity: other.activity };
     }
-    return activity | kept.flags(idOf(uri));
+    return driving;
   };
   /** The most recent change across a session's chats. */
   const modifiedOf = (held: Held): string => [...held.chats.values()]
     .map((chat) => chat.modifiedAt())
     .sort()
     .at(-1) ?? new Date().toISOString();
-  /** What a session is doing: its default chat's, or whichever chat is waiting. */
-  const activityOf = (held: Held): string | undefined => {
-    for (const chat of held.chats.values()) {
-      if (chat.status() === Status.InputNeeded) return chat.activity();
-    }
-    return leadOf(held)?.activity();
-  };
+  /** What a session is doing: the activity of the chat that decides its status. */
+  const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
   /** Everything watching a channel, which is not everything connected. */
   /**
    * How this host names a session's first chat.
@@ -2988,6 +3009,7 @@ export function createHost(options: HostOptions): Host {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     const action = withWorkerUri(uri, given);
+    const was = { status: ref.state.status, activity: ref.state.activity };
     absorb(ref, action);
     dispatch(uri, action);
     const summary = subagentSummary(uri, ref);
@@ -2995,6 +3017,8 @@ export function createHost(options: HostOptions): Host {
     if (describedSub.get(uri) === now) return;
     describedSub.set(uri, now);
     dispatch(ref.session, { type: 'session/chatUpdated', chat: uri, changes: summary });
+    // A worker's status and activity are part of what its session reads as.
+    if (ref.state.status !== was.status || ref.state.activity !== was.activity) summaryMoved(ref.session);
   };
 
   /**
@@ -3944,6 +3968,7 @@ export function createHost(options: HostOptions): Host {
       chat.close();
       byChat.delete(chatUri);
       drafts.delete(chatUri);
+      madeFrom.delete(chatUri);
       links.forgetChat(chatUri);
     }
     /*
@@ -5346,7 +5371,7 @@ export function createHost(options: HostOptions): Host {
         ? (await restoredSubagents(idOf(talking.uri), owner.agent, talking.chat.allTurns() as unknown as WireTurn<Turn>[]))
           .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
         : [];
-      const state: Bag = { ...talking.chat.chatState(), ...startedBy(talking.uri) };
+      const state: Bag = { ...talking.chat.chatState(), ...startedBy(talking.uri, channel) };
       if (Array.isArray(state.turns)) {
         state.turns = stampedCalls(talking.uri, linkedTurns(talking.uri, state.turns as Bag[], restored));
       }
@@ -7246,6 +7271,7 @@ export function createHost(options: HostOptions): Host {
             ? params.source
             : undefined) as { kind?: unknown; chat?: unknown; turnId?: unknown } | undefined;
           let made: { resume?: string; seed?: Bag[]; forkAt?: string; context?: string } | undefined;
+          let origin: Bag | undefined;
           if (source !== undefined) {
             const kind = String(source.kind ?? '');
             // The kind first, because it decides whether the rest of the
@@ -7282,7 +7308,19 @@ export function createHost(options: HostOptions): Host {
                 : undefined;
               made = { context: typeof said === 'string' ? said : '' };
             }
-
+            /*
+             * What the new chat says it was made from, kept for as long as it
+             * is: the summary is re-sent whole on every change, so an origin
+             * given only on `session/chatAdded` would be said once and then
+             * overwritten with `user`. A selection is kept as the protocol
+             * declares it, and only when it has text.
+             */
+            const picked = (source as { selection?: unknown }).selection as { text?: unknown; responsePartId?: unknown } | undefined;
+            const selection = kind === 'sideChat' && typeof picked === 'object' && picked !== null
+              && typeof picked.text === 'string' && picked.text !== ''
+              ? { text: picked.text, ...(typeof picked.responsePartId === 'string' ? { responsePartId: picked.responsePartId } : {}) }
+              : undefined;
+            origin = { kind, chat: chatOf(String(source.chat ?? '')), turnId, ...(selection !== undefined ? { selection } : {}) };
           }
           /*
            * The directories this chat is about, when it is about fewer.
@@ -7305,6 +7343,7 @@ export function createHost(options: HostOptions): Host {
             : held.additional;
           if (asked.length > 0) beside.set(chatUri, peers ?? []);
           const chat = spawn(held.agent, uri, chatUri, held.config, made, held.workingDirectory, undefined, peers);
+          if (origin !== undefined) madeFrom.set(chatUri, origin);
           log(`opened ${chatUri} in ${uri}`);
           // `summary`, not `chat`: the reducer reads `action.summary.resource`,
           // and a chat named any other way arrives as a TypeError inside it.
@@ -7336,6 +7375,7 @@ export function createHost(options: HostOptions): Host {
           found.chat.close();
           byChat.delete(chatUri);
           drafts.delete(chatUri);
+          madeFrom.delete(chatUri);
           links.forgetChat(chatUri);
           held?.chats.delete(chatUri);
           if (held && held.defaultChat === chatUri) {
@@ -8829,12 +8869,19 @@ export function createHost(options: HostOptions): Host {
             break;
           }
           /*
-           * On a worker's chat, the lead turn that runs the worker: the action
-           * names the worker's own turn, which the backend has no turn under.
+           * On a worker's chat, that worker, when the backend can stop one;
+           * otherwise the lead turn that runs the worker. The action names the
+           * worker's own turn, which the backend has no turn under, so the
+           * worker is named by the call its chat was opened for.
            */
           case 'chat/turnCancelled': {
             if (!worker) {
               session.cancel(String(action.turnId ?? ''));
+              break;
+            }
+            const call = toolCallOfSubagentChat(channel);
+            if (session.stopWorker !== undefined && call !== undefined) {
+              session.stopWorker(call);
               break;
             }
             const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
@@ -8953,7 +9000,11 @@ export function createHost(options: HostOptions): Host {
               : []);
             break;
           case 'chat/toolCallConfirmed':
-            session.confirm(String(action.toolCallId ?? ''), action.approved === true);
+            session.confirm(
+              String(action.toolCallId ?? ''),
+              action.approved === true,
+              typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined,
+            );
             break;
           case 'chat/inputCompleted': {
             /*

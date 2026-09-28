@@ -63,6 +63,21 @@ against its contract before it is recorded.
 
 A backend that runs a subagent inside one of its tool calls asks the host for a chat of its own through the `Start` it was handed: `start.subagent(toolCallId, { title, agentName?, description?, prompt?, parentToolCallId? })`. The host is the only thing that knows what a chat URI looks like, so it mints `ahp-chat://subagent/<session>/<call>`, announces the row read-only, opens its turn with the prompt, links the spawning call with a `subagent` content and hands back `{ uri, turnId, emit, end }`. The backend writes the worker's parts through `emit` and closes its turn with `end`. A backend without it draws a worker's output inline, and the member is optional, so a backend written before this existed keeps working unchanged.
 
+A worker's chat is read-only, but a client may still answer what the worker asked there and stop it.
+A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
+A backend without `stopWorker` gets `cancel` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
+The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it cancel the lead turn instead.
+
+### A backend's approval options
+
+A backend that asks before a tool call may offer the choices its own agent has, as `options` on the call's `chat/toolCallReady` and on the `toolCall` of its `toolConfirmation` entry, each a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
+The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and the backend acts on it through its agent's own mechanism; the host keeps no approval itself.
+A client that sends no option gets a plain approve or deny, which is what every backend does with `optionId` absent.
+Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, and only when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
+An ACP server's own options are offered as it listed them, approvals first, and the one picked is the `optionId` the server receives.
+cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
+pi offers none, so a client draws approve and deny.
+
 ### A contributed setting can be a question
 
 A key registered with a schema alone is a fact somebody types. A property with no `enum` is exactly that to a client, so `computer` - the key the machine plugin contributes - reached VS Code and a terminal client as a text box, and a person had to know a machine's name and spell it. Only a client holding code for that key by name could do better, which is one client rather than every client.
@@ -416,6 +431,7 @@ The workspace check resolves symlinks with cofold's own resolver, so a write thr
 The machine's public address is not among them, and a name that answers with a different address at the connection than at the check is not caught.
 
 The daemon draws each call, asks through the approvals mode, and reports a file an edit changed to the changeset.
+An approval offers Allow once, Allow the tool for this session, and Deny; the session choice reaches cofold as `alwaysApprove`, and cofold answers that tool's next asks in the session itself.
 A shell call is drawn as a terminal with its bare command, and a call that is declined or cut short never leaves a file held as changing.
 A session opened with no working directory keeps its tools and works in the daemon's current directory.
 
@@ -627,12 +643,9 @@ The shell is the host's and not the bridge's: `terminal/create` arrives with an
 argv and an environment, the host opens the terminal it would have opened for a
 client, and the bridge answers with what it printed and what it exited with.
 
-A permission is one question with two answers. ACP offers up to four options, of
-which `allow_once` and `reject_once` are the two this host can honestly return:
-approving picks `allow_once` and refusing picks `reject_once`, and an `always`
-option is never selected because that would change the session's policy from a
-single answer. A server that offers no once option is refused rather than
-allowed.
+A permission offers every option the server listed, approvals before refusals, on the call and on its confirmation entry, and the one the person picks is the `optionId` the server receives.
+An answer that picked no option, or one the server did not offer, selects `allow_once` or `reject_once`, and an `always` option is never selected that way because that would change the session's policy from a single answer.
+A server that offers no once option of the answer's kind is answered `cancelled`.
 
 A `!command` in the composer is the host's shell turn, not the server's: the
 bridge implements `ran`, so the daemon spawns the command in one of its own

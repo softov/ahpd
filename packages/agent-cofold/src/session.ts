@@ -1345,11 +1345,14 @@ export function cofoldSession(
      * with two open, comparing against whichever was held last is a person
      * pressing Approve and nothing at all happening. The entry leaves by the
      * same id it arrived with, the decision is said back because nothing in a
-     * client applies its own dispatch, and the answer goes into the run.
+     * client applies its own dispatch, and the answer goes into the run. An
+     * approval that picked `allow-session` is sent with `alwaysApprove`, which
+     * cofold keeps for this session and tool.
      */
-    confirm: (toolCallId, approved) => {
+    confirm: (toolCallId, approved, optionId) => {
       const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
       if (held === undefined) return;
+      const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       /*
        * A decline ends the call without a result, so the file it announced as
        * changing is settled here, where the call id is still known: the run's
@@ -1372,6 +1375,8 @@ export function cofoldSession(
         const call = bag(part.toolCall);
         call.status = approved ? 'running' : 'cancelled';
         if (approved) call.confirmed = 'user-action';
+        delete call.options;
+        if (picked !== undefined) call.selectedOption = picked;
         part.toolCall = call;
       }
       start.emit('chat', {
@@ -1380,9 +1385,10 @@ export function cofoldSession(
         toolCallId,
         approved,
         ...(approved ? { confirmed: 'user-action' } : { reason: DECLINED }),
+        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
       });
       route(approved
-        ? { type: 'approve', requestId: held.requestId }
+        ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' ? { alwaysApprove: true } : {}) }
         : { type: 'deny', requestId: held.requestId, reason: DECLINED });
       touch();
     },

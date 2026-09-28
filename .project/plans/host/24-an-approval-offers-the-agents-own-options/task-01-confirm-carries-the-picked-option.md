@@ -1,6 +1,6 @@
 ---
 title: confirm carries the option the person picked
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -33,3 +33,21 @@ A `chat/toolCallConfirmed` that carries `selectedOptionId` reaches the backend's
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+Built.
+`Session.confirm` is `confirm(toolCallId, approved, optionId?)`, its comment saying `optionId` is the picked `ConfirmationOption`'s `id`.
+The host passes `action.selectedOptionId` when it is a string, and `undefined` otherwise; a worker chat's answer reaches the lead's backend through the same switch.
+The nested proxy's `confirm` re-dispatches `selectedOptionId` into the nested host when it has one.
+No backend changed.
+
+Tests:
+
+- `packages/sdk/test/subagent-chat.test.ts`, `takes the option picked on the lead chat to its backend, and none when none was picked`: a fake backend's `confirm` receives `('c1', true, 'always')`, then `('c1', true, undefined)`.
+- `packages/sdk/test/subagent-chat.test.ts`, `takes the option picked on a worker chat to the session's backend`: the same through a worker chat.
+- `packages/sdk/test/nested-proxy.test.ts`, `a permission ask answered outside is seen inside`: extended so `confirm('req-1', true, 'always')` on the proxy reaches the inner backend with `always`.
+
+Failed first: all three, the option arriving as `undefined` (the host dropped it, and the proxy dispatched `approved` only).
+
+Departure: the lead-chat case is in `subagent-chat.test.ts` rather than `host.test.ts`, because that file already has a fake backend recording `confirm`, and `host.test.ts` runs the Claude backend.
+
+Gates: `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 107 files, 1534 tests passed.

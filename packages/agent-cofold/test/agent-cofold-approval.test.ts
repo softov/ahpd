@@ -10,6 +10,7 @@ import { createHost } from '../../sdk/src/host.js';
 import { cofoldAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
+import { checker } from '../../../tools/wire.mjs';
 
 /*
  * A cofold run that stops for a person, as a client drives it.
@@ -257,6 +258,83 @@ it('runs an approved tool, takes the entry down and finishes the turn', async ()
   const call = chat.turns[0]?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { status: string; confirmed: string };
   expect(call).toMatchObject({ status: 'completed', confirmed: 'user-action' });
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
+/** Two turns, each writing once, so a second call of the same tool can be watched for a second ask. */
+const twoWrites = [
+  { toolCalls: [{ name: 'write', input: { text: 'one' }, callId: 'call-a' }] },
+  { text: 'done' },
+  { toolCalls: [{ name: 'write', input: { text: 'two' }, callId: 'call-b' }] },
+  { text: 'done again' },
+];
+
+/** The approvals asked in a session so far. */
+const asked = (p: ReturnType<typeof peer>, uri: string): number => actions(p, uri)
+  .filter((e) => e.action.type === 'session/inputNeededSet' && (e.action.request as { kind?: string }).kind === 'toolConfirmation')
+  .length;
+
+it('offers allow once, allow the tool for this session, and deny', async () => {
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer([])], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+
+  const offered = [
+    { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
+    { id: 'allow-session', label: 'Allow Write a note for this session', kind: 'approve', group: 1 },
+    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+  ];
+  const ready = p.notes.find((n) => n.method === 'action' && (n.params as Note).action.type === 'chat/toolCallReady');
+  expect((ready?.params as Note).action.options).toEqual(offered);
+  const entry = p.notes.find((n) => n.method === 'action' && (n.params as Note).action.type === 'session/inputNeededSet');
+  expect(((entry?.params as Note).action.request as { toolCall: { options?: unknown } }).toolCall.options).toEqual(offered);
+  const check = checker();
+  expect([ready, entry].flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
+});
+
+it('allows the tool for the rest of the session when that is picked', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: twoWrites, stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write one');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' },
+    },
+  });
+  await until(() => ended(p, chatUri));
+  const echoed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
+  expect(echoed?.action.selectedOptionId).toBe('allow-session');
+
+  begin(client, chatUri, 't2', 'write two');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length >= 2);
+  // Run without a second question: cofold kept the answer for this session.
+  expect(ran).toEqual(['one', 'two']);
+  expect(asked(p, uri)).toBe(1);
+});
+
+it('asks again next time when the approval was only for once', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: twoWrites, stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write one');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action' } },
+  });
+  await until(() => ended(p, chatUri));
+
+  begin(client, chatUri, 't2', 'write two');
+  await until(() => asked(p, uri) >= 2);
+  expect(asked(p, uri)).toBe(2);
+  expect(ran).toEqual(['one']);
 });
 
 it('denies a tool, carries the reason and does not run it', async () => {

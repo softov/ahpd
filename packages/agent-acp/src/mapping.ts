@@ -14,9 +14,9 @@
  * throwing, so a 1.5 server does not fail a 1.4 bridge.
  */
 
-import type { ContentBlock, SessionUpdate, ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
+import type { ContentBlock, PermissionOption, SessionUpdate, ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
 import type { Bag } from '@ahpd/sdk';
-import type { AcpCall, AcpTurn } from './types.js';
+import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
@@ -226,4 +226,18 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
     default:
       return [];
   }
+}
+
+/**
+ * A permission request's options, as the choices a call offers a person.
+ *
+ * The approvals first and then the refusals, each in the server's order, so
+ * a client that draws them in order draws them grouped. A kind this bridge
+ * does not know is left out rather than guessed at.
+ */
+export function confirmationOptions(options: readonly PermissionOption[]): ConfirmationOption[] {
+  const of = (kind: 'approve' | 'deny', group: number, kinds: string[]): ConfirmationOption[] => options
+    .filter((one) => kinds.includes(one.kind))
+    .map((one) => ({ id: one.optionId, label: one.name, kind, group }));
+  return [...of('approve', 1, ['allow_once', 'allow_always']), ...of('deny', 2, ['reject_once', 'reject_always'])];
 }

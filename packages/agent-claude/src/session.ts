@@ -116,7 +116,48 @@ interface PendingInput {
    * session see the form being filled in.
    */
   answers: Map<string, Bag>;
-  settle(result: { behavior: 'allow'; updatedInput: Bag } | { behavior: 'deny'; message: string }): void;
+  /** The choices a tool confirmation offered, when the SDK suggested a rule to keep. */
+  options?: Bag[];
+  /** The SDK's `suggestions` for this call, returned as `updatedPermissions` when "always" is picked. */
+  suggestions?: unknown[];
+  settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
+}
+
+/** Where a kept permission lands, as a person reads it. */
+const KEPT_IN: Record<string, string> = {
+  session: ' for the rest of the session',
+  localSettings: ', kept in local settings',
+  projectSettings: ', kept in project settings',
+  userSettings: ', kept in user settings',
+};
+
+/**
+ * What a set of the SDK's permission suggestions does, in one line.
+ *
+ * The label of the "always" choice, so it says what is kept and where: the
+ * rules added, the mode set or the directories added, each followed by where
+ * it is kept, joined when there are several.
+ */
+function keptLabel(suggestions: unknown[]): string {
+  const said = suggestions.map((one) => {
+    const update = bag(one);
+    const where = KEPT_IN[str(update.destination) ?? ''] ?? '';
+    if (update.type === 'addRules' || update.type === 'replaceRules') {
+      const rules = list(update.rules).map((entry) => {
+        const rule = bag(entry);
+        const content = str(rule.ruleContent);
+        return content === undefined ? str(rule.toolName) ?? '' : `${str(rule.toolName) ?? ''}(${content})`;
+      }).join(', ');
+      return `Always ${str(update.behavior) ?? 'allow'} ${rules}${where}`;
+    }
+    if (update.type === 'setMode') {
+      const mode = str(update.mode) ?? '';
+      return `${mode === 'acceptEdits' ? 'Allow edits' : `Switch to ${mode} mode`}${where}`;
+    }
+    if (update.type === 'addDirectories') return `Allow access to ${list(update.directories).map((entry) => String(entry)).join(', ')}${where}`;
+    return `Always allow${where}`;
+  });
+  return said.join('; ');
 }
 
 /**
@@ -555,6 +596,11 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
   /**
+   * What a stop given in a worker's chat stops: that worker, by default, or
+   * with `session` the lead turn that runs it.
+   */
+  workerStop?: 'worker' | 'session';
+  /**
    * The host's seam for a chat of one tool call's own.
    *
    * A subagent is a conversation inside one call, and the host owns what a
@@ -893,6 +939,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const spawning = new Map<string, Spawning>();
   /** The calls `task_started` named, whose terminal `task_notification` ends them. */
   const background = new Set<string>();
+  /** The task id `task_started` named for each call, which is what `stopTask` stops. */
+  const tasks = new Map<string, string>();
   /** The agent ids a permission ask was seen with, so the next one lands in the same chat. */
   const byAgent = new Map<string, Scope>();
   /**
@@ -970,6 +1018,45 @@ export function createSession(options: ClaudeSessionOptions): Session {
   };
 
   /**
+   * A turn's tool calls that never reached an end, ended the way the
+   * protocol's reducer ends them when the turn ends: `cancelled`, with reason
+   * `skipped`, and only the fields a cancelled call keeps.
+   *
+   * No action is sent for them, because a client watching already applied
+   * that on the turn's own ending; this is the record a client that
+   * subscribes afterwards reads. An ask still waiting on one of them is
+   * declined, since nothing will run the call it is about.
+   */
+  const settleOpen = (turn: Bag | undefined): void => {
+    for (const part of list(turn?.responseParts) as Bag[]) {
+      if (part.kind !== 'toolCall') continue;
+      const call = bag(part.toolCall);
+      const was = str(call.status);
+      if (was === 'completed' || was === 'cancelled') continue;
+      const id = str(call.toolCallId);
+      for (const one of [...pending.values()]) {
+        if (one.entry.kind !== 'toolConfirmation' || str(bag(one.entry.toolCall).toolCallId) !== id) continue;
+        pending.delete(one.id);
+        one.settle({ behavior: 'deny', message: 'The turn ended before this ran' });
+        inputNeededRemoved(one.id);
+      }
+      const streamingCall = was === 'streaming';
+      part.toolCall = {
+        status: 'cancelled',
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        displayName: call.displayName,
+        ...(call.intention !== undefined ? { intention: call.intention } : {}),
+        ...(call.contributor !== undefined ? { contributor: call.contributor } : {}),
+        ...(call._meta !== undefined ? { _meta: call._meta } : {}),
+        invocationMessage: streamingCall ? (call.invocationMessage ?? '') : call.invocationMessage,
+        ...(!streamingCall && call.toolInput !== undefined ? { toolInput: call.toolInput } : {}),
+        reason: 'skipped',
+      };
+    }
+  };
+
+  /**
    * End a worker's turn, once, whichever signal got here first.
    *
    * A foreground worker ends on the `tool_result` of the call that spawned it
@@ -990,10 +1077,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
       one.settle({ behavior: 'deny', message: 'The subagent finished' });
       inputNeededRemoved(one.id);
     }
+    settleOpen(scope.turn);
     scope.chat.end(state, why);
     scopes.delete(callId);
     rounds.delete(callId);
     background.delete(callId);
+    tasks.delete(callId);
     if (spawning.get(callId)?.completed === true) spawning.delete(callId);
     byAgent.forEach((held, key) => { if (held === scope) byAgent.delete(key); });
   };
@@ -1542,7 +1631,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
            * no answer to whether anybody had approved it. The two have to say
            * the same thing, and this is the half that was not being said.
            */
-          invocationMessage: name,
+          invocationMessage: command ?? name,
           confirmed: 'not-needed',
           ...(command ? { toolInput: command } : {}),
         } satisfies OnWire<ToolCallRunningState>;
@@ -1555,7 +1644,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           // The half-written json is what `toolInput` now says properly, and
           // a client that kept both would draw the arguments twice.
           call.status = 'running';
-          call.invocationMessage = name;
+          call.invocationMessage = command ?? name;
           call.confirmed = 'not-needed';
           delete call.partialInput;
           if (command) call.toolInput = command;
@@ -1591,10 +1680,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
           turnId: turn.id,
           toolCallId: id,
           ...(contributor ? { contributor } : {}),
-          // The tool's name, never its input. A client draws the intention
-          // above the input, so the same string in both is the command
-          // printed twice on every row.
-          invocationMessage: name,
+          // What the call runs on, as the same call read back from its
+          // transcript is drawn, falling back to the tool's name.
+          invocationMessage: command ?? name,
           // Nothing is being asked here - `canUseTool` is what asks. Without
           // this the reducer moves every tool call in the transcript into
           // `pending-confirmation` and draws it as a question nobody put.
@@ -1871,8 +1959,21 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ...(command ? { toolInput: command } : {}),
         ...(meta ? { _meta: meta } : {}),
       } as Bag;
+      /*
+       * The choices, when the SDK suggested a permission to keep.
+       *
+       * Allow once, the "always" the suggestions describe, and deny. With no
+       * suggestion there is nothing to keep and the call is approve or deny.
+       */
+      const suggestions = list(about.suggestions);
+      const options: Bag[] | undefined = suggestions.length === 0 ? undefined : [
+        { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
+        { id: 'allow-always', label: keptLabel(suggestions), kind: 'approve', group: 1 },
+        { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+      ];
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
+      if (options !== undefined) call.options = options;
       // The same sentence the action carries, so a client reading the snapshot
       // has one too. See the call built in `assistant`.
       call.invocationMessage = invocationMessage;
@@ -1893,6 +1994,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         invocationMessage,
         confirmationTitle,
         ...(command ? { toolInput: command } : {}),
+        ...(options !== undefined ? { options } : {}),
       });
 
       if (scope === mainScope) doing(`Waiting on you: ${displayName}`);
@@ -1904,8 +2006,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         entry,
         asked: new Map(),
         answers: new Map(),
+        ...(options !== undefined ? { options, suggestions } : {}),
         settle: (result) => settle(result.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: raw }
+          ? { behavior: 'allow', updatedInput: raw, ...(result.updatedPermissions === undefined ? {} : { updatedPermissions: result.updatedPermissions }) }
           : result),
       });
       inputNeededSet(entry);
@@ -2513,7 +2616,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
          */
         if (type === 'system' && str(message.subtype) === 'task_started') {
           const id = str(message.tool_use_id);
+          const task = str(message.task_id);
           if (id !== undefined) background.add(id);
+          if (id !== undefined && task !== undefined && !ended.has(id)) tasks.set(id, task);
           continue;
         }
         if (type === 'system' && str(message.subtype) === 'task_notification') {
@@ -2574,6 +2679,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
               turn.usage = used;
               emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
             }
+            settleOpen(turn);
             const part = wrong === undefined ? undefined : addFailure(turn, wrong);
             turns.push(turn);
             active = undefined;
@@ -2625,6 +2731,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       if (turn) {
         turn.state = 'error';
         turn.duration = Date.now() - startedAt;
+        settleOpen(turn);
         const part = addFailure(turn, failed);
         turns.push(turn);
         active = undefined;
@@ -2748,7 +2855,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     });
   };
 
-  return {
+  const self: Session = {
     uri,
     chatUri,
     status,
@@ -3269,6 +3376,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       if (turn) {
         turn.state = 'cancelled';
         turn.duration = Date.now() - startedAt;
+        settleOpen(turn);
         turns.push(turn);
         active = undefined;
         emit('chat', { type: 'chat/turnCancelled', turnId: turnId || turn.id, duration: turn.duration });
@@ -3280,7 +3388,25 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // what they asked for.
     },
 
-    confirm: (toolCallId, approved) => {
+    /**
+     * Stop one worker, and leave the turn that runs it going.
+     *
+     * By the task id its `task_started` named, through the SDK's own
+     * per-task stop, which answers with a `stopped` notification that ends
+     * the worker's chat. Configured with `workerStop: 'session'`, or for a
+     * worker the harness has not named a task for yet, it stops the lead
+     * turn instead, which is the only stop there is then.
+     */
+    stopWorker: (toolCallId) => {
+      const task = tasks.get(toolCallId);
+      if (options.workerStop === 'session' || task === undefined) {
+        self.cancel('');
+        return;
+      }
+      void handle.stopTask(task).catch(() => {});
+    },
+
+    confirm: (toolCallId, approved, optionId) => {
       // Found by id rather than assumed to be the only one. This used to
       // compare against whichever question happened to be held and return
       // silently when it did not match - which, with two tool calls open, is
@@ -3294,12 +3420,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // The call's own conversation, so an approval given in a worker's chat
       // is said back there rather than on the lead chat.
       const scope = scopeOfCall(toolCallId) ?? mainScope;
+      // The choice picked, when it is one this call offered and of the
+      // answer's kind; anything else is a plain approve or deny.
+      const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = scope.parts.get(toolCallId);
       if (part) {
-        bag(part.toolCall).status = approved ? 'running' : 'cancelled';
+        const call = bag(part.toolCall);
+        call.status = approved ? 'running' : 'cancelled';
         // And how it was approved, which is required on the call and was only
         // ever said in the action.
-        if (approved) bag(part.toolCall).confirmed = 'user-action';
+        if (approved) call.confirmed = 'user-action';
+        delete call.options;
+        if (picked !== undefined) call.selectedOption = picked;
       }
       if (scope === mainScope) doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       // Said back, like every other action a client originates. Nothing in a
@@ -3312,9 +3444,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
         toolCallId,
         approved,
         ...(approved ? { confirmed: 'user-action' } : {}),
+        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
       });
       settle(approved
-        ? { behavior: 'allow', updatedInput: {} }
+        ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
         : { behavior: 'deny', message: 'The person declined this action' });
       touch();
     },
@@ -3476,4 +3609,5 @@ export function createSession(options: ClaudeSessionOptions): Session {
       handle.close();
     },
   };
+  return self;
 }

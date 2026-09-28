@@ -78,6 +78,14 @@ export interface ClaudeOptions {
    * where to look. `false` says nothing at all and leaves the image's own.
    */
   computerConfigDir?: string | false;
+  /**
+   * What a stop given in a subagent's chat stops.
+   *
+   * `worker`, the default, stops that subagent alone and the turn that
+   * started it goes on; `session` cancels that turn, and every subagent it
+   * runs with it.
+   */
+  workerStop?: 'worker' | 'session';
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
@@ -517,6 +525,7 @@ export function claude(options: ClaudeOptions): Agent {
       const inside = insideOf(start);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
+      ...(options.workerStop !== undefined ? { workerStop: options.workerStop } : {}),
       uri: start.uri,
       chatUri: start.chatUri,
       cwd: workingDirectory(start.workingDirectory),

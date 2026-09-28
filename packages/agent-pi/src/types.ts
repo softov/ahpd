@@ -101,6 +101,8 @@ export interface PiCall {
   toolCallId: string;
   toolName: string;
   displayName: string;
+  /** What the call runs on, as its row is titled once pi names its arguments. */
+  said?: string;
 }
 
 /** The running turn, and what has been opened inside it. */

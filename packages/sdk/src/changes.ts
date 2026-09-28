@@ -34,8 +34,10 @@ const lines = async (path: string): Promise<number> => {
  * would be the same work twice, once where nobody can see it.
  */
 const counted = (before: string, after: string): { added: number; removed: number } => {
-  const was = before === '' ? [] : before.split('\n');
-  const now = after === '' ? [] : after.split('\n');
+  // A final newline ends the last line rather than starting another.
+  const linesIn = (text: string): string[] => (text === '' ? [] : text.replace(/\n$/, '').split('\n'));
+  const was = linesIn(before);
+  const now = linesIn(after);
   const shared = new Set(was);
   const added = now.filter((row) => !shared.has(row)).length;
   const kept_ = new Set(now);
@@ -536,6 +538,13 @@ export function gitChanges(): ChangesetSource {
   const look = async (dir: string): Promise<{ files: ChangesetFile[]; summary: ChangesSummary } | undefined> => {
     const status = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
     if (status === undefined) return undefined;
+    /*
+     * Where the directory sits in its repository, as `sub/` or empty at the
+     * root. Porcelain and numstat paths are the repository root's, so a path
+     * is under the directory when it starts with this, and names the file
+     * at the rest of it inside the directory.
+     */
+    const prefix = (await git(dir, ['rev-parse', '--show-prefix']))?.trim() ?? '';
 
     /** Line counts per path, for the files git can already diff. */
     const counts = new Map<string, { added: number; removed: number }>();
@@ -576,12 +585,16 @@ export function gitChanges(): ChangesetSource {
       // index and `Y` the working tree, which is the whole of what staging is.
       const record = records[at] as string;
       const code = record.slice(0, 2);
-      const path = record.slice(3);
-      if (path === '') continue;
-      // A rename or a copy writes a second NUL record after its own, holding the
-      // path the file came from, and it is consumed here or it is read as a row
-      // of its own with a status made of that path's first two letters.
-      if ((code[0] ?? ' ') === 'R' || (code[0] ?? ' ') === 'C') at += 1;
+      const fromRoot = record.slice(3);
+      if (fromRoot === '') continue;
+      // A rename or a copy, in the index column or the working-tree one, writes
+      // a second NUL record after its own, holding the path the file came from,
+      // and it is consumed here or it is read as a row of its own with a status
+      // made of that path's first two letters.
+      if (/[RC]/.test(code)) at += 1;
+      // A change elsewhere in the repository is not this directory's.
+      if (!fromRoot.startsWith(prefix)) continue;
+      const path = fromRoot.slice(prefix.length);
       const gone = code.includes('D');
       const fresh = code.includes('A') || code.includes('?');
       // `?` is git's untracked mark, and an untracked file is in neither the
@@ -591,7 +604,7 @@ export function gitChanges(): ChangesetSource {
       const uri = `file://${dir}/${path}`;
       // An untracked file is in no diff against HEAD, so git reports nothing
       // for it. Every line of it is an addition, which is what it is.
-      const count = counts.get(path) ?? (fresh
+      const count = counts.get(fromRoot) ?? (fresh
         ? { added: await lines(`${dir}/${path}`), removed: 0 }
         : { added: 0, removed: 0 });
 
@@ -956,7 +969,9 @@ export function gitChanges(): ChangesetSource {
         .sort((a, b) => b.length - a.length)[0];
       if (dir === undefined) return undefined;
       const path = rest.slice(dir.length + 1);
-      const data = await git(dir, ['show', `HEAD:${path}`]);
+      // `./` names the path from the directory rather than from the root, which
+      // differs for a directory below the repository's root.
+      const data = await git(dir, ['show', `HEAD:./${path}`]);
       // A file that is not in HEAD has no before, and empty is the truthful
       // answer for one: it did not exist.
       return { data: data ?? '', encoding: 'utf-8' };

@@ -16,7 +16,7 @@
 
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { contributorOf, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
+import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
  * A request a client has to answer, as the session must hold it.
@@ -37,6 +37,8 @@ export interface OpenRequest {
   entryId: string;
   /** The entry itself, held so a subscription snapshot can repeat it. */
   entry: Bag;
+  /** The choices an approval offered, which the person's `selectedOptionId` names one of. */
+  options?: Bag[];
 }
 
 /** What one event means: the actions to send, and the request it opened or closed. */
@@ -395,9 +397,20 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
                 ...contributorOf(owner),
               }
             : held.part.toolCall as Bag;
+          /*
+           * Allow once, allow this tool for the rest of the session, or deny.
+           * The session choice is one cofold keeps itself, per session and
+           * tool, and answers the next ask for that tool with.
+           */
+          const choices: Bag[] = [
+            { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
+            { id: 'allow-session', label: `Allow ${displayName} for this session`, kind: 'approve', group: 1 },
+            { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+          ];
           call.status = 'pending-confirmation';
           call.confirmationTitle = prompt;
           call.invocationMessage = prompt;
+          call.options = choices;
           delete call.confirmed;
           const written = toolInputOf(event.name, event.input);
           if (written !== undefined) call.toolInput = written;
@@ -422,6 +435,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             confirmationTitle: prompt,
             ...contributorOf(owner),
             ...(written !== undefined ? { toolInput: written } : {}),
+            options: choices,
           });
 
           const entryId = `approval:${event.requestId}`;
@@ -432,6 +446,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             callId: event.callId,
             entryId,
             entry,
+            options: choices,
           };
           requests.set(event.requestId, opened);
           actions.push({ type: 'session/inputNeededSet', request: entry });
@@ -484,7 +499,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? held.name;
+          call.invocationMessage = held.invocation ?? describe(held.name, held.input);
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = toolInputOf(held.name, held.input);
           if (written !== undefined) call.toolInput = written;
@@ -498,7 +513,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? held.name,
+            invocationMessage: held.invocation ?? describe(held.name, held.input),
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
@@ -512,11 +527,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
-            call.pastTenseMessage = held.name;
+            call.pastTenseMessage = describe(held.name, held.input);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError)]);
+          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.input)]);
         }
 
         /*
@@ -537,14 +552,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
           call.success = false;
-          call.pastTenseMessage = held.name;
+          call.pastTenseMessage = describe(held.name, held.input);
           call.error = { message: event.reason };
           // A refusal can land before the call ever reached `running`; the
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
             : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner)];
-          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true));
+          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.input));
           return only(actions);
         }
 

@@ -473,8 +473,8 @@ const nestedSession = (
       if (turn === turnId) turn = undefined;
       deliver('chat', { type: 'chat/turnCancelled', turnId });
     },
-    confirm: (toolCallId: string, approved: boolean): void => {
-      deliver('chat', { type: 'chat/toolCallConfirmed', toolCallId, approved });
+    confirm: (toolCallId: string, approved: boolean, optionId?: string): void => {
+      deliver('chat', { type: 'chat/toolCallConfirmed', toolCallId, approved, ...(optionId === undefined ? {} : { selectedOptionId: optionId }) });
     },
     answer: (requestId: string, accepted: boolean, answers: Bag): void => {
       deliver('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });

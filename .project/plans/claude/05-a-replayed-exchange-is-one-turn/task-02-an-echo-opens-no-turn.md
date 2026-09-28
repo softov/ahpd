@@ -1,6 +1,6 @@
 ---
 title: A CLI echo or a compact summary opens no turn
-status: todo
+status: implemented
 depends: [task-01-an-exchanges-rounds-are-one-turn.md]
 layer: "agent-claude"
 refs:
@@ -29,3 +29,12 @@ A user frame that is a CLI echo, or the summary the CLI writes after compacting,
 - `pnpm typecheck`, `pnpm boundary`, `pnpm test` green.
 
 ## Resume
+
+- **Done:** the user branch of `buildTurns` skips a frame with `isCompactSummary: true`, or whose content (a string, or the first text block) starts with one of the CLI echo tags `command-name`, `command-message`, `command-args`, `local-command-stdout`, `local-command-stderr`, `local-command-caveat` (`CLI_ECHO`, `isCliEcho` in `transcript.ts`).
+- The marker list is the reference's `CLI_ECHO_MARKER_PATTERN` at 832cf23c588, read from a local checkout.
+- Tool results in a skipped frame are still paired to their calls, since the skip comes after that loop.
+- The SDK's `getSessionMessages` keeps `isCompactSummary: true` on the message it returns, and the raw worker transcripts carry the same field, so one check covers both readers.
+- **Tests:** in `agent-claude-transcript.test.ts`: "reads a CLI echo between two rounds as no prompt", "reads every CLI echo marker as no prompt, in a string or a text block", "reads a prompt that only mentions a marker as a prompt", "reads a compact summary as no prompt".
+- **Failed first:** the echo case gave 2 turns, the all-markers case 6, and the compact summary case 2, each frame opening a prompt turn. The mention case passed before and after.
+- **Departures:** none.
+- **Gates:** `pnpm typecheck` clean; `pnpm boundary` clean; `pnpm test` 1539 passed of 1539 in 108 files.

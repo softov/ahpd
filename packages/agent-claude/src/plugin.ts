@@ -62,6 +62,7 @@ const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOpt
     const configDir = str(values.computerConfigDir);
     if (configDir !== undefined) options.computerConfigDir = configDir;
   }
+  if (values.workerStop === 'worker' || values.workerStop === 'session') options.workerStop = values.workerStop;
   return options;
 };
 

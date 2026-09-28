@@ -359,6 +359,15 @@ export interface Session {
   cancel(turnId: string): void;
 
   /**
+   * Stop one worker, named by the tool call that spawned it, and leave the
+   * turn that runs it going: what a stop given in that worker's chat means.
+   *
+   * Optional. Without it a stop in a worker chat cancels the lead chat's
+   * running turn, which is the only stop such a backend has.
+   */
+  stopWorker?(toolCallId: string): void;
+
+  /**
    * Hold a message, and make it the next turn when the running one ends.
    *
    * The queue is the session's, not a client's: a client that held a message
@@ -378,8 +387,14 @@ export interface Session {
   /** Reorder what is waiting. Anything not named keeps its place behind what is. */
   reorder(order: string[]): void;
 
-  /** Answer a tool call the agent is waiting on. */
-  confirm(toolCallId: string, approved: boolean): void;
+  /**
+   * Answer a tool call the agent is waiting on.
+   *
+   * `optionId` is the `id` of the `ConfirmationOption` the person picked, when
+   * this backend offered options on the call and the client sent one as
+   * `selectedOptionId`; absent, the answer is a plain approve or deny.
+   */
+  confirm(toolCallId: string, approved: boolean, optionId?: string): void;
 
   /**
    * Replace the tools this session offers the model.

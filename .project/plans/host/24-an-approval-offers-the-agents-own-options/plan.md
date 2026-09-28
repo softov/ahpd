@@ -1,7 +1,7 @@
 ---
 title: An approval offers the agent's own options, and the one picked reaches the agent
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -79,11 +79,11 @@ client picks -> chat/toolCallConfirmed { approved, selectedOptionId } -> host ->
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - confirm carries the option the person picked](task-01-confirm-carries-the-picked-option.md) | todo | - |
-| [02 - An ACP agent's own options are offered, and the picked one answered](task-02-an-acp-agents-options-are-offered.md) | todo | 01 |
-| [03 - Claude offers "always allow" from its suggestions](task-03-claude-offers-always-allow.md) | todo | 01 |
-| [04 - cofold offers "allow for this session"](task-04-cofold-offers-allow-for-the-session.md) | todo | 01 |
-| [05 - Docs](task-05-docs.md) | todo | 02, 03, 04 |
+| [01 - confirm carries the option the person picked](task-01-confirm-carries-the-picked-option.md) | implemented | - |
+| [02 - An ACP agent's own options are offered, and the picked one answered](task-02-an-acp-agents-options-are-offered.md) | implemented | 01 |
+| [03 - Claude offers "always allow" from its suggestions](task-03-claude-offers-always-allow.md) | implemented | 01 |
+| [04 - cofold offers "allow for this session"](task-04-cofold-offers-allow-for-the-session.md) | implemented | 01 |
+| [05 - Docs](task-05-docs.md) | implemented | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -92,9 +92,9 @@ client picks -> chat/toolCallConfirmed { approved, selectedOptionId } -> host ->
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-confirm-carries-the-picked-option.md](task-01-confirm-carries-the-picked-option.md).
-- **Open questions:** none.
+- **Done so far:** tasks 01 to 05 implemented, awaiting review.
+- **Next action:** review tasks 01 to 05; then the by-hand check that VS Code or ahpapp shows the options in its approval dropdown.
+- **Open questions:** task 02's step 3 (fall back to an `always` with no once option) against the locked row (an `always` only when chosen), where the row was followed; an option whose kind does not match `approved` is ignored on all three backends; task 03's label wording; task 04's label uses the tool's display name; task 05 added an UPSTREAM.md item rather than ticking one. Each is in its task's Resume.
 - **Watch out for:** the protocol field is `selectedOptionId`, not `optionId`; the reducer turns it into `selectedOption` on the call, so the backend's own echo of `chat/toolCallConfirmed` must carry it too.
 
 ## Final verification checklist
