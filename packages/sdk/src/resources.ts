@@ -173,12 +173,23 @@ export async function resolve(uri: string, followSymlinks = true): Promise<Metad
   };
 }
 
-/** Text by extension, and bytes for anything this does not recognise. */
-const TEXTUAL = new Set([
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'md', 'txt', 'css', 'html',
-  'yml', 'yaml', 'toml', 'sh', 'c', 'h', 'cc', 'cpp', 'hpp', 'py', 'rb', 'go',
-  'rs', 'java', 'sql', 'xml', 'svg', 'ini', 'conf', 'env', 'gitignore',
-]);
+/**
+ * Whether bytes are text: valid UTF-8 with no zero byte.
+ *
+ * Judged by the content, not the name, because the name is not reliable in
+ * either direction: `LICENSE`, `Makefile` and `deno.lock` are text with no
+ * extension a list would know, and a zero byte is what almost every binary
+ * format carries and no text file does.
+ */
+function textual(bytes: Buffer): boolean {
+  if (bytes.includes(0)) return false;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * One file's bytes, as text where that is meaningful.
@@ -193,10 +204,7 @@ export async function read(uri: string, wanted?: string): Promise<Read> {
   const bytes = await readFile(path).catch(() => {
     throw new RpcError(NOT_FOUND, `No file at ${uri}`);
   });
-  const dot = path.lastIndexOf('.');
-  const extension = dot === -1 ? '' : path.slice(dot + 1).toLowerCase();
-  const textual = TEXTUAL.has(extension) || path.slice(path.lastIndexOf(sep) + 1).startsWith('.');
-  if (wanted === 'base64' || !textual) {
+  if (wanted === 'base64' || !textual(bytes)) {
     return { data: bytes.toString('base64'), encoding: 'base64' };
   }
   return { data: bytes.toString('utf8'), encoding: 'utf-8', contentType: 'text/plain' };

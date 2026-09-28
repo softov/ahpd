@@ -3384,6 +3384,35 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     expect(found.data).toContain('"name": "@ahpd/server"');
   });
 
+  it('reads a text file with no extension as text', async () => {
+    const client = await opened();
+    // Text is judged by the bytes: a name like `LICENSE` or `Makefile` says
+    // nothing a list of extensions could know.
+    const found = await client.handle({
+      method: 'resourceRead',
+      params: { channel: 'ahp-root://', uri: `file://${REPO}/LICENSE` },
+    }) as { data: string; encoding: string };
+    expect(found.encoding).toBe('utf-8');
+    expect(found.data.length).toBeGreaterThan(0);
+  });
+
+  it('reads bytes that are not text as base64, whatever the name', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-bytes-'));
+    try {
+      const file = join(root, 'looks.txt');
+      writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0xff]));
+      const client = await opened();
+      const found = await client.handle({
+        method: 'resourceRead',
+        params: { channel: 'ahp-root://', uri: `file://${file}` },
+      }) as { data: string; encoding: string };
+      expect(found.encoding).toBe('base64');
+      expect(Buffer.from(found.data, 'base64')).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0xff]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('serves the whole machine, not only the directories it was started on', async () => {
     const client = await opened(`${REPO}/packages/sdk/src`);
     // The window's folder dialog lists `..` from wherever it is and stats
