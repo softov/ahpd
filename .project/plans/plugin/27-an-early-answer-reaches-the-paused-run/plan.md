@@ -1,7 +1,7 @@
 ---
 title: An answer given the moment a cofold request opens reaches the run
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -57,7 +57,7 @@ No decision records of its own; the choices below are scope.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An early answer waits for the pause](task-01-an-early-answer-waits-for-the-pause.md) | implemented | - |
+| [01 - An early answer waits for the pause](task-01-an-early-answer-waits-for-the-pause.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -65,8 +65,8 @@ No decision records of its own; the choices below are scope.
 
 ## Resume state
 
-- **Done so far:** task 01 implemented in `/github/.worktrees/ahpd-flakes` (branch `flakes`, uncommitted), awaiting review.
-- **Next action:** review task 01.
+- **Done so far:** every task done 2026-09-28 (`518f438`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the worktree also holds the test-only flake fixes for computer, agent-acp and agent-cofold-store; leave them as they are.
 

@@ -1,6 +1,6 @@
 ---
 title: A session in a subfolder lists its rows by their real paths
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

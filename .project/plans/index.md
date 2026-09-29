@@ -21,7 +21,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/04-commands-declared-once/implemented.md)) | daemon 03 | daemon 05 |
 | [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/05-an-http-api/implemented.md)) | daemon 04 | - |
 | [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
-| [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | daemon 03 | - |
+| [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
 Next free number in `daemon`: `09`.
@@ -55,12 +55,12 @@ Reference: [00-host.md](host/00-host.md)
 | [21 - The commit operation asks first, and commits what is staged when anything is](host/21-commit-asks-and-takes-what-is-staged/plan.md) | high | built 2026-09-28 ([implemented.md](host/21-commit-asks-and-takes-what-is-staged/implemented.md)) | - | host 20 |
 | [22 - A file or a folder is staged and unstaged from the session's changeset](host/22-a-file-or-folder-is-staged-from-the-session/plan.md) | high | built 2026-09-28 ([implemented.md](host/22-a-file-or-folder-is-staged-from-the-session/implemented.md)) | host 21 | - |
 | [23 - A session outside the configured paths has its git facts and its changes without waiting for a turn](host/23-a-session-outside-the-paths-has-its-facts/plan.md) | high | built 2026-09-28 ([implemented.md](host/23-a-session-outside-the-paths-has-its-facts/implemented.md)) | - | - |
-| [24 - An approval offers the agent's own options, and the one picked reaches the agent](host/24-an-approval-offers-the-agents-own-options/plan.md) | high | active 2026-09-28; tasks 01-05 implemented, awaiting review | - | - |
-| [25 - A forked chat says which chat and turn it came from](host/25-a-forked-chat-says-where-it-came-from/plan.md) | medium | active 2026-09-28; task 01 implemented, awaiting review | - | - |
-| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | active 2026-09-28; tasks 02-04 implemented, awaiting review; task 01 blocked: the `D` did not reproduce | - | - |
-| [27 - A session reads as running while any of its chats runs, a worker chat included](host/27-a-session-reads-running-while-any-chat-runs/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | - | - |
+| [24 - An approval offers the agent's own options, and the one picked reaches the agent](host/24-an-approval-offers-the-agents-own-options/plan.md) | high | built 2026-09-28 ([implemented.md](host/24-an-approval-offers-the-agents-own-options/implemented.md)) | - | - |
+| [25 - A forked chat says which chat and turn it came from](host/25-a-forked-chat-says-where-it-came-from/plan.md) | medium | built 2026-09-28 ([implemented.md](host/25-a-forked-chat-says-where-it-came-from/implemented.md)) | - | - |
+| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | active 2026-09-28; tasks 02-04 done; task 01 blocked: the `D` did not reproduce | - | - |
+| [27 - A session reads as running while any of its chats runs, a worker chat included](host/27-a-session-reads-running-while-any-chat-runs/plan.md) | high | built 2026-09-28 ([implemented.md](host/27-a-session-reads-running-while-any-chat-runs/implemented.md)) | - | - |
 
-| [28 - A changeset watch says when it is armed, and nothing between the first read and the watch is missed](host/28-a-changeset-watch-says-when-it-is-armed/plan.md) | high | active 2026-09-28; tasks 01-05 implemented, awaiting review; blocks the 0.8.0 release | - | - |
+| [28 - A changeset watch says when it is armed, and nothing between the first read and the watch is missed](host/28-a-changeset-watch-says-when-it-is-armed/plan.md) | high | built 2026-09-28 ([implemented.md](host/28-a-changeset-watch-says-when-it-is-armed/implemented.md)) | - | - |
 
 Next free number in `host`: `29`.
 
@@ -74,9 +74,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [02 - A response round that ends empty is announced, or the gap is recorded](claude/02-round-ended/plan.md) | medium | built 2026-09-20 ([implemented.md](claude/02-round-ended/implemented.md)) | research/response-round-ended-signal.md | ahpc screen/02, which reads the notification; the gap is in [deferred.md](claude/02-round-ended/deferred.md) |
 | [03 - A model round that ends empty is announced](claude/03-an-empty-round-is-announced/plan.md) | medium | built 2026-09-26 ([implemented.md](claude/03-an-empty-round-is-announced/implemented.md)) | claude 02 | - |
 | [04 - A subagent has its own chat, linked from the call that started it](claude/04-a-subagent-has-its-own-chat/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/04-a-subagent-has-its-own-chat/implemented.md)) | claude 03 | - |
-| [05 - A replayed Claude exchange is one turn, as it was live](claude/05-a-replayed-exchange-is-one-turn/plan.md) | high | active 2026-09-28; tasks 01-02 implemented, awaiting review | - | - |
-| [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | active 2026-09-28; tasks 01-03 implemented, awaiting review | claude 04 | - |
-| [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review | - | - |
+| [05 - A replayed Claude exchange is one turn, as it was live](claude/05-a-replayed-exchange-is-one-turn/plan.md) | high | built 2026-09-28 ([implemented.md](claude/05-a-replayed-exchange-is-one-turn/implemented.md)) | - | - |
+| [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/06-a-stop-in-a-worker-chat-stops-that-worker/implemented.md)) | claude 04 | - |
+| [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | built 2026-09-28 ([implemented.md](claude/07-a-turn-ends-with-no-call-left-open/implemented.md)) | - | - |
 
 Next free number in `claude`: `08`.
 
@@ -123,7 +123,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [25 - A plugin's agent sees every path the daemon serves](plugin/25-a-plugin-agent-sees-every-served-path/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/25-a-plugin-agent-sees-every-served-path/implemented.md)) | plugin 01 | - |
 | [26 - A plugin declares a schema for its options, and the loader checks it](plugin/26-a-plugin-declares-its-options-schema/plan.md) | medium | built 2026-09-28 ([implemented.md](plugin/26-a-plugin-declares-its-options-schema/implemented.md)) | daemon 08 | - |
 
-| [27 - An answer given the moment a cofold request opens reaches the run](plugin/27-an-early-answer-reaches-the-paused-run/plan.md) | high | active 2026-09-28; task 01 implemented, awaiting review; blocks the 0.8.0 release | plugin 03 | - |
+| [27 - An answer given the moment a cofold request opens reaches the run](plugin/27-an-early-answer-reaches-the-paused-run/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/27-an-early-answer-reaches-the-paused-run/implemented.md)) | plugin 03 | - |
 
 Next free number in `plugin`: `28`.
 
@@ -170,7 +170,7 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [09 - pi asks a person before a tool runs](pi/09-pi-asks-before-a-tool-runs/plan.md) | high | built 2026-09-28 ([implemented.md](pi/09-pi-asks-before-a-tool-runs/implemented.md)) | pi 02 | - |
 | [10 - pi's models and history outlive the process, and pi loads without holding the daemon](pi/10-pi-outlives-the-process/plan.md) | high | built 2026-09-28 ([implemented.md](pi/10-pi-outlives-the-process/implemented.md)) | pi 01 | - |
 | [11 - A turn's parts come in the order the model wrote them, one part per block](pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) | high | built 2026-09-28 ([implemented.md](pi/11-a-turns-parts-come-in-the-order-they-were-written/implemented.md)) | pi 10 | - |
-| [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | active 2026-09-28; tasks 01-03 implemented, awaiting review | - | - |
+| [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | built 2026-09-28 ([implemented.md](pi/12-a-tool-call-says-what-it-runs-on/implemented.md)) | - | - |
 
 Next free number in `pi`: `13`.
 
@@ -182,7 +182,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | active 2026-09-28, task 01 implemented, 02-05 todo | - | acp 12 |
+| [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | active 2026-09-28, task 01 done, 02-05 todo | - | acp 12 |
 | [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | plugin 18, acp 01 task 03 |
 | [03 - A turn ends as the agent ended it](acp/03-a-turn-ends-as-the-agent-ended-it/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | - |
 | [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | acp 05 |

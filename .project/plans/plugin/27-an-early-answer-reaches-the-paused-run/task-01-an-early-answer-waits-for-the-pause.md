@@ -1,6 +1,6 @@
 ---
 title: An answer or cancel that arrives before the pause is recorded waits for it
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

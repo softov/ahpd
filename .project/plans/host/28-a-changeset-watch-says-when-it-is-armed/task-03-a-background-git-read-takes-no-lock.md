@@ -1,6 +1,6 @@
 ---
 title: A background git read takes no optional lock
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

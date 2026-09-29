@@ -1,6 +1,6 @@
 ---
 title: Claude offers "always allow" from its suggestions
-status: implemented
+status: done
 depends: [task-01-confirm-carries-the-picked-option.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The docs say what an approval offers on each backend
-status: implemented
+status: done
 depends: [task-02-an-acp-agents-options-are-offered.md, task-03-claude-offers-always-allow.md, task-04-cofold-offers-allow-for-the-session.md]
 layer: "docs"
 refs:

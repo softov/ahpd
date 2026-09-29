@@ -8,14 +8,12 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 
 ## Now
 
-- 0.8.0 is not published; npm has 0.7.0. The `v0.8.0` tag on `origin` points at `3a399bb`, whose release failed on flaky tests.
-- The fixes are committed on main and not pushed: the test flakes, [plugin/27](../plans/plugin/27-an-early-answer-reaches-the-paused-run/plan.md) and [host/28](../plans/host/28-a-changeset-watch-says-when-it-is-armed/plan.md).
-- Next: Softov pushes main, deletes the remote `v0.8.0` and pushes it on the new head; then all 8 `@ahpd` packages are checked at 0.8.0 on npm, and Softov checks the upgrade from his installed 0.7.0.
-- The worktree `/github/.worktrees/ahpd-flakes` (branch `flakes`) can be removed once the release is out.
+- 0.8.0 is published: all 8 `@ahpd` packages on npm, from `v0.8.0` on `bde31b5`.
+- Next: Softov checks the upgrade from his installed 0.7.0.
 
 ## Waiting on Softov
 
-- Review of built plans: [plugin/27](../plans/plugin/27-an-early-answer-reaches-the-paused-run/plan.md), [host/28](../plans/host/28-a-changeset-watch-says-when-it-is-armed/plan.md), [host/24](../plans/host/24-an-approval-offers-the-agents-own-options/plan.md), [host/25](../plans/host/25-a-forked-chat-says-where-it-came-from/plan.md), [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) (task 01 blocked, the `D` not reproduced), [host/27](../plans/host/27-a-session-reads-running-while-any-chat-runs/plan.md), [claude/05](../plans/claude/05-a-replayed-exchange-is-one-turn/plan.md), [claude/06](../plans/claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md), [claude/07](../plans/claude/07-a-turn-ends-with-no-call-left-open/plan.md), [pi/12](../plans/pi/12-a-tool-call-says-what-it-runs-on/plan.md), [daemon/07](../plans/daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md), [acp/01](../plans/acp/01-the-bridge-survives-its-agent/plan.md) task 01.
+- [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) task 01 waits on which client and scope showed the `D` (the question in its Resume).
 - [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on the approach (task 01).
 - [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) is a draft with two open questions.
 - [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md): two candidate fixes, none chosen.
@@ -36,6 +34,7 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 - VS Code with the seeded `computer` picker: the chip should read `This host` or a machine's name, once.
 - ahpapp against the published packages: the computer picker, and the dev container relay with `devcontainer.plugins` in a real container.
 - Session state written by 0.6 read by 0.8.
+- In ahpapp or VS Code: an approval's options in its dropdown (host/24), a fork shown as a fork (host/25), the session list while a worker runs (host/27), a restored Claude session (claude/05), Stop inside a subagent with and without `workerStop: "session"` (claude/06), a re-subscribe after a turn that ended with an open call (claude/07), and tool calls titled by what they run on (pi/12).
 
 ## Environment notes written nowhere else
 

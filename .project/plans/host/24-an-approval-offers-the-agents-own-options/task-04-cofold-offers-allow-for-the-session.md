@@ -1,6 +1,6 @@
 ---
 title: cofold offers "allow for this session"
-status: implemented
+status: done
 depends: [task-01-confirm-carries-the-picked-option.md]
 layer: "agent-cofold"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A rename in the working tree is one row
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

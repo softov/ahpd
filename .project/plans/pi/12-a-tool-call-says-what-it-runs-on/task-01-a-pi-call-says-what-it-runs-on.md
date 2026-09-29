@@ -1,6 +1,6 @@
 ---
 title: A pi call says what it runs on, live and replayed
-status: implemented
+status: done
 depends: []
 layer: "agent-pi"
 refs:

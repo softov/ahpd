@@ -1,7 +1,7 @@
 ---
 title: A replayed Claude exchange is one turn, as it was live
 domain: claude
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -60,8 +60,8 @@ getSessionMessages / readJsonl -> buildTurns -> turns -> host restore -> client
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An exchange's rounds are one turn, with the exchange's usage](task-01-an-exchanges-rounds-are-one-turn.md) | implemented | - |
-| [02 - A CLI echo or a compact summary opens no turn](task-02-an-echo-opens-no-turn.md) | implemented | 01 |
+| [01 - An exchange's rounds are one turn, with the exchange's usage](task-01-an-exchanges-rounds-are-one-turn.md) | done | - |
+| [02 - A CLI echo or a compact summary opens no turn](task-02-an-echo-opens-no-turn.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -70,8 +70,8 @@ getSessionMessages / readJsonl -> buildTurns -> turns -> host restore -> client
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 implemented, awaiting review.
-- **Next action:** review both tasks; the checklist's ahpapp check of a restored session is not yet run.
+- **Done so far:** every task done 2026-09-28 (`373253e`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** tool results are paired through the shared `calls` map by mutating the call in place, so they land in whichever turn holds the call; a fork anchor or a turn id that names an agent turn's uuid today names nothing after the merge.
 

@@ -1,7 +1,7 @@
 ---
 title: A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why
 domain: daemon
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -46,7 +46,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The refusal names ahpd plugin install, and DAEMON.md says why 0.6 had Claude](task-01-the-refusal-names-plugin-install.md) | implemented | - |
+| [01 - The refusal names ahpd plugin install, and DAEMON.md says why 0.6 had Claude](task-01-the-refusal-names-plugin-install.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -54,8 +54,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** task 01 implemented and awaiting review: the refusal names `ahpd plugin install @ahpd/agent-claude`, with `--config-file <p>` when the daemon was started with one, then `npm i` as the other way; `docs/DAEMON.md` quotes it and has the note for an upgrade from 0.6.
-- **Next action:** review task 01, then close the plan.
+- **Done so far:** every task done 2026-09-28 (`5adac82`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a daemon run with `--config-file` reads another file, so the command it names must carry the same `--config-file` or it would enable the plugin in a file the daemon does not read.
 

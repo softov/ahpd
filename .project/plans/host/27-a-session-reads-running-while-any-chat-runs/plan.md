@@ -1,7 +1,7 @@
 ---
 title: A session reads as running while any of its chats runs, a worker chat included
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -56,7 +56,7 @@ statusOf(session) -> lead activity, [new] promoted by any held chat or worker ch
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The session's status and activity follow its busiest chat](task-01-status-follows-the-busiest-chat.md) | implemented | - |
+| [01 - The session's status and activity follow its busiest chat](task-01-status-follows-the-busiest-chat.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -64,8 +64,8 @@ statusOf(session) -> lead activity, [new] promoted by any held chat or worker ch
 
 ## Resume state
 
-- **Done so far:** task 01 implemented, awaiting review.
-- **Next action:** review task 01; the checklist's ahpapp check is not yet run.
+- **Done so far:** every task done 2026-09-28 (`373253e`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `InputNeeded` is `24`, a superset of `InProgress`'s bit `8`, so a chat is purely in progress only when its status masked with `InputNeeded` equals `InProgress`.
 

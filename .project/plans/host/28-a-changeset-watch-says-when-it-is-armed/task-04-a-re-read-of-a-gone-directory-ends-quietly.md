@@ -1,6 +1,6 @@
 ---
 title: A re-read whose directory is gone ends quietly
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

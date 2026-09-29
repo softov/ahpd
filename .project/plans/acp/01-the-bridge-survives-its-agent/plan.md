@@ -63,7 +63,7 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A child that fails to start or exits is heard](task-01-a-child-that-fails-is-heard.md) | implemented | - |
+| [01 - A child that fails to start or exits is heard](task-01-a-child-that-fails-is-heard.md) | done | - |
 | [02 - The last of stderr rides on a failure](task-02-stderr-rides-on-a-failure.md) | todo | 01 |
 | [03 - A dead agent is reopened by its id](task-03-a-dead-agent-is-reopened-by-its-id.md) | todo | 01 |
 | [04 - Close ends the session and every process it started](task-04-close-ends-the-session-and-its-processes.md) | todo | - |
@@ -75,8 +75,8 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 
 ## Resume state
 
-- **Done so far:** task 01 implemented, awaiting review: a missing command or an exiting server fails the turn in a sentence and the daemon stays up.
-- **Next action:** review task 01, then [task-02-stderr-rides-on-a-failure.md](task-02-stderr-rides-on-a-failure.md) or [task-04-close-ends-the-session-and-its-processes.md](task-04-close-ends-the-session-and-its-processes.md).
+- **Done so far:** task 01 done 2026-09-28 (`990af73`), approved by Softov: a missing command or an exiting server fails the turn in a sentence and the daemon stays up.
+- **Next action:** [task-02-stderr-rides-on-a-failure.md](task-02-stderr-rides-on-a-failure.md) or [task-04-close-ends-the-session-and-its-processes.md](task-04-close-ends-the-session-and-its-processes.md).
 - **Open questions:** none.
 - **Watch out for:** task 03 reopens with a load, whose replay must not land in the new turn; plan 02 task 01 goes first.
 

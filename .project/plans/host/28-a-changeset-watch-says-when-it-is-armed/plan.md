@@ -1,7 +1,7 @@
 ---
 title: A changeset watch says when it is armed, and nothing between the first read and the watch is missed
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -59,11 +59,11 @@ subscribe changeset -> first read -> startWatchingDir -> gitChanges.watch: rev-p
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The git watch says when it is armed, and the host re-reads then](task-01-the-watch-says-when-it-is-armed.md) | implemented | 03 |
-| [02 - The coalesce case waits on its source](task-02-the-coalesce-case-waits-on-its-source.md) | implemented | - |
-| [03 - A background git read takes no optional lock](task-03-a-background-git-read-takes-no-lock.md) | implemented | - |
-| [04 - A re-read whose directory is gone ends quietly](task-04-a-re-read-of-a-gone-directory-ends-quietly.md) | implemented | - |
-| [05 - gitBranches takes no optional lock either](task-05-gitbranches-takes-no-lock.md) | implemented | 03 |
+| [01 - The git watch says when it is armed, and the host re-reads then](task-01-the-watch-says-when-it-is-armed.md) | done | 03 |
+| [02 - The coalesce case waits on its source](task-02-the-coalesce-case-waits-on-its-source.md) | done | - |
+| [03 - A background git read takes no optional lock](task-03-a-background-git-read-takes-no-lock.md) | done | - |
+| [04 - A re-read whose directory is gone ends quietly](task-04-a-re-read-of-a-gone-directory-ends-quietly.md) | done | - |
+| [05 - gitBranches takes no optional lock either](task-05-gitbranches-takes-no-lock.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -72,8 +72,8 @@ subscribe changeset -> first read -> startWatchingDir -> gitChanges.watch: rev-p
 
 ## Resume state
 
-- **Done so far:** in `/github/.worktrees/ahpd-flakes` (branch `flakes`, uncommitted): tasks 01 to 05 implemented, awaiting review.
-- **Next action:** review.
+- **Done so far:** every task done 2026-09-28 (`bde31b5`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `validate.ts` checks `watch` is a function; a function with a `ready` property still is.
 

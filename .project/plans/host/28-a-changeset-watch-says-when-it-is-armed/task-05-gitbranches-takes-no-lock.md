@@ -1,6 +1,6 @@
 ---
 title: gitBranches takes no optional lock either
-status: implemented
+status: done
 depends: [task-03-a-background-git-read-takes-no-lock.md]
 layer: "sdk"
 refs:

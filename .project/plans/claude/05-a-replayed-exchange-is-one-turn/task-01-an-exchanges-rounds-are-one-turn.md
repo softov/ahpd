@@ -1,6 +1,6 @@
 ---
 title: An exchange's rounds are one turn, with the exchange's usage
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

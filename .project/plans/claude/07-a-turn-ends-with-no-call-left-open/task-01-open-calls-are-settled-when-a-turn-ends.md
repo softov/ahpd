@@ -1,6 +1,6 @@
 ---
 title: A turn's open tool calls are settled when it ends
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

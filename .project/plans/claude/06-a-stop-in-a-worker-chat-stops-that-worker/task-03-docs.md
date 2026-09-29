@@ -1,6 +1,6 @@
 ---
 title: The docs say what a stop in a worker chat does
-status: implemented
+status: done
 depends: [task-02-claude-stops-one-worker.md]
 layer: "docs"
 refs:

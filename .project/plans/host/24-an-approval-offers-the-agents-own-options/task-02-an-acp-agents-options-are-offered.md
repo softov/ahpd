@@ -1,6 +1,6 @@
 ---
 title: An ACP agent's own options are offered, and the picked one answered
-status: implemented
+status: done
 depends: [task-01-confirm-carries-the-picked-option.md]
 layer: "agent-acp"
 refs:

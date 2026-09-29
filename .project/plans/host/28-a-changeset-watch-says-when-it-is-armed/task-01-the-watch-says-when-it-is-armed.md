@@ -1,6 +1,6 @@
 ---
 title: The git watch says when it is armed, and the host re-reads then
-status: implemented
+status: done
 depends: [task-03-a-background-git-read-takes-no-lock.md]
 layer: "sdk"
 refs:

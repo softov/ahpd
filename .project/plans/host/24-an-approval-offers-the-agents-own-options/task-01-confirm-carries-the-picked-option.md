@@ -1,6 +1,6 @@
 ---
 title: confirm carries the option the person picked
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

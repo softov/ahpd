@@ -1,6 +1,6 @@
 ---
 title: The session's status and activity follow its busiest chat
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

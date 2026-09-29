@@ -1,6 +1,6 @@
 ---
 title: A CLI echo or a compact summary opens no turn
-status: implemented
+status: done
 depends: [task-01-an-exchanges-rounds-are-one-turn.md]
 layer: "agent-claude"
 refs:

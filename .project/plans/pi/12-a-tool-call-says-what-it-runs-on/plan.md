@@ -1,7 +1,7 @@
 ---
 title: A tool call says what it runs on, on pi, cofold and Claude live
 domain: pi
-status: active
+status: built
 priority: medium
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -62,9 +62,9 @@ tool call args -> [new] describe(name, args) -> chat/toolCallReady.invocationMes
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A pi call says what it runs on, live and replayed](task-01-a-pi-call-says-what-it-runs-on.md) | implemented | - |
-| [02 - A cofold call says what it runs on, live and replayed](task-02-a-cofold-call-says-what-it-runs-on.md) | implemented | - |
-| [03 - A live Claude call says what it runs on](task-03-a-live-claude-call-says-what-it-runs-on.md) | implemented | - |
+| [01 - A pi call says what it runs on, live and replayed](task-01-a-pi-call-says-what-it-runs-on.md) | done | - |
+| [02 - A cofold call says what it runs on, live and replayed](task-02-a-cofold-call-says-what-it-runs-on.md) | done | - |
+| [03 - A live Claude call says what it runs on](task-03-a-live-claude-call-says-what-it-runs-on.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,8 +72,8 @@ tool call args -> [new] describe(name, args) -> chat/toolCallReady.invocationMes
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
-- **Next action:** review the three tasks; the checklist's ahpapp check is not yet run.
+- **Done so far:** every task done 2026-09-28 (`373253e`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** pi's `tool_execution_end` has no arguments, so `PiCall` must keep what the call was described as.
 

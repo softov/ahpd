@@ -1,6 +1,6 @@
 ---
 title: Claude stops one worker with stopTask, or the session under the option
-status: implemented
+status: done
 depends: [task-01-the-host-asks-to-stop-one-worker.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The host asks a backend to stop one worker
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

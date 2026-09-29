@@ -1,7 +1,7 @@
 ---
 title: A forked chat says which chat and turn it came from
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -59,7 +59,7 @@ createChat { source: { kind: 'fork', chat, turnId } } -> [new] origins.set(uri, 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A forked or side chat carries its origin](task-01-a-forked-chat-carries-its-origin.md) | implemented | - |
+| [01 - A forked or side chat carries its origin](task-01-a-forked-chat-carries-its-origin.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -67,9 +67,9 @@ createChat { source: { kind: 'fork', chat, turnId } } -> [new] origins.set(uri, 
 
 ## Resume state
 
-- **Done so far:** task 01 implemented, awaiting review.
-- **Next action:** review task 01; then the by-hand check that VS Code or ahpapp shows the fork as a fork.
-- **Open questions:** `respell` needed no change (see task 01's Resume); confirm.
+- **Done so far:** every task done 2026-09-28 (`373253e`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
+- **Open questions:** none.
 - **Watch out for:** `chatSummary` is resent on every title, status or activity change, so the origin must come from a map it reads, not from the action that created the chat.
 
 ## Final verification checklist

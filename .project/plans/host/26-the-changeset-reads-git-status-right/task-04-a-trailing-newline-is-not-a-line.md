@@ -1,6 +1,6 @@
 ---
 title: A trailing newline is not counted as a line
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

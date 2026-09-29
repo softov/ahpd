@@ -1,6 +1,6 @@
 ---
 title: A child that fails to start or exits is heard
-status: implemented
+status: done
 depends: []
 layer: "agent-acp"
 refs:

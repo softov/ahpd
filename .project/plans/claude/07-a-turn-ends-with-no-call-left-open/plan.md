@@ -1,7 +1,7 @@
 ---
 title: A Claude turn ends with no tool call left running or waiting
 domain: claude
-status: active
+status: built
 priority: high
 created: 2026-09-28
 revalidated: 2026-09-28
@@ -52,7 +52,7 @@ result / cancel -> turns.push(turn) with the part still open -> snapshot -> re-s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn's open tool calls are settled when it ends](task-01-open-calls-are-settled-when-a-turn-ends.md) | implemented | - |
+| [01 - A turn's open tool calls are settled when it ends](task-01-open-calls-are-settled-when-a-turn-ends.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -60,9 +60,9 @@ result / cancel -> turns.push(turn) with the part still open -> snapshot -> re-s
 
 ## Resume state
 
-- **Done so far:** task 01 implemented, awaiting review.
-- **Next action:** review task 01; then check by hand that a re-subscribe after a turn that ended with an open call shows it cancelled.
-- **Open questions:** the worker case has no observable state to test (see task 01's Resume).
+- **Done so far:** every task done 2026-09-28 (`373253e`), approved by Softov; see [implemented.md](implemented.md).
+- **Next action:** none.
+- **Open questions:** none.
 - **Watch out for:** a worker's own turn ends through `endWorker`, which needs the same settling on the worker's scope.
 
 ## Final verification checklist

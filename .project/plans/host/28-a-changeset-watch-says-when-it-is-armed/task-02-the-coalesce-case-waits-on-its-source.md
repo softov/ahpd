@@ -1,6 +1,6 @@
 ---
 title: The coalesce case waits on its counting source, not on a number of turns
-status: implemented
+status: done
 depends: []
 layer: "sdk tests"
 refs:

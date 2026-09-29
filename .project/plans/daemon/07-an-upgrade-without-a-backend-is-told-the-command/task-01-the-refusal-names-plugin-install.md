@@ -1,6 +1,6 @@
 ---
 title: The refusal names ahpd plugin install, and DAEMON.md says why 0.6 had Claude
-status: implemented
+status: done
 depends: []
 layer: "server, docs"
 refs:
