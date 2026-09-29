@@ -127,7 +127,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [27 - An answer given the moment a cofold request opens reaches the run](plugin/27-an-early-answer-reaches-the-paused-run/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/27-an-early-answer-reaches-the-paused-run/implemented.md)) | plugin 03 | - |
 
-Next free number in `plugin`: `28`.
+| [28 - A test that ends a session waits for its cleanup to finish before removing its folder](plugin/28-a-closed-session-test-waits-for-its-run/plan.md) | high | active 2026-09-29; tasks 01, 02 and 03 implemented; CI red on `c5dbe8c` | plugin 27 | - |
+
+Next free number in `plugin`: `29`.
 
 ## container
 

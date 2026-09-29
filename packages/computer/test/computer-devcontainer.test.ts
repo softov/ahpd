@@ -71,6 +71,25 @@ const dockerHeld = (state: string): DockerHeld => (existsSync(state)
   : { machines: [], calls: [] });
 
 /**
+ * Wait until the scripted Docker has answered every call a case made of it:
+ * its state file records `calls` of them and no call still holds the lock.
+ *
+ * Loading the plugin starts a listing that nothing awaits, so a case can reach
+ * its last assertion while that `docker ps` is still to write the state file,
+ * and `afterEach` then removes a folder the fixture is writing into. The lock
+ * is the last thing a call lets go of, on its exit.
+ */
+const answered = async (state: string, calls: number): Promise<void> => {
+  const limit = Date.now() + 4_000;
+  while (dockerHeld(state).calls.length < calls || existsSync(`${state}.lock`)) {
+    if (Date.now() > limit) {
+      throw new Error(`the scripted docker never finished ${calls} calls on ${state}: ${dockerHeld(state).calls.length} recorded`);
+    }
+    await new Promise((r) => { setTimeout(r, 5); });
+  }
+};
+
+/**
  * The plugin's options: the Docker fixture as the runtime, the CLI fixture as
  * the launcher and the maker, and both state files pointed at the same run.
  */
@@ -182,6 +201,7 @@ it('makes a computer from a folder\'s devcontainer.json, and lists it by its fol
     label: 'ahpd.computer=1',
   });
   expect((await runtime.list())[0]).toMatchObject({ id: 'abc123', folder });
+  await answered(dockerState, 6);
 });
 
 it('refuses a folder with no devcontainer.json, and a CLI that is not there', async () => {
@@ -215,6 +235,8 @@ it('refuses a folder with no devcontainer.json, and a CLI that is not there', as
     encoding: 'utf-8',
   })).rejects.toThrow(/Dev Container CLI/);
   expect(dockerHeld(otherDocker).machines).toEqual([]);
+  await answered(dockerState, 1);
+  await answered(otherDocker, 3);
 });
 
 /*
@@ -266,6 +288,7 @@ it('reaches it through devcontainer exec, with the folder from its label', async
   });
   expect(devHeld(devState).calls.length).toBe(before + 1);
   expect(devHeld(devState).calls.at(-1)).toContain('--workspace-folder');
+  await answered(dockerState, 6);
 });
 
 /*
@@ -303,6 +326,9 @@ it('offers the session folder\'s dev container, and not once one exists', async 
   const rows = await answererAgain({ property: 'computer', query: '', workingDirectory: `file://${withDefinition}` });
   expect(rows.map((one) => one.value)).toContain('computer://existing');
   expect(rows.some((one) => one.value === `devcontainer://${withDefinition}`)).toBe(false);
+  // Each load's own listing, and each answer's.
+  await answered(dockerState, 3);
+  await answered(existing, 2);
 });
 
 it('makes it at session start, with the harness needs as --mount and --remote-env', async () => {
@@ -339,6 +365,7 @@ it('makes it at session start, with the harness needs as --mount and --remote-en
   // source the person picked.
   expect(opened.snapshot.state.config?.values?.computer).toBe('computer://abc123');
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await answered(dockerState, 2);
 });
 
 /*
@@ -392,4 +419,5 @@ it('connect twice for one folder makes one container', async () => {
   await client.handle({ method: 'vscode/devContainers/disconnect', params: { connectionId: 'two' } });
   await until(() => devHeld(devState).calls.some((one) => one[0] === 'up'));
   expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  await answered(dockerState, 3);
 });

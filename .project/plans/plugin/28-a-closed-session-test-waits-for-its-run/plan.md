@@ -39,6 +39,7 @@ No decision records of its own; the choices below are scope.
 | --- | --- | --- |
 | Test-only: each case waits, with a wall-clock limit that fails on its own message, until the store holds no run still `running` or `awaiting`, then removes the folder; no retries on the removal | CI red on `c5dbe8c`, 2026-09-29, reported by Softov | 01 |
 | Test-only, same shape: a worktree case waits until git lists one worktree and the session's branch is gone before `afterEach` removes the root | `ENOTEMPTY` on `/tmp/ahpd-wt-*` in the review gates, 1 run in 3, 2026-09-29 | 02 |
+| Test-only, same shape: the dev container case waits for what still writes into its folder before `afterEach` removes it | `ENOTEMPTY` on `/tmp/ahpd-computer-devc-*`, 1 run in 12 of the file on main `cbaeb10`, 2026-09-29 | 03 |
 
 ## Tasks
 
@@ -46,10 +47,11 @@ No decision records of its own; the choices below are scope.
 | --- | --- | --- |
 | [01 - Wait for the run before removing the store](task-01-wait-for-the-run.md) | implemented | - |
 | [02 - Wait for git to finish removing a worktree before removing the repository](task-02-wait-for-git-after-dispose.md) | implemented | - |
+| [03 - The dev container cases wait for what they started](task-03-wait-for-the-dev-container-case.md) | implemented | - |
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 implemented 2026-09-29 and reviewed, on main; the three cofold cases wait on `settled` and every closed run ends `cancelled`; the two worktree cases that dispose a clean tree wait on `cleared` until git lists one worktree and the branch is gone.
-- **Next action:** CI green on the push moves 01 and 02 to `done` and closes the plan.
+- **Done so far:** tasks 01 and 02 implemented 2026-09-29 and reviewed, on main; the three cofold cases wait on `settled` and every closed run ends `cancelled`; the two worktree cases that dispose a clean tree wait on `cleared` until git lists one worktree and the branch is gone. Task 03 implemented 2026-09-29, awaiting review: the six dev container cases wait on `answered` until the scripted docker has recorded every call, the plugin's unawaited startup listing among them, and holds no lock.
+- **Next action:** review task 03; CI green on the push moves 01, 02 and 03 to `done`.
 - **Open questions:** none.
 - **Watch out for:** if the run never leaves `awaiting` after `close`, that is a product fault: stop and report it.
