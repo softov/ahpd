@@ -35,6 +35,7 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 ### Gaps
 
 - Replay is written into the first new turn; a load from `setConfig` drops it.
+- After a restart, a session opens blank until its next turn: `session/load` runs only when a turn opens the server.
 
 ## Decisions locked in
 
@@ -42,6 +43,7 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 | --- | --- | --- |
 | A replayed turn starts at each `user_message_chunk` | the spec's replay order: the user message, then the agent's updates | 02 |
 | Plugin 18 task 01 builds on this plan | both change `open`; this one is the ground | - |
+| A session this process never watched is loaded when a client reads its transcript, where the server advertises `loadSession`; its restored tool calls carry no times, since ACP has none | Softov, 2026-09-29, asked "After a daemon restart, an ACP session opens blank until a turn starts, although the server could replay its history with session/load (v1) or session/resume with replayFrom (v2 draft). Should that be planned?": "Plan it in acp" | 03 |
 
 ## Proposed architecture
 
@@ -53,6 +55,7 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 | --- | --- | --- |
 | [01 - Replay is collected, not mapped into a turn](task-01-replay-is-collected-not-mapped-into-a-turn.md) | todo | - |
 | [02 - Collected replay becomes the session's earlier turns](task-02-collected-replay-becomes-turns.md) | todo | 01 |
+| [03 - A session never watched is loaded when a client reads it](task-03-a-session-opened-after-a-restart-is-loaded.md) | todo | 02 |
 
 ## Risks and tradeoffs
 

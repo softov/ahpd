@@ -1,6 +1,6 @@
 ---
 title: A file Claude created, edited and staged through Bash is listed as added
-status: blocked
+status: dropped
 depends: []
 layer: "sdk, agent-claude"
 refs:
@@ -37,7 +37,7 @@ The `D` Softov saw is reproduced, its cause found and pinned by a test that fail
 
 ## Resume
 
-- **Status:** blocked. The `D` did not reproduce in six real Claude sessions, so there is no cause to pin and no fix was written.
+- **Status:** dropped 2026-09-29 by Softov: the `D` did not reproduce in six real Claude sessions, and on 2026-09-29 Softov staged and unstaged a new file from the IDE and from ahpapp in both directions and saw `A` and `U` each time. No cause was found and no fix was written.
 - **Setup:** a scratch daemon from this worktree (with tasks 02, 03 and 04 already built in it), `XDG_CONFIG_HOME=/tmp/ahpd-repro26/config`, port 9431, `--without-connection-token`, `--plugin file://<worktree>/packages/agent-claude/src/index.ts`, `--sessions memory`, `--automations memory`, `--wire /tmp/ahpd-repro26/wire.jsonl`; stopped by its pid after the runs.
 - The client was a scratch script over `ws`: `createSession` with `provider: 'claude'`, subscribed to the session, its default chat, `<session>/changeset/session` and `<session>/changeset/uncommitted`; it approved every `toolConfirmation`, waited for the turn to end plus 4 seconds, subscribed again to both changesets for their snapshots, and read `git status --porcelain=v1 -z`.
 - Claude Code 2.1.267, signed in on this machine, on the backend's default model.

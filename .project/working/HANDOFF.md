@@ -8,12 +8,15 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 
 ## Now
 
-- 0.8.0 is published: all 8 `@ahpd` packages on npm, from `v0.8.0` on `bde31b5`.
-- Next: Softov checks the upgrade from his installed 0.7.0.
+- 0.8.0 is published. Softov's checks 1 to 5 pass; checks 6 to 21 wait.
+- On main, not pushed: `2221a3c` and `944b9cd` ([plugin/28](../plans/plugin/28-a-closed-session-test-waits-for-its-run/plan.md), the CI fixes) and `cbaeb10` ([host/29](../plans/host/29-a-session-not-running-follows-its-own-folder/plan.md)). CI green on the push closes plugin/28 (tasks 01-03) and frees the `ahpd-ci` worktree.
+- [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) is built and reviewed in the `ahpd-fixes` worktree, uncommitted. It is committed after Softov checks `ahpd plugin update all` against a 0.7 configuration; task 07 (a named update refused before npm while another plugin is behind) passed review. Task 03 waits on cofold commands/03.
+- [plugin/29](../plans/plugin/29-a-tool-call-says-when-it-ran/plan.md), tool call times, is planned: p1 (sdk helper) first, then p2-p5.
 
 ## Waiting on Softov
 
-- [host/26](../plans/host/26-the-changeset-reads-git-status-right/plan.md) task 01 waits on which client and scope showed the `D` (the question in its Resume).
+- [daemon/10](../plans/daemon/10-a-first-run-sets-the-daemon-up/plan.md) `ahpd init` is a draft with four open questions.
+- cofold commands/03 is planned, not built; the `@cofold/terminal` range bump in ahpd needs his approval.
 - [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on the approach (task 01).
 - [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) is a draft with two open questions.
 - [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md): two candidate fixes, none chosen.

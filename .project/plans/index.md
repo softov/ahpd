@@ -24,7 +24,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
-Next free number in `daemon`: `09`.
+| [10 - `ahpd init` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | draft 2026-09-29; four open questions | daemon 09 | - |
+
+Next free number in `daemon`: `11`.
 
 ## host
 
@@ -57,14 +59,16 @@ Reference: [00-host.md](host/00-host.md)
 | [23 - A session outside the configured paths has its git facts and its changes without waiting for a turn](host/23-a-session-outside-the-paths-has-its-facts/plan.md) | high | built 2026-09-28 ([implemented.md](host/23-a-session-outside-the-paths-has-its-facts/implemented.md)) | - | - |
 | [24 - An approval offers the agent's own options, and the one picked reaches the agent](host/24-an-approval-offers-the-agents-own-options/plan.md) | high | built 2026-09-28 ([implemented.md](host/24-an-approval-offers-the-agents-own-options/implemented.md)) | - | - |
 | [25 - A forked chat says which chat and turn it came from](host/25-a-forked-chat-says-where-it-came-from/plan.md) | medium | built 2026-09-28 ([implemented.md](host/25-a-forked-chat-says-where-it-came-from/implemented.md)) | - | - |
-| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | active 2026-09-28; tasks 02-04 done; task 01 blocked: the `D` did not reproduce | - | - |
+| [26 - The session's changes read git's status right, from any folder](host/26-the-changeset-reads-git-status-right/plan.md) | high | built 2026-09-29 ([implemented.md](host/26-the-changeset-reads-git-status-right/implemented.md)) | - | - |
 | [27 - A session reads as running while any of its chats runs, a worker chat included](host/27-a-session-reads-running-while-any-chat-runs/plan.md) | high | built 2026-09-28 ([implemented.md](host/27-a-session-reads-running-while-any-chat-runs/implemented.md)) | - | - |
 
 | [28 - A changeset watch says when it is armed, and nothing between the first read and the watch is missed](host/28-a-changeset-watch-says-when-it-is-armed/plan.md) | high | built 2026-09-28 ([implemented.md](host/28-a-changeset-watch-says-when-it-is-armed/implemented.md)) | - | - |
 
 | [29 - A session that is not running shows its own folder, and its changes follow git](host/29-a-session-not-running-follows-its-own-folder/plan.md) | high | built 2026-09-29 ([implemented.md](host/29-a-session-not-running-follows-its-own-folder/implemented.md)) | - | - |
 
-Next free number in `host`: `30`.
+| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | draft 2026-09-29; four open questions | - | - |
+
+Next free number in `host`: `31`.
 
 ## claude
 
@@ -129,7 +133,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [28 - A test that ends a session waits for its cleanup to finish before removing its folder](plugin/28-a-closed-session-test-waits-for-its-run/plan.md) | high | active 2026-09-29; tasks 01, 02 and 03 implemented; CI red on `c5dbe8c` | plugin 27 | - |
 
-Next free number in `plugin`: `29`.
+| [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
+
+Next free number in `plugin`: `30`.
 
 ## container
 
@@ -187,7 +193,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | active 2026-09-28, task 01 done, 02-05 todo | - | acp 12 |
-| [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | plugin 18, acp 01 task 03 |
+| [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | plugin 18, acp 01 task 03 |
 | [03 - A turn ends as the agent ended it](acp/03-a-turn-ends-as-the-agent-ended-it/plan.md) | high | planned 2026-09-26, tasks 01-02 todo | - | - |
 | [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | acp 05 |
 | [05 - A spec can name a preset for a known ACP agent](acp/05-presets/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 04 | container 05 p5 |
