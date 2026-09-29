@@ -1780,6 +1780,20 @@ describe('a session that already happened', () => {
     expect(opened.title).toBe(listed.items[0]?.title);
   });
 
+  it('names the folder its catalogue row listed, not the host\'s', async () => {
+    sdk.sessions.push({ ...older, cwd: '/github/s2cmd' });
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const listed = await client.handle({ method: 'listSessions', params: {} }) as {
+      items: { resource: string; workingDirectories: string[] }[];
+    };
+    expect(listed.items[0]?.workingDirectories).toEqual(['file:///github/s2cmd']);
+    const opened = (await client.handle({ method: 'subscribe', params: { channel: listed.items[0]?.resource } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(opened.workingDirectories).toEqual(['file:///github/s2cmd']);
+  });
+
   it('resumes rather than replays when somebody says something', async () => {
     sdk.sessions.push(older);
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });

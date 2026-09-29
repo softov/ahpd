@@ -2755,6 +2755,26 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * The sessions in a directory that a move of its changesets is told to.
+   *
+   * Every running one, and each catalogued one that is not running whose
+   * changeset a connection watches, under the name that connection watches it
+   * by.
+   */
+  const toldIn = (dir: string): string[] => {
+    const told = new Set(inThere(dir));
+    for (const connection of connections) {
+      for (const channel of connection.watching) {
+        const at = changesetAt(channel);
+        if (at === undefined || at.dir !== dir) continue;
+        const named = heldAs(at.owner);
+        if (!sessions.has(named) && owners.has(named)) told.add(at.owner);
+      }
+    }
+    return [...told];
+  };
+
+  /**
    * Whether any connection is watching a changeset of a session in `dir`.
    *
    * The uncommitted changeset is only worth re-reading for a client that is
@@ -2762,7 +2782,7 @@ export function createHost(options: HostOptions): Host {
    * `git status` is not free.
    */
   const watchedIn = (dir: string): boolean => {
-    const prefixes = inThere(dir).map((uri) => `${uri}/changeset/`);
+    const prefixes = toldIn(dir).map((uri) => `${uri}/changeset/`);
     if (prefixes.length === 0) return false;
     for (const connection of connections) {
       for (const channel of connection.watching) {
@@ -2828,7 +2848,7 @@ export function createHost(options: HostOptions): Host {
          */
         if (moved) {
           try {
-            for (const uri of inThere(dir)) {
+            for (const uri of toldIn(dir)) {
               dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
               summaryMoved(uri);
               await contentMoved(uri);
@@ -5494,7 +5514,7 @@ export function createHost(options: HostOptions): Host {
               one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             )),
           ],
-          workingDirectories: wheres.get(`ahp-session:/${id}`) ?? [`file://${dir}`],
+          workingDirectories: wheres.get(nameOf(id)) ?? [`file://${dir}`],
           activeClients: activeClientsOf(nameOf(id)),
           ...(contributing.length > 0 ? { serverTools: toolDefinitions(nameOf(id)) } : {}),
           ...describes(nameOf(id)),

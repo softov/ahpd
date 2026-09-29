@@ -62,7 +62,9 @@ Reference: [00-host.md](host/00-host.md)
 
 | [28 - A changeset watch says when it is armed, and nothing between the first read and the watch is missed](host/28-a-changeset-watch-says-when-it-is-armed/plan.md) | high | built 2026-09-28 ([implemented.md](host/28-a-changeset-watch-says-when-it-is-armed/implemented.md)) | - | - |
 
-Next free number in `host`: `29`.
+| [29 - A session that is not running shows its own folder, and its changes follow git](host/29-a-session-not-running-follows-its-own-folder/plan.md) | high | built 2026-09-29 ([implemented.md](host/29-a-session-not-running-follows-its-own-folder/implemented.md)) | - | - |
+
+Next free number in `host`: `30`.
 
 ## claude
 

@@ -702,3 +702,54 @@ it('does not read a second time a stored session\'s directory that is already se
   await new Promise((r) => { setTimeout(r, 200); });
   expect(reads.get(dir)).toBe(1);
 });
+
+/** `storing`, with a transcript to serve its row from. */
+const stored = (home: string, dir: string): Agent => ({ ...storing(home, dir), transcript: async () => [] });
+
+it('tells a client watching a stored session\'s changeset that a commit cleared it', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'staged.txt'), 'staged\n');
+  git(dir, 'add', 'staged.txt');
+  const home = elsewhere();
+  const host = createHost({
+    path: home, agents: [stored(home, dir)], resources: fileResources(), terminals: shellTerminals(),
+    changes: gitChanges(), directories: gitBranches(),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle(hello);
+  await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  const changeset = 'echo:/stored/changeset/uncommitted';
+  await client.handle({ method: 'subscribe', params: { channel: 'echo:/stored' } });
+  const answer = await client.handle({ method: 'subscribe', params: { channel: changeset } }) as {
+    snapshot: { state: { files: unknown[] } };
+  };
+  expect(answer.snapshot.state.files).toHaveLength(1);
+
+  git(dir, 'commit', '-q', '-m', 'x');
+  await waitFor(() => channelActions(p, changeset).some((one) => one.type === 'changeset/cleared'));
+});
+
+it('keeps a stored session\'s git watch while its changeset is watched, and closes it after', async () => {
+  const dir = repository();
+  const home = elsewhere();
+  const { calls, source } = counting();
+  const host = createHost({
+    path: home, agents: [stored(home, dir)], resources: fileResources(), terminals: shellTerminals(),
+    changes: source, directories: gitBranches(),
+  });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  const changeset = 'echo:/stored/changeset/uncommitted';
+  await client.handle({ method: 'subscribe', params: { channel: changeset } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+
+  const before = calls.refresh;
+  calls.watched?.();
+  await waitFor(() => calls.finished === before + 1);
+  expect(calls.stopped).toBe(0);
+
+  await client.handle({ method: 'unsubscribe', params: { channel: changeset } });
+  expect(calls.stopped).toBe(1);
+});
