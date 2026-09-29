@@ -100,6 +100,37 @@ const joined = async (root: string, worktrees?: Worktrees) => {
 
 const project = (root: string) => join(root, 'project');
 
+/** The branch checked out in a working tree. */
+const branchOf = (where: string) => execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
+
+/**
+ * Wait until git has finished taking a session's tree away: the repository
+ * lists only itself and the session's branch is gone.
+ *
+ * Disposal removes the tree and then deletes the branch without being
+ * awaited, and both write `.git` after the tree's folder is gone, so a test
+ * that stops at the folder leaves `afterEach` removing a repository git is
+ * still writing. A probe that fails counts as not yet: git reading
+ * `.git/worktrees` while another git is removing an entry from it can fail.
+ */
+const cleared = async (repository: string, branch: string): Promise<void> => {
+  const finished = (): boolean => {
+    try {
+      const trees = execFileSync('git', ['-C', repository, 'worktree', 'list', '--porcelain'], { stdio: 'pipe' })
+        .toString().split('\n').filter((line) => line.startsWith('worktree ')).length;
+      const left = execFileSync('git', ['-C', repository, 'branch', '--list', branch], { stdio: 'pipe' }).toString().trim();
+      return trees === 1 && left === '';
+    } catch {
+      return false;
+    }
+  };
+  const limit = Date.now() + 4_000;
+  while (!finished()) {
+    if (Date.now() > limit) throw new Error(`git never finished removing the worktree on ${branch} in ${repository}`);
+    await new Promise((r) => { setTimeout(r, 25); });
+  }
+};
+
 /** Read the session back until it says what the test is waiting for. */
 type Held = { config: { values: Record<string, string> }; workingDirectories?: string[] };
 const until = async (
@@ -548,9 +579,10 @@ describe('a session with a working tree of its own', () => {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
     expect(existsSync(where)).toBe(true);
+    const branch = branchOf(where);
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
-    for (let i = 0; i < 40 && existsSync(where); i++) await new Promise((r) => { setTimeout(r, 25); });
+    await cleared(project(root), branch);
     expect(existsSync(where)).toBe(false);
   });
 
@@ -635,8 +667,6 @@ describe('a worktree the window holds a handle on', () => {
     }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
     return { client, where };
   };
-  const branchOf = (where: string) => execFileSync('git', ['-C', where, 'rev-parse', '--abbrev-ref', 'HEAD']).toString().trim();
-
   it('says so on initialize, and answers the session\'s tree by handle', async () => {
     const root = repository();
     const held = serving(root);
@@ -663,23 +693,11 @@ describe('a worktree the window holds a handle on', () => {
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: true } });
     expect(existsSync(where)).toBe(true);
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/held' } });
-    /*
-     * Wait for both halves of the disposal, not for the directory alone.
-     *
-     * The host takes the tree down and then deletes the branch, without
-     * awaiting either, so a poll on the directory can pass while the branch
-     * deletion is still in flight - and recreating the branch then fails with
-     * `a branch named ... already exists`, which is this test's flake. The
-     * branch is what the next line depends on, so it is what is waited for.
-     */
-    const branchGone = (): boolean =>
-      execFileSync('git', ['-C', project(root), 'branch', '--list', branch]).toString().trim() === '';
-    for (let i = 0; i < 40 && (!branchGone() || existsSync(where)); i++) {
-      await new Promise((r) => { setTimeout(r, 25); });
-    }
+    // Both halves of the disposal, since recreating the branch below needs
+    // the deletion finished, not only the directory gone.
+    await cleared(project(root), branch);
     // The disposal took the clean tree; the branch went with it, since it carried nothing.
     expect(existsSync(where)).toBe(false);
-    expect(branchGone()).toBe(true);
     // Unarchived: put back on its branch, when the branch is still there.
     execFileSync('git', ['-C', project(root), 'branch', branch, 'main'], { stdio: 'pipe' });
     await client.handle({ method: 'vscode/setAgentHostDetachedWorktreeArchived', params: { handle, archived: false } });

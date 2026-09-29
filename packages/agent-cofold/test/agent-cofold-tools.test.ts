@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
+import { createFileStore } from '@cofold/store-file';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import {
   DEFAULT_TOOLS,
@@ -33,6 +34,33 @@ const when = async (check: () => boolean, ms = 5000): Promise<void> => {
   const until = Date.now() + ms;
   while (!check()) {
     if (Date.now() > until) throw new Error('timed out waiting');
+    await new Promise((r) => { setTimeout(r, 0); });
+  }
+};
+
+/**
+ * Waits until the store under `root` holds a run of the session and none of
+ * them is still `running` or `awaiting` or has a write after its
+ * `run.finished`, and answers their statuses. Throws once `ms` of wall-clock
+ * time has passed, inside the case's own limit, so a run that `close` never
+ * ends fails on its own message rather than on the folder's removal.
+ */
+const settled = async (root: string, sessionId = 'tools', ms = 4000): Promise<string[]> => {
+  const store = createFileStore({ root });
+  const limit = Date.now() + ms;
+  for (;;) {
+    const runs = await store.runs.list({ sessionId });
+    let done = runs.length > 0;
+    for (const run of runs) {
+      if (!done) break;
+      const last = (await store.runs.listEvents({ sessionId, runId: run.runId })).at(-1);
+      done = run.status !== 'running' && run.status !== 'awaiting'
+        && last?.type === 'run.finished' && last.outcome.status === run.status;
+    }
+    if (done) return runs.map((run) => run.status);
+    if (Date.now() > limit) {
+      throw new Error(`timed out waiting for the closed session's runs to end: ${runs.map((run) => run.status).join(', ') || 'none'}`);
+    }
     await new Promise((r) => { setTimeout(r, 0); });
   }
 };
@@ -360,6 +388,7 @@ it('sends a declined edit its after before the next ask', async () => {
   expect(ended(v)).toBe(false);
 
   session.close();
+  expect(await settled(dir)).toEqual(['cancelled']);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -478,6 +507,7 @@ it('asks before a shell command and sends its bare command on the request', asyn
   expect((request?.toolCall as Bag).toolInput).toBe('echo hi');
   expect(v.of('chat', 'chat/toolCallReady')[0]?.toolInput).toBe('echo hi');
   session.close();
+  expect(await settled(dir)).toEqual(['cancelled']);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -698,7 +728,10 @@ async function outcomeOf(mode: Mode, row: Row): Promise<Outcome> {
     ? 'ask'
     : completion !== undefined && (completion.result as Bag).success === true ? 'run' : 'deny';
   // A paused run is stopped rather than left waiting on a person who is not there.
-  if (paused) session.close();
+  if (paused) {
+    session.close();
+    expect(await settled(workspace), `${row.what} under ${mode}`).toEqual(['cancelled']);
+  }
   rmSync(workspace, { recursive: true, force: true });
   rmSync(away, { recursive: true, force: true });
   return outcome;
