@@ -137,7 +137,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
 
-Next free number in `plugin`: `30`.
+| [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | planned 2026-09-29; tasks 01-03 implemented 2026-09-29, awaiting review | plugin 28 | - |
+
+Next free number in `plugin`: `31`.
 
 ## container
 

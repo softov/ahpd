@@ -219,6 +219,38 @@ it('fails the turn when the point is not in the conversation, rather than contin
   expect((await store.sessions.listMessages({ sessionId: id })).length).toBe(before);
 });
 
+/**
+ * Wait until a fork has landed, failing on its own message after a wall-clock
+ * limit inside the case's.
+ *
+ * `Store.sessions.fork` writes the target's messages first and then each kept
+ * run's record, events and steps, so the fork is whole once the messages are
+ * there and every source run that ended inside them has all of its events and
+ * steps in the target.
+ */
+const landed = async (store: ReturnType<typeof createFileStore>, source: string, target: string, ms = 2000): Promise<void> => {
+  const limit = Date.now() + ms;
+  const runs = await store.runs.list({ sessionId: source });
+  const whole = async (): Promise<boolean> => {
+    const kept = new Set((await store.sessions.listMessages({ sessionId: target })).map((message) => message.id));
+    if (kept.size === 0) return false;
+    for (const run of runs) {
+      if (run.lastMessageId === undefined || !kept.has(run.lastMessageId)) continue;
+      const from = { sessionId: source, runId: run.runId };
+      const to = { sessionId: target, runId: run.runId };
+      if ((await store.runs.listEvents(to)).length !== (await store.runs.listEvents(from)).length) return false;
+      if ((await store.runs.listSteps(to)).length !== (await store.runs.listSteps(from)).length) return false;
+    }
+    return true;
+  };
+  for (;;) {
+    // A target the fork has not made yet is `not_found`, which is not landed.
+    if (await whole().catch(() => false)) return;
+    if (Date.now() > limit) throw new Error(`timed out waiting for the fork of ${source} to land in ${target}`);
+    await new Promise((r) => { setTimeout(r, 0); });
+  }
+};
+
 it('copies the kept turns with their records, not just their text', async () => {
   // The same fork, asserted on the store rather than on the transcript, so the
   // two views cannot agree by accident. The cut is at the prompt the forked
@@ -243,7 +275,7 @@ it('copies the kept turns with their records, not just their text', async () => 
       return [];
     }
   };
-  await untilAsync(async () => (await copied()).length === 3);
+  await landed(store, id, target);
   expect(await copied()).toEqual(['question one', 'answer one', 'question two']);
   // The turn whose prompt was kept has no run: it is the turn the fork is for.
   const runs = await store.runs.list({ sessionId: target });

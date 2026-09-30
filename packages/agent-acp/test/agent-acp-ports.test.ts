@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,11 +62,33 @@ const prose = (p: ReturnType<typeof peer>, chatUri: string): string => actions(p
 const made: string[] = [];
 const running: { client: ReturnType<ReturnType<typeof createHost>['accept']>; uri: string }[] = [];
 
+/**
+ * Wait until the host's own catalogue read has written its last line into a
+ * folder's log, failing on its own message after a wall-clock limit inside the
+ * hook's.
+ *
+ * `createHost` reads the catalogue once by itself, unawaited, and that read
+ * spawns a server of its own that appends each request it is sent to the same
+ * log. Its last request is `session/list`, which a session's server is never
+ * sent.
+ */
+const listed = async (log: string, ms = 4000): Promise<void> => {
+  const limit = Date.now() + ms;
+  for (;;) {
+    if (existsSync(log) && readFileSync(log, 'utf8').includes('"method":"session/list"')) return;
+    if (Date.now() > limit) throw new Error(`timed out waiting for the host's catalogue read to finish writing ${log}`);
+    await new Promise((r) => { setTimeout(r, 1); });
+  }
+};
+
 afterEach(async () => {
   for (const one of running.splice(0)) {
     await one.client.handle({ method: 'disposeSession', params: { channel: one.uri } });
   }
-  for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of made.splice(0)) {
+    await listed(join(path, 'requests.jsonl'));
+    rmSync(path, { recursive: true, force: true });
+  }
 });
 
 /**

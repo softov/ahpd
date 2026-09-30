@@ -448,4 +448,5 @@ it('installs the server in a container at the daemon\'s version, from the plugin
   );
   expect(devHeld(devState).commands[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
   for (let i = 0; i < 600 && said.length === 0 && closed.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
+  await answered(join(root, 'docker.json'), 2);
 });
