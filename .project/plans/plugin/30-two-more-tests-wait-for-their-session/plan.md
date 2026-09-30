@@ -1,7 +1,7 @@
 ---
 title: Two more tests wait for what their session is still doing
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -33,14 +33,14 @@ The two tests stop failing about one run in three, so CI does not go red on an u
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The acp ports case waits for its shell](task-01-the-acp-ports-case-waits.md) | implemented | - |
-| [02 - The cofold fork case waits for its records](task-02-the-cofold-fork-case-waits.md) | implemented | - |
-| [03 - The daemon's-version case waits for the scripted docker](task-03-the-daemon-version-case-waits.md) | implemented | - |
+| [01 - The acp ports case waits for its shell](task-01-the-acp-ports-case-waits.md) | done | - |
+| [02 - The cofold fork case waits for its records](task-02-the-cofold-fork-case-waits.md) | done | - |
+| [03 - The daemon's-version case waits for the scripted docker](task-03-the-daemon-version-case-waits.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** planned 2026-09-29; tasks 01, 02 and 03 implemented 2026-09-29, test-only, awaiting review. The acp case's writer is the host's unawaited catalogue read, whose fixture server logs into the case's folder; the cofold case's writer is `Store.sessions.fork`, which writes the messages before the run records; the daemon's-version dev container case now waits on `answered` for its 2 docker calls, like its siblings.
-- **Next action:** review of tasks 01, 02 and 03.
+- **Done so far:** tasks 01-03 done 2026-09-30; CI green on `aa66dec`.
+- **Next action:** none; built.
 - **Open questions:** none.
 - **Watch out for:** if the writer is product code with nothing to wait on, stop and report it.
 

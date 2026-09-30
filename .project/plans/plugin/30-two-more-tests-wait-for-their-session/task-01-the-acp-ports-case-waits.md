@@ -1,6 +1,6 @@
 ---
 title: The acp ports case waits for its shell
-status: implemented
+status: done
 depends: []
 layer: "tests"
 refs:

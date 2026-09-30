@@ -1,6 +1,6 @@
 ---
 title: Wait for the run before removing the store
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold tests"
 refs:

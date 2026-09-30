@@ -1,7 +1,7 @@
 ---
 title: A test that ends a session waits for its cleanup to finish before removing its folder
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -45,13 +45,13 @@ No decision records of its own; the choices below are scope.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Wait for the run before removing the store](task-01-wait-for-the-run.md) | implemented | - |
-| [02 - Wait for git to finish removing a worktree before removing the repository](task-02-wait-for-git-after-dispose.md) | implemented | - |
-| [03 - The dev container cases wait for what they started](task-03-wait-for-the-dev-container-case.md) | implemented | - |
+| [01 - Wait for the run before removing the store](task-01-wait-for-the-run.md) | done | - |
+| [02 - Wait for git to finish removing a worktree before removing the repository](task-02-wait-for-git-after-dispose.md) | done | - |
+| [03 - The dev container cases wait for what they started](task-03-wait-for-the-dev-container-case.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 implemented 2026-09-29 and reviewed, on main; the three cofold cases wait on `settled` and every closed run ends `cancelled`; the two worktree cases that dispose a clean tree wait on `cleared` until git lists one worktree and the branch is gone. Task 03 implemented 2026-09-29, awaiting review: the six dev container cases wait on `answered` until the scripted docker has recorded every call, the plugin's unawaited startup listing among them, and holds no lock.
-- **Next action:** review task 03; CI green on the push moves 01, 02 and 03 to `done`.
+- **Done so far:** tasks 01-03 done 2026-09-29; CI green on `944b9cd`.
+- **Next action:** none; built.
 - **Open questions:** none.
 - **Watch out for:** if the run never leaves `awaiting` after `close`, that is a product fault: stop and report it.

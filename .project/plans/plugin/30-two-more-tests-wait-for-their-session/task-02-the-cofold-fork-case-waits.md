@@ -1,6 +1,6 @@
 ---
 title: The cofold fork case waits for its records
-status: implemented
+status: done
 depends: []
 layer: "tests"
 refs:

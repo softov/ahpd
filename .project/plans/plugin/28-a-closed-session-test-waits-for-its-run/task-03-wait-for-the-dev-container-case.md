@@ -1,6 +1,6 @@
 ---
 title: The dev container cases wait for what they started before removing their folder
-status: implemented
+status: done
 depends: []
 layer: "computer tests"
 refs:

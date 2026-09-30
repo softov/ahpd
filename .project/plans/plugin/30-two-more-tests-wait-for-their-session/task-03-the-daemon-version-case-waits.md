@@ -1,6 +1,6 @@
 ---
 title: The dev container case for the daemon's version waits for the scripted docker
-status: implemented
+status: done
 depends: []
 layer: "tests"
 refs:

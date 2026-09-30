@@ -1,6 +1,6 @@
 ---
 title: Wait for git to finish removing a worktree before removing the repository
-status: implemented
+status: done
 depends: []
 layer: "sdk tests"
 refs:

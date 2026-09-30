@@ -133,11 +133,11 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [27 - An answer given the moment a cofold request opens reaches the run](plugin/27-an-early-answer-reaches-the-paused-run/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/27-an-early-answer-reaches-the-paused-run/implemented.md)) | plugin 03 | - |
 
-| [28 - A test that ends a session waits for its cleanup to finish before removing its folder](plugin/28-a-closed-session-test-waits-for-its-run/plan.md) | high | active 2026-09-29; tasks 01, 02 and 03 implemented; CI red on `c5dbe8c` | plugin 27 | - |
+| [28 - A test that ends a session waits for its cleanup to finish before removing its folder](plugin/28-a-closed-session-test-waits-for-its-run/plan.md) | high | built 2026-09-29 ([implemented.md](plugin/28-a-closed-session-test-waits-for-its-run/implemented.md)) | plugin 27 | - |
 
 | [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
 
-| [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | planned 2026-09-29; tasks 01-03 implemented 2026-09-29, awaiting review | plugin 28 | - |
+| [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
 
 Next free number in `plugin`: `31`.
 
