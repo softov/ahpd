@@ -13,14 +13,17 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 - [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) is on main in `21a4488`, pushed; its tasks wait on Softov's check. Task 03 waits on cofold commands/03. It reaches the registry only in 0.8.1, since the published 0.8.0 sdk still peers the protocol package.
 - [claude/08](../plans/claude/08-tool-input-is-the-whole-input/plan.md) is built and reviewed on main, uncommitted; Softov checks the whole `toolInput` in ahpapp, then it is committed.
 - [plugin/29](../plans/plugin/29-a-tool-call-says-when-it-ran/plan.md), tool call times, is planned: p1 (sdk helper) first, then p2-p5.
+- Planned 2026-09-29, from the VS Code key comparison: [host/31](../plans/host/31-a-sessions-config-outlives-a-restart/plan.md) before [claude/10](../plans/claude/10-a-claude-session-runs-on-a-preset/plan.md) presets; [claude/09](../plans/claude/09-a-message-runs-on-the-agent-it-picked/plan.md) the agent picker; [daemon/11](../plans/daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md), [daemon/12](../plans/daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) and [daemon/13](../plans/daemon/13-ahpd-restart/plan.md) for configuration from a client. None started.
 
 ## Waiting on Softov
 
-- [daemon/10](../plans/daemon/10-a-first-run-sets-the-daemon-up/plan.md) `ahpd init` is a draft with four open questions.
 - cofold commands/03 is planned, not built; the `@cofold/terminal` range bump in ahpd needs his approval.
-- [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) waits on the approach (task 01).
-- [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) is a draft with two open questions.
-- [A plugin file without its own package.json takes the enclosing package's manifest](../problems/a-plugin-file-without-a-manifest-takes-the-enclosing-packages.md): two candidate fixes, none chosen.
+- The claude/08 check: he reports `toolInput` cut in ahpapp with the daemon run from source (2026-09-30); being traced.
+- host/30 task 06: the upstream issue's text, shown to him before it is posted.
+
+## Answered 2026-09-30, now planned
+
+- [host/30](../plans/host/30-a-session-is-listed-under-its-providers-name/plan.md), [daemon/10](../plans/daemon/10-a-first-run-sets-the-daemon-up/plan.md) (`ahpd configure`), [acp/11](../plans/acp/11-the-agent-gets-mcp-servers/plan.md) (after daemon/11), [plugin/22](../plans/plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) (in cofold), and [plugin/31](../plans/plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md), which replaced the manifest problem.
 
 ## Next after the release
 
@@ -38,6 +41,7 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 - VS Code with the seeded `computer` picker: the chip should read `This host` or a machine's name, once.
 - ahpapp against the published packages: the computer picker, and the dev container relay with `devcontainer.plugins` in a real container.
 - Session state written by 0.6 read by 0.8.
+- An MCP tool call on Claude, and on each other agent: the tool is listed, runs, and its result is shown.
 - In ahpapp or VS Code: an approval's options in its dropdown (host/24), a fork shown as a fork (host/25), the session list while a worker runs (host/27), a restored Claude session (claude/05), Stop inside a subagent with and without `workerStop: "session"` (claude/06), a re-subscribe after a turn that ended with an open call (claude/07), and tool calls titled by what they run on (pi/12).
 
 ## Environment notes written nowhere else

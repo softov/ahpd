@@ -26,9 +26,12 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 
 | [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; tasks 01, 02, 04, 06, 08, 09, 10, 11 implemented, 05 and 07 dropped; 03 waits on cofold | - | - |
 
-| [10 - `ahpd init` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | draft 2026-09-29; four open questions | daemon 09 | - |
+| [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | planned 2026-09-30; tasks 01-05 todo | daemon 09 | - |
+| [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | planned 2026-09-29; tasks 01-06 todo | - | - |
+| [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | planned 2026-09-29; tasks 01-03 todo | - | - |
+| [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | planned 2026-09-29; tasks 01-03 todo | - | - |
 
-Next free number in `daemon`: `11`.
+Next free number in `daemon`: `14`.
 
 ## host
 
@@ -68,9 +71,10 @@ Reference: [00-host.md](host/00-host.md)
 
 | [29 - A session that is not running shows its own folder, and its changes follow git](host/29-a-session-not-running-follows-its-own-folder/plan.md) | high | built 2026-09-29 ([implemented.md](host/29-a-session-not-running-follows-its-own-folder/implemented.md)) | - | - |
 
-| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | draft 2026-09-29; four open questions | - | - |
+| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | planned 2026-09-30; tasks 01-06 todo | - | - |
+| [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | planned 2026-09-29; tasks 01-02 todo | - | claude 10 |
 
-Next free number in `host`: `31`.
+Next free number in `host`: `32`.
 
 ## claude
 
@@ -86,7 +90,10 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/06-a-stop-in-a-worker-chat-stops-that-worker/implemented.md)) | claude 04 | - |
 | [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | built 2026-09-28 ([implemented.md](claude/07-a-turn-ends-with-no-call-left-open/implemented.md)) | - | - |
 
-Next free number in `claude`: `08`.
+| [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | - | - |
+| [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | host 31 | - |
+
+Next free number in `claude`: `11`.
 
 ## documentation
 
@@ -125,7 +132,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [19 - A docker machine may run under gVisor](plugin/19-a-docker-machine-may-run-under-gvisor/plan.md) | low | planned 2026-09-26, after plugin 18 | plugin 10 | - |
 | [20 - A plugin is a client of its own host, as a principal of its own](plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md) | high | planned 2026-09-26, after plugin 17 | plugin 01, host 11 | plugin 21, and every gateway, trigger and facade plugin |
 | [21 - A plugin serves an HTTP route on the daemon's listener](plugin/21-a-plugin-serves-an-http-route/plan.md) | medium | planned 2026-09-26, after plugin 20; task 02 after daemon 05 tasks 15 and 16 | daemon 05, plugin 20 | webhook, callback and facade plugins |
-| [22 - A cofold write lands on the file its check allowed, and not on one that changed since it was read](plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) | medium | draft 2026-09-27; task 01 chooses the approach with Softov | plugin 14 | - |
+| [22 - A cofold write lands on the file its check allowed, and not on one that changed since it was read](plugin/22-a-cofold-write-lands-where-it-was-allowed/plan.md) | medium | planned 2026-09-30; task 01 done, 02-04 todo (02 and 03 in cofold) | plugin 14 | - |
 | [23 - A cofold session reopens on the model its turns ran on](plugin/23-a-cofold-session-keeps-its-model/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/23-a-cofold-session-keeps-its-model/implemented.md)) | plugin 14 | - |
 | [24 - The log says when each plugin starts loading and how long it took](plugin/24-the-log-times-each-plugin/plan.md) | medium | built 2026-09-28 ([implemented.md](plugin/24-the-log-times-each-plugin/implemented.md)) | plugin 01 | - |
 | [25 - A plugin's agent sees every path the daemon serves](plugin/25-a-plugin-agent-sees-every-served-path/plan.md) | high | built 2026-09-28 ([implemented.md](plugin/25-a-plugin-agent-sees-every-served-path/implemented.md)) | plugin 01 | - |
@@ -138,8 +145,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
 
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
+| [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | planned 2026-09-30; task 01 todo | - | - |
 
-Next free number in `plugin`: `31`.
+Next free number in `plugin`: `32`.
 
 ## container
 
@@ -192,7 +200,7 @@ Next free number in `pi`: `13`.
 
 Reference: [00-acp.md](acp/00-acp.md)
 
-Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in any order, 12; 07 is dropped into host 24; 11 is a draft.
+Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in any order, 12; 07 is dropped into host 24; 11 is planned after daemon 11.
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
@@ -206,7 +214,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | [08 - Usage, title, plan and mode changes reach the client](acp/08-session-updates-reach-the-client/plan.md) | medium | planned 2026-09-26, tasks 01-04 todo | - | acp 09 |
 | [09 - Every option an agent offers is a control](acp/09-every-config-option-is-a-control/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 08 | - |
 | [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | - | - |
-| [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | draft 2026-09-26, two open questions | - | - |
+| [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | planned 2026-09-30; tasks 01-05 todo | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | planned 2026-09-26, tasks 01-02 todo | acp 01 | - |
 
 Next free number in `acp`: `13`.
@@ -214,4 +222,4 @@ Next free number in `acp`: `13`.
 ## Domains without a plan
 
 None. `host`, `claude`, `documentation`, `plugin`, `container`, `pi` and `acp` each have a plan above.
-Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md).
+Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [a plugin reloads without a restart](../ideas/a-plugin-reloads-without-a-restart.md), [a secret store](../ideas/a-secret-store.md), [users are managed like computers](../ideas/users-are-managed-like-computers.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md).

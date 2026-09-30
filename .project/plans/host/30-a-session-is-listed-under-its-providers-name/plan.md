@@ -1,10 +1,10 @@
 ---
 title: A session is listed under its provider's name, whatever a client created it as, so VS Code opens it
 domain: host
-status: draft
+status: planned
 priority: high
 created: 2026-09-29
-revalidated: 2026-09-29
+revalidated: 2026-09-30
 decisions:
   - decisions/a-session-is-held-under-its-providers-name.md
 refs:
@@ -67,6 +67,10 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 | --- | --- | --- |
 | Every request that names a session or chat resolves any spelling of it | decision 1 | 02 |
 | A chat title survives the session being held under a new name | decision 1 | 04 |
+| URIs inside an action reach an aliased subscriber in its own spelling (task 03 in scope) | Softov, 2026-09-30, took the proposed answers to the open questions ("major accepted recommendations on questions") | 03 |
+| The creating connection gets `root/sessionAdded` under the held name, not its own | same answer | 01 |
+| A nested host's inner session keeps `ahp-session:/<uuid>` | same answer | - |
+| The mismatch is reported upstream: an issue on the agent-host-protocol repository asking whether a session's scheme must be its provider, its text shown to Softov before it is posted | Softov, 2026-09-30, asked "should we also report upstream that VS Code reads a session's provider from its URI scheme?": "Yes, text shown first" | 06 |
 
 ## Proposed architecture
 
@@ -85,6 +89,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 | [03 - An action reaches an aliased subscriber in its own spelling](task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md) | todo | 01 |
 | [04 - A chat title survives the session's new name](task-04-a-chat-title-survives-the-new-name.md) | todo | 01 |
 | [05 - VS Code opens a session another client created](task-05-vs-code-opens-a-session-another-client-created.md) | todo | 02, 03, 04 |
+| [06 - The mismatch is reported upstream](task-06-the-mismatch-is-reported-upstream.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -95,13 +100,9 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 
 ## Resume state
 
-- **Done so far:** nothing; this is a proposal.
-- **Next action:** Softov answers the open questions, then [task-01-a-created-session-is-held-under-its-providers-name.md](task-01-a-created-session-is-held-under-its-providers-name.md).
-- **Open questions:**
-  1. Is task 03 in scope, or is the envelope's channel enough for now? - proposed: in scope; a subagent chat announced as `ahp-chat://subagent/<b64 claude:/…>` to a client that knows the session as `ahp-session:/…` is the same mismatch one level down.
-  2. Should the creating connection get `root/sessionAdded` in its own spelling? - proposed: no; the root channel is one list for every client, and clients already match rows by id after a restart.
-  3. Does a nested host's inner session (`packages/sdk/src/nested.ts:232`, `ahp-session:/<uuid>`) change too? - proposed: no; only this host reads it, and it never reaches VS Code.
-  4. Is the mismatch reported to VS Code as well? - proposed: yes, separately, with the text shown to Softov before it is posted.
+- **Done so far:** nothing; open questions answered 2026-09-30.
+- **Next action:** [task-01-a-created-session-is-held-under-its-providers-name.md](task-01-a-created-session-is-held-under-its-providers-name.md).
+- **Open questions:** none.
 - **Watch out for:** `idOf` is exported and used by `agent-claude` and `agent-pi` as the backend session id, so the id must never change, only the scheme; the resume path (`host.ts` 8401-8434) already re-keys under `nameOf(id)` and must end up with the same name as a newly created session.
 
 ## Final verification checklist

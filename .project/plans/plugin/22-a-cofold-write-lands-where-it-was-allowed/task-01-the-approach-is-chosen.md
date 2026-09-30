@@ -1,6 +1,6 @@
 ---
 title: The way cofold's tools close the window between the check and the write is chosen
-status: todo
+status: done
 depends: []
 layer: "tools"
 refs:
@@ -33,3 +33,5 @@ The plan's *Decisions locked in* names how cofold's file tools make the written 
 - The plan's *Tasks* table has a task per change, each with a Validation that fails first.
 
 ## Resume
+
+Done 2026-09-30: Softov chose re-check after open and refusing a stale write, not `O_NOFOLLOW`; the two decision files and tasks 02 to 04 are written.

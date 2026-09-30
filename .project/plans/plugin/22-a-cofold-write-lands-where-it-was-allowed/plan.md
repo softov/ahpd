@@ -1,15 +1,17 @@
 ---
 title: A cofold write lands on the file its check allowed, and not on one that changed since it was read
 domain: plugin
-status: draft
+status: planned
 priority: medium
 created: 2026-09-27
-revalidated: 2026-09-27
+revalidated: 2026-09-30
 requires:
   - plans/plugin/14-cofold-runs-its-own-tools/plan.md
 changes: []
 creates: []
-decisions: []
+decisions:
+  - decisions/a-cofold-write-rechecks-the-file-it-opened.md
+  - decisions/a-cofold-write-to-a-file-changed-since-read-is-refused.md
 refs:
   - "[code://packages/agent-cofold/src/session.ts#L37-L51](../../../../packages/agent-cofold/src/session.ts#L37-L51) - `insideDirectory`, the check a write is allowed by"
   - "[code://packages/agent-cofold/src/session.ts#L446](../../../../packages/agent-cofold/src/session.ts#L446) - where the harness is given it"
@@ -47,6 +49,11 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 
 ## Decisions locked in
 
+| Decision | Task |
+| --- | --- |
+| [A cofold write opens the file, checks the descriptor is the file the check allowed, and writes through it](../../../decisions/a-cofold-write-rechecks-the-file-it-opened.md) | 02 |
+| [A cofold write to a file that changed since the session read it, or that it never read, is refused](../../../decisions/a-cofold-write-to-a-file-changed-since-read-is-refused.md) | 03 |
+
 | What | Source | Task |
 | --- | --- | --- |
 | The swapped-symlink window from plugin/14's Risks becomes a plan of its own, and plugin/14 closes as planned. | Softov, 2026-09-27, asked where the TOCTOU task goes: "New plugin plan". | - |
@@ -56,7 +63,10 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The way cofold's tools close the window is chosen](task-01-the-approach-is-chosen.md) | todo | - |
+| [01 - The way cofold's tools close the window is chosen](task-01-the-approach-is-chosen.md) | done | - |
+| [02 - A write re-checks the file it opened](task-02-a-write-rechecks-the-file-it-opened.md) | todo | 01 |
+| [03 - A stale write is refused](task-03-a-stale-write-is-refused.md) | todo | 01 |
+| [04 - ahpd takes the cofold release](task-04-ahpd-takes-the-cofold-release.md) | todo | 02, 03, cofold release |
 
 ## Risks and tradeoffs
 
@@ -65,15 +75,14 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 
 ## Resume state
 
-- **Done so far:** nothing; drafted 2026-09-27 from plugin/14's Risks.
-- **Next action:** [task-01-the-approach-is-chosen.md](task-01-the-approach-is-chosen.md).
-- **Open questions:**
-  1. Which of the three candidates, alone or together - task 01 asks.
+- **Done so far:** task 01, the approach chosen 2026-09-30.
+- **Next action:** [task-02-a-write-rechecks-the-file-it-opened.md](task-02-a-write-rechecks-the-file-it-opened.md) and [task-03-a-stale-write-is-refused.md](task-03-a-stale-write-is-refused.md), in `/github/cofold`.
+- **Open questions:** none.
 - **Watch out for:** Node's `fs` has `O_NOFOLLOW` but no `openat`, so "open by descriptor" can refuse a link only at the last name, not walk the path from the workspace one name at a time.
 
 ## Final verification checklist
 
 - [ ] A case in cofold's tools swaps a link between the check and the write and the write does not land outside.
-- [ ] A case in cofold's tools changes a file after `read_file` and the next `edit_file` or `write_file` is refused, if task 01 chooses it.
+- [ ] A case in cofold's tools changes a file after `read_file` and the next `edit_file` or `write_file` is refused.
 - [ ] ahpd takes the cofold release, and `pnpm test` is green.
 - [ ] `plans/index.md` updated.

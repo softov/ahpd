@@ -1,6 +1,7 @@
 ---
 title: Served answers hide the connection token, every plugin option value, and the credentials in a plugin spec's URL
-status: accepted
+status: superseded
+superseded-by: decisions/root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value.md
 date: 2026-09-27
 supersedes: decisions/the-config-command-hides-its-secrets.md
 refs:

@@ -1,15 +1,18 @@
 ---
 title: The agent gets the host's MCP servers
 domain: acp
-status: draft
+status: planned
 priority: medium
 created: 2026-09-26
-revalidated: 2026-09-26
-requires: []
+revalidated: 2026-09-30
+requires:
+  - plans/daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/acp-ports-come-through-start.md
+  - decisions/the-hosts-mcp-servers-are-root-config-as-in-vscode.md
+  - decisions/the-hosts-tools-are-an-mcp-server-each-backend-may-take.md
 refs:
   - "[code://packages/agent-acp/src/session.ts#L537-L549](../../../../packages/agent-acp/src/session.ts#L537-L549) - `mcpServers: []` on every open"
   - "[code://packages/agent-acp/src/session.ts#L1145-L1147](../../../../packages/agent-acp/src/session.ts#L1145-L1147) - `startMcpServer` answers false"
@@ -33,11 +36,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Decision | Task |
 | --- | --- |
-| [An ACP backend reaches files and a shell through Start](../../../decisions/acp-ports-come-through-start.md) | the tools port is the same kind of seam |
+| [An ACP backend reaches files and a shell through Start](../../../decisions/acp-ports-come-through-start.md) | 02 |
+| [The host's MCP servers are the root config key `mcpServers`, as in VS Code](../../../decisions/the-hosts-mcp-servers-are-root-config-as-in-vscode.md) | 01, 02 |
+| [The host's tools are an MCP server the host serves, and each agent plugin says whether its sessions take it](../../../decisions/the-hosts-tools-are-an-mcp-server-each-backend-may-take.md) | 03, 04 |
 
 | What | Source | Task |
 | --- | --- | --- |
-| This plan stays a draft until its questions are answered | (defaulted) | - |
+| Servers the agent's `mcpCapabilities` do not accept (`http`, `sse`) are left out and logged | https://agentclientprotocol.com/protocol/session-setup | 04 |
+| agent-acp's option is `hostTools`, on by default | (defaulted: the ACP bridge is why the service exists) | 04 |
 
 ## Proposed architecture
 
@@ -45,11 +51,13 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Tasks
 
-Written when this plan leaves draft. The outline:
-
-1. The host's configured MCP servers passed, filtered by capability.
-2. `Start.tools` served as an HTTP MCP server per session, with a per-session token.
-3. Docs.
+| Task | Status | Depends on |
+| --- | --- | --- |
+| [01 - `mcpServers` in the configuration and in root config](task-01-mcp-servers-in-the-configuration.md) | todo | daemon/11 task 02 |
+| [02 - A session's MCP servers reach its backend in Start](task-02-a-sessions-mcp-servers-reach-start.md) | todo | 01 |
+| [03 - The host serves its tools as an MCP server per session](task-03-the-host-serves-its-tools-over-mcp.md) | todo | - |
+| [04 - The ACP bridge opens a session with its MCP servers](task-04-the-acp-bridge-opens-with-mcp-servers.md) | todo | 02, 03 |
+| [05 - Docs](task-05-docs.md) | todo | 04 |
 
 ## Risks and tradeoffs
 
@@ -58,10 +66,8 @@ Written when this plan leaves draft. The outline:
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** answer the open questions.
-- **Open questions:**
-  1. Where does the host keep its MCP server configuration: the daemon config, or a plugin option? - proposed: the daemon config, shared by every backend.
-  2. Does `Start.tools` become an MCP server for the ACP bridge only, or a host service any backend may use? - proposed: a host service.
+- **Next action:** [task-03-the-host-serves-its-tools-over-mcp.md](task-03-the-host-serves-its-tools-over-mcp.md), which needs nothing else; 01 after daemon/11 task 02.
+- **Open questions:** none; answered 2026-09-30.
 - **Watch out for:** ACP v2 routes files and terminals through an MCP server too (plugin 18's deferred.md); the service built here is where that would land.
 
 ## Final verification checklist
