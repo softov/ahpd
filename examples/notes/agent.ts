@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
+import { idOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/sdk';
 
 /**
@@ -191,7 +192,7 @@ export function notes(options: NotesOptions): Agent {
     let activity: string | undefined;
     const queued: Bag[] = [];
     let draft: Bag | undefined;
-    const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
+    const id = start.resume ?? idOf(start.uri);
     const where = start.workingDirectory ?? dir;
 
     /** Tool call parts by their call id, so a result can find the part it belongs to. */

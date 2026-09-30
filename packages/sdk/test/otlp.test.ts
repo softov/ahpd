@@ -75,7 +75,7 @@ it('carries what the host logs as an OTLP request the client can parse', async (
   expect(record?.severityText).toBe('INFO');
   expect(typeof record?.body.stringValue).toBe('string');
   expect(sent.some((one) => (one.payload as typeof first)
-    .resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body.stringValue.includes('ahp-session:/a'))).toBe(true);
+    .resourceLogs[0]?.scopeLogs[0]?.logRecords[0]?.body.stringValue.includes('echo:/a'))).toBe(true);
 });
 
 it('is not replayed, which is what stateless means', async () => {

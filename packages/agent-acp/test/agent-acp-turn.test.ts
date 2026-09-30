@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
+import { idOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -262,8 +263,10 @@ const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, t
     && (n.params as Note).channel === chatUri
     && (n.params as Note).action.type === type);
   if (at < 0) return undefined;
+  // By id: the row is published under the provider's name, whatever the
+  // client created the session as.
   const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
-    && (n.params as { session: string }).session === uri);
+    && idOf((n.params as { session: string }).session) === idOf(uri));
   return (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
 };
 

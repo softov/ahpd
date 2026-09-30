@@ -400,7 +400,8 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: Record<string, unknown>[];
   };
-  const row = listed.items.find((one) => one.resource === uri);
+  // Listed under its provider's name, whatever the client created it as.
+  const row = listed.items.find((one) => one.resource === 'echo:/one');
   expect(row).toBeDefined();
   expect(row).not.toHaveProperty('changesets');
   // The diff stat is a different field, is declared on a summary, and stays.

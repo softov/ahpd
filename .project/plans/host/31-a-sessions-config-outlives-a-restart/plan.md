@@ -1,7 +1,7 @@
 ---
 title: A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -44,6 +44,11 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 | --- | --- | --- |
 | The store holds the values a session was created with and every accepted change, as JSON values | (defaulted: a resume must start where the session was) | 01 |
 | A stored value the schema does not accept is dropped and the default used; nothing is refused | Softov, 2026-09-29: "For some session that could store that information we retrieve.. without that goes to default... since a profile could be removed in a future... changed its name. etc" | 02 |
+| Only a declared key whose stored value the schema refuses is dropped; a key the schema does not declare is kept and handed back, since the store only holds keys the backend accepted | Softov, 2026-09-30, asked what happens on resume to a stored key the schema does not declare, such as Claude's `model`: "Keep it" | 02 |
+| A browsed row logs a dropped value once per session, not on every read | (defaulted: the same line on every listing is noise) | 02 |
+| A config change for a channel that names no session this host runs, lists or finds in the catalogue is refused, and nothing is stored for it | (defaulted: the store is keyed by id, and a row for no session is one nothing will read or forget) | 01 |
+| A listing answers `past` for `LISTING_FRESH` (2 s); an id missing from a listing `past` did not start itself is listed for once more, at most once in that window | (defaulted: a backend writes a session to disk after a listing, and an id that names nothing must not cost a listing each) | 01 |
+| A key the schema scopes to one chat is stored when it is set on the session's lead chat, which is what a resume applies it to, and not when it is set on a peer chat | Softov, 2026-09-30, asked "After a restart, should the lead chat come back on the model you last picked for it?": "Yes, save the lead chat's" | 01 |
 
 ## Proposed architecture
 
@@ -55,8 +60,8 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The store keeps what a session was made with and every change](task-01-the-store-keeps-every-change.md) | todo | - |
-| [02 - A stored value the schema refuses falls back to the default](task-02-a-refused-value-falls-back.md) | todo | 01 |
+| [01 - The store keeps what a session was made with and every change](task-01-the-store-keeps-every-change.md) | implemented | - |
+| [02 - A stored value the schema refuses falls back to the default](task-02-a-refused-value-falls-back.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -64,8 +69,8 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-store-keeps-every-change.md](task-01-the-store-keeps-every-change.md).
+- **Done so far:** tasks 01 and 02 implemented: the store keeps a session's config from creation and every accepted change, as JSON values, except a peer chat's chat-scoped key, a change answered after the session was disposed, and config for a channel that names no session, and a resume or a browsed row drops a declared value the schema refuses, logged once, and keeps undeclared keys.
+- **Next action:** review.
 - **Open questions:** none.
 - **Watch out for:** `sessions: 'memory'` forgets by design; test with `fileSessions`.
 

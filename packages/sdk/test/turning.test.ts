@@ -16,6 +16,8 @@ import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
 const SESSION = 'ahp-session:/one';
+/** The name the host holds it under, which is its provider's. */
+const HELD = 'echo:/one';
 const CHAT = 'ahp-chat:/one';
 
 /**
@@ -65,7 +67,7 @@ describe('turning', () => {
       params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five' } } },
     });
     // The first word streamed is inside the turn, whatever the pace.
-    expect(await heard(seen, 'chat/delta')).toEqual([SESSION]);
+    expect(await heard(seen, 'chat/delta')).toEqual([HELD]);
 
     // The turn is over by the time it says so.
     expect(await heard(seen, 'chat/turnComplete')).toEqual([]);

@@ -180,7 +180,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (typeof row?.id !== 'string' || row.id === '') continue;
       known.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
-      if (typeof row.config === 'object' && row.config !== null) inner.setConfig(row.id, row.config);
+      if (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)) inner.setConfig(row.id, row.config);
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
       // Only an object with two arrays of strings is a baseline this version
       // understands; anything else is ignored rather than guessed at.

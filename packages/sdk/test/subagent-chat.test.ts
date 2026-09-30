@@ -544,6 +544,57 @@ it('takes an approval given on a worker chat spelt from a session alias', async 
   expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: false }]);
 });
 
+/*
+ * The actions about a session, to two clients that name it differently.
+ *
+ * The creator made it as `ahp-session:/ask` and the host holds it as
+ * `fake:/ask`. Each client is sent every URI of the session inside an action in
+ * its own spelling, the same as its snapshot, so the worker chat it is told
+ * about is one it can subscribe to and answer on.
+ */
+it('says the session\'s URIs inside an action in the spelling each client uses', async () => {
+  const host = createHost({ path: '/tmp', agents: [askingInWorker()] });
+  const listening = (into: Bag[]): Peer => ({
+    send: () => {},
+    notify: (method, params) => { if (method === 'action') into.push(params as Bag); },
+    request: async () => ({}),
+    answered: () => {},
+    close: () => {},
+  });
+  const heard = { creator: [] as Bag[], other: [] as Bag[] };
+  const creator = asking(host.accept(listening(heard.creator)));
+  const other = asking(host.accept(listening(heard.other)));
+  const hello = { channel: 'ahp-root://', protocolVersions: ['0.9.0'] };
+  await creator('initialize', { ...hello, clientId: 'creator' });
+  await other('initialize', { ...hello, clientId: 'other' });
+  await creator('createSession', { channel: 'ahp-session:/ask', provider: 'fake' });
+  const chatOf = (session: string): string => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+  const workerOf = (session: string): string =>
+    `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  for (const [client, session] of [[creator, 'ahp-session:/ask'], [other, 'fake:/ask']] as const) {
+    await client('subscribe', { channel: session });
+    await client('subscribe', { channel: chatOf(session) });
+  }
+  await creator('dispatchAction', {
+    channel: chatOf('ahp-session:/ask'),
+    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'run a subagent' } },
+  });
+  await settle();
+
+  for (const [said, session] of [[heard.creator, 'ahp-session:/ask'], [heard.other, 'fake:/ask']] as const) {
+    const on_ = (channel: string, type: string): Bag[] => said
+      .filter((one) => one.channel === channel && (one.action as Bag).type === type)
+      .map((one) => one.action as Bag);
+    const added = on_(session, 'session/chatAdded')[0]?.summary as Bag | undefined;
+    expect(added?.resource).toBe(workerOf(session));
+    expect((added?.origin as Bag | undefined)?.chat).toBe(chatOf(session));
+    const asks = on_(session, 'session/inputNeededSet').map((one) => (one.request as Bag).chat);
+    expect(asks).toEqual([workerOf(session), workerOf(session)]);
+    const start = on_(chatOf(session), 'chat/toolCallStart').find((one) => one.toolCallId === 'toolu_agent');
+    expect((start?._meta as Bag | undefined)?.subagentChatUri).toBe(workerOf(session));
+  }
+});
+
 it('takes an answer to a question given on a worker chat to the session\'s backend', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/inputCompleted', requestId: 'toolu_ask', response: 'accept', answers: {} });
@@ -680,7 +731,8 @@ async function busyHost() {
   await settle();
   /** The session's catalogue row as the root has announced it so far, one change at a time. */
   const row = (): Bag[] => wire
-    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === uri)
+    // Published under its provider's name, whatever it was created as.
+    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === 'fake:/busy')
     .map((one) => one.params.changes as Bag);
   /** The activity bits of a status, without the read and archived flags. */
   const activity = (status: unknown): number => Number(status) & 31;

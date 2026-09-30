@@ -1,12 +1,12 @@
 ---
 title: A session is held under `<provider>:/<id>`, and the name a client created it under is an alias
-status: proposed
+status: accepted
 date: 2026-09-29
 refs:
-  - "[code://packages/sdk/src/host.ts#L408-L422](../../packages/sdk/src/host.ts#L408-L422) - `named`, which takes the client's session URI and keeps it as the session's key"
-  - "[code://packages/sdk/src/host.ts#L942-L958](../../packages/sdk/src/host.ts#L942-L958) - `names` and `nameOf`, which already publish a listed session as `<provider>:/<id>`"
-  - "[code://packages/sdk/src/host.ts#L3493-L3500](../../packages/sdk/src/host.ts#L3493-L3500) - `listing`, which names a session found on a backend's disk `<provider>:/<id>`"
-  - "[code://packages/sdk/src/host.ts#L909-L941](../../packages/sdk/src/host.ts#L909-L941) - `heldAs`, which resolves any spelling of a session to the one held"
+  - "[code://packages/sdk/src/host.ts#L559-L573](../../packages/sdk/src/host.ts#L559-L573) - `named`, which checks the session URI a client sent"
+  - "[code://packages/sdk/src/host.ts#L1121-L1131](../../packages/sdk/src/host.ts#L1121-L1131) - `names` and `nameOf`, which already publish a listed session as `<provider>:/<id>`"
+  - "[code://packages/sdk/src/host.ts#L3828-L3835](../../packages/sdk/src/host.ts#L3828-L3835) - `listing`, which names a session found on a backend's disk `<provider>:/<id>`"
+  - "[code://packages/sdk/src/host.ts#L1098-L1120](../../packages/sdk/src/host.ts#L1098-L1120) - `heldAs`, which resolves any spelling of a session to the one held"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/session-channel.md - the provider is not encoded in the session URI's scheme
 ---
 
@@ -31,7 +31,7 @@ Holding the provider's name and aliasing the client's, rather than the other way
 
 A session reads the same before and after a restart, so VS Code opens a session another client created.
 A client that created a session as `ahp-session:/<id>` sees it listed as `<provider>:/<id>` and has to match rows by id, which it already must for any session it resumed after a restart.
-The host no longer echoes the client's session URI as the session's key; the comment on `named` that says it does has to be rewritten.
+The host no longer echoes the client's session URI as the session's key, and `named` says the client names the id and the host the scheme.
 Persisted chat titles are keyed by a chat URI that embeds the old spelling, so they need a lookup that survives the rename.
 
 ## Options

@@ -1,6 +1,6 @@
 ---
 title: An action reaches an aliased subscriber in its own spelling
-status: todo
+status: implemented
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:
@@ -37,3 +37,16 @@ A connection subscribed to a session or chat under an alias receives each action
 
 ## Resume
 
+`respell(uri, held, asked)` holds the per-URI rules (the session, anything under `<session>/`, a default or worker chat of this session; a chat a client named or a chat of another session stays), `respelledIn` applies it to every URI in a value as a copy, and `spelledFor` now uses it.
+`spellingOf(connection, channel)` finds the pair for a session, chat or annotations channel from the connection's alias of the session or of the chat, and `seenBy` respells an envelope's action with it; `broadcast` sends that copy to the connection, whether it watches the held channel or an alias, and both replays do the same, while `replayable` keeps the held spelling.
+A chat snapshot is respelled the same way in `answeredAs` when the connection knows its session by another name, including a peer chat the client named itself; the chat's own `state.resource` keeps the held name, as it did.
+Test: `subagent-chat.test.ts`, `says the session's URIs inside an action in the spelling each client uses`: a creator on `ahp-session:/ask` and a client on `fake:/ask` each get `session/chatAdded` (`summary.resource`, `summary.origin.chat`), `session/inputNeededSet` (`request.chat`) and `chat/toolCallStart` (`_meta.subagentChatUri`) in their own spelling.
+With the respelling taken out of `broadcast`, it fails, and so do existing `subagent-chat.test.ts` cases.
+`conformance.test.ts` and `wire.test.ts` pass; `wire.test.ts` first caught `spelledFor` adding `chat` and `defaultChat` keys with no value where there were none, which it no longer does.
+A `reconnect` replay now reaches the connection in its own spelling too: an action on a session or chat channel it knows by an alias goes out under that alias, respelled by `seenBy`, and any other channel keeps the held name.
+Test: `host.test.ts`, `replays what it missed on a reconnect in the creator's spelling`: a creator on `ahp-session:/<uuid>` forks a chat, and a reconnect from seq 0 replays every action under `ahp-session:/<uuid>` with no `claude:/<uuid>` inside; it failed first on the channel.
+`automations.test.ts` `is resumed under it on reconnect, and replayed` is unchanged: its client subscribes `ahp-automations://catalog` and is replayed under `ahp-automations://`, which is the catalogue and not a session, so the session rule does not reach it.
+After the review of 2026-09-30, `spelledTo` is folded into `seenBy`, which now rewrites a root envelope as before and respells a session, chat or annotations envelope for a connection with an alias; `broadcast`, the `subscribe` replay and the `reconnect` replay each call `seenBy` alone, so its comment that it is the one place an envelope is rewritten for a connection is true.
+The `reconnect` replay is one `flatMap` over `replayable` that takes the alias from `resumed` once, without an unreachable fallback.
+`respelledIn` respells only a string under a key in `URI_KEYS` (every field the protocol types `URI`, `uriTemplate`, and `_meta.subagentChatUri`) or in an array under one, so a message, a tool's input or output or a title that names the session stays as written.
+Test: `host.test.ts` `replays a chat and a pending approval on a reconnect in the creator's spelling, and leaves text alone`: a reconnect from seq 0 with the session and its default chat under their `ahp-session:` names replays `chat/turnStarted` under the chat's alias with its text `claude:/<uuid>/changeset/session is what changed` unchanged, and `session/inputNeededSet` with `request.chat` in the creator's spelling; it failed first on the text, which came back as `ahp-session:/<uuid>/...`.

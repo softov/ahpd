@@ -25,25 +25,21 @@ export const Status = {
 } as const;
 
 /**
- * A URI for a session this host found on disk. `ahp-session:/<uuid>`, and the
- * SDK's id is already a uuid.
+ * `ahp-session:/<id>`, the protocol's own spelling of a session URI.
  *
- * Only for rows this host names itself. A session a *client* created is named
- * by that client, in whatever scheme it likes - see {@link idOf}.
+ * What the host names an id no backend has named. A session it holds or
+ * lists is named `<provider>:/<id>`, and a client may use any scheme for it -
+ * see {@link idOf}.
  */
 export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`;
 
 /**
- * The id inside a channel URI, whatever scheme the client chose.
+ * The id inside a channel URI, whatever its scheme.
  *
- * A channel URI is the **client's** to name and this host's to echo. VS Code
- * names a session after its provider - `claude:/<uuid>`, with the provider as
- * the *scheme* - and its terminals `agenthost-terminal:/<uuid>`. This used to
- * strip a literal `ahp-session:/` and refuse anything else, so every session
- * and every terminal VS Code opened was answered `is not a session URI`.
- *
- * So: everything after the scheme, without its leading slashes. The result is
- * an opaque key, not something to parse further.
+ * A client may name a channel under any scheme: VS Code names a session after
+ * its provider, `claude:/<uuid>`, and its terminals `agenthost-terminal:/<uuid>`,
+ * and the id is what identifies it. Everything after the scheme, without its
+ * leading slashes: an opaque key, not something to parse further.
  */
 export const idOf = (uri: string): string => {
   const colon = uri.indexOf(':');

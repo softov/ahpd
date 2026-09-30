@@ -604,7 +604,8 @@ it('offers no pull request on the first subscribe when there is no GitHub to ask
 it('announces the session\'s counts on the first subscribe in a directory outside the path', async () => {
   const dir = onGitHub();
   const { peer: p } = await firstOperations(dir);
-  const counted = rowsMoved(p, URI).find((one) => one.changes !== undefined);
+  // The row is published under its provider's name.
+  const counted = rowsMoved(p, 'echo:/s').find((one) => one.changes !== undefined);
   expect((counted?.changes as { files?: number } | undefined)?.files).toBe(1);
 });
 

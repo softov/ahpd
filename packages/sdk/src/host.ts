@@ -31,6 +31,7 @@ import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
+import { accepts } from './configvalues.js';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from './artifacttools.js';
 import { debugLogs, hostLogPath } from './debuglogs.js';
 import type { LogFile } from './debuglogs.js';
@@ -279,19 +280,26 @@ const UNGATED = new Set([
  * dispatch is always a *write*: typing into a terminal, saying something in a
  * chat, changing a root setting.
  *
+ * `kind` is the host's answer to what the channel is - a session's (the
+ * session, a chat, its annotations or a changeset), a terminal's, or
+ * something else - which the scheme cannot say: a session is held as
+ * `<provider>:/<id>` and VS Code names a terminal `agenthost-terminal:/<id>`.
+ * The subscribe gate asks the same question of the same function,
+ * `channelKind` in `createHost`.
+ *
  * `ahp-root://` is the one channel read with the action as well.
  * `root/configChanged` that only sets `PER_CONNECTION` keys changes nothing
  * anybody else reads, so it needs a sign-in and no grant (`undefined`). Any
  * other key, and a `replace`, changes the host for everybody and needs
  * `config:write`.
  *
- * Anything else - a resource watch this client created, or a channel a later
- * plan adds - is `file:read`, the conservative answer and the one
- * `createResourceWatch` already required to hand the channel over.
+ * What is left - a `file:` URI, a resource watch, one another client relays,
+ * or one of this host's own `ahp-` channels with no subject of its own - is
+ * `file:read`, the grant `createResourceWatch` required to hand a watch over.
  */
-const dispatchNeeds = (channel: string, action?: Record<string, unknown>): Grant | undefined => {
-  if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return 'session:write';
-  if (channel.startsWith('ahp-terminal:')) return 'terminal:write';
+const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Record<string, unknown>): Grant | undefined => {
+  if (kind === 'session') return 'session:write';
+  if (kind === 'terminal') return 'terminal:write';
   if (channel.startsWith('ahp-automation')) return 'automation:write';
   if (isRootChannel(channel)) {
     if (action?.type !== 'root/configChanged' || action.replace === true) return 'config:write';
@@ -315,6 +323,139 @@ const dispatchNeeds = (channel: string, action?: Record<string, unknown>): Grant
  * live on the `Connection`, and a connection reads its own back.
  */
 const PER_CONNECTION = new Set(['defaultShell']);
+
+/** The kinds of channel a family of client action can belong on. */
+type Home = 'session' | 'terminal' | 'automations' | 'root' | 'watch';
+
+/**
+ * Each family of client action, by the part of its type before the slash:
+ * the kind of channel it belongs on, and what dispatching one needs beside
+ * what the channel does. An action on a channel of another kind is refused
+ * before any handler reads it, since a handler acts on the action and not
+ * on the channel. The root's grant is read off the channel with the action
+ * (`dispatchNeeds`), and a watch's actions are its owner's to say.
+ */
+const ACTION_HOMES: Record<string, { home: Home; needs?: Grant }> = {
+  session: { home: 'session', needs: 'session:write' },
+  chat: { home: 'session', needs: 'session:write' },
+  annotations: { home: 'session', needs: 'session:write' },
+  changeset: { home: 'session', needs: 'session:write' },
+  terminal: { home: 'terminal', needs: 'terminal:write' },
+  automation: { home: 'automations', needs: 'automation:write' },
+  automationRun: { home: 'automations', needs: 'automation:write' },
+  root: { home: 'root' },
+  resourceWatch: { home: 'watch' },
+};
+
+/** A kind of channel, as a refusal names it. */
+const HOME_WORDS: Record<Home, string> = {
+  session: 'a session', terminal: 'a terminal', automations: 'an automation channel', root: 'the root', watch: 'a resource watch',
+};
+
+/** The kinds of name this host keeps a space of schemes for. */
+type Space = 'session' | 'chat' | 'terminal' | 'own';
+/**
+ * The space a name falls in by its scheme alone, whatever this host holds:
+ * `ahp-session:` is a session's, `ahp-chat:` a chat's, `ahp-terminal:` a
+ * terminal's, and `file:` and every other `ahp-` scheme - the root, the
+ * logs, resource watches, the automations - this host's own. Any other
+ * scheme says nothing, and the name is whatever `claims` holds it as.
+ */
+const spaceOf = (uri: string): Space | undefined => {
+  const scheme = schemeOf(uri);
+  if (scheme === 'ahp-session') return 'session';
+  if (scheme === 'ahp-chat') return 'chat';
+  if (scheme === 'ahp-terminal') return 'terminal';
+  return scheme === 'file' || scheme.startsWith('ahp-') ? 'own' : undefined;
+};
+
+/** A session's own channel under a name: the name, less `/annotations` or `/changeset/<scope>`. */
+const baseOf = (uri: string): string => {
+  if (uri.endsWith(MARKS)) return uri.slice(0, -MARKS.length);
+  const cut = uri.indexOf('/changeset/');
+  return cut > 0 ? uri.slice(0, cut) : uri;
+};
+
+/** What a name this host holds is. */
+type NameKind = 'session' | 'chat' | 'terminal' | 'watch';
+
+/** A name in `claims`: its kind, and the session it belongs to for a session's or a chat's name. */
+interface Claimed { kind: NameKind; of: string }
+
+/**
+ * A map whose keys are names this host holds, each claimed in `claims` when
+ * it is set and released when it is deleted.
+ *
+ * A key another kind already claims keeps that claim. Deleting a session
+ * releases every name claimed as belonging to it.
+ */
+class Claiming<V> extends Map<string, V> {
+  private readonly claims: Map<string, Claimed>;
+  private readonly kind: NameKind;
+  private readonly ofOf: (key: string, value: V) => string;
+
+  constructor(claims: Map<string, Claimed>, kind: NameKind, ofOf: (key: string, value: V) => string = (key) => key) {
+    super();
+    this.claims = claims;
+    this.kind = kind;
+    this.ofOf = ofOf;
+  }
+
+  override set(key: string, value: V): this {
+    if (!this.claims.has(key)) this.claims.set(key, { kind: this.kind, of: this.ofOf(key, value) });
+    return super.set(key, value);
+  }
+
+  /** Deleted from the map with its claim kept, for a key about to be set again. */
+  drop(key: string): boolean {
+    return super.delete(key);
+  }
+
+  override delete(key: string): boolean {
+    if (this.claims.get(key)?.kind === this.kind) this.claims.delete(key);
+    if (this.kind === 'session') {
+      for (const [name, held] of this.claims) if (held.of === key) this.claims.delete(name);
+    }
+    return super.delete(key);
+  }
+}
+
+/**
+ * How long a listing of the catalogue answers `past` for, in milliseconds.
+ *
+ * A subscribe to a session this host is not running reads the catalogue to
+ * find its row, and whoever subscribes decides how often that is: an id that
+ * names nothing is answered from the last listing rather than a new one.
+ * An id missing from a listing `past` did not start itself is listed for
+ * once more, at most once in this long, since a backend can write a session
+ * to disk after the listing it was not in.
+ */
+const LISTING_FRESH = 2_000;
+
+/**
+ * How long a dispatch waits on a session being started again or on a read
+ * of the catalogue, in milliseconds, before it is refused and the
+ * connection's later dispatches go on without it.
+ */
+const WAIT_LIMIT = 60_000;
+
+/**
+ * The keys whose string values are URIs, in an action or a state.
+ *
+ * Every field the protocol types `URI`, a changeset's `uriTemplate`, and
+ * `subagentChatUri`, the worker chat link this host stamps on a tool call's
+ * `_meta`. What `respelledIn` rewrites for a client that knows a session by
+ * another name.
+ */
+const URI_KEYS = new Set([
+  'automation', 'channel', 'chat', 'cwd', 'defaultChat', 'defaultDirectory', 'destination', 'directory',
+  'initialSubscriptions', 'logs', 'metrics', 'missing', 'primarySession', 'replacement', 'resource', 'root', 'run',
+  'session', 'sessions', 'source', 'src', 'subscriptions', 'traces', 'uri', 'url', 'workingDirectories',
+  'workingDirectory', 'uriTemplate', 'subagentChatUri',
+]);
+
+/** What the users gate reads a channel as: see `channelKind` in `createHost`. */
+type ChannelKind = 'session' | 'terminal' | 'other';
 
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
@@ -418,12 +559,12 @@ function claimOf(value: unknown): Claim | undefined {
 /**
  * A channel URI a client named, checked for being one at all.
  *
- * Not for its *scheme*: the client chooses that. VS Code names a session after
- * its provider (`claude:/<uuid>`) and a terminal `agenthost-terminal:/<uuid>`,
- * and this host demanded `ahp-session:/` and `ahp-terminal:` - so every session
- * and every terminal an editor opened came back `is not a session URI`. The
- * protocol's own `ahp-session:/<uuid>` is an example in a doc comment, and the
- * host's job is to echo what it was given, not to rename it.
+ * Not for its *scheme*: any scheme is taken. VS Code names a session after its
+ * provider (`claude:/<uuid>`) and a terminal `agenthost-terminal:/<uuid>`, and
+ * the protocol's own example is `ahp-session:/<uuid>`. For a session the
+ * client names the id and the host names the scheme: `createSession` holds it
+ * as `<provider>:/<id>` and the client's URI is an alias of that - decision
+ * `a-session-is-held-under-its-providers-name`.
  */
 const named = (uri: string, what: string): string => {
   const colon = uri.indexOf(':');
@@ -433,6 +574,19 @@ const named = (uri: string, what: string): string => {
 
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
+  /**
+   * Every name this host holds or has handed out, and what it is.
+   *
+   * A session under its held name and every name a client created it under,
+   * its chats, including the ones a client named, its worker chats,
+   * terminals, this host's resource watches and the ones a client relays.
+   * One name is one thing: a new session, chat, terminal or relayed watch is
+   * refused a name already here (`claimable`), and the users gate reads a
+   * channel's kind from here (`channelKind`). Written by the maps that hold
+   * each kind, which are `Claiming`, and by `createSession` for the name a
+   * client asked for.
+   */
+  const claims = new Map<string, Claimed>();
   /**
    * The backends this host serves, by the id clients name.
    *
@@ -446,6 +600,12 @@ export function createHost(options: HostOptions): Host {
     }
     agents.set(agent.provider, agent);
   }
+  /**
+   * `spaceOf`, and a scheme that names a provider here is a session's: a
+   * session is held as `<provider>:/<id>`, and one a backend keeps on disk
+   * has that name before anything has listed it.
+   */
+  const spaceHere = (uri: string): Space | undefined => (agents.has(schemeOf(uri)) ? 'session' : spaceOf(uri));
   /**
    * Every directory any backend catalogues, plus the host's own.
    *
@@ -508,6 +668,25 @@ export function createHost(options: HostOptions): Host {
     'resourceMove', 'resourceResolve', 'resourceMkdir', 'resourceRequest', 'createResourceWatch',
   ]);
   /**
+   * Whether a client id is one a person can hold: a client that names none
+   * is `anonymous` (or empty), which is every such client and nobody's.
+   */
+  const ownId = (clientId: string): boolean => clientId !== '' && clientId !== 'anonymous';
+  /**
+   * Whether a connection answers for its client id: always with no users
+   * directory and for the door, never for a connection with no id of its
+   * own, and otherwise when nobody holds the id (`holders`) or the person
+   * signed in on it does and still stands.
+   */
+  const claimsId = (one: Connection): boolean => {
+    if (options.users === undefined || one.root === true) return true;
+    if (!ownId(one.clientId)) return false;
+    const holder = holders.get(one.clientId);
+    if (holder === undefined) return true;
+    const who = one.principal;
+    return who !== undefined && who.id === holder && (who.standing === undefined || who.standing());
+  };
+  /**
    * Which client published a URI, if a connected one did.
    *
    * `<scheme>://<clientId>/…` is how the reference host addresses a
@@ -521,11 +700,11 @@ export function createHost(options: HostOptions): Host {
     const scheme = found?.[1];
     const who = found?.[2];
     if (scheme === undefined || who === undefined || scheme === 'file' || scheme.startsWith('ahp-')) return undefined;
-    return [...connections].find((one) => one.clientId === who);
+    return [...connections].find((one) => one.clientId === who && claimsId(one));
   };
   /** Ask one client one of the ten, in its own words. */
   const ask = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
-    const held = [...connections].find((one) => one.clientId === client);
+    const held = [...connections].find((one) => one.clientId === client && claimsId(one));
     if (held === undefined) throw new RpcError(-32008, `${client} is not a client this host has seen`);
     // The channel last, not first: every one of the ten declares it as the
     // literal `ahp-root://`, and this host refuses a client that names another
@@ -540,7 +719,7 @@ export function createHost(options: HostOptions): Host {
    * are checked here rather than at the other end.
    */
   const clients: Clients = {
-    ids: () => [...connections].map((one) => one.clientId).filter((one) => one !== ''),
+    ids: () => [...connections].filter(claimsId).map((one) => one.clientId).filter((one) => one !== ''),
     owner: (uri) => ownerOf(uri)?.clientId,
     read: async (client, uri, encoding) => await ask(client, 'resourceRead', {
       uri, ...(encoding !== undefined ? { encoding } : {}),
@@ -571,7 +750,7 @@ export function createHost(options: HostOptions): Host {
    * subscribed - and nobody else is, because a change to somebody else's
    * files is not a thing a third client may claim happened.
    */
-  const relayed = new Map<string, { owner: Connection; state: Record<string, unknown> }>();
+  const relayed = new Claiming<{ owner: Connection; state: Record<string, unknown> }>(claims, 'watch');
   /**
    * One `resource*` request, answered by the client that published its URI.
    *
@@ -635,6 +814,7 @@ export function createHost(options: HostOptions): Host {
       // no state this host could ask for, and the protocol's reducer keeps no
       // history - a client arriving later has missed what it was not there for.
       if (channel !== '') {
+        claimable(channel, 'watch');
         relayed.set(channel, {
           owner,
           state: {
@@ -672,14 +852,14 @@ export function createHost(options: HostOptions): Host {
    */
   const presence = new Map<string, Map<string, Bag>>();
 
-  const watches = new Map<string, {
+  const watches = new Claiming<{
     state: Bag;
     watcher: { close(): void };
     /** The connection that asked for it, which keeps it alive until it subscribes. */
     owner: Connection;
     /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
     opened: boolean;
-  }>();
+  }>(claims, 'watch');
   /**
    * `IsRead` and `IsArchived`, per session - by the **id** inside its URI.
    *
@@ -780,7 +960,7 @@ export function createHost(options: HostOptions): Host {
     options.automations?.settle?.(from.run, ending);
   };
   /** Every chat, back to the session holding it. */
-  const byChat = new Map<string, { uri: string; chat: Session }>();
+  const byChat = new Claiming<{ uri: string; chat: Session }>(claims, 'chat', (_, held) => held.uri);
   /**
    * The peer directories each chat was given, when they are not its session's.
    *
@@ -858,7 +1038,7 @@ export function createHost(options: HostOptions): Host {
     /** Its `ChatState`, as the reducer leaves it. */
     state: Bag;
   }
-  const subagents = new Map<string, LiveSubagent>();
+  const subagents = new Claiming<LiveSubagent>(claims, 'chat', (_, held) => held.session);
 
   /** The open turn of each chat and the content of each spawning call, which a worker's link is written from. */
   const links = createCallLinks();
@@ -914,58 +1094,54 @@ export function createHost(options: HostOptions): Host {
    * about a session - its schema, its transcript, the process that continues
    * it - is that backend's answer rather than the host's.
    */
-  const owners = new Map<string, Agent>();
+  const owners = new Claiming<Agent>(claims, 'session');
   /**
    * The name this host holds a session under, given any name a client used.
    *
-   * A session URI is the client's to name and this host's to echo, and only
-   * the id inside one is ever read - so `claude:/<uuid>`, which is what VS
-   * Code computes from a session's *provider*, and `ahp-session:/<uuid>`,
-   * which is what this host listed that same session as, are one session.
+   * A session is held as `<provider>:/<id>`, and a client may name it under
+   * any scheme - VS Code computes `claude:/<uuid>` from the provider, the
+   * protocol's example is `ahp-session:/<uuid>` - so the id inside the URI is
+   * the identity. Everything this host keys by a session - who owns it, where
+   * it ran, the bits a client set on it, the settings chosen for it before it
+   * starts - is keyed by the held name, so a lookup resolves through here.
    *
-   * They were not one key. Everything this host keys by a session - who owns
-   * it, where it ran, the bits a client set on it, the settings chosen for it
-   * before it starts - is stored under the name in the catalogue, and a lookup
-   * under the client's name found nothing: a row marked read that came back
-   * unread, and a browsed session that could not be continued because no
-   * backend owned a name nobody had stored.
-   *
-   * The held name, then, and the name as given when no session here has that
-   * id at all - which is how a client still names a session it is creating.
+   * The name as given when no session here has that id, which is how a client
+   * names a session it is creating.
    */
   const heldAs = (uri: string): string => {
     if (sessions.has(uri) || owners.has(uri)) return uri;
-    /*
-     * Only a session URI is read for its id.
-     *
-     * A session is addressable under any scheme a client chooses, so the id
-     * inside it is the identity - but that is true of sessions and of nothing
-     * else. `ahp-terminal:/x` and a session whose id is `x` are two channels,
-     * and reading the id out of both made a terminal answer with the
-     * session's state. Every other `ahp-` channel this host serves is already
-     * its own name.
-     */
-    if (/^ahp-(?!session:)[a-z-]+:/.test(uri)) return uri;
+    const held = claims.get(uri);
+    if (held !== undefined) return held.kind === 'session' ? held.of : uri;
+    // Only a session URI is read for its id: `ahp-terminal:/x`, `file:///x`
+    // and a session whose id is `x` are three channels.
+    if (ownName(uri)) return uri;
     const named = nameOf(idOf(uri));
     return sessions.has(named) || owners.has(named) ? named : uri;
   };
   /**
    * The name this host publishes a session under, by the id inside it.
    *
-   * A session URI is the client's to name, and the only implementation there
-   * is builds one as `<provider>:/<id>` - the provider as the *scheme* - both
-   * when it creates a session and when it reopens one it listed. Publishing
-   * `ahp-session:/<id>` instead gave it two strings for one session, and which
-   * one it reached for came out of its own stored state: addressed as
-   * `claude:/<id>` the conversation drew, addressed as `ahp-session:/<id>` the
-   * same session with the same bytes behind it drew nothing.
-   *
-   * So this host names them the way that client will: the id is the identity,
-   * and the scheme is whose it is. The old spelling still resolves - see
-   * `heldAs` - because it is only ever read through the id.
+   * `<provider>:/<id>`, the provider as the *scheme*, whether the session was
+   * created here, resumed or listed from a backend's disk: VS Code builds a
+   * session URI that way and reads the provider back off the scheme. The id is
+   * the identity and the scheme is whose it is, so any other spelling a client
+   * used, `ahp-session:/<id>` included, resolves through `heldAs`.
    */
   const names = new Map<string, string>();
   const nameOf = (id: string): string => names.get(id) ?? uriFor(id);
+  /**
+   * Whether a URI is a channel that is its own name and never a session's:
+   * a terminal or a watch this host holds under whatever name it was given,
+   * and, for a name nothing here holds, one in a space other than a
+   * session's (`spaceOf`) - a chat is resolved as a chat, not read for a
+   * session's id. None of them is read for a session's id.
+   */
+  const ownName = (uri: string): boolean => {
+    const held = claims.get(uri);
+    if (held !== undefined) return held.kind === 'terminal' || held.kind === 'watch';
+    const space = spaceHere(uri);
+    return space !== undefined && space !== 'session';
+  };
   /**
    * Terminals, by their own channel URI.
    *
@@ -973,7 +1149,7 @@ export function createHost(options: HostOptions): Host {
    * opened it, several clients watch one, and the protocol lists them on the
    * *root* channel - which is where something owned by no session belongs.
    */
-  const terminals = new Map<string, Terminal>();
+  const terminals = new Claiming<Terminal>(claims, 'terminal');
   /** Set by `close`: no session, terminal or automation run starts after it. */
   let closed = false;
   /** The one close, shared by every caller of `close`. */
@@ -1013,6 +1189,11 @@ export function createHost(options: HostOptions): Host {
    * saying so is the point - see the refusal in `reconnect`.
    */
   const known = new Set<string>();
+  /**
+   * The person who first signed in under each client id, by client id: the
+   * only one a `reconnect` under that id is answered for.
+   */
+  const holders = new Map<string, string>();
   /**
    * What one backend turned out to offer.
    *
@@ -1200,7 +1381,7 @@ export function createHost(options: HostOptions): Host {
    * back to unread the moment anything else about it changes.
    */
   const statusOf = (uri: string): number => {
-    const held = sessions.get(uri);
+    const held = sessions.get(heldAs(uri));
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
     return drivingOf(held).status | kept.flags(idOf(uri));
@@ -1386,6 +1567,9 @@ export function createHost(options: HostOptions): Host {
    * is also what the client is told.
    */
   const meantBy = (channel: string): string => {
+    // A name claimed as a terminal or a watch is that thing's own name.
+    const held = claims.get(channel)?.kind;
+    if (held === 'terminal' || held === 'watch') return channel;
     // Nested under a session, so it is resolved the way the session it hangs
     // off is: a client that opened the row under its own spelling dispatches
     // annotations under that spelling too.
@@ -1472,6 +1656,22 @@ export function createHost(options: HostOptions): Host {
    */
   const restarting = new Map<string, Promise<void>>();
   /**
+   * One token per session, by session URI: made the first time a
+   * `session/configChanged` for it is applied, and dropped when the session
+   * is disposed or a restart of it fails.
+   *
+   * What a late answer checks it is still about the same session: a restart
+   * keeps the token, and a session disposed and created again under the same
+   * name is given a new one.
+   */
+  const lives = new Map<string, object>();
+  /** A session's token in `lives`, made when it has none. */
+  const lifeOf = (uri: string): object => {
+    const held = lives.get(uri) ?? {};
+    lives.set(uri, held);
+    return held;
+  };
+  /**
    * The isolation schema each session was offered when it was created.
    *
    * Kept because a session reports its own config schema and a client draws
@@ -1521,6 +1721,7 @@ export function createHost(options: HostOptions): Host {
     if (typeof state !== 'object' || state === null) return;
     const bag = state as Record<string, unknown>;
     if (typeof bag.resource === 'string') bag.resource = asked;
+    const moved = (uri: unknown): unknown => (typeof uri === 'string' ? respell(uri, meant, asked) : uri);
     /*
      * A changeset's URI is built from the session's, so a template is the
      * other name in disguise.
@@ -1538,28 +1739,10 @@ export function createHost(options: HostOptions): Host {
         if (typeof one !== 'object' || one === null) return one;
         const template = (one as Record<string, unknown>).uriTemplate;
         return typeof template === 'string' && template.startsWith(`${meant}/`)
-          ? { ...(one as Record<string, unknown>), uriTemplate: `${asked}${template.slice(meant.length)}` }
+          ? { ...(one as Record<string, unknown>), uriTemplate: moved(template) }
           : one;
       });
-    // Only the chats derived from this session are renamed. A chat a client
-    // named itself is that client's name and stays as it was written.
-    const mine = (uri: unknown): boolean => {
-      if (typeof uri !== 'string') return false;
-      const owning = sessionOfChat(uri);
-      return owning !== undefined && owning !== uri && idOf(owning) === idOf(asked);
-    };
-    if (mine(bag.defaultChat)) bag.defaultChat = chatUriFor(asked);
-    /*
-     * A chat derived from this session is renamed in the client's spelling -
-     * but a worker's chat is a chat of its own, not the default: it keeps its
-     * own authority and its call id, and only the session inside it moves.
-     * Renaming it to the default chat would put every worker conversation on
-     * the lead chat's channel.
-     */
-    const respell = (uri: string): string => {
-      const callId = toolCallOfSubagentChat(uri);
-      return callId === undefined ? chatUriFor(asked) : subagentChatUri(asked, callId);
-    };
+    if (bag.defaultChat !== undefined) bag.defaultChat = moved(bag.defaultChat);
     if (Array.isArray(bag.chats))
       bag.chats = bag.chats.map((chat) => {
         if (typeof chat !== 'object' || chat === null) return chat;
@@ -1567,8 +1750,8 @@ export function createHost(options: HostOptions): Host {
         const origin = row.origin as Record<string, unknown> | undefined;
         // A worker's origin names the chat its call is in, which is one of
         // this session's too.
-        const from = origin !== undefined && mine(origin.chat) ? { origin: { ...origin, chat: respell(String(origin.chat)) } } : {};
-        return mine(row.resource) ? { ...row, resource: respell(String(row.resource)), ...from } : { ...row, ...from };
+        const from = origin?.chat !== undefined ? { origin: { ...origin, chat: moved(origin.chat) } } : {};
+        return { ...row, resource: moved(row.resource), ...from };
       });
     // The chat each waiting request is answered on, which a client dispatches
     // to as it reads it.
@@ -1576,7 +1759,7 @@ export function createHost(options: HostOptions): Host {
       bag.inputNeeded = bag.inputNeeded.map((one) => {
         if (typeof one !== 'object' || one === null) return one;
         const request = one as Record<string, unknown>;
-        return mine(request.chat) ? { ...request, chat: respell(String(request.chat)) } : request;
+        return request.chat === undefined ? request : { ...request, chat: moved(request.chat) };
       });
     /*
      * And the link on the call that spawned a worker, so the two ends of it
@@ -1590,42 +1773,96 @@ export function createHost(options: HostOptions): Host {
      */
     const hasWorker = Array.isArray(bag.chats)
       && (bag.chats as Bag[]).some((chat) => toolCallOfSubagentChat(String((chat as Bag)?.resource ?? '')) !== undefined);
-    if (hasWorker && Array.isArray(bag.turns)) {
-      bag.turns = (bag.turns as Bag[]).map((turn) => {
-        const parts = Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : undefined;
-        if (parts === undefined) return turn;
-        let touched = false;
-        const next = parts.map((part) => {
-          const call = part.toolCall as Bag | undefined;
-          if (call === undefined) return part;
-          let moved = false;
-          const content = Array.isArray(call.content)
-            ? (call.content as Bag[]).map((block) => {
-              if (block.type !== 'subagent') return block;
-              const callId = toolCallOfSubagentChat(String(block.resource ?? ''));
-              if (callId === undefined) return block;
-              moved = true;
-              return { ...block, resource: subagentChatUri(asked, callId) };
-            })
-            : call.content;
-          // The same URI in the reference's `_meta` key.
-          const meta = call._meta as Bag | undefined;
-          const stamped = typeof meta?.subagentChatUri === 'string' ? toolCallOfSubagentChat(meta.subagentChatUri) : undefined;
-          if (stamped !== undefined) moved = true;
-          if (!moved) return part;
-          touched = true;
-          return {
-            ...part,
-            toolCall: {
-              ...call,
-              ...(content !== undefined ? { content } : {}),
-              ...(stamped !== undefined ? { _meta: { ...meta, subagentChatUri: subagentChatUri(asked, stamped) } } : {}),
-            },
-          };
-        });
-        return touched ? { ...turn, responseParts: next } : turn;
-      });
+    if (hasWorker && Array.isArray(bag.turns)) bag.turns = respelledIn(bag.turns, meant, asked);
+  };
+
+  /**
+   * One URI of a session, in another spelling of that session.
+   *
+   * The rules a snapshot and an action are respelled by: the session URI
+   * itself, anything built under it (`<session>/changeset/<scope>`,
+   * `<session>/annotations`), and a chat derived from it - its default chat,
+   * or a worker's, which keeps its own authority and call id while the
+   * session inside it moves. A chat a client named itself is that client's
+   * name and stays as it was written, and so does a chat of another session.
+   */
+  const respell = (uri: string, held: string, asked: string): string => {
+    if (uri === held) return asked;
+    if (uri.startsWith(`${held}/`)) return `${asked}${uri.slice(held.length)}`;
+    if (!uri.startsWith('ahp-chat:')) return uri;
+    const owning = sessionOfChat(uri);
+    if (owning === undefined || owning === uri || idOf(owning) !== idOf(asked)) return uri;
+    const callId = toolCallOfSubagentChat(uri);
+    return callId === undefined ? chatUriFor(asked) : subagentChatUri(asked, callId);
+  };
+
+  /**
+   * A value with every URI in it respelled, as a copy; the value itself is
+   * left alone.
+   *
+   * A URI is a string under a key in `URI_KEYS`, or in an array under one.
+   * Any other string - a message, a tool's input or output, a title - is
+   * somebody's words, and stays as written even where it names the session.
+   */
+  const respelledIn = <T>(value: T, held: string, asked: string, key?: string): T => {
+    if (typeof value === 'string') return (key !== undefined && URI_KEYS.has(key) ? respell(value, held, asked) : value) as T;
+    if (Array.isArray(value)) return value.map((one) => respelledIn(one, held, asked, key)) as T;
+    if (typeof value === 'object' && value !== null) {
+      return Object.fromEntries(Object.entries(value).map(([name, one]) => [name, respelledIn(one, held, asked, name)])) as T;
     }
+    return value;
+  };
+
+  /**
+   * The session a connection knows by another name, for a channel of it.
+   *
+   * The held session behind a session, chat or annotations channel, and the
+   * name this connection used for it: its alias of the session, or the
+   * session inside its alias of the chat. Nothing for a connection that uses
+   * the held name, and nothing for a channel that is not a session's.
+   */
+  const spellingOf = (connection: Connection, channel: string): { held: string; asked: string } | undefined => {
+    if (connection.aliases.size === 0) return undefined;
+    const bare = (uri: string): string => (uri.endsWith(MARKS) ? uri.slice(0, -MARKS.length) : uri);
+    const held = sessionHolding(channel) ?? sessionOfChat(channel) ?? bare(channel);
+    if (ownName(held)) return undefined;
+    const alias = connection.aliases.get(channel);
+    const asked = connection.aliases.get(held)
+      ?? (alias === undefined ? undefined : sessionOfChat(alias) ?? bare(alias));
+    return asked !== undefined && asked !== held && idOf(asked) === idOf(held) ? { held, asked } : undefined;
+  };
+
+  /**
+   * A snapshot taken for a channel a client named, answered in its name.
+   *
+   * The channel the snapshot was taken of is the one this host dispatches
+   * under; the one the client named is recorded as its alias on this
+   * connection and the snapshot is respelled into it. What comes back is the
+   * held name, which is what a replay is keyed by.
+   */
+  const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
+    const meant = meantBy(channel);
+    if (meant !== channel) connection.aliases.set(meant, channel);
+    if (sessionOfChat(channel) === undefined) {
+      if (meant !== channel) spelledFor(channel, snapshot);
+      return meant;
+    }
+    if (meant !== channel) snapshot.resource = channel;
+    /*
+     * A chat's own state names its session's other chats - where a fork came
+     * from, a worker's link on the call that spawned it - and those are
+     * respelled the way an action on this chat is, whether the chat itself
+     * was asked for by an alias or by a name a client gave it.
+     */
+    const spelling = spellingOf(connection, meant);
+    if (spelling !== undefined && typeof snapshot.state === 'object' && snapshot.state !== null) {
+      const state = snapshot.state as Record<string, unknown>;
+      snapshot.state = {
+        ...respelledIn(state, spelling.held, spelling.asked),
+        ...(state.resource === undefined ? {} : { resource: state.resource }),
+      };
+    }
+    return meant;
   };
 
   /**
@@ -1638,13 +1875,13 @@ export function createHost(options: HostOptions): Host {
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
+      const alias = connection.aliases.get(channel);
+      const aliased = alias !== undefined && connection.watching.has(alias);
+      if (!connection.watching.has(channel) && !aliased) continue;
       const said = per === undefined ? params : per(connection);
       if (connection.watching.has(channel)) connection.peer.notify(method, said);
       // And under the older spelling, for a client still watching by that one.
-      const alias = connection.aliases.get(channel);
-      if (alias !== undefined && connection.watching.has(alias)) {
-        connection.peer.notify(method, { ...(said as Record<string, unknown>), channel: alias });
-      }
+      if (aliased) connection.peer.notify(method, { ...(said as Record<string, unknown>), channel: alias });
     }
   };
   /** Which client's dispatch an action is the echo of. */
@@ -1662,7 +1899,10 @@ export function createHost(options: HostOptions): Host {
    * place when the action replaces the config. `root/agentsChanged` carries
    * the root agent list, whose sign-in resource says `required: true` for a
    * connection that must sign in and `false` for one the host already treats
-   * as somebody. Every other envelope is delivered as it is.
+   * as somebody. An action on a session, chat or annotations channel this
+   * connection knows the session by another name for carries the session's
+   * URIs in that name, the same as its snapshot. Every other envelope is
+   * delivered as it is.
    *
    * This is the one place an envelope is rewritten for a connection, which is
    * why the live broadcast and both replay paths call it: a rewrite anywhere
@@ -1673,7 +1913,12 @@ export function createHost(options: HostOptions): Host {
     envelope: E,
   ): E => {
     const { action } = envelope;
-    if (!isRootChannel(envelope.channel)) return envelope;
+    if (!isRootChannel(envelope.channel)) {
+      const spelling = spellingOf(connection, envelope.channel);
+      return spelling === undefined
+        ? envelope
+        : { ...envelope, action: respelledIn(action, spelling.held, spelling.asked) };
+    }
     if (action.type === 'root/agentsChanged') {
       return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
     }
@@ -1809,6 +2054,36 @@ export function createHost(options: HostOptions): Host {
   /** The session a chat of this host's belongs to, lead or worker. */
   const sessionHolding = (chat: string): string | undefined =>
     byChat.get(chat)?.uri ?? subagents.get(chat)?.session;
+  /**
+   * What the users gate reads a channel as: a session's - the session, a
+   * chat of it, its annotations or one of its changesets - a terminal's, or
+   * something else.
+   *
+   * Read from `claims` for a name this host holds, or whose session channel
+   * (`baseOf`) it holds, and otherwise from the name's space (`spaceOf`).
+   * Every other channel is a session's: a session is held under its
+   * provider's scheme, `claude:/<id>`, which says nothing about it being one,
+   * and a session a backend keeps on disk is named before anything here has
+   * listed it. Asked for a subscribe and for a dispatch alike, synchronously.
+   * The gate may be stricter than the handler behind it, never looser: a
+   * channel that turns out to be nothing is refused there anyway.
+   */
+  const channelKind = (channel: string): ChannelKind => {
+    const held = claims.get(channel) ?? claims.get(baseOf(channel));
+    if (held !== undefined) return held.kind === 'terminal' ? 'terminal' : held.kind === 'watch' ? 'other' : 'session';
+    const space = spaceHere(channel);
+    return space === 'terminal' ? 'terminal' : space === 'own' ? 'other' : 'session';
+  };
+  /** Whether `channelKind` reads a channel as a session's. */
+  const sessionChannel = (channel: string): boolean => channelKind(channel) === 'session';
+  /** The kind of channel a channel is, as `ACTION_HOMES` names it, or nothing an action belongs on. */
+  const homeOf = (channel: string): Home | undefined => {
+    if (isRootChannel(channel)) return 'root';
+    if (channel.startsWith('ahp-automation')) return 'automations';
+    const kind = channelKind(channel);
+    if (kind !== 'other') return kind;
+    return claims.get(channel)?.kind === 'watch' || schemeOf(channel) === 'ahp-resource-watch' ? 'watch' : undefined;
+  };
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
     typeof meta === 'object' && meta !== null && (meta as Bag).toolKind === 'subagent'
@@ -1978,7 +2253,9 @@ export function createHost(options: HostOptions): Host {
     reason: string,
   ): void => {
     log(`${channel}: ${reason}`);
-    peer.notify('action', { channel, action, serverSeq, origin, rejectionReason: reason });
+    // Under the name the client watches it by, as `broadcast` sends an action.
+    const alias = [...connections].find((one) => one.peer === peer)?.aliases.get(channel);
+    peer.notify('action', { channel: alias ?? channel, action, serverSeq, origin, rejectionReason: reason });
   };
   /**
    * Let a watch go once nobody is listening to it.
@@ -2018,13 +2295,16 @@ export function createHost(options: HostOptions): Host {
    * same condition seen from three places: no connection with that client id
    * is watching that session any more. Checked rather than assumed, because
    * one person can have two windows open on one session and closing the first
-   * must not remove them from it.
+   * must not remove them from it. Any spelling of the session counts, and
+   * the removal is said under the name it is held by.
    */
-  const leaves = (uri: string, clientId: string): void => {
+  const leaves = (asked: string, clientId: string): void => {
+    const uri = heldAs(asked);
     const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
     for (const connection of connections) {
-      if (connection.clientId === clientId && connection.watching.has(uri)) return;
+      if (connection.clientId !== clientId) continue;
+      if ([...connection.watching].some((channel) => heldAs(channel) === uri)) return;
     }
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
@@ -2286,7 +2566,7 @@ export function createHost(options: HostOptions): Host {
     const held = sessions.get(uri);
     const agent = held?.agent ?? owners.get(uri);
     const dir = dirOf(uri);
-    const chosen = chat === undefined ? undefined : byChat.get(chat);
+    const chosen = chat === undefined ? undefined : byChat.get(chatOf(chat));
     if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(-32602, 'chat must belong to the requested Agent Session');
     if (agent?.stateFile === undefined || dir === undefined) return undefined;
     const live = chosen?.chat ?? (held ? leadOf(held) : undefined);
@@ -2336,6 +2616,18 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * Whether a changeset channel is one of a session's, under any spelling of it.
+   *
+   * A changeset is watched under the name the client used for its session,
+   * so a scan of what connections watch looks through that name to the
+   * session it is held as.
+   */
+  const changesetOf = (channel: string, uri: string): boolean => {
+    const cut = channel.indexOf('/changeset/');
+    return cut > 0 && (channel.slice(0, cut) === uri || heldAs(channel.slice(0, cut)) === uri);
+  };
+
+  /**
    * Invocations in flight, and the last one that failed.
    *
    * Keyed by changeset and operation, because status is per operation on a
@@ -2365,7 +2657,8 @@ export function createHost(options: HostOptions): Host {
    * has said anything yet. Read at the moment of asking, since every one of
    * them moves.
    */
-  const operationContext = (uri: string, dir: string): ChangesetOperationContext => {
+  const operationContext = (asked: string, dir: string): ChangesetOperationContext => {
+    const uri = heldAs(asked);
     const base = worktrees.get(uri)?.base;
     const git = (options.directories?.meta(dir) as { git?: Record<string, unknown> } | undefined)?.git;
     const facts = githubFacts.get(dir) as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
@@ -2423,7 +2716,7 @@ export function createHost(options: HostOptions): Host {
     const done = new Set<string>();
     for (const connection of connections) {
       for (const channel of connection.watching) {
-        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        if (!changesetOf(channel, uri) || done.has(channel)) continue;
         done.add(channel);
         const operations = operationsOf(channel);
         // `undefined` is how the protocol clears the list, and an operation
@@ -2517,7 +2810,7 @@ export function createHost(options: HostOptions): Host {
     const done = new Set<string>();
     for (const connection of connections) {
       for (const channel of connection.watching) {
-        if (!channel.startsWith(`${uri}/changeset/`) || done.has(channel)) continue;
+        if (!changesetOf(channel, uri) || done.has(channel)) continue;
         done.add(channel);
         const at = changesetAt(channel);
         if (!at) continue;
@@ -2798,11 +3091,11 @@ export function createHost(options: HostOptions): Host {
    * `git status` is not free.
    */
   const watchedIn = (dir: string): boolean => {
-    const prefixes = toldIn(dir).map((uri) => `${uri}/changeset/`);
-    if (prefixes.length === 0) return false;
+    const told = toldIn(dir);
+    if (told.length === 0) return false;
     for (const connection of connections) {
       for (const channel of connection.watching) {
-        if (prefixes.some((prefix) => channel.startsWith(prefix))) return true;
+        if (told.some((uri) => changesetOf(channel, uri))) return true;
       }
     }
     return false;
@@ -3177,6 +3470,31 @@ export function createHost(options: HostOptions): Host {
     };
   };
 
+  /**
+   * A chat of a session in the session's `ahp-session:/<id>` spelling, or
+   * nothing for a chat whose name does not carry its session - one a client
+   * named itself.
+   *
+   * A default or worker chat's URI embeds its session's, and a session store
+   * may hold a chat's title under that spelling of it, so a title is looked
+   * for there too.
+   */
+  const formerChatUri = (uri: string, chatUri: string): string | undefined => {
+    const former = respell(chatUri, uri, uriFor(idOf(uri)));
+    return former === chatUri ? undefined : former;
+  };
+  /** A chat's stored title: under its name, or else under its `ahp-session:` spelling. */
+  const titleOf = (uri: string, chatUri: string): string | undefined => {
+    const former = formerChatUri(uri, chatUri);
+    return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
+  };
+  /** Store a chat's title under its name, and clear one kept under its `ahp-session:` spelling. */
+  const keepTitle = (uri: string, chatUri: string, title: string): void => {
+    kept.setChatTitle(idOf(uri), chatUri, title);
+    const former = formerChatUri(uri, chatUri);
+    if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
+  };
+
   const spawn = (
     agent: Agent,
     uri: string,
@@ -3378,9 +3696,9 @@ export function createHost(options: HostOptions): Host {
      * announced or handed to a backend, so a client never sees the derived
      * name first and then a correction.
      */
-    const named_ = kept.chatTitle(idOf(uri), chatUri);
+    const named_ = titleOf(uri, chatUri);
     if (named_ !== undefined) session.setTitle?.(named_);
-    // Named by whoever created it, which is the client. Recorded so every
+    // The name it is held under, which is its provider's. Recorded so every
     // other answer about it uses that same string.
     names.set(idOf(uri), uri);
     byChat.set(chatUri, { uri, chat: session });
@@ -3990,6 +4308,37 @@ export function createHost(options: HostOptions): Host {
     return held;
   };
 
+  /** The stored values already said to be dropped, by session id, key and value, so each is said once. */
+  const droppedSaid = new Set<string>();
+  /**
+   * The config a session was stored with, less what its backend no longer offers.
+   *
+   * Checked against the schema published now, backend and plugin keys both,
+   * because a stored value may name a preset that was renamed or removed
+   * since it was written. A value a declared property refuses is left out so
+   * the default applies, and said in one line the first time. A key no
+   * property declares is handed back as stored: the store only holds keys
+   * the backend took, and a backend takes some it does not declare.
+   */
+  const storedConfig = (owner: Agent, id: string): Record<string, unknown> => {
+    const schema = sessionSchema(owner);
+    const properties = (typeof schema.properties === 'object' && schema.properties !== null
+      ? schema.properties
+      : {}) as Bag;
+    const held: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(kept.config(id) ?? {})) {
+      if (properties[key] === undefined || accepts(properties[key], value)) {
+        held[key] = value;
+        continue;
+      }
+      const said = `${id}\u0000${key}\u0000${JSON.stringify(value)}`;
+      if (droppedSaid.has(said)) continue;
+      droppedSaid.add(said);
+      log(`${nameOf(id)}: stored ${key} ${JSON.stringify(value)} is not offered; using the default`);
+    }
+    return held;
+  };
+
   /** What this host answered, as strings, for saying back on the session. */
   const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
     Object.entries(config)
@@ -4139,8 +4488,10 @@ export function createHost(options: HostOptions): Host {
     decided.delete(uri);
     kept.forget(idOf(uri));
     offered.delete(uri);
+    owners.delete(uri);
+    lives.delete(uri);
     for (const channel of [...shown.keys()]) {
-      if (channel.startsWith(`${uri}/changeset/`)) shown.delete(channel);
+      if (changesetOf(channel, uri)) shown.delete(channel);
     }
     activeSessionsMoved();
     // Every other client is told, because the session was theirs too.
@@ -4178,9 +4529,10 @@ export function createHost(options: HostOptions): Host {
     }
     const to = await isolated(uri, mine, from);
     const before = held.workingDirectory;
+    // Their names stay the session's while it starts again.
     for (const [chatUri, chat] of held.chats) {
       chat.close();
-      byChat.delete(chatUri);
+      byChat.drop(chatUri);
     }
     /*
      * The conversation, when this is a restart rather than a re-creation.
@@ -4317,7 +4669,7 @@ export function createHost(options: HostOptions): Host {
       : undefined;
     chat.close();
     held.chats.delete(chatUri);
-    byChat.delete(chatUri);
+    byChat.drop(chatUri);
     spawn(
       held.agent,
       uri,
@@ -4793,7 +5145,7 @@ export function createHost(options: HostOptions): Host {
     found.setTitle?.(title);
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
-    kept.setChatTitle(idOf(uri), chatUri, title);
+    keepTitle(uri, chatUri, title);
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
     else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     summaryMoved(uri);
@@ -4860,7 +5212,8 @@ export function createHost(options: HostOptions): Host {
     },
     create: async (asked) => {
       const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? first.provider;
-      const made = `ahp-session:/${crypto.randomUUID()}`;
+      // Held under its provider's name, as a client's `createSession` is.
+      const made = `${provider}:/${crypto.randomUUID()}`;
       const config: Record<string, unknown> = {
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
         ...(asked.model !== undefined ? { model: asked.model } : {}),
@@ -4883,7 +5236,7 @@ export function createHost(options: HostOptions): Host {
       const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
       const chat = spawn(held.agent, at, chatUri, held.config, undefined, held.workingDirectory, undefined, held.additional);
       log(`opened ${chatUri} in ${at}`);
-      if (asked.title !== undefined) { chat.setTitle?.(asked.title); kept.setChatTitle(idOf(at), chatUri, asked.title); }
+      if (asked.title !== undefined) { chat.setTitle?.(asked.title); keepTitle(at, chatUri, asked.title); }
       dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
       chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
       return { chat: chatUri };
@@ -5146,6 +5499,28 @@ export function createHost(options: HostOptions): Host {
    * disagree about what the conversation is called.
    */
   const titles = new Map();
+  /** The last listing started, by `past` or by `listSessions`, and when. */
+  let listed: { at: number; rows: Promise<Summary[]> } | undefined;
+  /** When `past` last started a listing of its own. */
+  let pastAt = -Infinity;
+  /** A new listing, recorded as the one `catalogue` answers with. */
+  const listNow = (): Promise<Summary[]> => {
+    const rows = listing();
+    listed = { at: Date.now(), rows };
+    rows.catch(() => { if (listed?.rows === rows) listed = undefined; });
+    return rows;
+  };
+  /**
+   * The catalogue as `past` reads it: a listing started within
+   * `LISTING_FRESH`, running or finished, or else a new one.
+   */
+  const catalogue = (): Promise<Summary[]> => {
+    if (listed === undefined || Date.now() - listed.at >= LISTING_FRESH) {
+      pastAt = Date.now();
+      return listNow();
+    }
+    return listed.rows;
+  };
   const past = async (id: string): Promise<Bag[] | undefined> => {
     const held = history.get(id);
     if (held)
@@ -5166,8 +5541,14 @@ export function createHost(options: HostOptions): Host {
     if (already) return await already;
     const asked = (async (): Promise<Bag[] | undefined> => {
       // The listing is what says whose session this is, so it is asked first.
-      const found = await listing();
-      const row = found.find((item) => idFor(item.resource) === id);
+      const before = pastAt;
+      let found = await catalogue();
+      let row = found.find((item) => idFor(item.resource) === id);
+      if (!row && pastAt === before && Date.now() - pastAt >= LISTING_FRESH) {
+        pastAt = Date.now();
+        found = await listNow();
+        row = found.find((item) => idFor(item.resource) === id);
+      }
       const owner = owners.get(nameOf(id));
       if (!row || !owner?.transcript)
         return undefined;
@@ -5260,7 +5641,7 @@ export function createHost(options: HostOptions): Host {
      * there is a failed open, and a client that treats the three as one
      * hydration renders nothing at all.
      */
-    if (channel.endsWith(MARKS)) {
+    if (channel.endsWith(MARKS) && sessionChannel(channel)) {
       const owning = channel.slice(0, -MARKS.length);
       // Asked of `past`, which consults the catalogue itself, rather than of
       // the maps a listing fills: a client sends the three subscriptions that
@@ -5448,6 +5829,8 @@ export function createHost(options: HostOptions): Host {
     // A chat URI carries its session; a session URI is one. Either way the
     // transcript is the session's, and the id is what reads it.
     const owning = sessionOfChat(channel) ?? channel;
+    // Never a session's id read out of a file, a terminal or a watch.
+    if (!sessionChannel(owning)) throw new RpcError(-32001, `No agent for session ${channel}`);
     const id = idOf(owning);
     const turns = await past(id);
     const owner = owners.get(nameOf(id)) ?? first;
@@ -5546,7 +5929,7 @@ export function createHost(options: HostOptions): Host {
           // which are the settings somebody wants *before* continuing one.
           config: {
             schema: sessionSchema(owner),
-            values: { ...owner.defaults(), ...(kept.config(id) ?? {}) },
+            values: { ...owner.defaults(), ...storedConfig(owner, id) },
           },
         },
         fromSeq: serverSeq,
@@ -5646,6 +6029,43 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * Refuse a name for a new session, chat, terminal or relayed watch that
+   * `claims` already holds, as it is or as the session channel it hangs off
+   * (`baseOf`), that resolves to a session running or listed here, or that
+   * falls in a space (`spaceOf`) this host keeps for another kind. A
+   * relayed watch may be named in `ahp-resource-watch:`, as this host's own
+   * are.
+   */
+  const claimable = (name: string, kind: NameKind): void => {
+    const space = spaceHere(name);
+    const fits = space === undefined || space === kind || (kind === 'watch' && schemeOf(name) === 'ahp-resource-watch');
+    if (!fits)
+      throw new RpcError(-32003, `${name} is a name this host keeps for ${space === 'own' ? 'its own channels' : `${space}s`}`);
+    for (const one of new Set([name, baseOf(name)])) {
+      const held = claims.get(one);
+      if (held !== undefined) throw new RpcError(-32003, `${name} is already a ${held.kind} here`);
+      const as = heldAs(one);
+      if (sessions.has(as) || owners.has(as)) throw new RpcError(-32003, `${name} names the session ${as}`);
+    }
+  };
+
+  /**
+   * Refuse a new session whose id is already a session here, running or
+   * listed, under any scheme: the id is what its flags, config, marks and
+   * titles are kept by. Refused too when the name it would be held under, or
+   * the one the client asked for, is not `claimable`. Asked before anything
+   * is made for the new one - a
+   * worktree, a machine, the choices recorded for it - so a refusal leaves
+   * nothing behind.
+   */
+  const unheld = (uri: string, asked = uri): void => {
+    const name = nameOf(idOf(uri));
+    if (sessions.has(name) || owners.has(name))
+      throw new RpcError(-32003, `${idOf(uri)} is already held as ${name}`);
+    for (const one of new Set([name, uri, asked])) claimable(one, 'session');
+  };
+
+  /**
    * Start a session.
    *
    * At host scope rather than inside a connection because there are two ways
@@ -5667,6 +6087,7 @@ export function createHost(options: HostOptions): Host {
     named(uri, 'session');
     if (sessions.has(uri))
       throw new RpcError(-32003, `${uri} already exists`);
+    unheld(uri);
     const agent = agents.get(provider);
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
@@ -5680,7 +6101,10 @@ export function createHost(options: HostOptions): Host {
       // row that appears as "New session" and is renamed a moment later is
       // two rows to a client that lists once. Written down for the same
       // reason a rename is: a first name outlives a restart too.
-      if (title !== undefined) { lead.setTitle?.(title); kept.setChatTitle(idOf(uri), chatUriFor(uri), title); }
+      if (title !== undefined) { lead.setTitle?.(title); keepTitle(uri, chatUriFor(uri), title); }
+      // What it was made with, so a resume after a restart starts from the
+      // same place rather than from the defaults.
+      if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -5734,7 +6158,10 @@ export function createHost(options: HostOptions): Host {
    * that nobody is at the keyboard to say the first thing.
    */
   const beginAutomation = async (wanted: StartSession): Promise<string> => {
-    const uri = `ahp-session:/${crypto.randomUUID()}`;
+    const provider = wanted.provider ?? first.provider;
+    // Held under its provider's name, as a client's `createSession` is.
+    const uri = `${provider}:/${crypto.randomUUID()}`;
+    unheld(uri);
     const config = wanted.config ?? {};
     // The same two steps a client's `createSession` takes: the tree is made
     // before anything runs in it, and the host's own keys are not the
@@ -5744,10 +6171,10 @@ export function createHost(options: HostOptions): Host {
     await settle(uri, wanted.workingDirectory, config);
     // A source in the config is made into a machine before anything runs, the
     // same step a client's `createSession` takes.
-    await placedIn(uri, wanted.provider ?? first.provider, config, where);
+    await placedIn(uri, provider, config, where);
     openSession(
       uri,
-      wanted.provider ?? first.provider,
+      provider,
       backendsOwn(config),
       where,
       wanted.origin,
@@ -6005,17 +6432,36 @@ export function createHost(options: HostOptions): Host {
        * does not acquire a plugin's scheme by accident. That is what `HANDOFF`'s
        * pending step 9 means by scoping the gate rather than restoring it.
        */
+      /** What reading a channel of each kind needs. */
+      const read: Record<ChannelKind, Grant> = { session: 'session:read', terminal: 'terminal:read', other: 'file:read' };
       const capabilityFor = (method: string, params: Record<string, unknown>): Grant[] | undefined => {
         if (method === 'subscribe') {
           const channel = String(params.channel ?? '');
           if (isRootChannel(channel)) return undefined;
-          if (channel.startsWith('ahp-session:') || channel.startsWith('ahp-chat:')) return ['session:read'];
           if (channel.startsWith('ahp-automations')) return ['automation:read'];
-          if (channel.startsWith('ahp-terminal:')) return ['terminal:read'];
-          // Something a later plan added: the conservative answer, and the
-          // subject `createResourceWatch` already required to hand it over.
-          return ['file:read'];
+          /*
+           * What the channel is spelt as and what it resolves to, both: the
+           * snapshot is taken of the resolved channel, so a spelling that
+           * reads as something else cannot reach a session. Anything that is
+           * neither a session's nor a terminal's - a file, a resource watch,
+           * one another client relays - needs what `createResourceWatch`
+           * required to hand a watch over.
+           */
+          return [...new Set([read[channelKind(channel)], read[channelKind(meantBy(channel))]])];
         }
+        /*
+         * Completions in a session are the session's commands, so they need
+         * what reading it does, as well as the `file:read` a path needs.
+         */
+        if (method === 'completions' && typeof params.channel === 'string' && params.channel !== '') {
+          const channel = params.channel;
+          return [...new Set<Grant>(['file:read', read[channelKind(channel)], read[channelKind(meantBy(channel))]])];
+        }
+        /*
+         * A changeset is a session's, so running an operation on it writes to
+         * the session as well as to its files.
+         */
+        if (method === 'invokeChangesetOperation') return ['file:write', 'session:write'];
         const plain = NEEDS[method];
         if (plain === undefined) return undefined;
         const at = plain.indexOf(':');
@@ -6039,6 +6485,44 @@ export function createHost(options: HostOptions): Host {
           needed.add((scheme === '' || scheme === 'file' ? plain : `${scheme}:${verb}`) as Grant);
         }
         return [...needed];
+      };
+
+      /**
+       * The users gate for one command, which throws what the client is told.
+       *
+       * Asked of every command at the boundary, and of each channel an
+       * `initialize` or a `reconnect` subscribes to, as `subscribe`, since
+       * those subscribe without passing the boundary as one.
+       */
+      const admit = (method: string, params: Record<string, unknown>): void => {
+        if (options.users === undefined || connection.root === true) return;
+        const needed = capabilityFor(method, params);
+        if (needed === undefined || needed.length === 0) return;
+        const who = connection.principal;
+        if (who === undefined) {
+          throw new RpcError(-32007, `Sign in to use this host`, {
+            resources: [options.users.resource],
+          });
+        }
+        /*
+         * Removed since they signed in, which is a sign-in again and not
+         * a role that does not cover this. The directory re-reads its
+         * file on every question, so the answer is current as of this
+         * command - decision `a-role-is-read-on-every-command`.
+         */
+        if (who.standing !== undefined && !who.standing()) {
+          throw new RpcError(-32007, `Sign in to use this host`, {
+            resources: [options.users.resource],
+          });
+        }
+        const missing = needed.find((one) => !who.can(one));
+        if (missing !== undefined) {
+          // No `request` key: a role is not something a client can
+          // negotiate, and the protocol says that field is omitted when
+          // no grant would resolve the denial. Its absence is what tells
+          // a client to stop rather than retry.
+          throw new RpcError(-32009, refusalReason(who.id, missing), {});
+        }
       };
 
       /**
@@ -6153,12 +6637,12 @@ export function createHost(options: HostOptions): Host {
             // A handshake that fails because one requested channel is gone is
             // a client that cannot connect at all. Take what can be taken.
             try {
-              const snapshot = await snapshotOf(channel, connection.config ?? {}, connection);
-              // The root under its other spelling is answered and told under that spelling.
-              if (isRootChannel(channel) && channel !== ROOT) {
-                connection.aliases.set(ROOT, channel);
-                snapshot.resource = channel;
-              }
+              // Gated, resolved and answered the way `subscribe` is: the
+              // root, a session or a chat under another spelling is told
+              // under that spelling.
+              admit('subscribe', { channel });
+              const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
+              answeredAs(connection, channel, snapshot);
               snapshots.push(snapshot);
               connection.watching.add(channel);
             }
@@ -6274,6 +6758,23 @@ export function createHost(options: HostOptions): Host {
           if (!known.has(clientId)) {
             throw new RpcError(-32008, `${clientId || 'That client'} is not a client this host has seen`);
           }
+          /*
+           * Under a users directory, a person signed in resumes only an id
+           * that is theirs or nobody's, and is answered `-32008` otherwise,
+           * so their client falls back to a fresh `initialize`. A connection
+           * nobody has signed in on resumes any id it names: what it may not
+           * read is `missing`, and `claimsId` gives it no claim on an id
+           * somebody holds until that person signs in on it.
+           */
+          const holder = holders.get(clientId);
+          if (options.users !== undefined && connection.root !== true && connection.principal !== undefined
+            && holder !== undefined && holder !== connection.principal.id) {
+            throw new RpcError(-32008, `${clientId || 'That client'} is not a client this connection may resume`);
+          }
+          // A person signed in resuming an id nobody holds holds it from now.
+          if (options.users !== undefined && connection.principal !== undefined && holder === undefined && ownId(clientId)) {
+            holders.set(clientId, connection.principal.id);
+          }
           connection.clientId = clientId;
           void fire({ type: 'client_connect', client: connection.clientId });
           // The other way in. A client that dropped resumes with this rather
@@ -6291,7 +6792,8 @@ export function createHost(options: HostOptions): Host {
           const since = typeof params.lastSeenServerSeq === 'number' ? params.lastSeenServerSeq : 0;
 
           const missing: string[] = [];
-          const resumed: string[] = [];
+          /** Each channel resumed, by the name this host dispatches under, with the name the client used. */
+          const resumed = new Map<string, string>();
           for (const channel of wanted) {
             try {
               // Resolved the way `subscribe` resolves it, so a client coming
@@ -6299,11 +6801,12 @@ export function createHost(options: HostOptions): Host {
               // automations catalogue is resumed rather than told the channel
               // has gone - and is replayed, which is keyed by the name this
               // host dispatches under rather than the one the client used.
+              admit('subscribe', { channel });
               const meant = meantBy(channel);
               await snapshotOf(meant, connection.config ?? {}, connection);
               if (meant !== channel) connection.aliases.set(meant, channel);
               connection.watching.add(channel);
-              resumed.push(meant);
+              resumed.set(meant, channel);
             }
             catch {
               // A session whose agent has gone, or one this client may no
@@ -6329,14 +6832,25 @@ export function createHost(options: HostOptions): Host {
             log(`${clientId} came back at ${since}, replaying`);
             return {
               type: 'replay',
-              actions: replayable.filter((held) => held.serverSeq > since
-                && resumed.includes(held.channel)).map((held) => seenBy(connection, held)),
+              actions: replayable.flatMap((held) => {
+                const alias = resumed.get(held.channel);
+                if (held.serverSeq <= since || alias === undefined) return [];
+                const envelope = seenBy(connection, held);
+                // A session's actions under the name this connection uses for
+                // it, as they went out live; any other channel, the
+                // automations catalogue among them, under the held name.
+                return [spellingOf(connection, held.channel) === undefined ? envelope : { ...envelope, channel: alias }];
+              }),
               missing,
             };
           }
           log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
           const snapshots = [];
-          for (const channel of resumed) snapshots.push(await snapshotOf(channel, connection.config ?? {}, connection));
+          for (const channel of resumed.values()) {
+            const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
+            answeredAs(connection, channel, snapshot);
+            snapshots.push(snapshot);
+          }
           return { type: 'snapshot', snapshots };
         },
         /**
@@ -6387,12 +6901,7 @@ export function createHost(options: HostOptions): Host {
            * session afterwards went out under a name this client was not
            * watching.
            */
-          const meant = meantBy(channel);
-          if (meant !== channel) {
-            connection.aliases.set(meant, channel);
-            if (sessionOfChat(channel) === undefined) spelledFor(channel, snapshot);
-            else snapshot.resource = channel;
-          }
+          const meant = answeredAs(connection, channel, snapshot);
           connection.watching.add(channel);
           // From here on, an unsubscribe means something: a watch nobody has
           // subscribed to yet is not one everybody has finished with.
@@ -6485,7 +6994,7 @@ export function createHost(options: HostOptions): Host {
           if (asked) {
             const typed_ = asked[1] ?? '';
             const from = offset - typed_.length - 1;
-            const asking = String(params.channel ?? '');
+            const asking = meantBy(String(params.channel ?? ''));
             const chat_ = byChat.get(asking)?.chat
               ?? (sessions.get(asking) ? leadOf(sessions.get(asking) as Held) : undefined);
             // Relative to the session's own directory, which is what a person
@@ -6518,7 +7027,7 @@ export function createHost(options: HostOptions): Host {
             return { items: [] };
           const typed = (found[1] ?? '').toLowerCase();
           const start = offset - typed.length - 1;
-          const asked_ = String(params.channel ?? '');
+          const asked_ = meantBy(String(params.channel ?? ''));
           const session = byChat.get(asked_)?.chat
             ?? (sessions.get(asked_) ? leadOf(sessions.get(asked_) as Held) : undefined);
           // A live session's own list wins: two sessions in one directory can
@@ -6659,7 +7168,7 @@ export function createHost(options: HostOptions): Host {
          * whole catalogue to both of them.
          */
         listSessions: async (params) => {
-          const rows = await listing();
+          const rows = await listNow();
           const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
           const after = cursor === undefined
             ? 0
@@ -6713,6 +7222,7 @@ export function createHost(options: HostOptions): Host {
           const uri = named(String(params.channel ?? ''), 'terminal');
           if (terminals.has(uri))
             throw new RpcError(-32003, `${uri} already exists`);
+          claimable(uri, 'terminal');
           const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
           /*
            * Whose terminal this is, checked rather than taken.
@@ -6938,8 +7448,19 @@ export function createHost(options: HostOptions): Host {
             // signing in again is the same thing to this resource that a
             // replaced token is to any other, and the path below forgets that
             // one for the same reason.
+            /*
+             * A client id is the first person's who signed in under it, and
+             * nobody else signs in under it: the id is who a published
+             * resource is routed to. `InitializeResult` carries no client id,
+             * so the connection cannot be handed another one.
+             */
+            const holder = holders.get(connection.clientId);
+            if (holder !== undefined && holder !== held.id) {
+              throw new RpcError(-32003, `${connection.clientId} is another person's client id here; connect under one of your own`);
+            }
             forgetExpiry(resource);
             connection.principal = held;
+            if (ownId(connection.clientId)) holders.set(connection.clientId, held.id);
             if (expiresIn !== undefined) {
               connection.principalUntil = Date.now() + expiresIn * 1000;
               expire(resource);
@@ -7251,102 +7772,126 @@ export function createHost(options: HostOptions): Host {
          * The **client** chooses the URI and sends it as `channel` - which is
          * what makes the session addressable before this host has answered, so
          * the client can subscribe to it without a round trip in between.
+         *
+         * Held as `<provider>:/<id>`, with the id from the client's URI, which
+         * is the name a listed session has and the one VS Code routes on. The
+         * client's own URI stays a name for it: `heldAs` resolves it and a
+         * connection subscribed under it is answered in its spelling -
+         * decision `a-session-is-held-under-its-providers-name`.
          */
         createSession: async (params) => {
           if (closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
-          const uri = named(String(params.channel ?? ''), 'session');
+          const given = named(String(params.channel ?? ''), 'session');
           const provider = String(params.provider ?? first.provider);
-          const config = (typeof params.config === 'object' && params.config !== null
-            ? params.config
-            : {}) as Record<string, string>;
+          const uri = `${provider}:/${idOf(given)}`;
+          unheld(uri, given);
           /*
-           * Where the client asked the agent to work.
-           *
-           * A list on the wire and one directory to a session, so the first is
-           * the answer. `file://` comes off: everything below here deals in
-           * paths, and a backend handed a URI would open a directory called
-           * `file:`.
+           * Both names, claimed before anything is made for the session, so a
+           * second creation of either while this one waits on a worktree or
+           * a machine is refused; let go again unless the session was made.
            */
-          const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
-            .filter((entry): entry is string => typeof entry === 'string')
-            .map((entry) => entry.replace(/^file:\/\//, ''));
-          const asked = wanted[0];
-          const where = asked;
-          // The peers of the first, which the protocol says are equal to each
-          // other and to it in everything but which one the process is rooted
-          // at. A backend that cannot take them is told none.
-          const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
-          /*
-           * The worktree, before anything is started in it.
-           *
-           * Made first because the backend is handed a directory and expected
-           * to work in it: a session opened in the folder and then moved would
-           * be an agent whose files changed under it. A failure here is a
-           * session that never existed, which is the right outcome - the
-           * alternative is one running somewhere the person did not choose.
-           */
-          /*
-           * How far along, for the one thing here that takes visible time.
-           *
-           * `root/progress` echoes the `progressToken` the request carried, so
-           * it is sent only when the client asked for one - and only to the
-           * client that asked, because the token is that request's and means
-           * nothing to anybody else. Making a worktree is `git worktree add`
-           * plus a copy of whatever the client asked to bring along, which on
-           * a large repository is seconds a person otherwise waits through
-           * with nothing on screen.
-           */
-          const token = typeof params.progressToken === 'string' ? params.progressToken : undefined;
-          const along = (progress: number, message: string): void => {
-            if (token === undefined) return;
-            connection.peer.notify('root/progress', { channel: ROOT, progressToken: token, progress, total: 2, message });
+          const pending: Claimed = { kind: 'session', of: uri };
+          for (const one of new Set([uri, given])) claims.set(one, pending);
+          const release = (): void => {
+            for (const one of [uri, given]) if (claims.get(one) === pending) claims.delete(one);
           };
-          along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
-          const running = await isolated(uri, config, where);
-          along(1, 'Starting the agent');
-          await settle(uri, where, config);
-          // A `disposable:<profile>` setting is a machine made for this
-          // session, with this harness's needs and this folder, before the
-          // backend is started with it.
-          await placedIn(uri, provider, config, running);
-          // This connection's tokens and no other's. A client that pushed
-          // nothing gets a session on the daemon's own credentials, which is
-          // how every session worked before there was anything to push.
-          openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), peers);
-          // Complete, which the protocol spells as `progress === total`.
-          along(2, 'Ready');
-          /*
-           * The creator claiming its place in the session it just made.
-           *
-           * The protocol's own words: "equivalent to dispatching a
-           * `session/activeClientSet` immediately after creation". Answered
-           * here rather than left to that dispatch because it saves the round
-           * trip the field exists to save, and because a client that has to
-           * announce itself afterwards owns a session that is briefly empty
-           * of it.
-           *
-           * The `clientId` is this connection's, not the one in the payload.
-           * The protocol says the two MUST match, and forcing it is what the
-           * dispatch path does for the same reason: a client naming somebody
-           * else is announcing a presence that is not theirs.
-           */
-          const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
-            ? params.activeClient as Bag
-            : undefined;
-          if (claimed !== undefined) {
-            const clientId = connection.clientId || 'anonymous';
-            const activeClient: Bag = {
-              ...claimed,
-              clientId,
-              tools: Array.isArray(claimed.tools) ? claimed.tools : [],
+          try {
+            const config = (typeof params.config === 'object' && params.config !== null
+              ? params.config
+              : {}) as Record<string, string>;
+            /*
+             * Where the client asked the agent to work.
+             *
+             * A list on the wire and one directory to a session, so the first is
+             * the answer. `file://` comes off: everything below here deals in
+             * paths, and a backend handed a URI would open a directory called
+             * `file:`.
+             */
+            const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
+              .filter((entry): entry is string => typeof entry === 'string')
+              .map((entry) => entry.replace(/^file:\/\//, ''));
+            const asked = wanted[0];
+            const where = asked;
+            // The peers of the first, which the protocol says are equal to each
+            // other and to it in everything but which one the process is rooted
+            // at. A backend that cannot take them is told none.
+            const peers = agents.get(provider)?.multipleDirectories === true ? wanted.slice(1) : [];
+            /*
+             * The worktree, before anything is started in it.
+             *
+             * Made first because the backend is handed a directory and expected
+             * to work in it: a session opened in the folder and then moved would
+             * be an agent whose files changed under it. A failure here is a
+             * session that never existed, which is the right outcome - the
+             * alternative is one running somewhere the person did not choose.
+             */
+            /*
+             * How far along, for the one thing here that takes visible time.
+             *
+             * `root/progress` echoes the `progressToken` the request carried, so
+             * it is sent only when the client asked for one - and only to the
+             * client that asked, because the token is that request's and means
+             * nothing to anybody else. Making a worktree is `git worktree add`
+             * plus a copy of whatever the client asked to bring along, which on
+             * a large repository is seconds a person otherwise waits through
+             * with nothing on screen.
+             */
+            const token = typeof params.progressToken === 'string' ? params.progressToken : undefined;
+            const along = (progress: number, message: string): void => {
+              if (token === undefined) return;
+              connection.peer.notify('root/progress', { channel: ROOT, progressToken: token, progress, total: 2, message });
             };
-            const here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
-            presence.set(idOf(uri), here);
-            here.set(clientId, activeClient);
-            dispatch(uri, { type: 'session/activeClientSet', activeClient });
-            retool(uri);
+            along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
+            const running = await isolated(uri, config, where);
+            along(1, 'Starting the agent');
+            await settle(uri, where, config);
+            // A `disposable:<profile>` setting is a machine made for this
+            // session, with this harness's needs and this folder, before the
+            // backend is started with it.
+            await placedIn(uri, provider, config, running);
+            // This connection's tokens and no other's. A client that pushed
+            // nothing gets a session on the daemon's own credentials, which is
+            // how every session worked before there was anything to push.
+            // Handed over, since `openSession` refuses a name this still holds.
+            release();
+            openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), peers);
+            if (!claims.has(given)) claims.set(given, { kind: 'session', of: uri });
+            // Complete, which the protocol spells as `progress === total`.
+            along(2, 'Ready');
+            /*
+             * The creator claiming its place in the session it just made.
+             *
+             * The protocol's own words: "equivalent to dispatching a
+             * `session/activeClientSet` immediately after creation". Answered
+             * here rather than left to that dispatch because it saves the round
+             * trip the field exists to save, and because a client that has to
+             * announce itself afterwards owns a session that is briefly empty
+             * of it.
+             *
+             * The `clientId` is this connection's, not the one in the payload.
+             * The protocol says the two MUST match, and forcing it is what the
+             * dispatch path does for the same reason: a client naming somebody
+             * else is announcing a presence that is not theirs.
+             */
+            const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
+              ? params.activeClient as Bag
+              : undefined;
+            if (claimed !== undefined) {
+              const clientId = connection.clientId || 'anonymous';
+              const activeClient: Bag = {
+                ...claimed,
+                clientId,
+                tools: Array.isArray(claimed.tools) ? claimed.tools : [],
+              };
+              const here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
+              presence.set(idOf(uri), here);
+              here.set(clientId, activeClient);
+              dispatch(uri, { type: 'session/activeClientSet', activeClient });
+              retool(uri);
+            }
+            return {};
           }
-          return {};
+          finally { release(); }
         },
         /**
          * A second conversation in one session.
@@ -7358,7 +7903,7 @@ export function createHost(options: HostOptions): Host {
          * turn's text on its first prompt.
          */
         createChat: async (params) => {
-          const uri = String(params.channel ?? '');
+          const uri = heldAs(String(params.channel ?? ''));
           const chatUri = String(params.chat ?? '');
           const held = sessions.get(uri);
           if (!held)
@@ -7367,6 +7912,7 @@ export function createHost(options: HostOptions): Host {
             throw new RpcError(-32602, `${chatUri} is not a chat URI`);
           if (byChat.has(chatUri))
             throw new RpcError(-32003, `${chatUri} already exists`);
+          claimable(chatUri, 'chat');
           /*
            * Made out of another chat, when a client asks for that.
            *
@@ -7496,7 +8042,7 @@ export function createHost(options: HostOptions): Host {
           return {};
         },
         disposeSession: async (params) => {
-          removeSession(String(params.channel ?? ''));
+          removeSession(heldAs(String(params.channel ?? '')));
           return {};
         },
         /**
@@ -8004,6 +8550,54 @@ export function createHost(options: HostOptions): Host {
         },
       };
       /**
+       * This connection's dispatches that wait, in the order it sent them.
+       *
+       * Two kinds of dispatch cannot be applied at once: one into a session
+       * being started again, which waits for the start, and a config change
+       * for a session nothing is running, which reads its transcript to learn
+       * whether it is one. Each is applied once what it waits on answers, and
+       * every dispatch this connection sends meanwhile goes behind it: a
+       * client that changes the config and then starts a turn means that
+       * order. Undefined when nothing waits, which is when a dispatch is
+       * applied at once.
+       */
+      let waiting: Promise<void> | undefined;
+      /**
+       * `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has
+       * passed without it.
+       */
+      const bounded = <T>(wait: Promise<T>, what: string): Promise<T> => new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => { reject(new Error(`${what} took longer than ${WAIT_LIMIT / 1000}s`)); }, WAIT_LIMIT);
+        wait.then(
+          (value) => { clearTimeout(timer); resolve(value); },
+          (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
+        );
+      });
+      /** A dispatch applied now, as the one this host is applying. */
+      const applyNow = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
+        applying = origin;
+        try { return applyDispatch(params, origin); }
+        finally { applying = undefined; }
+      };
+      /**
+       * `waiting`, extended by one step for the dispatch in `params`.
+       *
+       * A step whose connection left while it waited is dropped: there is
+       * nobody to answer or echo it to. A step that fails is refused to the
+       * client, as any other action this host will not apply.
+       */
+      const behind = (params: Record<string, unknown>, origin: Origin, step: () => Promise<void> | undefined): void => {
+        const next = (waiting ?? Promise.resolve()).then(() => (connections.has(connection) ? step() : undefined)).catch((error: unknown) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
+          if (!connections.has(connection)) return;
+          const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
+          refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
+        });
+        waiting = next;
+        void next.then(() => { if (waiting === next) waiting = undefined; });
+      };
+      /**
        * One client action, applied.
        *
        * Only the actions a client is *allowed* to originate: the rest are
@@ -8018,7 +8612,7 @@ export function createHost(options: HostOptions): Host {
        * config key the backend has to be asked about cannot read `applying`,
        * because by the time it answers that is nobody's.
        */
-      const applyDispatch = (params: Record<string, unknown>, origin: Origin): void => {
+      const applyDispatch = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
         const asked = String(params.channel ?? '');
         // Resolved before anything looks it up, so a client that talks to a
         // chat - or a session - under its own spelling drives the same one it
@@ -8047,18 +8641,39 @@ export function createHost(options: HostOptions): Host {
          * A host with no user directory refuses nothing, exactly as at the
          * other boundary.
          */
+        /*
+         * An action only on the kind of channel it belongs on, spelt and
+         * resolved, before the gate and before any handler: the handlers
+         * below act on the action, and read a session's id out of whatever
+         * channel it came on.
+         */
+        const family = ACTION_HOMES[type.slice(0, type.indexOf('/'))];
+        if (family !== undefined) {
+          const wrong = [asked, channel].find((one) => homeOf(one) !== family.home);
+          if (wrong !== undefined) {
+            no(`${wrong} is not ${HOME_WORDS[family.home]} here`);
+            return;
+          }
+        }
         if (options.users !== undefined && connection.root !== true) {
-          const needed = dispatchNeeds(channel, action);
-          const asked = needed === undefined ? '' : ` needs ${needed}`;
+          /*
+           * What the channel is spelt as and what it resolves to, both,
+           * because the handler below acts on the resolved one, and what the
+           * action needs: the strictest of them is asked.
+           */
+          const all = [...new Set([dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), family?.needs])]
+            .filter((one): one is Grant => one !== undefined);
+          const needed = all.find((one) => connection.principal !== undefined && !connection.principal.can(one)) ?? all[0];
+          const needs = needed === undefined ? '' : ` needs ${needed}`;
           const who = connection.principal;
           if (who === undefined) {
-            no(`Sign in to use this host: ${channel}${asked}`);
+            no(`Sign in to use this host: ${channel}${needs}`);
             return;
           }
           // Removed since they signed in: a sign-in again, not a role that
           // does not cover this.
           if (who.standing !== undefined && !who.standing()) {
-            no(`Sign in to use this host: ${channel}${asked}`);
+            no(`Sign in to use this host: ${channel}${needs}`);
             return;
           }
           if (needed !== undefined && !who.can(needed)) {
@@ -8089,7 +8704,7 @@ export function createHost(options: HostOptions): Host {
          * else by the check below - a change to somebody else's files is not
          * a thing a third client may claim happened.
          */
-        if (relayed.get(channel)?.owner === connection) {
+        if (relayed.get(channel)?.owner === connection && type === 'resourceWatch/changed') {
           dispatch(channel, action, origin);
           return;
         }
@@ -8442,6 +9057,32 @@ export function createHost(options: HostOptions): Host {
         const holding = sessions.get(owning);
         const held = byChat.get(channel)?.chat ?? (holding ? leadOf(holding) : undefined);
         /*
+         * A session being started again waits for the start to finish.
+         *
+         * Moving a fixed key restarts the backend, and the first send pushes
+         * the whole config and then the first turn without waiting for the
+         * host between them. The turn is applied when the session it was
+         * meant for is the one that exists - a backend started again is a new
+         * object under the same URI - and a restart that failed answers every
+         * action that waited on it with its own failure, which is the same
+         * thing a refused action reads.
+         *
+         * Asked of the session the channel names rather than of what is
+         * running, and before anything that reads "nothing is running" as a
+         * session to browse: while it restarts, the session is out of
+         * `sessions` and its chats out of `byChat`. The wait is returned, so
+         * this connection's later dispatches go behind it in `waiting`.
+         */
+        const running = restarting.get(sessionFor(channel));
+        if (running !== undefined) {
+          return bounded(running, `${channel} starting again`).then(
+            () => (connections.has(connection) ? applyNow(params, origin) : undefined),
+            (error: unknown) => {
+              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+            },
+          );
+        }
+        /*
          * Config for a session with no agent yet: remembered, not refused.
          *
          * It is applied when the session is resumed, which is what makes the
@@ -8449,15 +9090,33 @@ export function createHost(options: HostOptions): Host {
          * instead would start one per setting somebody tried.
          */
         if (!held && type === 'session/configChanged') {
-          const uri = sessionFor(channel);
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
-          const values = { ...kept.config(idOf(uri)) };
-          for (const [key, value] of Object.entries(config)) values[key] = String(value);
-          kept.setConfig(idOf(uri), values);
-          dispatch(uri, action);
-          return;
+          /*
+           * Only for a session this host runs, has listed, or finds in the
+           * catalogue with a transcript: the store is keyed by id, and a
+           * channel that names none would be a row for nothing. This host's
+           * own keys decide a directory when a session is created, which a
+           * browsed row was long ago, so they are not the store's.
+           */
+          const keep = (): void => {
+            const uri = sessionFor(channel);
+            const taken = Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+            if (Object.keys(taken).length > 0) kept.setConfig(idOf(uri), { ...kept.config(idOf(uri)), ...taken });
+            dispatch(uri, action, origin);
+          };
+          const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
+          if (known()) {
+            keep();
+            return;
+          }
+          // `past` reads the catalogue first, which is what lists it.
+          return bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then((found) => {
+            if (!connections.has(connection)) return;
+            if (found !== undefined || known()) keep();
+            else no(`${channel} is not a session here`);
+          });
         }
         /*
          * A turn on a session this host is not running yet.
@@ -8497,7 +9156,7 @@ export function createHost(options: HostOptions): Host {
             // a conversation whose second half cannot see the files its
             // first half was about.
             const ran = wheres.get(named)?.[0]?.replace(/^file:\/\//, '');
-            const session = spawn(owner, named, chatUriFor(named), kept.config(id) ?? {}, { resume: id, seed }, ran);
+            const session = spawn(owner, named, chatUriFor(named), storedConfig(owner, id), { resume: id, seed }, ran);
             log(`resumed ${named}`);
             dispatch(named, { type: 'session/ready' });
             summaryMoved(named);
@@ -8517,27 +9176,6 @@ export function createHost(options: HostOptions): Host {
           return;
         }
         const session = held;
-        /*
-         * A session being started again waits for the start to finish.
-         *
-         * Moving a fixed key restarts the backend, and the first send pushes
-         * the whole config and then the first turn without waiting for the
-         * host between them. The turn is applied when the session it was
-         * meant for is the one that exists - a backend started again is a new
-         * object under the same URI - and a restart that failed answers every
-         * action that waited on it with its own failure, which is the same
-         * thing a refused action reads.
-         */
-        const running = restarting.get(holding !== undefined ? owning : byChat.get(channel)?.uri ?? '');
-        if (running !== undefined) {
-          void running.then(
-            () => { applyDispatch(params, origin); },
-            (error: unknown) => {
-              refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
-            },
-          );
-          return;
-        }
         /*
          * A draft in a session this host is not running.
          *
@@ -8743,6 +9381,26 @@ export function createHost(options: HostOptions): Host {
               if (was === undefined) delete owning.config[key];
               else owning.config[key] = was;
             };
+            /**
+             * An accepted key written to the store, which a resume after a
+             * restart spawns the lead chat with.
+             *
+             * A key the schema scopes to one chat only when that chat is the
+             * lead, since a peer chat's is that chat's and not the session's.
+             * And only while the session is the one the change was made to:
+             * the backend answers after a turn of the event loop, and a
+             * session disposed meanwhile has had its row forgotten, maybe for
+             * a new session under the same name. A session being started
+             * again is still the session.
+             */
+            const lead = owning !== undefined && session.chatUri === owning.defaultChat;
+            const life = lifeOf(session.uri);
+            const remember = (key: string, value: unknown): void => {
+              if (propertyOf(owning?.agent, key)?.scope === 'chat' && !lead) return;
+              if (lives.get(session.uri) !== life) return;
+              const id = idOf(session.uri);
+              kept.setConfig(id, { ...kept.config(id), [key]: value });
+            };
             /*
              * This host's own keys, which no backend has heard of.
              *
@@ -8828,11 +9486,13 @@ export function createHost(options: HostOptions): Host {
                        * were sent.
                        */
                       const answered = owning.config[key] ?? value;
+                      if (!HOSTS_OWN.includes(key)) remember(key, answered);
                       dispatch(uri, { type: 'session/configChanged', config: { [key]: answered } }, origin);
                     }
                   },
                   (error: unknown) => {
                     clear();
+                    lives.delete(uri);
                     no(error instanceof Error ? error.message : String(error));
                   },
                 );
@@ -8901,7 +9561,10 @@ export function createHost(options: HostOptions): Host {
               void Promise.resolve(session.setConfig(key, value)).then((answer) => {
                 // The backend's own words when it refused, because only it
                 // knows whether the key or the value was the problem.
-                if (answer === true) dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
+                if (answer === true) {
+                  remember(key, value);
+                  dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
+                }
                 else {
                   undo(key);
                   no(answer);
@@ -9352,16 +10015,21 @@ export function createHost(options: HostOptions): Host {
          * emitted from inside a session, several layers down - goes out
          * carrying the `clientSeq` the client sent. Nothing in there is
          * awaited, which is what makes that safe: no second dispatch can
-         * begin while this one is being applied.
+         * begin while this one is being applied. A dispatch that has to wait
+         * returns what it waits on instead, and this connection's later
+         * dispatches go behind it in `waiting`.
          */
         dispatchAction: (params) => {
           const origin: Origin = {
             clientId: connection.clientId || 'anonymous',
             clientSeq: typeof params.clientSeq === 'number' ? params.clientSeq : 0,
           };
-          applying = origin;
-          try { applyDispatch(params, origin); }
-          finally { applying = undefined; }
+          if (waiting !== undefined) {
+            behind(params, origin, () => applyNow(params, origin));
+            return;
+          }
+          const later = applyNow(params, origin);
+          if (later !== undefined) behind(params, origin, () => later);
         },
       };
       return {
@@ -9407,36 +10075,7 @@ export function createHost(options: HostOptions): Host {
            * which is what keeps every install that never configured one exactly
            * as it was.
            */
-          if (options.users !== undefined && connection.root !== true) {
-            const needed = capabilityFor(request.method, (request.params ?? {}) as Record<string, unknown>);
-            if (needed !== undefined && needed.length > 0) {
-              const who = connection.principal;
-              if (who === undefined) {
-                throw new RpcError(-32007, `Sign in to use this host`, {
-                  resources: [options.users.resource],
-                });
-              }
-              /*
-               * Removed since they signed in, which is a sign-in again and not
-               * a role that does not cover this. The directory re-reads its
-               * file on every question, so the answer is current as of this
-               * command - decision `a-role-is-read-on-every-command`.
-               */
-              if (who.standing !== undefined && !who.standing()) {
-                throw new RpcError(-32007, `Sign in to use this host`, {
-                  resources: [options.users.resource],
-                });
-              }
-              const missing = needed.find((one) => !who.can(one));
-              if (missing !== undefined) {
-                // No `request` key: a role is not something a client can
-                // negotiate, and the protocol says that field is omitted when
-                // no grant would resolve the denial. Its absence is what tells
-                // a client to stop rather than retry.
-                throw new RpcError(-32009, refusalReason(who.id, missing), {});
-              }
-            }
-          }
+          admit(request.method, (request.params ?? {}) as Record<string, unknown>);
           // And a second `initialize` is no longer one of them: the version
           // is agreed, and re-agreeing it would re-key every subscription
           // this connection is holding.

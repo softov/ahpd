@@ -1,6 +1,6 @@
 ---
 title: VS Code opens a session another client created
-status: todo
+status: doing
 depends: [task-02-every-request-answers-to-either-name.md, task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md, task-04-a-chat-title-survives-the-new-name.md]
 layer: "sdk"
 refs:
@@ -31,3 +31,7 @@ With the daemon still running, a Claude session created from ahpapp opens in VS 
 
 ## Resume
 
+The automated part: `host.test.ts`, `a session asked for by the name its creator used`, `opens for a second client the way VS Code opens it, with its turn and its pending approval`.
+A creator makes `ahp-session:/<uuid>` and starts a turn that waits on a Bash approval; a second client lists it as `claude:/<uuid>`, subscribes to it and to `ahp-chat://default/<b64 claude:/<uuid>>`, sees the pending approval on that chat and the running turn, approves it, the agent is allowed, and the creator sees `session/inputNeededRemoved` and `chat/toolCallConfirmed` under its own names.
+It was written after tasks 01 to 04 and passed as written; on `main` it fails at the listing.
+Left for Softov, by hand, from the steps above: the daemon with `--wire`, ahpapp and the VS Code Agents Window; a Claude session created in ahpapp opens in the Agents Window with its turns and its pending approval and no `No harness descriptor found for session type …-ahp-session` in the log; approving there reaches the agent; ahpapp and then ahpc each show the session once, stream the turn and see the approval resolved; the wire capture names `claude:/<uuid>` in `listSessions` and `root/sessionAdded` and keeps ahpapp's frames in the `ahp-session:` spelling.

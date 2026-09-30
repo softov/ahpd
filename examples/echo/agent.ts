@@ -1,4 +1,5 @@
 import type { Turn } from '@microsoft/agent-host-protocol';
+import { idOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MessageFrom, Session, Start, WireTurn } from '@ahpd/sdk';
 
 /**
@@ -104,7 +105,7 @@ export function echo(options: EchoOptions): Agent {
     /** What somebody is part-way through typing. */
     let draft: Bag | undefined;
     /** The backend's own id, which is not the URI the client chose. */
-    const id = start.resume ?? start.uri.replace(/^ahp-session:\//, '');
+    const id = start.resume ?? idOf(start.uri);
 
     // A resumed session opens on what it said before, so a title from the
     // seed is better than one invented now.

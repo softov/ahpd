@@ -1,6 +1,6 @@
 ---
 title: A chat title survives the session's new name
-status: todo
+status: implemented
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:
@@ -32,3 +32,7 @@ A chat renamed while its session was held as `ahp-session:/<uuid>` keeps that ti
 
 ## Resume
 
+`titleOf(uri, chatUri)` reads the title under the chat URI and, when there is none, under the same chat respelled to `uriFor(id)` with `respell`; `keepTitle` writes under the chat URI and clears the old key when one is there.
+`spawn` reads through `titleOf`, and `renameChat`, the session tools' `createChat` and `openSession`'s first name write through `keepTitle`; a chat a client named keeps one key, since its URI does not carry the session.
+Test: `host.test.ts`, `keeps a title written under the session's old name once it is held under its provider's`: a store with `Paging` under the `ahp-session:/<uuid>` chat resumes as `claude:/<uuid>` with that title, and renaming it leaves one entry under the `claude:` chat URI.
+It failed first with the derived title, `carry on`.

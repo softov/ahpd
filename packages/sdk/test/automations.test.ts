@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { memoryAutomations } from '../src/automations.js';
+import { idOf } from '../src/catalog.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -286,7 +287,7 @@ it('starts a session and says the first message, which is the whole point', asyn
 
   // A session created and never spoken to does nothing, and nobody is at the
   // keyboard to speak to it - so the turn has to have been started here.
-  const chat = `ahp-chat:/${(state.primarySession ?? '').replace('ahp-session:/', '')}`;
+  const chat = `ahp-chat:/${idOf(state.primarySession ?? '')}`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
     snapshot: { state: { turns?: { message?: { text?: string; origin?: { kind?: string } } }[] } };
   };
@@ -381,7 +382,8 @@ it('settles a run cancelled when its session is disposed mid-turn', async () => 
   const before = await runState(client, run.resource);
   expect(before.lifecycle.status).toBe('running');
   const session = before.sessions[0] ?? '';
-  expect(session.startsWith('ahp-session:/')).toBe(true);
+  // Held under its provider's name, as a client's `createSession` is.
+  expect(session).toMatch(/^echo:\/[0-9a-f-]+$/);
 
   await client.handle({ method: 'disposeSession', params: { channel: session } });
   await until(async () => (await runState(client, run.resource)).lifecycle.status === 'cancelled');
@@ -583,7 +585,8 @@ it('lets go of a session a run was holding when the session is disposed', async 
   const session = String((await client.handle({ method: 'subscribe', params: { channel: run.resource } }) as {
     snapshot: { state: { sessions: string[] } };
   }).snapshot.state.sessions[0] ?? '');
-  expect(session.startsWith('ahp-session:/')).toBe(true);
+  // Held under its provider's name, as a client's `createSession` is.
+  expect(session).toMatch(/^echo:\/[0-9a-f-]+$/);
 
   await client.handle({ method: 'disposeSession', params: { channel: session } });
   await settle();

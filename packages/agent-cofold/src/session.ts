@@ -22,7 +22,7 @@ import { resolve } from 'node:path';
 import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store, Tool } from '@cofold/agents';
 import { resolveWithin } from '@cofold/tools';
-import { Status } from '@ahpd/sdk';
+import { idOf, Status } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
 import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf, storeOf } from './agent.js';
@@ -133,10 +133,11 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
  *
  * The client names the channel and cofold names the transcript; the two are
  * one conversation, so the id is derived in one place rather than a channel
- * URI handed to a store keyed by ids. A URI already stripped of its scheme
- * is left alone, which is what a `resume` carries.
+ * URI handed to a store keyed by ids. The id is what follows the scheme,
+ * whichever scheme the host holds the session under, and a URI already
+ * stripped of its scheme is left alone, which is what a `resume` carries.
  */
-export const sessionIdOf = (uri: string): string => uri.replace(/^ahp-session:\//, '');
+export const sessionIdOf = (uri: string): string => idOf(uri);
 
 /**
  * A tool call a connected client is running, as the session holds it.

@@ -1,10 +1,12 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
+import { memorySessions } from '../src/sessions.js';
+import { shellTerminals } from '../src/terminals.js';
 
 /*
  * A key that may not move once the session runs.
@@ -296,4 +298,269 @@ it('treats a key a plugin contributed the same way', async () => {
   await settle();
   const refused = actions(p, uri).filter((one) => one.rejectionReason !== undefined).at(-1);
   expect(refused?.rejectionReason).toBe('computer is fixed once the session has started');
+});
+
+it('keeps a change the backend took while the session was being started again', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  /** The answer to the pending `setConfig`, given as the old backend is closed for the restart. */
+  let answer: (said: true) => void = () => {};
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+    create: (start: Start): Session => {
+      const session = base.create(start);
+      return {
+        ...session,
+        setConfig: (key) => (key === 'mutable' ? new Promise<true>((resolve) => { answer = resolve; }) : true),
+        close: () => { answer(true); session.close(); },
+      };
+    },
+  };
+  const store = memorySessions();
+  const host = createHost({ path: DIR, agents: [agent], sessions: store });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fixed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  void change(client, 'fixed:/fixed', { mutable: 'b' });
+  await settle();
+  // The restart closes the old backend, which is when it answers.
+  void change(client, 'fixed:/fixed', { fixed: 'two' });
+  await settle();
+  expect(store.config('fixed')).toMatchObject({ fixed: 'two', mutable: 'b' });
+});
+
+it('applies a config change and a turn sent while the session starts again into a machine, in order, to the new backend', async () => {
+  const base = echo({ path: DIR, pace: 0 });
+  /** What each backend was told, by the spawn it was. */
+  const said: string[] = [];
+  let spawned = 0;
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+    create: (start: Start): Session => {
+      const spawn = spawned;
+      spawned += 1;
+      const session = base.create(start);
+      return {
+        ...session,
+        begin: (turnId, text, model, from) => { said.push(`${spawn}: begin ${text}`); session.begin(turnId, text, model, from); },
+        setConfig: (key, value) => { said.push(`${spawn}: ${key}=${String(value)}`); return true; },
+      };
+    },
+  };
+  /** Holds the machine back until the test lets it go, which is the window a restart is in. */
+  let made: (id: string) => void = () => {};
+  const host = createHost({
+    path: DIR,
+    agents: [agent],
+    sessionConfig: {
+      computer: { type: 'string', title: 'Computer', description: 'Where it runs.', sessionMutable: false },
+    },
+    computers: {
+      create: () => new Promise<string>((resolve) => { made = resolve; }),
+      how: async () => undefined,
+    } as never,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/boxed' } });
+  void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
+  await settle();
+  // The machine is still being made: the old backend is gone and the new one
+  // not yet started. Both are sent back to back, as the first send does.
+  void change(client, 'ahp-session:/boxed', { mutable: 'b' });
+  void turn(client, 'ahp-chat:/boxed', 'go');
+  // And one on another channel, which this connection sent after them.
+  void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
+  await settle();
+  made('m1');
+  await settle();
+  expect(said).toEqual(['1: mutable=b', '1: begin go']);
+  const echoed = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as Note).action)
+    .filter((action) => action.type === 'root/configChanged' || (action.type === 'session/configChanged' && (action.config as Bag).mutable === 'b'))
+    .map((action) => String(action.type));
+  expect(echoed).toEqual(['session/configChanged', 'root/configChanged']);
+});
+
+/**
+ * A session being started again into a machine the test makes by calling
+ * `made`, a record of what each backend was told, and a backend whose
+ * `begin` throws when `throws` is set.
+ */
+const intoMachine = async (throws = false) => {
+  const base = echo({ path: DIR, pace: 0 });
+  const said: string[] = [];
+  let spawned = 0;
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+    create: (start: Start): Session => {
+      const spawn = spawned;
+      spawned += 1;
+      const session = base.create(start);
+      return {
+        ...session,
+        begin: (turnId, text, model, from) => {
+          said.push(`${spawn}: begin ${text}`);
+          if (throws && spawn > 0) throw new Error('the backend fell over');
+          session.begin(turnId, text, model, from);
+        },
+      };
+    },
+  };
+  const machine = { made: (_id: string): void => {} };
+  const host = createHost({
+    path: DIR,
+    agents: [agent],
+    sessionConfig: {
+      computer: { type: 'string', title: 'Computer', description: 'Where it runs.', sessionMutable: false },
+    },
+    computers: {
+      create: () => new Promise<string>((resolve) => { machine.made = resolve; }),
+      how: async () => undefined,
+    } as never,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/boxed' } });
+  void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
+  await settle();
+  return { p, client, said, machine };
+};
+
+it('drops a turn that waited on a restart when its connection left', async () => {
+  const { client, said, machine } = await intoMachine();
+  void turn(client, 'ahp-chat:/boxed', 'go');
+  await settle();
+  client.close();
+  machine.made('m1');
+  await settle();
+  expect(said).toEqual([]);
+});
+
+it('refuses a waiting turn the backend throws on, to the client that sent it', async () => {
+  const { p, client, said, machine } = await intoMachine(true);
+  void turn(client, 'ahp-chat:/boxed', 'first');
+  void turn(client, 'ahp-chat:/boxed', 'second');
+  await settle();
+  machine.made('m1');
+  await settle();
+  expect(said).toContain('1: begin first');
+  const refused = p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note)
+    .filter((note) => note.action.type === 'chat/turnStarted' && note.rejectionReason !== undefined);
+  expect(refused.map((note) => note.rejectionReason)).toContain('the backend fell over');
+});
+
+it('refuses a dispatch that waited too long on a restart, and goes on with the next', async () => {
+  const { p, client, said } = await intoMachine();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    void turn(client, 'ahp-chat:/boxed', 'go');
+    void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(p.notes.filter((n) => n.method === 'action' && (n.params as Note).rejectionReason !== undefined)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2_000);
+  }
+  finally { vi.useRealTimers(); }
+  await settle();
+  expect(said).toEqual([]);
+  const notes = p.notes.filter((n) => n.method === 'action').map((n) => n.params as Note);
+  const late = notes.find((note) => note.action.type === 'chat/turnStarted' && note.rejectionReason !== undefined);
+  expect(late?.rejectionReason).toContain('took longer than 60s');
+  expect(notes.some((note) => note.action.type === 'root/configChanged' && note.rejectionReason === undefined)).toBe(true);
+});
+
+it('refuses a config change that waited too long on the catalogue', async () => {
+  const agent: Agent = { ...echo({ path: DIR, pace: 0 }), list: () => new Promise(() => {}) };
+  const store = memorySessions();
+  const host = createHost({ path: DIR, agents: [agent], sessions: store });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    void change(client, 'echo:/nowhere', { voice: 'shouty' });
+    await vi.advanceTimersByTimeAsync(61_000);
+  }
+  finally { vi.useRealTimers(); }
+  await settle();
+  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['reading the catalogue took longer than 60s']);
+  expect(store.config('nowhere')).toBeUndefined();
+});
+
+/** A host whose machines are made when the test says, with a shell for terminals. */
+const heldMachines = () => {
+  const base = echo({ path: DIR, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    provider: 'fixed',
+    displayName: 'Fixed backend',
+    schema: (): Bag => ({ type: 'object', properties: { ...(base.schema().properties as Bag), ...(wire().properties as Bag) } }),
+    defaults: () => ({ ...base.defaults(), fixed: 'one', mutable: 'a' }),
+  };
+  const machine = { made: (_id: string): void => {}, failed: (_error: Error): void => {} };
+  const host = createHost({
+    path: DIR,
+    agents: [agent],
+    terminals: shellTerminals(),
+    sessionConfig: {
+      computer: { type: 'string', title: 'Computer', description: 'Where it runs.', sessionMutable: false },
+    },
+    computers: {
+      create: () => new Promise<string>((resolve, reject) => { machine.made = resolve; machine.failed = reject; }),
+      how: async () => undefined,
+    } as never,
+  });
+  return { host, machine };
+};
+
+/** A request's answer or its refusal, whichever came. */
+const asked = async (client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> }, method: string, params: Record<string, unknown>) =>
+  client.handle({ method, params }).then((result) => ({ result }), (error: { code: number }) => error);
+
+it('claims a new session\'s names while its machine is made, and lets them go when it fails', async () => {
+  const { host, machine } = heldMachines();
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  const first = asked(client, 'createSession', { channel: 'ahp-session:/boxed', provider: 'fixed', config: { computer: 'disposable:box' } });
+  await settle();
+  expect(await asked(client, 'createSession', { channel: 'x:/boxed', provider: 'fixed' })).toMatchObject({ code: -32003 });
+  expect(await asked(client, 'createTerminal', { channel: 'ahp-session:/boxed', cwd: DIR })).toMatchObject({ code: -32003 });
+  machine.made('m1');
+  expect(await first).toHaveProperty('result');
+
+  const failing = asked(client, 'createSession', { channel: 'ahp-session:/gone', provider: 'fixed', config: { computer: 'disposable:box' } });
+  await settle();
+  machine.failed(new Error('no machine'));
+  expect(await failing).not.toHaveProperty('result');
+  expect(await asked(client, 'createSession', { channel: 'x:/gone', provider: 'fixed' })).toHaveProperty('result');
+});
+
+it('keeps a session\'s chat names while the session starts again', async () => {
+  const { host, machine } = heldMachines();
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
+  expect(await asked(client, 'createChat', { channel: 'fixed:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
+  void change(client, 'fixed:/boxed', { computer: 'disposable:box' });
+  await settle();
+  // The session is being started again into its machine: its chats are gone
+  // from the backend and not yet back, and their names are still its.
+  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
+  machine.made('m1');
+  await settle();
+  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
 });

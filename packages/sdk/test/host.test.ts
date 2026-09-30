@@ -2567,6 +2567,219 @@ describe('a session read from its transcript', () => {
   });
 });
 
+describe('a session\'s config across a restart', () => {
+  /** A temporary `sessions.json`, removed after the test. */
+  let root: string;
+  let file: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'ahpd-config-'));
+    file = join(root, 'sessions.json');
+  });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  /** A host on the store file, introduced. */
+  const hostOnFile = async () => {
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    return client;
+  };
+
+  /** The store written, which is coalesced onto the next tick. */
+  const written = () => new Promise((tick) => { setTimeout(tick, 5); });
+
+  /** A second host on the same file, which is what a restart is, with a turn sent to the session. */
+  const resumed = async (id: string) => {
+    await written();
+    sdk.sessions.push({ sessionId: id, summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    const client = await hostOnFile();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: `ahp-chat:/${id}`, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+    });
+    await settle(8);
+    return sessionQueries().at(-1)?.options;
+  };
+
+  /** What the store file holds for one session. */
+  const stored = (id: string) => (JSON.parse(readFileSync(file, 'utf8')) as {
+    sessions: { id: string; config?: Record<string, unknown> }[];
+  }).sessions.find((row) => row.id === id)?.config;
+
+  it('resumes a session with the config it was created with', async () => {
+    const client = await hostOnFile();
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/made', provider: 'claude', config: { permissionMode: 'plan', thinking: 'disabled' } },
+    });
+    const options = await resumed('made');
+    expect(options?.permissionMode).toBe('plan');
+    expect(options?.thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('resumes a session with a change made while it ran', async () => {
+    const client = await hostOnFile();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/moved', provider: 'claude' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/moved', action: { type: 'session/configChanged', config: { permissionMode: 'acceptEdits' } } },
+    });
+    await settle();
+    const options = await resumed('moved');
+    expect(options?.permissionMode).toBe('acceptEdits');
+  });
+
+  it('keeps a change the backend refused out of the store', async () => {
+    const client = await hostOnFile();
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/refused', provider: 'claude', config: { permissionMode: 'plan' } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/refused', action: { type: 'session/configChanged', config: { effortLevel: 'enormous' } } },
+    });
+    await settle();
+    await written();
+    expect(stored('refused')).toEqual({ permissionMode: 'plan' });
+  });
+
+  it('keeps an array as an array, on a live session and on a row', async () => {
+    const scripts = [{ shell: 'bash', script: 'export FOO=bar\n' }];
+    const client = await hostOnFile();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/configChanged', config: { shellInitScripts: scripts } } },
+    });
+    // A row nothing is running, which is written to the store with no
+    // backend to ask.
+    sdk.sessions.push({ sessionId: 'row', summary: 'Row', lastModified: 1, cwd: '/home/softov' });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'claude:/row', action: { type: 'session/configChanged', config: { shellInitScripts: scripts } } },
+    });
+    await settle();
+    await written();
+    expect(stored('live')?.shellInitScripts).toEqual(scripts);
+    expect(stored('row')?.shellInitScripts).toEqual(scripts);
+    const again = await hostOnFile();
+    const opened = await again.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    };
+    expect(opened.snapshot.state.config.values.shellInitScripts).toEqual(scripts);
+  });
+
+  it('keeps a key the schema scopes to one chat out of the session\'s store', async () => {
+    const client = await hostOnFile();
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/peers', provider: 'claude', config: { permissionMode: 'plan' } },
+    });
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/peers', chat: 'ahp-chat:/peer' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/peer', action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+    });
+    await settle();
+    await written();
+    // Taken by the chat it was set on, and not what the session resumes with.
+    expect(sdk.effortsSet).toContain('low');
+    expect(stored('peers')).toEqual({ permissionMode: 'plan' });
+  });
+
+  it('keeps a key the schema scopes to one chat when it was set on the lead chat', async () => {
+    const client = await hostOnFile();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/lead', action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+    });
+    await settle();
+    await written();
+    // What a resume hands the lead chat.
+    expect(stored('lead')).toEqual({ effortLevel: 'low' });
+  });
+
+  it('writes nothing for a session disposed before its backend took the change, even under its name again', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const base = echo({ path: '/tmp', pace: 0 });
+    let answer: (said: true) => void = () => {};
+    const slow: Agent = {
+      ...base,
+      create: (start) => {
+        const session = base.create(start);
+        return { ...session, setConfig: () => new Promise<true>((resolve) => { answer = resolve; }) };
+      },
+    };
+    const store = memorySessions();
+    const host = createHost({ path: '/tmp', agents: [slow], ...machine(), sessions: store });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'echo' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'echo:/gone', action: { type: 'session/configChanged', config: { voice: 'shouty' } } },
+    });
+    await settle();
+    await client.handle({ method: 'disposeSession', params: { channel: 'echo:/gone' } });
+    // A new session under the same name, which the late answer is not about.
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'echo' } });
+    answer(true);
+    await settle();
+    expect(store.config('gone')).toBeUndefined();
+  });
+
+  /** A host over a store already holding a config for the session `stale`, as a restart finds it. */
+  const staleHost = async (config: Record<string, unknown>) => {
+    const store = memorySessions();
+    store.setConfig('stale', config);
+    sdk.sessions.push({ sessionId: 'stale', summary: 'Stale', lastModified: 1, cwd: '/home/softov' });
+    const said: string[] = [];
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store,
+      onEvent: (message) => said.push(message),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    return { client, said };
+  };
+
+  it('resumes a stored value the schema no longer offers as the default, and says so', async () => {
+    const { client, said } = await staleHost({ permissionMode: 'nope', thinking: 'disabled' });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/stale', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+    });
+    await settle(8);
+    const options = sessionQueries().at(-1)?.options;
+    expect(options?.permissionMode).toBe('default');
+    // A value the schema still offers is passed as it was stored.
+    expect(options?.thinking).toEqual({ type: 'disabled' });
+    expect(said.filter((line) => line.includes('permissionMode'))).toEqual([
+      expect.stringMatching(/stale.*permissionMode.*"nope"/),
+    ]);
+  });
+
+  it('keeps a stored key the schema does not declare, and drops a declared one it refuses, saying so once', async () => {
+    const { client, said } = await staleHost({ model: 'opus', sandboxEnabled: 'on', permissions: 'all' });
+    const read = async () => (await client.handle({ method: 'subscribe', params: { channel: 'claude:/stale' } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state.config.values;
+    const values = await read();
+    // Kept: the store only holds what the backend took, declared or not.
+    expect(values.model).toBe('opus');
+    expect(values.sandboxEnabled).toBe('on');
+    // The wrong JSON type is refused the same way an unknown value is.
+    expect(values.permissions).toEqual({ allow: [], deny: [] });
+    await read();
+    expect(said.filter((line) => /stale.*permissions.*"all"/.test(line))).toHaveLength(1);
+    expect(said.some((line) => line.includes('stored model'))).toBe(false);
+  });
+});
+
 describe('one conversation, one row', () => {
   it('hides the transcript a running session is writing', async () => {
     const { client } = await running();
@@ -2583,7 +2796,8 @@ describe('one conversation, one row', () => {
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
     };
-    expect(listed.items.map((i) => i.resource)).toEqual(['ahp-session:/live']);
+    // One row, under the provider's name the session is held by.
+    expect(listed.items.map((i) => i.resource)).toEqual(['claude:/live']);
   });
 });
 
@@ -3106,6 +3320,37 @@ describe('what it says it is doing', () => {
     finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('keeps a title written under the session\'s old name once it is held under its provider\'s', async () => {
+    const id = '5d0c9e1a-7b2f-4c3d-9e8f-1a2b3c4d5e6f';
+    const chatOf = (session: string) => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+    // What a store written before holds: the title under the chat of
+    // `ahp-session:/<id>`, the name the session was held by then.
+    const store = memorySessions();
+    store.setChatTitle(id, chatOf(`ahp-session:/${id}`), 'Paging');
+    sdk.sessions.push({ sessionId: id, summary: 'Derived', lastModified: 1, cwd: '/home/softov' });
+    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatOf(`claude:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+    });
+    await settle(8);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: `claude:/${id}` } }) as {
+      snapshot: { state: { title: string } };
+    };
+    expect(opened.snapshot.state.title).toBe('Paging');
+
+    // Renamed again, it is kept once, under the name it is held by now.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: `claude:/${id}`, action: { type: 'session/titleChanged', title: 'Paging, again' } },
+    });
+    await settle();
+    expect(store.chatTitlesOf(id)).toEqual({ [chatOf(`claude:/${id}`)]: 'Paging, again' });
   });
 
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {
@@ -4225,7 +4470,7 @@ describe('a terminal a backend opens', () => {
     // both know about it.
     expect(listed()).toHaveLength(1);
     expect(listed()[0]?.resource).toMatch(/^ahp-terminal:\//);
-    expect(listed()[0]?.claim).toMatchObject({ kind: 'session', session: 'ahp-session:/shells' });
+    expect(listed()[0]?.claim).toMatchObject({ kind: 'session', session: 'claude:/shells' });
     expect(opened.uri).toBe(listed()[0]?.resource);
 
     opened.release();
@@ -4705,7 +4950,10 @@ describe('tools the host contributes', () => {
     await client.handle(hello(['0.8.0']));
     const uri = 'ahp-session:/served';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    return { host, client, peer: p, uri };
+    // The name the session is held and listed by, which is the one a tool
+    // answers with and is asked by.
+    const held = 'claude:/served';
+    return { host, client, peer: p, uri, held };
   };
 
   it('reports them on the session, and says nothing when it has none', async () => {
@@ -4763,7 +5011,7 @@ describe('tools the host contributes', () => {
   });
 
   it('hands them to the backend as a server it can call', async () => {
-    const { uri } = await withTools();
+    const { held } = await withTools();
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
     }[] }>;
@@ -4777,7 +5025,7 @@ describe('tools the host contributes', () => {
     // own, with the link the reference window opens.
     const answered = await listing?.handler({});
     const said = JSON.parse(answered?.content[0]?.text ?? '{}') as { sessions: { session: string; openLink: string; status: string }[] };
-    expect(said.sessions.map((one) => one.session)).toEqual([uri]);
+    expect(said.sessions.map((one) => one.session)).toEqual([held]);
     expect(said.sessions[0]?.openLink).toBe('agent-host-session://claude/served');
     expect(said.sessions[0]?.status).toBe('idle');
   });
@@ -4805,9 +5053,9 @@ describe('tools the host contributes', () => {
     };
 
     it('says which session it is running in, with the row and the link', async () => {
-      const { uri } = await withTools();
+      const { held } = await withTools();
       const said = JSON.parse(await call('get_current_session', {})) as Record<string, unknown>;
-      expect(said.session).toBe(uri);
+      expect(said.session).toBe(held);
       expect(said.openLink).toBe('agent-host-session://claude/served');
       expect(said.status).toBe('idle');
       expect(said.workingDirectory).toBe('file:///home/softov');
@@ -4828,12 +5076,12 @@ describe('tools the host contributes', () => {
       expect(started?.action.message).toMatchObject({
         text: 'check the makefile',
         origin: { kind: 'agent' },
-        _meta: { 'vscode.chat.delegation': { sourceSession: 'ahp-session:/served' } },
+        _meta: { 'vscode.chat.delegation': { sourceSession: 'claude:/served' } },
       });
     });
 
     it('queues the message when the other chat is busy, and refuses its own chat', async () => {
-      const { client, peer: p, uri } = await withTools();
+      const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/busy', provider: 'claude' } });
       const chatUri = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/busy' } }) as {
         snapshot: { state: { defaultChat: string } };
@@ -4844,13 +5092,13 @@ describe('tools the host contributes', () => {
         params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
       });
       await settle();
-      const said = await call('send_message', { session: 'ahp-session:/busy', message: 'and then this' }, 0);
+      const said = await call('send_message', { session: 'claude:/busy', message: 'and then this' }, 0);
       expect(said).toBe('Message queued (agent-host-session://claude/busy).');
       await settle();
       const queued = actions(p, chatUri).find((one) => one.action.type === 'chat/pendingMessageSet');
       expect(queued?.action).toMatchObject({ kind: 'queued', message: { text: 'and then this', origin: { kind: 'agent' } } });
 
-      expect(await call('send_message', { session: uri, message: 'to myself' }, 0)).toContain('refusing to send a message to the current chat');
+      expect(await call('send_message', { session: held, message: 'to myself' }, 0)).toContain('refusing to send a message to the current chat');
       expect(await call('send_message', { session: 'ahp-session:/nobody', message: 'x' }, 0)).toContain('session must match the URI of a known session');
     });
 
@@ -4865,6 +5113,8 @@ describe('tools the host contributes', () => {
       const added = p.notes.find((one) => one.method === 'root/sessionAdded');
       const summary = (added?.params as { summary?: { resource: string; title: string; workingDirectories: string[] } } | undefined)?.summary;
       expect(summary?.title).toBe('Port the makefile');
+      // Held under its provider's name, as a client's `createSession` is.
+      expect(summary?.resource).toMatch(/^claude:\/[0-9a-f-]+$/);
       expect(summary?.workingDirectories).toEqual(['file:///home/softov']);
       // Its first turn, as the creating agent's.
       const chat = (await client.handle({ method: 'subscribe', params: { channel: summary?.resource } }) as {
@@ -4878,7 +5128,7 @@ describe('tools the host contributes', () => {
       // And a second session's own tools answer about both.
       const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
       expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
-      expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+      expect(rows.sessions.map((one) => one.session)).toContain('claude:/served');
     });
 
     it('creates a chat in the current session for currentSession work, and refuses a workspace with it', async () => {
@@ -4894,11 +5144,11 @@ describe('tools the host contributes', () => {
     });
 
     it('renames the calling chat, which is the session when it is the default one', async () => {
-      const { client, peer: p, uri } = await withTools();
+      const { client, peer: p, uri, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: uri } });
       expect(await call('rename_chat', { title: '  Kqueue   port ' })).toBe('Renamed chat to "Kqueue port".');
       expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.action.title).toBe('Kqueue port');
-      const rows = JSON.parse(await call('list_sessions', { session: uri })) as { sessions: { title: string }[] };
+      const rows = JSON.parse(await call('list_sessions', { session: held })) as { sessions: { title: string }[] };
       expect(rows.sessions[0]?.title).toBe('Kqueue port');
       expect(await call('rename_chat', { title: 'Auto', automatic: true })).toBe('Renaming chat.');
       expect(await call('rename_chat', { title: '   ' })).toContain('title must be a non-empty string');
@@ -4946,16 +5196,16 @@ describe('tools the host contributes', () => {
     });
 
     it('deletes another session and refuses its own', async () => {
-      const { client, peer: p, uri } = await withTools();
+      const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
-      expect(await call('delete_session', { session: uri }, 0)).toContain('refusing to delete the current session');
-      expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
-        .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
+      expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
+      expect(await call('delete_session', { session: 'claude:/doomed' }, 0))
+        .toBe('Deleted session claude:/doomed. Reply with one short sentence confirming the session was deleted.');
       expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
-        && (one.params as { session?: string }).session === 'ahp-session:/doomed')).toBe(true);
+        && (one.params as { session?: string }).session === 'claude:/doomed')).toBe(true);
       const rows = JSON.parse(await call('list_sessions', {}, 0)) as { sessions: { session: string }[] };
-      expect(rows.sessions.map((one) => one.session)).not.toContain('ahp-session:/doomed');
+      expect(rows.sessions.map((one) => one.session)).not.toContain('claude:/doomed');
     });
 
     it('reads another chat\'s turns, cut to the detail asked for', async () => {
@@ -4983,12 +5233,12 @@ describe('tools the host contributes', () => {
       first.wake = undefined;
       await settle(8);
       // Read from the second session's tools.
-      const said = JSON.parse(await call('get_session_context', { session: 'ahp-session:/served', detail: 'digest' })) as {
+      const said = JSON.parse(await call('get_session_context', { session: 'claude:/served', detail: 'digest' })) as {
         openLink: string; transcript: { turn: number; state: string; user?: string; assistant?: string }[];
       };
       expect(said.openLink).toBe('agent-host-session://claude/served');
       expect(said.transcript).toEqual([{ turn: 1, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' }]);
-      expect(await call('get_session_context', { session: 'ahp-session:/served', detail: 'everything' })).toContain('detail must be');
+      expect(await call('get_session_context', { session: 'claude:/served', detail: 'everything' })).toContain('detail must be');
     });
 
     it('moves the session once the turn that asked is over, and tells the agent where it is', async () => {
@@ -5999,7 +6249,8 @@ describe('the fields a client reads by name', () => {
     const gone = catalogue(p).find((n) => n.method === 'root/sessionRemoved');
     // `session`, which is the field the protocol declares. Under any other
     // name the client reads `undefined` and takes nothing out of its list.
-    expect(gone?.params.session).toBe(uri);
+    // The name it is held and listed by, which is its provider's.
+    expect(gone?.params.session).toBe('claude:/live');
   });
 
   it('sends root/sessionSummaryChanged as a partial, without the identity fields', async () => {
@@ -6011,7 +6262,7 @@ describe('the fields a client reads by name', () => {
     await settle();
 
     const moved = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    expect(moved?.params.session).toBe(uri);
+    expect(moved?.params.session).toBe('claude:/live');
     const changes = moved?.params.changes as Record<string, unknown>;
     expect(changes).toBeDefined();
     // What moved is in there under its own name.
@@ -6251,7 +6502,7 @@ describe('the fields a client reads by name', () => {
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string; createdAt: string; modifiedAt: string }[];
     };
-    const row = listed.items.find((one) => one.resource === uri);
+    const row = listed.items.find((one) => one.resource === 'claude:/live');
     // `createdAt` is identity and `modifiedAt` is not. Answering both with the
     // modification time gave every live row an age that moved every time
     // somebody said something to it.
@@ -6371,6 +6622,96 @@ describe('a session a client names', () => {
     // it would be refused, so the backend names this one and nothing is lost
     // that was not already lost.
     expect(sessionQueries()[0]?.options.sessionId).toBeUndefined();
+  });
+
+  it('holds a session created under another scheme as its provider\'s, and answers its creator in its own', async () => {
+    const id = '39c2a6f0-8c1e-4d7a-9b6e-2f1d3c4b5a69';
+    const p = peer();
+    const client = serving('/home/softov').accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
+
+    // Listed and announced the way it is after a restart, which is the name
+    // VS Code routes on.
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    expect(listed.items.map((one) => one.resource)).toEqual([`claude:/${id}`]);
+    const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
+      .map((n) => (n.params as { summary: { resource: string } }).summary.resource);
+    expect(added).toEqual([`claude:/${id}`]);
+
+    // The creator's own name is still the session, in its own spelling.
+    const opened = await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }) as {
+      snapshot: { resource: string; state: { defaultChat: string } };
+    };
+    expect(opened.snapshot.resource).toBe(`ahp-session:/${id}`);
+    expect(opened.snapshot.state.defaultChat)
+      .toBe(`ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
+    // And the backend is handed the id, never the scheme.
+    expect(sessionQueries()[0]?.options.sessionId).toBe(id);
+  });
+
+  it('refuses a session whose id another provider already holds', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const id = '5d0c9e8b-7a6f-4e3d-8c2b-1a0f9e8d7c6b';
+    const host = createHost({
+      path: '/home/softov',
+      agents: [claude({ paths: ['/home/softov'] }), { ...echo({ path: '/home/softov', pace: 0 }), provider: 'codex', displayName: 'Codex' }],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
+    // The id is what everything kept about a session is stored by, so a
+    // second one under it would share the first one's flags, config and marks.
+    await expect(client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'codex' } }))
+      .rejects.toMatchObject({ code: -32003 });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    expect(listed.items.map((one) => one.resource)).toEqual([`claude:/${id}`]);
+  });
+
+  it('refuses a held id before it makes anything for the new session', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const asked: string[] = [];
+    const host = createHost({
+      path: '/tmp',
+      agents: [echo({ path: '/tmp', pace: 0 })],
+      ...machine(),
+      worktrees: {
+        repository: async (dir) => { asked.push(dir); return dir; },
+        branches: async () => [],
+        create: async () => {},
+        dirty: async () => false,
+        remove: async () => {},
+      },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/dup', provider: 'echo' } });
+    await expect(client.handle({
+      method: 'createSession',
+      params: { channel: 'elsewhere:/dup', provider: 'echo', workingDirectories: ['file:///tmp'], config: { isolation: 'worktree' } },
+    })).rejects.toMatchObject({ code: -32003 });
+    // No worktree was asked for on the refused one's behalf.
+    expect(asked).toEqual([]);
+  });
+
+  it('refuses the id of a session a backend keeps on disk', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const stamp = new Date(0).toISOString();
+    const host = createHost({
+      path: '/tmp',
+      agents: [{ ...echo({ path: '/tmp', pace: 0 }), list: async () => [{ id: 'kept', title: 'Kept', createdAt: stamp, modifiedAt: stamp, workingDirectories: ['file:///tmp'] }] }],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } }))
+      .rejects.toMatchObject({ code: -32003 });
   });
 });
 
@@ -6510,6 +6851,183 @@ describe('a session asked for by the name a client computed', () => {
       params: { channel: 'claude:/row/annotations' },
     }) as { snapshot: { state: { annotations: unknown[] } } };
     expect(opened.snapshot.state.annotations).toEqual([]);
+  });
+});
+
+/*
+ * A session asked for by the name its creator used.
+ *
+ * A session created as `ahp-session:/<uuid>` is held as `claude:/<uuid>`, and
+ * the creator keeps talking to it under its own name: every request that names
+ * the session resolves that name, and every snapshot answered on it is in that
+ * spelling.
+ */
+describe('a session asked for by the name its creator used', () => {
+  const id = '6b1f0e8a-3c2d-4e5f-8a9b-0c1d2e3f4a5b';
+  const given = `ahp-session:/${id}`;
+  const held = `claude:/${id}`;
+  const chatOfSession = (session: string) =>
+    `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  const created = async () => {
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: given, provider: 'claude' } });
+    return { host, client, peer: p };
+  };
+
+  it('forks a chat in it', async () => {
+    const { client } = await created();
+    await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: given } }) as {
+      snapshot: { resource: string; state: { chats: { resource: string }[] } };
+    };
+    expect(opened.snapshot.resource).toBe(given);
+    expect(opened.snapshot.state.chats.map((one) => one.resource)).toEqual([chatOfSession(given), 'ahp-chat:/second']);
+  });
+
+  it('disposes it, and says so under the name it is held by', async () => {
+    const { client, peer: p } = await created();
+    await client.handle({ method: 'disposeSession', params: { channel: given } });
+    const removed = p.notes.filter((n) => n.method === 'root/sessionRemoved')
+      .map((n) => (n.params as { session: string }).session);
+    expect(removed).toEqual([held]);
+  });
+
+  it('answers it in the handshake\'s first subscriptions, in the creator\'s spelling', async () => {
+    const { host } = await created();
+    const again = host.accept(peer());
+    const result = await again.handle(hello(['0.9.0'], { clientId: 'again', initialSubscriptions: [given] })) as {
+      snapshots: { resource: string; state: { defaultChat: string } }[];
+    };
+    expect(result.snapshots.map((one) => one.resource)).toEqual([given]);
+    expect(result.snapshots[0]?.state.defaultChat).toBe(chatOfSession(given));
+  });
+
+  it('answers it on a reconnect, in the creator\'s spelling', async () => {
+    const { host } = await created();
+    const again = host.accept(peer());
+    // Ahead of anything this host issued, so it is answered with state
+    // rather than a replay.
+    const result = await again.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 1_000_000, subscriptions: [given] },
+    }) as { type: string; snapshots: { resource: string; state: { defaultChat: string } }[] };
+    expect(result.type).toBe('snapshot');
+    expect(result.snapshots.map((one) => one.resource)).toEqual([given]);
+    expect(result.snapshots[0]?.state.defaultChat).toBe(chatOfSession(given));
+  });
+
+  it('opens for a second client the way VS Code opens it, with its turn and its pending approval', async () => {
+    const { host, client: creator, peer: made } = await created();
+    await creator.handle({ method: 'subscribe', params: { channel: given } });
+    await creator.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } });
+    creator.handle({
+      method: 'dispatchAction',
+      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'clean the build' } } },
+    });
+    await settle();
+    const decision = sdk.canUseTool?.('Bash', { command: 'rm -rf build' }, { toolUseID: 'c1' });
+    await settle();
+
+    // The window lists, takes the row's resource as the session, reads the
+    // provider off its scheme and builds the chat from it.
+    const window = peer();
+    const vscode = host.accept(window);
+    await vscode.handle(hello(['0.9.0'], { clientId: 'vscode' }));
+    const rows = await vscode.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; provider: string }[];
+    };
+    expect(rows.items.map((one) => one.resource)).toEqual([held]);
+    const session = await vscode.handle({ method: 'subscribe', params: { channel: held } }) as {
+      snapshot: { state: { defaultChat: string; inputNeeded?: { chat: string; toolCall: { toolCallId: string } }[] } };
+    };
+    expect(session.snapshot.state.defaultChat).toBe(chatOfSession(held));
+    expect(session.snapshot.state.inputNeeded?.map((one) => one.chat)).toEqual([chatOfSession(held)]);
+    const chat = await vscode.handle({ method: 'subscribe', params: { channel: chatOfSession(held) } }) as {
+      snapshot: { state: { activeTurn?: { message: { text: string } } } };
+    };
+    expect(chat.snapshot.state.activeTurn?.message.text).toBe('clean the build');
+
+    // Approved from the window, it reaches the agent, and the creator sees
+    // it resolved under its own name.
+    vscode.handle({
+      method: 'dispatchAction',
+      params: { channel: chatOfSession(held), action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, confirmed: 'user-action' } },
+    });
+    expect(await decision).toMatchObject({ behavior: 'allow' });
+    await settle();
+    expect(actions(made, given).map((one) => one.action.type)).toContain('session/inputNeededRemoved');
+    expect(actions(made, chatOfSession(given)).map((one) => one.action.type)).toContain('chat/toolCallConfirmed');
+  });
+
+  it('replays what it missed on a reconnect in the creator\'s spelling', async () => {
+    const { host, client } = await created();
+    await client.handle({ method: 'subscribe', params: { channel: given } });
+    await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
+    const again = host.accept(peer());
+    const result = await again.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
+    }) as { type: string; actions: { channel: string }[] };
+    expect(result.type).toBe('replay');
+    expect(result.actions.length).toBeGreaterThan(0);
+    expect(result.actions.every((one) => one.channel === given)).toBe(true);
+    expect(JSON.stringify(result.actions)).not.toContain(held);
+  });
+
+  it('replays a chat and a pending approval on a reconnect in the creator\'s spelling, and leaves text alone', async () => {
+    const { host, client } = await created();
+    await client.handle({ method: 'subscribe', params: { channel: given } });
+    await client.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } });
+    // Text that names the session is somebody's words, not a URI to respell.
+    const text = `${held}/changeset/session is what changed`;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatOfSession(given), action: { type: 'chat/turnStarted', turnId: 't1', message: { text } } },
+    });
+    await settle();
+    void sdk.canUseTool?.('Bash', { command: 'rm -rf build' }, { toolUseID: 'c1' });
+    await settle();
+
+    const again = host.accept(peer());
+    const result = await again.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given, chatOfSession(given)] },
+    }) as { type: string; actions: { channel: string; action: Record<string, any> }[] };
+    expect(result.type).toBe('replay');
+    // The chat's actions under the creator's name for the chat.
+    const started = result.actions.find((one) => one.action.type === 'chat/turnStarted');
+    expect(started?.channel).toBe(chatOfSession(given));
+    expect(started?.action.message.text).toBe(text);
+    // And the chat a pending approval is answered on, inside the payload.
+    const asked = result.actions.find((one) => one.action.type === 'session/inputNeededSet');
+    expect(asked?.channel).toBe(given);
+    expect(asked?.action.request.chat).toBe(chatOfSession(given));
+    expect(result.actions.every((one) => one.channel === given || one.channel === chatOfSession(given))).toBe(true);
+  });
+
+  it('lets its creator go when it unsubscribes under its own name', async () => {
+    const { host } = await created();
+    const watcher = peer();
+    const other = host.accept(watcher);
+    await other.handle(hello(['0.9.0'], { clientId: 'watcher' }));
+    await other.handle({ method: 'subscribe', params: { channel: held } });
+    const creator = host.accept(peer());
+    await creator.handle(hello(['0.9.0'], { clientId: 'creator' }));
+    await creator.handle({ method: 'subscribe', params: { channel: given } });
+    creator.handle({
+      method: 'dispatchAction',
+      params: { channel: given, action: { type: 'session/activeClientSet', activeClient: { clientId: 'creator', tools: [] } } },
+    });
+    await settle();
+    await creator.handle({ method: 'unsubscribe', params: { channel: given } });
+    await settle();
+    // Told under the held name, which is where everybody else is watching.
+    const gone = actions(watcher, held).filter((one) => one.action.type === 'session/activeClientRemoved');
+    expect(gone.map((one) => one.action.clientId)).toEqual(['creator']);
   });
 });
 

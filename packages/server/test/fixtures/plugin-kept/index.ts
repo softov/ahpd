@@ -1,5 +1,6 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { idOf } from '@ahpd/sdk';
 import type { Listed, Plugin } from '@ahpd/sdk';
 import { echo } from '../../../../../examples/echo/agent.ts';
 
@@ -31,7 +32,7 @@ export const apply: Plugin['apply'] = (host) => {
       if (start.resume === undefined) {
         const at = new Date().toISOString();
         const row: Listed = {
-          id: start.uri.replace(/^ahp-session:\//u, ''),
+          id: idOf(start.uri),
           title: 'Kept session',
           createdAt: at,
           modifiedAt: at,

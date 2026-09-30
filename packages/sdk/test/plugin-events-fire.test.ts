@@ -111,13 +111,13 @@ it('fires session_start with its provider, and session_end when it is disposed',
 
   const started = of(seen, 'session_start');
   expect(started).toHaveLength(1);
-  expect(started[0]).toMatchObject({ session: 'ahp-session:/one', provider: 'echo' });
+  expect(started[0]).toMatchObject({ session: 'echo:/one', provider: 'echo' });
 
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await settle();
   const ended = of(seen, 'session_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ session: 'ahp-session:/one' });
+  expect(ended[0]).toMatchObject({ session: 'echo:/one' });
 });
 
 it('fires message, turn_start and turn_end once each, and nothing per delta', async () => {
@@ -133,9 +133,10 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
 
   const about = seen.filter((event) => event.type === 'message' || event.type === 'turn_start' || event.type === 'turn_end');
   expect(about.map((event) => event.type)).toEqual(['message', 'turn_start', 'turn_end']);
-  // The host's own chat URI, not the client's alias for it: the event carries
-  // what the host calls the channel, which is the identity it uses everywhere.
-  expect(about[0]).toMatchObject({ session: 'ahp-session:/turn', chat: expect.stringMatching(/^ahp-chat:/), turn: 'turn-1', text: 'hello there' });
+  // The host's own session and chat URIs, not the client's aliases for them:
+  // the event carries what the host calls the channel, which is the identity
+  // it uses everywhere, and a session is held under its provider's name.
+  expect(about[0]).toMatchObject({ session: 'echo:/turn', chat: expect.stringMatching(/^ahp-chat:/), turn: 'turn-1', text: 'hello there' });
   expect(about[1]).toMatchObject({ turn: 'turn-1' });
   expect(about[2]).toMatchObject({ turn: 'turn-1', status: 'complete' });
 });
@@ -171,7 +172,7 @@ it('fires tool_call once, after a host tool answered', async () => {
   expect(outcomes).toEqual(['ok']);
   const calls = of(seen, 'tool_call');
   expect(calls).toHaveLength(1);
-  expect(calls[0]).toMatchObject({ session: 'ahp-session:/tool', tool: 'probe_tool', ok: true });
+  expect(calls[0]).toMatchObject({ session: 'tooler:/tool', tool: 'probe_tool', ok: true });
 });
 
 it('fires tool_call with the failure when a host tool throws', async () => {
