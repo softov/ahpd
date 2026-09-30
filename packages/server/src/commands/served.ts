@@ -15,6 +15,7 @@ import type { Users } from '@ahpd/sdk';
 import type { Options } from './options.js';
 import { declareConfig } from './config.js';
 import { declarePlugin } from './plugin.js';
+import { declareRestart } from './restart.js';
 import { declareStatus } from './status.js';
 import { declareUser } from './user.js';
 import { checkScopes } from './scopes.js';
@@ -44,6 +45,15 @@ export interface ServedFacts {
   readonly users?: Users;
   /** The daemon as it is now, read per request because the listener is bound after this is built. */
   running(): ServedRunning;
+  /** The sessions with a turn running, read per request because the host is built after this is. */
+  turning(): string[];
+  /**
+   * Read that line over the configuration as it is now, then stop this daemon
+   * once the answer has gone and start it again with it. Throws, or rejects,
+   * with why the line cannot run or, unless forced, which turns are running,
+   * and the daemon runs on.
+   */
+  restart(argv: string[], force: boolean): void | Promise<void>;
 }
 
 /** The declarations a daemon serves, bound to the daemon's own facts. */
@@ -53,5 +63,6 @@ export const servedRegistry = (facts: ServedFacts): Registry<object> => {
   declareConfig(registry, facts);
   declareUser(registry, facts);
   declarePlugin(registry, facts);
+  declareRestart(registry, facts);
   return registry;
 };

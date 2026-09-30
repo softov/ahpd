@@ -455,6 +455,8 @@ describe('the handlers, called with a Request', () => {
       configFile: config,
       users,
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),

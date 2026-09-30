@@ -511,6 +511,11 @@ export interface Session {
    */
   awaiting?(): string[];
 
-  /** End the session and stop its agent. */
-  close(): void;
+  /**
+   * End the session and stop its agent.
+   *
+   * A backend that can tell when its process has gone answers a promise that
+   * settles then, and never rejects; `Host.close` waits on it, bounded.
+   */
+  close(): void | Promise<void>;
 }

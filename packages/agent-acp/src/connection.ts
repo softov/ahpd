@@ -221,11 +221,12 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     })),
     cancel: (sessionId: string): Promise<void> => heard(() => connection.cancel({ sessionId })),
     ended,
-    close: (): void => {
+    close: async (): Promise<void> => {
       // The stdin end is what a well-behaved server reads as a shutdown; the
       // kill is for one that does not.
       child.stdin.end();
       child.kill();
+      await ended;
     },
   };
 }

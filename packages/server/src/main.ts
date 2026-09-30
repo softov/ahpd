@@ -167,10 +167,11 @@ const asked = tokens.options['--help'] === true || tokens.options['--version'] =
  */
 const first = tokens.words[0];
 if (!asked && first !== undefined && matchCommand(program.commands, tokens.words) === null) {
-  const subs = visible(program.commands)
+  // Once each: two declarations may share a word, as `plugin config` does.
+  const subs = [...new Set(visible(program.commands)
     .filter((command) => literalPrefix(command)[0] === first)
     .map((command) => literalPrefix(command)[1])
-    .filter((word): word is string => word !== undefined);
+    .filter((word): word is string => word !== undefined))];
   if (subs.length > 0 && !subs.includes(tokens.words[1] ?? '')) {
     const refused = new ArgumentError(`${first} takes ${subs.slice(0, -1).join(', ')}${subs.length > 1 ? ' or ' : ''}${subs.at(-1) ?? ''}.`);
     process.stderr.write(`${program.name}: ${refused.message}\n`);
@@ -237,6 +238,6 @@ function runHelp(run: Command): string {
   return `\n${style.heading('ahpd [options]:')}\n${renderDefinitions(optionsOf(run).map(optionLine))}`
     + '\nEvery option above can be a key in the configuration file instead, spelled the way it is here without the dashes: port, host, paths, connectionToken, connectionTokenFile, withoutConnectionToken, automations, sessions, wire, updateCheck, plugins, users, resource, issuer, trustToken, advancedTools.\n'
     + 'A flag beats the file, because a flag is this run and a file is every run until somebody edits it.\n'
-    + '"plugins" is a list of the same specs --plugin takes, and --no-plugins is the one flag with no key: leaving plugins out is already the off.\n'
+    + '"plugins" is a list of the same specs --plugin takes, and --plugin-option sets an entry\'s "options" for one run; --no-plugins has no key, because leaving plugins out is already the off.\n'
     + '\nClients present the token as ?tkn=<secret> on the URL, or as an Authorization: Bearer <secret> header.\n';
 }

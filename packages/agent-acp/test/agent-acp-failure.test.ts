@@ -106,3 +106,19 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
   expect(failure(actions)).toContain('exited with code 3');
   expect(escaped).toEqual([]);
 });
+
+it('settles a close once the server process has gone, and never rejects', async () => {
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', "process.stdin.resume(); process.on('SIGTERM', () => { setTimeout(() => process.exit(0), 100); });"],
+    handlers: { update: () => {} },
+  });
+  let gone = false;
+  void connection.ended.then(() => { gone = true; });
+  await new Promise((resolve) => { setTimeout(resolve, 200); });
+  await connection.close();
+  expect(gone).toBe(true);
+  // A second close of a server already gone settles at once.
+  await connection.close();
+  expect(escaped).toEqual([]);
+});

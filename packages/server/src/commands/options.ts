@@ -75,6 +75,32 @@ export interface Options {
   configFiles: string[];
 }
 
+/**
+ * A value as it was typed: JSON when it parses, and the text itself otherwise.
+ * A number is kept only when it reads back exactly as typed, at any depth: at
+ * the top a long id or `1.0` is the text instead, and inside an object or
+ * array, where it cannot be, the value is refused with words saying to quote
+ * it. A JSON string, `"123"`, is always text.
+ */
+export const typedValue = (typed: string): unknown => {
+  let value: unknown;
+  try { value = JSON.parse(typed) as unknown; }
+  catch { return typed; }
+  if (typeof value === 'number') return String(value) !== typed ? typed : value;
+  if (typeof value !== 'object' || value === null) return value;
+  for (const [literal] of typed.matchAll(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/gu)) {
+    if (literal.startsWith('"')) continue;
+    const read = Number(literal);
+    if (!Number.isFinite(read)) {
+      stop(`${typed} holds ${literal}, too large to be a number; write it in quotes, as a JSON string.`);
+    }
+    if (String(read) !== literal) {
+      stop(`${typed} holds ${literal}, which would be kept as ${String(read)}; write it in quotes, as a JSON string.`);
+    }
+  }
+  return value;
+};
+
 /*
  * The return type is on the variable rather than the arrow, which is what tells
  * TypeScript a call to this never comes back: with it, a check like
@@ -211,6 +237,12 @@ export const serverFields = {
     description: 'Load none, whatever the configuration file says.',
     cli: { negatable: false },
   },
+  pluginOptions: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'Set one option of a plugin for this run, over the configuration file: <plugin>.<key>=<value>, the value read as JSON when it parses and as text otherwise. Repeatable.',
+    cli: { flag: '--plugin-option', value: 'PLUGIN.KEY=VALUE' },
+  },
   updateCheck: {
     type: 'boolean',
     description: 'Ask npm, in the background, whether a newer version exists. On by default; --no-update-check, NO_UPDATE_NOTIFIER, CI and "updateCheck": false in the configuration turn it off.',
@@ -222,7 +254,7 @@ export const serverFields = {
 const FILE_ONLY = ['http'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
-const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins'] as const;
+const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'pluginOptions'] as const;
 
 /** A copy of `fields` without the keys named. */
 const without = <T extends Record<string, Field>, K extends keyof T>(fields: T, keys: readonly K[]): Omit<T, K> =>
@@ -400,6 +432,31 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
       }
       plugins.push(spec);
     });
+  }
+
+  /*
+   * `--plugin-option`, over the options of the plugin it names.
+   *
+   * Split at the first `=`, so a value may hold one, and the name at the last
+   * `.` before it, since a scoped package name holds none and a path's last dot
+   * is its extension's. The value is JSON when it parses. The plugin must be
+   * one this run loads, enabled, because an option for a plugin that is not loaded is a
+   * setting nobody would see take effect.
+   */
+  for (const typedOption of (input['pluginOptions'] as string[] | undefined) ?? []) {
+    const equals = typedOption.indexOf('=');
+    const dot = equals === -1 ? -1 : typedOption.lastIndexOf('.', equals);
+    if (dot <= 0 || dot + 1 === equals) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
+    const name = typedOption.slice(0, dot);
+    const key = typedOption.slice(dot + 1, equals);
+    const value = typedValue(typedOption.slice(equals + 1));
+    // An entry switched off is one this run does not load.
+    const at = plugins.findIndex((spec) => (typeof spec === 'string' ? spec : spec.enabled === false ? undefined : spec.name) === name);
+    if (at === -1) stop(`--plugin-option names ${name}, which is not a plugin this run loads.`);
+    const spec = plugins[at] as PluginSpec;
+    plugins[at] = typeof spec === 'string'
+      ? { name: spec, options: { [key]: value } }
+      : { ...spec, options: { ...spec.options, [key]: value } };
   }
 
   const paths = [...given('paths') ?? []];

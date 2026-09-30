@@ -63,7 +63,7 @@ plugins, then a restart:
 ```bash
 npm i -g @ahpd/server
 ahpd plugin update all
-ahpd stop && ahpd start
+ahpd restart
 ```
 
 `ahpd plugin update all` runs one `npm install` in the configuration directory
@@ -104,6 +104,8 @@ whatever directories the daemon was started on. What it does take is in
 ahpd [options]              run it here, in this terminal
 ahpd start [options]        run it in the background and let go of it
 ahpd stop                   stop the one running in the background
+ahpd restart                stop it and start it again with the same line;
+                            --force restarts while a turn is running
 ahpd status                 say whether one is, and where
 ahpd config                 say where the configuration is, and what it says
 ahpd plugin list            what the configuration names, and what a run would
@@ -116,6 +118,10 @@ ahpd plugin remove <name>   drop it from the configuration and uninstall it,
 ahpd plugin update all      move every installed plugin to the daemon's
                             version, in one npm call
 ahpd plugin update <name>   move only the plugins named
+ahpd plugin config <name>   show a plugin's options; with <key>, one of them;
+                            with <key> <value>, set it; --unset removes it
+ahpd plugin enable <name>   turn a configured plugin on
+ahpd plugin disable <name>  turn it off, keeping its entry and options
 ahpd user list              who is in the user file
 ahpd user add <id>          add a person, with --role and --issuer
 ahpd user token <id>        mint their credential, shown once; --url prints
@@ -133,6 +139,32 @@ ahpd --help              # every command, then the foreground run's flags
 ahpd plugin --help       # only what follows `plugin`
 ahpd user add --help     # the flags one sub-command takes
 ```
+
+### `ahpd restart`
+
+`ahpd restart` restarts the daemon `ahpd start` started, with the arguments it was started with, so a change that waits for a restart can be applied without retyping them.
+Sessions come back from the store. A daemon on a fixed port comes back on the same URL; one started with `--port 0` gets a new port, and its record says which.
+
+```bash
+ahpd restart            # refused while a turn is running, naming the sessions
+ahpd restart --force    # restart anyway
+```
+
+The terminal sends the recorded process a signal, `SIGHUP` for a restart and `SIGUSR2` for a forced one, and the daemon decides: it refuses while a turn is running unless forced, and otherwise starts its successor and exits.
+Its answer is in `daemon.log`, which the command reads, printing the new pid and URL, the refusal, or why no successor started.
+The daemon writes `restart: stopping (SIGHUP)`, or `(SIGUSR2)`, once it has read its recorded arguments and token and begins to stop, and each refusal names the signal it answers, so a terminal reads only the answer to its own kind of signal; a signal names no sender, so two terminals sending the same one share an answer.
+The command waits five seconds for that line, and says when it gave up that the daemon may still take the signal; a signal that could not be sent, to a pid that is gone, is refused with words.
+After the line it waits for as long as the old daemon is still stopping, since a plugin's `stopping` handler has no time limit, and gives the successor 25 seconds from the line the daemon writes when it starts it, five more than the daemon itself waits.
+Before anything goes down, the daemon reads its recorded arguments over the configuration as it is now, and the connection token they give; when either cannot be read, such as a `config.json` that is no longer JSON or a `connectionTokenFile` that is gone, the restart is refused with why and the daemon runs on.
+The successor is handed that token, so a changed `connectionToken` or `connectionTokenFile` is the one its connect URL carries.
+Before it starts the successor, the old daemon fires no automation and starts nothing new, ends every session and terminal and waits up to five seconds for their processes to exit, then closes its automation store and its session store, writing them for the last time, as a stop does, so the two processes never write the same files; a turn `--force` let run ends there.
+One restart runs at a time, and a second is refused while it does; `ahpd stop` during a restart wins, and no successor is left running.
+A successor writes the record only while it is still the old daemon's or no live daemon's, and a daemon, or `ahpd stop`, forgets the record only when it names the daemon it is about.
+A daemon run in the foreground does not listen for either signal, so either one ends it, as a hang-up does; restart it where it runs.
+A daemon started by an older ahpd did not record its arguments, so `ahpd stop` and `ahpd start` are the way to restart it once.
+
+From another machine it is `ahpd --remote <url> restart`, or `POST /api/restart` with `{ "force": true }` to force it; the daemon answers the refusal or that it is restarting.
+The terminal only signals and a remote restart only asks the API, and neither falls back to the other.
 
 ### `--json`, for the things a script reads
 
@@ -190,6 +222,7 @@ anything has been let go of.
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
 | `--no-plugins` | Load none, whatever the configuration file says |
+| `--plugin-option <plugin>.<key>=<value>` | Set one option of a loaded plugin for this run. Repeatable. See below |
 | `--update-check`, `--no-update-check` | Ask npm, in the background, whether a newer version exists. On by default; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` and `"updateCheck": false` turn it off. See below |
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
@@ -296,6 +329,38 @@ or that throws is reported on stdout and skipped; the one failure that refuses
 the start is two plugins claiming the same agent `provider`, because a host
 built over that answers a turn with the wrong backend.
 
+`ahpd plugin config` reads and writes a plugin's options in `config.json`, and `ahpd plugin enable` and `ahpd plugin disable` set its `enabled`.
+The plugin is named as `plugins` names it, and one the file does not name is refused.
+
+```bash
+ahpd plugin config @ahpd/agent-claude                       # every option it sets
+ahpd plugin config @ahpd/agent-claude workerStop            # one of them
+ahpd plugin config @ahpd/agent-claude workerStop session    # set it
+ahpd plugin config @ahpd/agent-claude workerStop --unset    # remove it
+ahpd plugin disable @ahpd/agent-cofold
+ahpd plugin enable @ahpd/agent-cofold
+```
+
+A value is JSON when it parses and text otherwise, so `3` is a number and `session` is a string.
+A number that would not read back as typed, such as a long id or `1.0`, stays text, and a value quoted as JSON, `'"3"'` at the shell, is always a string.
+Inside an object or array a number must read back exactly as typed too, and since it cannot become text there, a value such as `{"id":12345678901234567890}`, `{"a":1.0}` or `{"x":1e400}` is refused; quote that number as a JSON string.
+It is checked against the plugin's `optionsSchema` by importing the plugin as a start would, and a value the schema refuses is not written.
+A plugin that cannot be imported is written anyway, and its options are checked at the next start.
+A plugin switched off with `enabled: false` is never imported, here or over the API: a value set for it is written unchecked and checked when it is enabled and loads, and one read over the API answers `<set>` for each of its values.
+`--unset` of an option the entry does not set leaves the file as it is and says so.
+Nothing a running daemon loaded changes until it is restarted, and each of these says so when a daemon is running.
+
+`--plugin-option` sets one option for one run, over the file's:
+
+```bash
+ahpd --plugin-option @ahpd/agent-claude.workerStop=session
+```
+
+It is repeated for each option, and its value is read the same way as `plugin config`'s.
+The plugin is the text before the last `.` ahead of the `=`, so a scoped name or a path works as it is written.
+It must name a plugin this run loads, the file's or a typed `--plugin`, and not one switched off with `enabled: false`, and the option is checked when the plugin loads, so a value the schema refuses skips that plugin with the option named in the log.
+A value typed at the shell lands in its history, so a credential is better set with `plugin config`.
+
 `ahpd plugin list` prints one line per spec - its state, where it resolves, and
 the name and title its manifest declares - without importing any of it. The
 states are `ready`, `incompatible`, `unconfigured`, `disabled`, `missing` and
@@ -359,10 +424,11 @@ A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
 `--path` or a `--plugin` on the command line **replaces** its list rather than
 adding to it, so a file naming two and a flag naming a third loads one, not
-three. `"updateCheck": false` is `--no-update-check`. `--no-plugins` is the one
-flag with no key: leaving `plugins` out is already the off.
+three. `"updateCheck": false` is `--no-update-check`. `--no-plugins` has no
+key, because leaving `plugins` out is already the off, and `--plugin-option` has
+none, because an entry's `options` is where the file sets the same thing.
 
-The merged files are checked against the same schema the flags are, before anything starts. A wrong value on a key ahpd knows refuses the start with exit code 2 and a line naming the file that set the key, and the key: `"port": "8080"` is `/home/you/.config/ahpd/config.json: port must be an integer`, and `"http": { "port": 70000 }` is `...: http.port must be an integer between 0 and 65535`. A key ahpd does not know, such as `"plugin"` for `"plugins"` or one a newer version added, is one line in the log, `/home/you/.config/ahpd/config.json: plugin is not a setting ahpd knows; ignored`, and the daemon starts without it. `stdio`, `configFile` and `noPlugins` mean something only when typed, so the file warns about them the same way.
+The merged files are checked against the same schema the flags are, before anything starts. A wrong value on a key ahpd knows refuses the start with exit code 2 and a line naming the file that set the key, and the key: `"port": "8080"` is `/home/you/.config/ahpd/config.json: port must be an integer`, and `"http": { "port": 70000 }` is `...: http.port must be an integer between 0 and 65535`. A key ahpd does not know, such as `"plugin"` for `"plugins"` or one a newer version added, is one line in the log, `/home/you/.config/ahpd/config.json: plugin is not a setting ahpd knows; ignored`, and the daemon starts without it. `stdio`, `configFile`, `noPlugins` and `pluginOptions` mean something only when typed, so the file warns about them the same way.
 
 `ahpd config` prints every file it read, then each key and its value; with more than one file, each key also names the file that set it. `ahpd config --json` answers `files`, `config` and `sources`, the file per key.
 
@@ -443,6 +509,9 @@ the grants their roles resolve to:
 | `config` | `config:write` |
 | `user list`, `user add`, `user rm`, `user token` | `users:write` |
 | `plugin install`, `plugin remove` | the deployment's token only |
+| `plugin update` | the deployment's token only |
+| `plugin config`, `plugin enable`, `plugin disable` | the deployment's token only |
+| `restart` | the deployment's token only |
 
 `users:write` manages people at or below the caller: `user add` refuses a role,
 and `user add`, `user token` and `user rm` refuse a person, that holds a grant
@@ -460,6 +529,8 @@ read or change settings carries neither the root credential nor a plugin's own
 secrets.
 `GET /api/plugin/list` reports each plugin's `options` and every string that may
 quote its spec the same way.
+`POST /api/plugin/config` with `{ "name": ..., "key": ... }` answers a plugin's options, and `POST /api/plugin/config/set` with a `value` sets one; an option its schema marks `writeOnly` is answered as `<set>`, and every option is when the plugin cannot be imported to read its schema.
+`POST /api/plugin/enable` and `/api/plugin/disable` take `{ "name": ... }`.
 
 A refusal carries the same sentence the WebSocket gives, so a script reads the
 reason:

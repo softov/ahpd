@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -43,15 +43,37 @@ describe('describePlugin', () => {
     expect(row.path).toBe(join(fixtures, 'plugin-plain', 'index.js'));
   });
 
-  it('lists a single file with no manifest above it as (no manifest)', async () => {
+  it('lists a single file with no manifest above it by its file name', async () => {
     loose = mkdtempSync(join(tmpdir(), 'ahpd-loose-'));
     writeFileSync(join(loose, 'loose.js'), 'export const x = 1;\n');
     const row = await listing(join(loose, 'loose.js'));
 
     expect(row.state).toBe('ready');
-    expect(row.name).toBeUndefined();
+    expect(row.name).toBe('loose');
     expect(row.title).toBeUndefined();
-    expect(pluginLine(row)).toContain('(no manifest)');
+    expect(pluginLine(row)).toContain('(loose)');
+  });
+
+  it('lists a file whose nearest package.json is not a plugin\'s by its file name, unchecked by that package', async () => {
+    loose = mkdtempSync(join(tmpdir(), 'ahpd-loose-'));
+    writeFileSync(join(loose, 'package.json'), JSON.stringify({ name: 'not-a-plugin', peerDependencies: { '@ahpd/sdk': '^99.0.0' } }));
+    mkdirSync(join(loose, 'plugin-x'));
+    writeFileSync(join(loose, 'plugin-x', 'index.js'), 'export const x = 1;\n');
+    const row = await listing(join(loose, 'plugin-x', 'index.js'));
+
+    expect(row.state).toBe('ready');
+    expect(row.name).toBe('plugin-x');
+  });
+
+  it('names a fixture file by its directory, not by the server package above it', async () => {
+    const row = await listing('./fixtures/plugin-throws/index.ts');
+    expect(row.name).toBe('plugin-throws');
+  });
+
+  it('takes a plugin package\'s manifest for a file inside it', async () => {
+    const row = await listing(join(here, '..', '..', 'agent-claude', 'src', 'index.ts'));
+    expect(row.name).toBe('@ahpd/agent-claude');
+    expect(row.title).toBe('Claude');
   });
 
   it('lists a spec that does not resolve as missing, with its problem and no path', async () => {

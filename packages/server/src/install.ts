@@ -222,6 +222,78 @@ export const disableNames = (path: string, names: readonly string[]): string[] =
   return dropped;
 };
 
+/** The entry `plugins` holds under that name, string or object, or nothing. */
+export const pluginEntry = (path: string, name: string): PluginSpec | undefined => {
+  const list = readEntry(path).plugins;
+  if (!Array.isArray(list)) return undefined;
+  for (const entry of list) {
+    const spec = asSpec(entry);
+    if (spec !== undefined && nameOf(spec) === name) return spec;
+  }
+  return undefined;
+};
+
+/**
+ * Rewrite the entry named, as an object, and write the file.
+ *
+ * Refused naming the plugin when the file does not configure it, because a
+ * setting for a plugin that is not loaded is one nobody would see take effect.
+ */
+const editEntry = (
+  path: string,
+  name: string,
+  change: (entry: { name: string; options?: Record<string, unknown>; enabled?: boolean }) => void,
+): void => {
+  const held = readEntry(path);
+  const list = Array.isArray(held.plugins) ? [...held.plugins] : [];
+  const at = list.findIndex((entry) => {
+    const spec = asSpec(entry);
+    return spec !== undefined && nameOf(spec) === name;
+  });
+  if (at === -1) throw new Error(`${name} is not in plugins in ${path}.`);
+  const spec = asSpec(list[at]) as PluginSpec;
+  const entry = typeof spec === 'string' ? { name: spec } : { ...list[at] as Record<string, unknown>, name: spec.name };
+  change(entry);
+  list[at] = entry;
+  held.plugins = list;
+  writeEntry(path, held);
+};
+
+/**
+ * Set one option of the entry named, or remove it when `value` is undefined,
+ * and answer whether the file changed.
+ *
+ * An entry left with no options loses the key, so an unset leaves no `{}`. An
+ * unset of an option the entry does not set leaves the file as it was, a
+ * string entry included.
+ */
+export const setPluginOption = (path: string, name: string, key: string, value: unknown): boolean => {
+  if (value === undefined) {
+    const spec = pluginEntry(path, name);
+    if (spec !== undefined && (typeof spec === 'string' || spec.options === undefined || !Object.hasOwn(spec.options, key))) return false;
+  }
+  editEntry(path, name, (entry) => {
+    const options = { ...entry.options };
+    if (value === undefined) delete options[key];
+    else options[key] = value;
+    if (Object.keys(options).length === 0) delete entry.options;
+    else entry.options = options;
+  });
+  return true;
+};
+
+/**
+ * Turn the entry named on or off.
+ *
+ * A string entry is already on, so turning it on leaves the file alone; turning
+ * it off makes it an object that says so.
+ */
+export const setPluginEnabled = (path: string, name: string, enabled: boolean): void => {
+  const spec = pluginEntry(path, name);
+  if (enabled && typeof spec === 'string') return;
+  editEntry(path, name, (entry) => { entry.enabled = enabled; });
+};
+
 /** The configuration directory's `package.json` `dependencies`, name to spec, in the order it lists them. */
 const dependenciesIn = (configDir: string): [string, string][] => {
   const dependencies = readEntry(join(configDir, 'package.json')).dependencies;

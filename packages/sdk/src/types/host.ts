@@ -630,6 +630,13 @@ export interface Host {
   /** How many clients are currently connected. */
   connections(): number;
   /**
+   * The sessions with a turn running or waiting on a person, by URI.
+   *
+   * What an embedder asks before it takes the host down, since every session's
+   * process goes with it.
+   */
+  turning(): string[];
+  /**
    * The connected clients, as places a resource can come from.
    *
    * Used by this host to answer a `resource*` command naming a URI a client
@@ -645,4 +652,17 @@ export interface Host {
    * backend is offered its tools when its process starts.
    */
   setTools(tools: HostTool[]): void;
+  /**
+   * Stop what this host runs, once, while the process stays up.
+   *
+   * From the first call no automation fires and no session, terminal or
+   * automation run starts. Every session's chats end, with their agents and any
+   * turn still running, and every terminal; once those have exited or
+   * `HOST_CLOSE_WAIT_MS` has passed, the automation store and then the session
+   * store close, writing what is waiting and nothing after. A step that throws
+   * is logged and the rest still run. What a process does before it hands the
+   * stores to another. Every call answers the one close, which settles when
+   * the stores are closed.
+   */
+  close(): Promise<void>;
 }

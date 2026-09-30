@@ -7,17 +7,31 @@
  * are about the machine rather than a run, so they take only their own flags.
  */
 
-import { output } from '@cofold/commands';
-import type { Command, Registry } from '@cofold/commands';
+import { check, output } from '@cofold/commands';
+import type { Command, CommandContext, JsonSchema, Output, Registry } from '@cofold/commands';
 import { configDir, configPath } from '../config.js';
 import { running } from '../daemon.js';
-import { NpmFailure, installPlugins, removePlugins, run as runProgram, updatePlugins } from '../install.js';
+import {
+  NpmFailure, installPlugins, pluginEntry, removePlugins, run as runProgram, setPluginEnabled, setPluginOption, updatePlugins,
+} from '../install.js';
 import type { Moved } from '../install.js';
-import { describePlugin, pluginLine } from '../plugins.js';
+import { describePlugin, optionsSchemaOf, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
 import { withoutSpecSecrets, withoutUserinfoIn } from './config.js';
-import { optionsFrom, pluginWriteFields, flagFields, servedPluginWriteFields, stop } from './options.js';
+import { optionsFrom, pluginWriteFields, flagFields, serverFields, servedPluginWriteFields, stop, typedValue } from './options.js';
 import type { ServedFacts } from './served.js';
+
+/** What a change to the plugins says, since only a restart loads it. */
+const RESTART = 'Restart the daemon to load the change: ahpd restart';
+
+/** The options a schema marks `writeOnly`, whose values a served answer never carries. */
+const writeOnlyIn = (schema: Record<string, unknown> | undefined): Set<string> => {
+  const properties = schema?.['properties'];
+  if (typeof properties !== 'object' || properties === null) return new Set();
+  return new Set(Object.entries(properties as Record<string, unknown>)
+    .filter(([, one]) => typeof one === 'object' && one !== null && (one as Record<string, unknown>)['writeOnly'] === true)
+    .map(([key]) => key));
+};
 
 export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   const list = registry.action({
@@ -91,7 +105,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     scopes: ['config:write'],
     // Installing or removing a plugin runs code in this process, so over HTTP
     // it is the deployment's own token and never a person.
-    meta: { deploymentTokenOnly: true },
+    meta: { deploymentTokenOnly: 'install or remove a plugin' },
     run: (context) => oneAtATime(async () => {
       const names = context.list<string>('name');
       // Served, the file edited is the daemon's, whatever the request names.
@@ -129,7 +143,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
        * only by a restart. At the terminal a record is what says one is up.
        */
       const restart = served !== undefined || running() !== undefined;
-      if (restart) say('Restart the daemon to load the change: ahpd stop && ahpd start');
+      if (restart) say(RESTART);
       return output({ plugins: names, ...(restart ? { restart: true } : {}) }, '');
     }),
   });
@@ -145,7 +159,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     scopes: ['config:write'],
     // An update runs code in this process as an install does, so over HTTP it
     // is the deployment's own token and never a person.
-    meta: { deploymentTokenOnly: true },
+    meta: { deploymentTokenOnly: 'update a plugin' },
     run: (context) => oneAtATime(async () => {
       const payload = context.globals['json'] === true || context.globals['quiet'] === true;
       const say = (line: string): void => {
@@ -167,10 +181,185 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         stop(failure(error));
       }
       const restart = moved.length > 0 && (served !== undefined || running() !== undefined);
-      if (restart) say('Restart the daemon to load the change: ahpd stop && ahpd start');
+      if (restart) say(RESTART);
       return output({ plugins: moved, ...(restart ? { restart: true } : {}) }, '');
     }),
   });
 
-  return [list, write('install'), write('remove'), update];
+  /** The file a command edits: the daemon's own when served, whatever the request names. */
+  const fileOf = (named: string | undefined): string => (served === undefined ? named : served.configFile) ?? configPath();
+
+  /** Whether a change is said to need a restart: always served, and at the terminal when a record says one is up. */
+  const restarting = (): boolean => served !== undefined || running() !== undefined;
+
+  /*
+   * `plugin config` reads and writes a plugin's options. It is two
+   * declarations because a pattern holds no slot after an optional one: the
+   * first shows, or with --unset removes, and the second sets. Both run the
+   * body below, which reads whichever fields its declaration has.
+   */
+  const configFields = {
+    ...(served === undefined ? { configFile: serverFields.configFile } : {}),
+    name: { type: 'string', description: 'The plugin, as plugins names it.' },
+    key: { type: 'string', description: 'One option.' },
+  } as const;
+  const configure = (context: CommandContext): Promise<Output> => oneAtATime(async () => {
+    const name = context.optional<string>('name');
+    if (name === undefined) stop('Say which plugin: ahpd plugin config <name>.');
+    const key = context.optional<string>('key');
+    const typed = context.optional<string>('value');
+    const unset = context.flag('unset');
+    const file = fileOf(context.optional<string>('configFile'));
+    const payload = context.globals['json'] === true || context.globals['quiet'] === true;
+    const say = (line: string): void => {
+      if (payload) context.error(line);
+      else context.write(`${line}\n`);
+    };
+    const entry = pluginEntry(file, name);
+    if (entry === undefined) stop(`${name} is not in plugins in ${file}.`);
+    if (unset && (key === undefined || typed !== undefined)) stop('--unset takes a key and no value: ahpd plugin config <name> <key> --unset.');
+
+    /*
+     * The plugin's schema, from the module a load would import. Needed to
+     * check a value, and served to know which values are write-only; a module
+     * that cannot be imported is `undefined` with the reason beside it. A
+     * plugin switched off is never imported, since importing runs its code.
+     */
+    const disabled = typeof entry !== 'string' && entry.enabled === false;
+    const schemaNeeded = !disabled && (served !== undefined || typed !== undefined);
+    let schema: Record<string, unknown> | undefined;
+    let unreadable: string | undefined;
+    if (schemaNeeded) {
+      try {
+        schema = await optionsSchemaOf(entry, { configDir: configDir(), cwd: process.cwd() });
+      }
+      catch (error) {
+        unreadable = error instanceof Error ? error.message : String(error);
+      }
+    }
+    /*
+     * What a served answer carries for a value: `<set>` for a write-only
+     * option, and for every option of a plugin whose schema was not read,
+     * because it could not be or because the plugin is switched off, since
+     * nothing says which of them is a credential.
+     */
+    const hidden = writeOnlyIn(schema);
+    const shown = (option: string, value: unknown): unknown =>
+      served !== undefined && (disabled || unreadable !== undefined || hidden.has(option)) ? '<set>' : value;
+    const options = typeof entry === 'string' ? {} : entry.options ?? {};
+
+    if (typed === undefined && !unset) {
+      if (key === undefined) {
+        const rows = Object.entries(options).map(([option, value]) => [option, shown(option, value)] as const);
+        const text = rows.length === 0
+          ? `${name}\n  (no options set)\n`
+          : `${name}\n${rows.map(([option, value]) => `  ${option}: ${JSON.stringify(value)}`).join('\n')}\n`;
+        return output({ name, options: Object.fromEntries(rows) }, text);
+      }
+      if (!Object.hasOwn(options, key)) stop(`${name} sets no ${key} in ${file}.`);
+      const value = shown(key, options[key]);
+      return output({ name, key, value }, `${JSON.stringify(value)}\n`);
+    }
+
+    const option = key as string;
+    if (unset) {
+      if (!setPluginOption(file, name, option, undefined)) {
+        say(`${name} sets no ${option} in ${file}.`);
+        return output({ name, key: option }, '');
+      }
+      say(`Unset ${name} ${option}.`);
+    }
+    else {
+      const value = typedValue(typed as string);
+      const properties = schema?.['properties'];
+      const known = typeof properties === 'object' && properties !== null ? properties as Record<string, unknown> : undefined;
+      if (disabled) say(`${name} is switched off, so ${option} is written unchecked; it is checked when the plugin is enabled and loads.`);
+      else if (unreadable !== undefined) say(`Could not import ${name} to check it (${unreadable}); it is checked at the next start.`);
+      else if (known !== undefined && Object.hasOwn(known, option)) {
+        try {
+          check(value, known[option] as JsonSchema, `plugins.${name}.options.${option}`);
+        }
+        catch (error) {
+          stop(error instanceof Error ? error.message : String(error));
+        }
+      }
+      else if (schema !== undefined) say(`${option} is not an option ${name} knows; written anyway.`);
+      setPluginOption(file, name, option, value);
+      say(`Set ${name} ${option}.`);
+    }
+    const restart = restarting();
+    if (restart) say(RESTART);
+    return output({
+      name,
+      key: option,
+      ...(unset ? {} : { value: shown(option, typedValue(typed as string)) }),
+      ...(restart ? { restart: true } : {}),
+    }, '');
+  });
+  const config = registry.action({
+    id: 'plugin.config',
+    summary: "Show a plugin's options, or remove one",
+    description: 'With a name, every option the configuration sets for it; with a key, that one; --unset removes it.',
+    surfaces: { cli: { pattern: ['plugin', 'config', ':name', ':key?'] }, http: { method: 'POST', path: '/plugin/config' } },
+    input: {
+      ...configFields,
+      unset: { type: 'boolean', description: 'Remove the option.' },
+    },
+    scopes: ['config:write'],
+    // A plugin's options change what its code does in this process, so over
+    // HTTP this is the deployment's own token, as an install is.
+    meta: { deploymentTokenOnly: "change a plugin's options" },
+    run: configure,
+  });
+  const set = registry.action({
+    id: 'plugin.config.set',
+    summary: 'Set one of a plugin\'s options',
+    description: 'The value is read as JSON when it parses and as text otherwise, and checked against the plugin\'s options schema when the plugin can be imported.',
+    surfaces: {
+      cli: { pattern: ['plugin', 'config', ':name', ':key', ':value'] },
+      http: { method: 'POST', path: '/plugin/config/set' },
+    },
+    input: {
+      ...configFields,
+      value: { type: 'string', description: 'The value: JSON when it parses, otherwise text.' },
+    },
+    scopes: ['config:write'],
+    meta: { deploymentTokenOnly: "change a plugin's options" },
+    run: configure,
+  });
+
+  const toggle = (sub: 'enable' | 'disable') => registry.action({
+    id: `plugin.${sub}`,
+    summary: sub === 'enable' ? 'Turn a configured plugin on' : 'Turn a configured plugin off, keeping its entry and options',
+    surfaces: { cli: { pattern: ['plugin', sub, ':name'] }, http: { method: 'POST', path: `/plugin/${sub}` } },
+    input: {
+      ...(served === undefined ? { configFile: serverFields.configFile } : {}),
+      name: { type: 'string', description: 'The plugin, as plugins names it.' },
+    },
+    scopes: ['config:write'],
+    // Turning a plugin on runs its code in this process, as an install does.
+    meta: { deploymentTokenOnly: 'enable or disable a plugin' },
+    run: (context) => oneAtATime(async () => {
+      const name = context.optional<string>('name');
+      if (name === undefined) stop(`Say which plugin: ahpd plugin ${sub} <name>.`);
+      const file = fileOf(context.optional<string>('configFile'));
+      const payload = context.globals['json'] === true || context.globals['quiet'] === true;
+      const say = (line: string): void => {
+        if (payload) context.error(line);
+        else context.write(`${line}\n`);
+      };
+      try {
+        setPluginEnabled(file, name, sub === 'enable');
+      }
+      catch (error) {
+        stop(error instanceof Error ? error.message : String(error));
+      }
+      say(`${sub === 'enable' ? 'Enabled' : 'Disabled'} ${name}.`);
+      const restart = restarting();
+      if (restart) say(RESTART);
+      return output({ name, enabled: sub === 'enable', ...(restart ? { restart: true } : {}) }, '');
+    }),
+  });
+
+  return [list, write('install'), write('remove'), update, config, set, toggle('enable'), toggle('disable')];
 };

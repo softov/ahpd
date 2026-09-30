@@ -47,7 +47,12 @@ export interface Listener {
   readonly port: number;
   /** Whether a connection token is required. */
   readonly guarded: boolean;
-  /** Stop accepting and drop open connections. */
+  /**
+   * Stop accepting, let a response in flight finish for up to two seconds,
+   * and drop the rest of the connections. Settles once the port is free, on
+   * Node, Bun and Deno alike; a Deno shutdown still waiting after those two
+   * seconds is no longer waited on.
+   */
   close(): void | Promise<void>;
 }
 
@@ -141,7 +146,12 @@ export interface RequestsListener {
   readonly host: string;
   /** The port it bound. */
   readonly port: number;
-  /** Stop accepting and drop open connections. */
+  /**
+   * Stop accepting, let a response in flight finish for up to two seconds,
+   * and drop the rest of the connections. Settles once the port is free, on
+   * Node, Bun and Deno alike; a Deno shutdown still waiting after those two
+   * seconds is no longer waited on.
+   */
   close(): void | Promise<void>;
 }
 

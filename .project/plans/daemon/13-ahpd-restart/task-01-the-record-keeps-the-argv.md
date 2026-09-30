@@ -1,11 +1,11 @@
 ---
 title: The record keeps the argv
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
-  - "[code://packages/server/src/daemon.ts#L8-L24](../../../../packages/server/src/daemon.ts#L8-L24) - `Running`"
-  - "[code://packages/server/src/commands/start.ts#L182-L191](../../../../packages/server/src/commands/start.ts#L182-L191) - the forwarded argv"
+  - "[code://packages/server/src/daemon.ts#L9-L30](../../../../packages/server/src/daemon.ts#L9-L30) - `Running`"
+  - "[code://packages/server/src/commands/start.ts#L47-L75](../../../../packages/server/src/commands/start.ts#L47-L75) - the forwarded argv"
 ---
 
 ## Objective
@@ -28,3 +28,8 @@ refs:
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 
 ## Resume
+
+- `Running` has `argv?: string[]`, and `recordOf` takes it as a fourth argument; `start` in `daemon.ts` writes the line it spawned the child with, which is the forwarded line `ahpd start` already built, so `commands/start.ts` needed no change.
+- Tests: `daemon.test.ts` "keeps the arguments the child was given" and "reads a record an older daemon wrote, which has no argv"; `server-cli.test.ts` "records the line the child was given, and not the parent's globals" (a real `start` with `--no-color` before it, killed after).
+- Failed first: the `recordOf` case and the real `start` case (`argv` undefined); the older-record case passed before the change, since reading a record never checked fields beyond `pid`.
+- Not known to the plan: `--plugin-option` does not exist until daemon/12 task 02, so the `start` case records `--path` and `--plugin` instead; the `recordOf` case holds the `--plugin-option` line as data.

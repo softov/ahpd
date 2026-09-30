@@ -128,7 +128,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
 
   if (here === 'bun') {
     const Bun = (globalThis as unknown as { Bun: {
-      serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void; port: number };
+      serve(options: Record<string, unknown>): BunServer;
     } }).Bun;
     // Per socket, because Bun's handler table is one set of callbacks for
     // every connection - `ws` is the only thing distinguishing them.
@@ -179,7 +179,17 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         },
       },
     });
-    return { runtime: here, host, port: server.port, guarded: token !== undefined, close: () => server.stop(true) };
+    return {
+      runtime: here,
+      host,
+      port: server.port,
+      guarded: token !== undefined,
+      // The sockets first, since a stop waits on an open one as on a request.
+      close: () => {
+        for (const ws of bound.keys()) (ws as BunSocket).close();
+        return stopBun(server);
+      },
+    };
   }
 
   if (here === 'deno') {
@@ -190,6 +200,8 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       };
       upgradeWebSocket(r: Request): { socket: DenoSocket; response: Response };
     } }).Deno;
+    /** The upgraded sockets still open, closed first on close: a shutdown waits on each. */
+    const sockets = new Set<DenoSocket>();
     const server = Deno.serve({ port: options.port, hostname: host }, async (request) => {
       if (options.request !== undefined && !upgrading(request)) return options.request(request);
       const identity = await identityOf(request.url, request.headers.get('authorization'));
@@ -200,6 +212,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         return new Response('ahpd speaks the Agent Host Protocol over WebSocket', { status: 426 });
       }
       const { socket, response } = Deno.upgradeWebSocket(request);
+      sockets.add(socket);
       let held: Bound | undefined;
       socket.onopen = () => {
         const seen = tapping(options.tap, ++accepted);
@@ -219,7 +232,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         open.seen.in(text);
         receive(text, open.peer, (request_) => open.connected.handle(request_));
       };
-      socket.onclose = () => { held?.peer.close(); held?.connected.close(); held = undefined; };
+      socket.onclose = () => { sockets.delete(socket); held?.peer.close(); held?.connected.close(); held = undefined; };
       return response;
     });
     return {
@@ -227,7 +240,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       host,
       port: server.addr.port,
       guarded: token !== undefined,
-      close: () => server.shutdown(),
+      close: () => {
+        for (const socket of sockets) socket.close();
+        return within(server.shutdown());
+      },
     };
   }
 
@@ -272,24 +288,22 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   /*
    * The upgrade, and the plain requests beside it.
    *
-   * `ws` builds its own `http` server when it is given a port, and that server
-   * answers everything that is not an upgrade with 426. A host with an HTTP
-   * surface on the same port brings `nodeRequest`, served on a `node:http`
-   * server of this module's own that `ws` attaches to; the upgrade
-   * itself is decided by the same `verifyClient` either way. With no handler
-   * the port path is `ws`'s own server, so a host that wants no HTTP surface
-   * carries nothing extra.
+   * Served on a `node:http` server of this module's own that `ws` attaches to,
+   * so a close lets a request in flight finish as `serveRequests` does. A host
+   * with an HTTP surface on the same port brings `nodeRequest`; one without is
+   * answered 426 as on the other runtimes. The upgrade itself is decided by
+   * the same `verifyClient` either way.
    */
-  let server: NodeServer;
-  if (options.request === undefined) {
-    server = new WebSocketServer({ port: options.port, host, verifyClient });
-  }
-  else {
-    const { createServer } = await import('node:http');
-    const plain = createServer(mountable(options.nodeRequest));
-    server = new WebSocketServer({ server: plain, verifyClient });
-    plain.listen(options.port, host);
-  }
+  const { createServer } = await import('node:http');
+  /** The `node:http` server `ws` is attached to, which `ws` does not close. */
+  const plain = createServer(options.request === undefined
+    ? (_request, response) => {
+      response.writeHead(426, { 'content-type': 'text/plain' });
+      response.end('ahpd speaks the Agent Host Protocol over WebSocket');
+    }
+    : mountable(options.nodeRequest));
+  const server: NodeServer = new WebSocketServer({ server: plain, verifyClient });
+  plain.listen(options.port, host);
   server.on('connection', (socket, request) => {
     const seen = tapping(options.tap, ++accepted);
     const peer = createPeer({
@@ -318,7 +332,11 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
     // What was bound, not what was asked for: port 0 means the OS chooses.
     port: server.address()?.port ?? options.port,
     guarded: token !== undefined,
-    close: () => { server.close(); },
+    // Settled once the port is let go of and every connection has been dropped.
+    close: () => new Promise<void>((done) => {
+      for (const client of server.clients) client.terminate();
+      server.close(() => { void closeHttp(plain).then(done); });
+    }),
   };
 }
 
@@ -335,10 +353,10 @@ export async function serveRequests(options: RequestsOptions, handler: RequestHa
   const host = options.host ?? '127.0.0.1';
   if (here === 'bun') {
     const Bun = (globalThis as unknown as { Bun: {
-      serve(options: Record<string, unknown>): { stop(closeActive?: boolean): void; port: number };
+      serve(options: Record<string, unknown>): BunServer;
     } }).Bun;
     const server = Bun.serve({ port: options.port, hostname: host, fetch: handler });
-    return { runtime: here, host, port: server.port, close: () => server.stop(true) };
+    return { runtime: here, host, port: server.port, close: () => stopBun(server) };
   }
   if (here === 'deno') {
     const Deno = (globalThis as unknown as { Deno: {
@@ -348,7 +366,7 @@ export async function serveRequests(options: RequestsOptions, handler: RequestHa
       };
     } }).Deno;
     const server = Deno.serve({ port: options.port, hostname: host }, handler);
-    return { runtime: here, host, port: server.addr.port, close: () => server.shutdown() };
+    return { runtime: here, host, port: server.addr.port, close: () => within(server.shutdown()) };
   }
   const listener = mountable(options.nodeRequest);
   const { createServer } = await import('node:http');
@@ -368,9 +386,47 @@ export async function serveRequests(options: RequestsOptions, handler: RequestHa
     runtime: here,
     host,
     port: typeof bound === 'object' && bound !== null ? bound.port : options.port,
-    close: () => { server.close(); },
+    close: () => closeHttp(server),
   };
 }
+
+/**
+ * How long a closing listener lets a request in flight finish before its
+ * connection is dropped, and how long a Deno shutdown is waited on.
+ */
+const CLOSE_GRACE_MS = 2_000;
+
+/**
+ * Close a `node:http` server: the port at once, idle connections at once and
+ * each busy one as its response finishes, and whatever is still busy after
+ * `CLOSE_GRACE_MS`. Settles once the port is free and every connection is gone.
+ */
+const closeHttp = (server: import('node:http').Server): Promise<void> => new Promise((done) => {
+  const idle = setInterval(() => { server.closeIdleConnections(); }, 25);
+  const busy = setTimeout(() => { server.closeAllConnections(); }, CLOSE_GRACE_MS);
+  server.close(() => {
+    clearInterval(idle);
+    clearTimeout(busy);
+    done();
+  });
+  server.closeIdleConnections();
+});
+
+/**
+ * Stop a Bun server: the port at once and each request in flight as it
+ * finishes, and whatever is still running after `CLOSE_GRACE_MS`. Settles once
+ * the port is free and every connection is gone.
+ */
+const stopBun = (server: BunServer): Promise<void> => new Promise((done) => {
+  const busy = setTimeout(() => { void Promise.resolve(server.stop(true)).finally(done); }, CLOSE_GRACE_MS);
+  void Promise.resolve(server.stop(false)).finally(() => { clearTimeout(busy); done(); });
+});
+
+/** A Deno shutdown, waited on for `CLOSE_GRACE_MS` at most: it waits for every request, however long. */
+const within = (closing: Promise<void>): Promise<void> => new Promise((done) => {
+  const bound = setTimeout(done, CLOSE_GRACE_MS);
+  void closing.finally(() => { clearTimeout(bound); done(); });
+});
 
 /** Whether a request asks for the WebSocket upgrade. */
 const upgrading = (request: Request): boolean =>
@@ -486,6 +542,9 @@ export async function overStdio(options: StdioOptions, onConnect: OnConnect): Pr
 
 // --- the shapes each runtime hands back, named so the code above reads ------
 
+/** A server `Bun.serve` answered: `stop(true)` drops the connections still open, `stop(false)` waits for them. */
+interface BunServer { stop(closeActive?: boolean): void | Promise<void>; port: number }
+
 interface BunSocket { send(text: string): unknown; close(): void; readyState: number; data?: unknown }
 
 interface DenoSocket {
@@ -519,7 +578,9 @@ interface NodeServer {
   on(event: 'connection', handler: (socket: NodeSocket, request: NodeRequest) => void): void;
   once(event: 'listening' | 'error', handler: (error?: unknown) => void): void;
   address(): { port: number } | null;
-  close(): void;
+  /** Every socket still open. */
+  readonly clients: Set<{ terminate(): void }>;
+  close(done?: () => void): void;
 }
 
 interface NodeSocket {

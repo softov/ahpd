@@ -1,0 +1,262 @@
+/*
+ * `ahpd plugin config`, `enable` and `disable`, run in this process.
+ *
+ * The configuration is a temporary directory, so every case writes the file it
+ * reads and no case sees the configuration or the daemon record of whoever runs
+ * the suite. The terminal's commands are run through the registry the program
+ * is built from; the served ones through the handler a daemon answers with.
+ */
+
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Output } from '@cofold/commands';
+import type { Options } from '../src/commands/options.js';
+import { cliRegistry } from '../src/commands/registry.js';
+import { apiOrigins } from '../src/commands/run.js';
+import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
+import { apiHandler } from '../src/http.js';
+
+/** A plugin whose `apiKey` is write-only, `region` is not, and `retries` is bounded. */
+const SECRET = join(import.meta.dirname, 'fixtures', 'plugin-secret', 'index.ts');
+const AUTHORITY = '127.0.0.1:9350';
+/** A plugin that writes the file `AHPD_MARKER` names when it is imported. */
+const MARKER = join(import.meta.dirname, 'fixtures', 'plugin-marker', 'index.ts');
+
+let home: string;
+let config: string;
+let had: string | undefined;
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'ahpd-plugin-config-'));
+  had = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = home;
+  mkdirSync(join(home, 'ahpd'), { recursive: true });
+  config = join(home, 'ahpd', 'config.json');
+});
+afterEach(() => {
+  if (had === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = had;
+  rmSync(home, { recursive: true, force: true });
+});
+
+const put = (held: unknown): void => { writeFileSync(config, `${JSON.stringify(held, null, 2)}\n`); };
+const read = (): { plugins: unknown[] } => JSON.parse(readFileSync(config, 'utf8')) as { plugins: unknown[] };
+
+/** One terminal command, as what it answered and what it wrote. */
+const run = async (id: string, input: Record<string, unknown>): Promise<{ output: Output | null; said: string }> => {
+  const registry = cliRegistry();
+  const command = registry.find(id);
+  if (command === undefined) throw new Error(`no ${id}`);
+  let said = '';
+  const output = await registry.execute(command, {
+    surface: 'cli',
+    input: { configFile: config, ...input },
+    io: { out: (text) => { said += text; }, err: (text) => { said += text; } },
+  });
+  return { output, said };
+};
+
+describe('plugin config at the terminal', () => {
+  it('shows every option the entry sets, and one', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    const all = await run('plugin.config', { name: SECRET });
+    expect(all.output?.data).toEqual({ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } });
+    expect(all.output?.plain).toBe(`${SECRET}\n  apiKey: "k-1"\n  region: "eu"\n`);
+
+    const one = await run('plugin.config', { name: SECRET, key: 'region' });
+    expect(one.output?.data).toEqual({ name: SECRET, key: 'region', value: 'eu' });
+    expect(one.output?.plain).toBe('"eu"\n');
+  });
+
+  it('says so when an entry sets nothing', async () => {
+    put({ plugins: [SECRET] });
+    const all = await run('plugin.config', { name: SECRET });
+    expect(all.output?.data).toEqual({ name: SECRET, options: {} });
+    expect(all.output?.plain).toBe(`${SECRET}\n  (no options set)\n`);
+  });
+
+  it('sets a value, as JSON when it parses and as a string when it does not', async () => {
+    put({ plugins: [SECRET] });
+    await run('plugin.config.set', { name: SECRET, key: 'retries', value: '1' });
+    await run('plugin.config.set', { name: SECRET, key: 'region', value: 'eu' });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { retries: 1, region: 'eu' } }]);
+  });
+
+  it('refuses a value the plugin\'s schema refuses, naming the option, and writes nothing', async () => {
+    put({ plugins: [SECRET] });
+    await expect(run('plugin.config.set', { name: SECRET, key: 'retries', value: '-1' }))
+      .rejects.toThrow(`plugins.${SECRET}.options.retries must be an integer >= 0`);
+    expect(read().plugins).toEqual([SECRET]);
+  });
+
+  it('writes a value for a plugin it cannot import, and says it is checked at the next start', async () => {
+    put({ plugins: ['not-installed-anywhere'] });
+    const set = await run('plugin.config.set', { name: 'not-installed-anywhere', key: 'mode', value: 'fast' });
+    expect(read().plugins).toEqual([{ name: 'not-installed-anywhere', options: { mode: 'fast' } }]);
+    expect(set.said).toContain('checked at the next start');
+  });
+
+  it('unsets a value', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    await run('plugin.config', { name: SECRET, key: 'apiKey', unset: true });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { region: 'eu' } }]);
+  });
+
+  it('leaves the file alone and says so when the option was not set, a string entry included', async () => {
+    put({ plugins: [SECRET, { name: 'other', options: { region: 'eu' } }] });
+    const before = readFileSync(config, 'utf8');
+    const bare = await run('plugin.config', { name: SECRET, key: 'apiKey', unset: true });
+    expect(bare.said).toBe(`${SECRET} sets no apiKey in ${config}.\n`);
+    const other = await run('plugin.config', { name: 'other', key: 'apiKey', unset: true });
+    expect(other.said).toBe(`other sets no apiKey in ${config}.\n`);
+    expect(readFileSync(config, 'utf8')).toBe(before);
+  });
+
+  it('refuses a plugin the file does not name', async () => {
+    put({ plugins: [SECRET] });
+    await expect(run('plugin.config', { name: 'nobody' })).rejects.toThrow(`nobody is not in plugins in ${config}`);
+    await expect(run('plugin.enable', { name: 'nobody' })).rejects.toThrow(`nobody is not in plugins in ${config}`);
+  });
+});
+
+describe('the restart line', () => {
+  it('names ahpd restart when a daemon is running', async () => {
+    writeFileSync(join(home, 'ahpd', 'daemon.json'), JSON.stringify({
+      pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '',
+    }));
+    put({ plugins: [SECRET] });
+    const set = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'eu' });
+    expect(set.said).toContain('Restart the daemon to load the change: ahpd restart\n');
+    expect(set.output?.data).toMatchObject({ restart: true });
+    const off = await run('plugin.disable', { name: SECRET });
+    expect(off.said).toContain('ahpd restart\n');
+  });
+});
+
+describe('plugin enable and disable at the terminal', () => {
+  it('turns a string entry off and on', async () => {
+    put({ plugins: [SECRET] });
+    await run('plugin.disable', { name: SECRET });
+    expect(read().plugins).toEqual([{ name: SECRET, enabled: false }]);
+    await run('plugin.enable', { name: SECRET });
+    expect(read().plugins).toEqual([{ name: SECRET, enabled: true }]);
+  });
+
+  it('turns an object entry off and on, keeping its options', async () => {
+    put({ plugins: [{ name: SECRET, options: { region: 'eu' } }] });
+    await run('plugin.disable', { name: SECRET });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { region: 'eu' }, enabled: false }]);
+    await run('plugin.enable', { name: SECRET });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { region: 'eu' }, enabled: true }]);
+  });
+
+  it('leaves a string entry that is already on as it is', async () => {
+    put({ plugins: [SECRET] });
+    await run('plugin.enable', { name: SECRET });
+    expect(read().plugins).toEqual([SECRET]);
+  });
+});
+
+describe('plugin config, served', () => {
+  const post = async (path: string, body: unknown): Promise<Response> => {
+    const facts: ServedFacts = {
+      options: {} as Options,
+      configFile: config,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+    return handler(new Request(`http://${AUTHORITY}/api${path}`, {
+      method: 'POST',
+      headers: { host: AUTHORITY, 'content-type': 'application/json', authorization: 'Bearer root-secret' },
+      body: JSON.stringify(body),
+    }));
+  };
+
+  it('answers a write-only value as set, and any other as the file holds it', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    const all = await post('/plugin/config', { name: SECRET });
+    expect(all.status).toBe(200);
+    expect(await all.json()).toEqual({ name: SECRET, options: { apiKey: '<set>', region: 'eu' } });
+    const one = await post('/plugin/config', { name: SECRET, key: 'apiKey' });
+    expect(await one.json()).toEqual({ name: SECRET, key: 'apiKey', value: '<set>' });
+  });
+
+  it('sets a write-only value without answering it, and says to restart', async () => {
+    put({ plugins: [SECRET] });
+    const set = await post('/plugin/config/set', { name: SECRET, key: 'apiKey', value: 'k-2' });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ name: SECRET, key: 'apiKey', value: '<set>', restart: true });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: 'k-2' } }]);
+  });
+
+  it('refuses a refused value with 400', async () => {
+    put({ plugins: [SECRET] });
+    const refused = await post('/plugin/config/set', { name: SECRET, key: 'retries', value: 'many' });
+    expect(refused.status).toBe(400);
+    expect((await refused.json() as { message: string }).message).toContain(`plugins.${SECRET}.options.retries`);
+  });
+
+  it('turns a plugin off and on', async () => {
+    put({ plugins: [SECRET] });
+    const off = await post('/plugin/disable', { name: SECRET });
+    expect(off.status).toBe(200);
+    expect(await off.json()).toEqual({ name: SECRET, enabled: false, restart: true });
+    expect((await post('/plugin/enable', { name: SECRET })).status).toBe(200);
+    expect(read().plugins).toEqual([{ name: SECRET, enabled: true }]);
+  });
+});
+
+describe('a plugin switched off', () => {
+  it('is never imported to show, set or unset its options, at the terminal or served, and is once it is on', async () => {
+    const marker = join(home, 'imported');
+    const had = process.env['AHPD_MARKER'];
+    process.env['AHPD_MARKER'] = marker;
+    try {
+      put({ plugins: [{ name: MARKER, options: { level: 1 }, enabled: false }] });
+      const set = await run('plugin.config.set', { name: MARKER, key: 'level', value: 'not a number' });
+      expect(set.said).toContain(`${MARKER} is switched off, so level is written unchecked; it is checked when the plugin is enabled and loads.`);
+      expect(read().plugins).toEqual([{ name: MARKER, options: { level: 'not a number' }, enabled: false }]);
+      await run('plugin.config', { name: MARKER });
+      await run('plugin.config', { name: MARKER, key: 'level' });
+      await run('plugin.config', { name: MARKER, key: 'level', unset: true });
+
+      const facts: ServedFacts = {
+        options: {} as Options,
+        configFile: config,
+        running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+        turning: () => [],
+        restart: () => {},
+      };
+      const handler = apiHandler({
+        registry: servedRegistry(facts),
+        token: 'root-secret',
+        program: { name: 'ahpd', version: '0.0.0' },
+        origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+      });
+      const post = (path: string, body: unknown): Promise<Response> => handler(new Request(`http://${AUTHORITY}/api${path}`, {
+        method: 'POST',
+        headers: { host: AUTHORITY, 'content-type': 'application/json', authorization: 'Bearer root-secret' },
+        body: JSON.stringify(body),
+      }));
+      expect((await post('/plugin/config/set', { name: MARKER, key: 'level', value: '2' })).status).toBe(200);
+      // Nothing says which of its options is a credential, so a served answer shows none.
+      expect(await (await post('/plugin/config', { name: MARKER })).json()).toEqual({ name: MARKER, options: { level: '<set>' } });
+      expect(existsSync(marker)).toBe(false);
+
+      // The control: switched on, the same set imports it to check the value.
+      put({ plugins: [MARKER] });
+      await run('plugin.config.set', { name: MARKER, key: 'level', value: '3' });
+      expect(existsSync(marker)).toBe(true);
+    }
+    finally {
+      if (had === undefined) delete process.env['AHPD_MARKER']; else process.env['AHPD_MARKER'] = had;
+    }
+  });
+});

@@ -31,6 +31,7 @@ import { declareRun } from './run.js';
 import { declareStart } from './start.js';
 import { declareStatus } from './status.js';
 import { declareStop } from './stop.js';
+import { declareRestart } from './restart.js';
 import { declareUser } from './user.js';
 import { checkScopes } from './scopes.js';
 
@@ -49,6 +50,7 @@ export const cliRegistry = (): Registry<object> => {
   declareRun(registry);
   declareStart(registry);
   declareStop(registry);
+  declareRestart(registry);
   declareStatus(registry);
   declareConfig(registry);
   declareUser(registry);
@@ -78,9 +80,10 @@ const remoteCache = (): string => {
  * The commands a daemon declares, arriving over HTTP.
  *
  * `start` and `stop` are the daemon this process is not, so they stay local:
- * the manifest's `status`, `config`, `plugin` and `user` replace their local
- * namesakes, and every one of them runs on the daemon. The token is the same
- * `Authorization: Bearer` the API checks, and `--refresh` ignores the cache.
+ * the manifest's `status`, `restart`, `config`, `plugin` and `user` replace
+ * their local namesakes, and every one of them runs on the daemon. The token is
+ * the same `Authorization: Bearer` the API checks, and `--refresh` ignores the
+ * cache.
  */
 export async function remoteRegistry(options: {
   /** The origin the daemon answers on; the API is under its `/api`. */

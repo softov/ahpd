@@ -181,7 +181,7 @@ describe('the schema', () => {
   it('is built from the flags, so a new one is checked in the file too', () => {
     const keys = Object.keys(configSchema.properties);
     for (const key of Object.keys(serverFields)) {
-      if (['stdio', 'configFile', 'noPlugins'].includes(key)) continue;
+      if (['stdio', 'configFile', 'noPlugins', 'pluginOptions'].includes(key)) continue;
       expect(keys).toContain(key);
     }
   });

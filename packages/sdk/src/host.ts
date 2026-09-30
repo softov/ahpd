@@ -116,6 +116,16 @@ const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'AL
 /** How long a network probe waits, and how much of the body it keeps. */
 const PROBE_TIMEOUT = 10_000;
 const MAX_BODY = 64 * 1024;
+/**
+ * How long `Host.close` waits for the agents and terminals it ended to exit.
+ *
+ * Long enough for a backend to take its process down after stdin closes, and
+ * short enough that a process that ignores its kill does not hold a stop or a
+ * restart for ever: what is still running then is left to the operating system.
+ */
+export const HOST_CLOSE_WAIT_MS = 5_000;
+/** What a request that would start something is refused with once the host is closing. */
+const CLOSING = 'This host is closing, so nothing new starts on it';
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -964,6 +974,12 @@ export function createHost(options: HostOptions): Host {
    * *root* channel - which is where something owned by no session belongs.
    */
   const terminals = new Map<string, Terminal>();
+  /** Set by `close`: no session, terminal or automation run starts after it. */
+  let closed = false;
+  /** The one close, shared by every caller of `close`. */
+  let closing: Promise<void> | undefined;
+  /** The automation runs starting a session now, which a close waits for. */
+  const starting = new Set<Promise<string>>();
   /** Where a browsed session ran, as its own catalogue reported it. */
   const wheres = new Map<string, string[]>();
   /**
@@ -3185,6 +3201,7 @@ export function createHost(options: HostOptions): Host {
     const used = agent.runsNested === true && computerId(config.computer) !== undefined
       ? nestedAgent(agent)
       : agent;
+    if (closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
     if (resuming?.resume !== undefined) resumedSessions.add(uri);
     const session = used.create({
       uri,
@@ -4482,6 +4499,7 @@ export function createHost(options: HostOptions): Host {
   const commanded = async (command: string, cwd: string, claim: Claim): Promise<Ran> => {
     const shells = options.terminals;
     if (!shells) return { success: false, said: 'There is no shell here to run it in', output: '' };
+    if (closed) return { success: false, said: CLOSING, output: '' };
     const uri = `ahp-terminal:/${crypto.randomUUID()}`;
     return await new Promise<Ran>((resolve) => {
       const terminal = shells.create({
@@ -4562,6 +4580,7 @@ export function createHost(options: HostOptions): Host {
    */
   const heldTerminals = (shells: TerminalStore, sessionUri: string, chatUri: string): StartTerminals => ({
     open: (asked) => {
+      if (closed) throw new Error(CLOSING);
       const uri = `ahp-terminal:/${crypto.randomUUID()}`;
       const terminal = shells.create({
         uri,
@@ -5714,7 +5733,7 @@ export function createHost(options: HostOptions): Host {
    * is a session that does nothing, and the whole point of an automation is
    * that nobody is at the keyboard to say the first thing.
    */
-  const startForAutomation = async (wanted: StartSession): Promise<string> => {
+  const beginAutomation = async (wanted: StartSession): Promise<string> => {
     const uri = `ahp-session:/${crypto.randomUUID()}`;
     const config = wanted.config ?? {};
     // The same two steps a client's `createSession` takes: the tree is made
@@ -5744,6 +5763,19 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * `beginAutomation`, refused once the host is closing, and held in
+   * `starting` while it runs so a close waits for it as it waits for a session.
+   */
+  const startForAutomation = (wanted: StartSession): Promise<string> => {
+    if (closed) return Promise.reject(new Error(CLOSING));
+    const run = beginAutomation(wanted);
+    starting.add(run);
+    const done = (): void => { starting.delete(run); };
+    run.then(done, done);
+    return run;
+  };
+
+  /**
    * The clock, wired to the only thing that can act on it.
    *
    * A store holding one says an automation is due and this starts the run,
@@ -5756,6 +5788,7 @@ export function createHost(options: HostOptions): Host {
    * worse than one that says so.
    */
   options.automations?.onDue?.(({ automation, origin }) => {
+    if (closed) return;
     void (async () => {
       try {
         const run = await options.automations?.run(automation, origin, startForAutomation);
@@ -5786,6 +5819,40 @@ export function createHost(options: HostOptions): Host {
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
     connections: () => connections.size,
+    close: () => {
+      closing ??= (async () => {
+        closed = true;
+        /** One step of the close, logged rather than thrown, so a failed one does not skip the rest. */
+        const step = async (what: string, run: () => unknown): Promise<void> => {
+          try { await run(); }
+          catch (error) { log(`closing ${what} failed: ${reason(error)}`); }
+        };
+        const going: Promise<void>[] = [];
+        for (const held of sessions.values()) {
+          for (const [uri, chat] of held.chats) going.push(step(uri, () => chat.close()));
+        }
+        // A run already past its guard ends here, refused at `spawn` or started
+        // and so among the sessions; its outcome is the run's to report.
+        for (const run of starting) going.push(run.then(() => undefined, () => undefined));
+        for (const [uri, terminal] of terminals) {
+          going.push(step(uri, async () => {
+            terminal.close();
+            await terminal.waitForExit();
+          }));
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          Promise.all(going),
+          new Promise((done) => { timer = setTimeout(done, HOST_CLOSE_WAIT_MS); }),
+        ]);
+        clearTimeout(timer);
+        await step('the automation store', () => options.automations?.close?.());
+        await step('the session store', () => kept.close?.());
+      })();
+      return closing;
+    },
+    turning: () => [...sessions.keys()]
+      .filter((uri) => (statusOf(uri) & (Status.InProgress | Status.InputNeeded)) !== 0),
     accept(peer: Peer, principal?: Principal, root?: boolean) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
@@ -6661,6 +6728,7 @@ export function createHost(options: HostOptions): Host {
             ? { kind: 'client' as const, clientId: connection.clientId }
             : claimOf(params.claim);
           if (!claim) throw new RpcError(-32602, 'That is not a terminal claim');
+          if (closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
           const terminal = shells.create({
             uri,
             cwd: asked,
@@ -7185,6 +7253,7 @@ export function createHost(options: HostOptions): Host {
          * the client can subscribe to it without a round trip in between.
          */
         createSession: async (params) => {
+          if (closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
           const uri = named(String(params.channel ?? ''), 'session');
           const provider = String(params.provider ?? first.provider);
           const config = (typeof params.config === 'object' && params.config !== null

@@ -24,7 +24,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
@@ -67,7 +67,7 @@ export const denoMessage = (name: string, configDir: string): string =>
   `Plugin ${name} is a bare name, and Deno has no createRequire to resolve one against ${configDir}; write it as npm:${name}.`;
 
 /** The nearest directory above `from` holding a `package.json`, or nothing when there is none. */
-const nearestManifest = (from: string): string | undefined => {
+const enclosingPackage = (from: string): string | undefined => {
   let at = dirname(from);
   for (;;) {
     if (existsSync(join(at, 'package.json'))) return at;
@@ -75,6 +75,29 @@ const nearestManifest = (from: string): string | undefined => {
     if (up === at) return undefined;
     at = up;
   }
+};
+
+/**
+ * The directory of the plugin package a file spec sits in, or nothing when it
+ * sits in none.
+ *
+ * The nearest `package.json` above the file, only when it has an `ahpd` field:
+ * a file inside another package, such as a fixture under this server's own
+ * tree, is a plugin of its own and is held to no other package's range or
+ * entry.
+ */
+const nearestManifest = (from: string): string | undefined => {
+  const at = enclosingPackage(from);
+  return at === undefined || parseManifest(at)?.['ahpd'] === undefined ? undefined : at;
+};
+
+/**
+ * What a plugin file with no manifest is called until its module says: the
+ * file's name without its extension, or its directory's for an `index` file.
+ */
+const fileNameOf = (path: string): string => {
+  const name = basename(path, extname(path));
+  return name === 'index' ? basename(dirname(path)) : name;
 };
 
 /** What a `package.json` says about its plugin, read without judging it. */
@@ -175,7 +198,7 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
   catch {
     throw new Error(`Plugin ${name} is not installed in ${configDir}; run npm install there, or name a path.`);
   }
-  const packageDir = nearestManifest(file);
+  const packageDir = enclosingPackage(file);
   return {
     spec,
     url: pathToFileURL(file).href,
@@ -333,32 +356,36 @@ export interface OneResult {
   problems: string[];
 }
 
+/** Where a resolved spec's module is, once its manifest has been read and held to this SDK. */
+interface Located {
+  manifest?: Manifest;
+  /** The file a load imports, when there is one. */
+  target?: string;
+  /** The URL a load imports. */
+  url: string;
+  /** What is worth saying but does not stop the import. */
+  problems: string[];
+}
+
 /**
- * Resolve, validate, import and apply one plugin.
- *
- * The order is the point: the manifest is read and the range checked before
- * `import()` is reached, so an incompatible or malformed plugin is never
- * executed. Everything after that - the import, the shape of the module, its
- * options held to the `optionsSchema` it exports, and `apply` itself - is
- * caught and turned into a problem line, because a plugin that throws must cost
- * a line in the log rather than the daemon.
+ * Read and check the manifest of a resolved spec, and find the module a load
+ * imports; or the one problem that stops it being imported at all.
  */
-export async function loadOne(resolved: Resolved, options: LoadOneOptions): Promise<OneResult> {
+function locate(resolved: Resolved, version: string): Located | { refused: string } {
   const problems: string[] = [];
-  const spec = resolved.spec;
-  const said = nameOf(spec);
+  const said = nameOf(resolved.spec);
   const manifestDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
 
   let manifest: Manifest | undefined;
   if (manifestDir !== undefined) {
     manifest = readManifest(manifestDir);
     const bad = checkManifest(manifest, manifestDir);
-    if (bad !== undefined) return { problems: [bad] };
+    if (bad !== undefined) return { refused: bad };
     if (manifest.sdkRange !== undefined) {
       let satisfied = false;
       let why = '';
       try {
-        satisfied = satisfies(options.version, manifest.sdkRange);
+        satisfied = satisfies(version, manifest.sdkRange);
       }
       catch (error) {
         // An unreadable range is refused rather than passed, which is the
@@ -367,7 +394,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
         why = ` (${messageOf(error)})`;
       }
       if (!satisfied) {
-        return { problems: [`plugin ${manifest.name ?? said} needs @ahpd/sdk ${manifest.sdkRange}, this is ${options.version}${why}`] };
+        return { refused: `plugin ${manifest.name ?? said} needs @ahpd/sdk ${manifest.sdkRange}, this is ${version}${why}` };
       }
     }
   }
@@ -393,8 +420,49 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     }
     url = pathToFileURL(target).href;
   }
+  return { ...(manifest === undefined ? {} : { manifest }), ...(target === undefined ? {} : { target }), url, problems };
+}
 
-  const provisional = manifest?.name ?? said;
+/**
+ * The options schema the module a spec names exports, imported the way a load
+ * imports it, or nothing when it exports none.
+ *
+ * Throws the problem when the spec does not resolve, its manifest refuses it,
+ * or the module does not import as a plugin, so a caller can say it could not
+ * check rather than guess.
+ */
+export async function optionsSchemaOf(
+  spec: PluginSpec,
+  options: { configDir: string; cwd: string },
+): Promise<Record<string, unknown> | undefined> {
+  const found = locate(resolvePlugin(spec, options), sdkVersion());
+  if ('refused' in found) throw new Error(found.refused);
+  const module: unknown = await import(found.url);
+  const wrong = checkShape(module, found.target ?? found.url);
+  if (wrong !== undefined) throw new Error(wrong);
+  const held = module as Record<string, unknown>;
+  return isRecord(held.optionsSchema) ? held.optionsSchema : undefined;
+}
+
+/**
+ * Resolve, validate, import and apply one plugin.
+ *
+ * The order is the point: the manifest is read and the range checked before
+ * `import()` is reached, so an incompatible or malformed plugin is never
+ * executed. Everything after that - the import, the shape of the module, its
+ * options held to the `optionsSchema` it exports, and `apply` itself - is
+ * caught and turned into a problem line, because a plugin that throws must cost
+ * a line in the log rather than the daemon.
+ */
+export async function loadOne(resolved: Resolved, options: LoadOneOptions): Promise<OneResult> {
+  const spec = resolved.spec;
+  const said = nameOf(spec);
+  const found = locate(resolved, options.version);
+  if ('refused' in found) return { problems: [found.refused] };
+  const { manifest, target, url } = found;
+  const problems = [...found.problems];
+
+  const provisional = manifest?.name ?? (manifest === undefined && target !== undefined ? fileNameOf(target) : said);
   options.log(`plugin ${provisional} loading`);
   // When the start line was logged, which every later line measures from.
   const started = Date.now();
@@ -624,7 +692,10 @@ export async function describePlugin(
   if (resolved.path !== undefined) row.path = resolved.path;
 
   const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
-  if (packageDir === undefined) return row;
+  if (packageDir === undefined) {
+    if (resolved.path !== undefined) row.name = fileNameOf(resolved.path);
+    return row;
+  }
 
   const manifest = readManifest(packageDir);
   if (manifest.problem !== undefined) return { ...row, state: 'error', problem: manifest.problem };

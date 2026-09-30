@@ -113,8 +113,11 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   /** Every id this store has heard of, because the port has no way to list them. */
   const known = new Set<string>();
   let writing: ReturnType<typeof setTimeout> | undefined;
+  /** Closed: what was waiting has been written, and nothing is written again. */
+  let closed = false;
 
   const save = (): void => {
+    if (closed) return;
     const held: Saved = {
       version: 1,
       sessions: [...known].map((id) => {
@@ -150,7 +153,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   };
 
   const later = (): void => {
-    if (writing !== undefined) return;
+    if (writing !== undefined || closed) return;
     writing = setTimeout(() => { writing = undefined; save(); }, 0);
     // A daemon should not be held open by a pending write of a bit somebody
     // toggled a moment before quitting.
@@ -214,5 +217,14 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { known.add(id); inner.setChatTitle(id, chatUri, title); later(); },
     forget: (id) => { known.delete(id); inner.forget(id); later(); },
+    close: () => {
+      if (closed) return;
+      if (writing !== undefined) {
+        clearTimeout(writing);
+        writing = undefined;
+        save();
+      }
+      closed = true;
+    },
   };
 }

@@ -10,6 +10,7 @@
 
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, Tap } from '@ahpd/sdk';
 import {
@@ -33,6 +34,7 @@ import {
   shellTerminals,
   signInRecord,
 } from '@ahpd/sdk';
+import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
 import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier, urlHost } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
@@ -40,7 +42,8 @@ import { loadPlugins } from '../plugins.js';
 import { pty } from '../pty.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
-import { optionsFrom, secret, flagFields, stop } from './options.js';
+import { conflict, optionsFrom, secret, flagFields, stop } from './options.js';
+import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle } from './restart.js';
 import type { Options } from './options.js';
 
 /**
@@ -79,6 +82,12 @@ export function apiOrigins(host: string, resource: string | undefined, port: num
  */
 export async function runForeground(options: Options): Promise<void> {
   const { token, from } = secret(options);
+  /*
+   * Whether `ahpd start` spawned this process, and so will record it. Taken out
+   * of the environment at once, so a shell a session runs does not inherit it.
+   */
+  const detached = process.env[DETACHED_ENV] === '1';
+  delete process.env[DETACHED_ENV];
 
   /*
    * Whether a clock is running, decided once and then said out loud.
@@ -200,6 +209,10 @@ export async function runForeground(options: Options): Promise<void> {
   const startedAt = new Date().toISOString();
   let boundHost = '';
   let boundPort = 0;
+  // Both are this daemon's once the host is built and the socket is open; a
+  // request before then finds no turn and nothing to restart.
+  let turning = (): string[] => [];
+  let restart = async (_argv: string[], _force: boolean): Promise<void> => { conflict('It is still starting; restart it once it has.'); };
   const facts: ServedFacts = {
     options,
     configFile: options.configFile ?? configPath(),
@@ -213,6 +226,8 @@ export async function runForeground(options: Options): Promise<void> {
       startedAt,
       automations: memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`,
     }),
+    turning: () => turning(),
+    restart: (argv, force) => restart(argv, force),
   };
   /*
    * The port the API answers on: its own when `http.port` gave it one, and the
@@ -409,6 +424,7 @@ export async function runForeground(options: Options): Promise<void> {
   }
 
   const host = createHost(folded);
+  turning = () => host.turning();
 
   /*
    * The wire, written down as it happens.
@@ -518,6 +534,9 @@ export async function runForeground(options: Options): Promise<void> {
     // `http.port` bound. Its own line, and `http://` rather than `ws://`, so
     // `daemon.ts` keeps reading the origin off the line above.
     + (api === undefined ? '' : `http on http://${urlHost(apiHost)}:${apiListener?.port ?? listener.port}${API_PREFIX}\n`)
+    // Its own line, in the same write as the origin, so `start` reading a log
+    // other daemons also write to takes the announcement of the child it spawned.
+    + `pid ${String(process.pid)}\n`
     // Its own line rather than the end of the one above, which `daemon.ts`
     // reads the session directories off with a regular expression.
     + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`}\n`
@@ -566,22 +585,62 @@ export async function runForeground(options: Options): Promise<void> {
    * hangs here is a daemon that will not stop, which is the same deliberate cost
    * awaiting has everywhere else.
    */
-  let stopping = false;
-  const shutdown = (): void => {
-    // Both signals are wired, and `ahpd stop` sends one to a daemon a person may
-    // also be holding a terminal on: twice would take a tunnel down under the
-    // handler still bringing it down.
-    if (stopping) return;
-    stopping = true;
-    void raise(folded.events, { type: 'stopping' }, stamp)
-      // The API first, so a request in flight is not left holding a listener
-      // the daemon is no longer behind.
-      .then(() => { apiListener?.close(); })
-      .then(() => listener.close())
-      .finally(() => process.exit(0));
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  const way = lifecycle({
+    down: async () => {
+      await raise(folded.events, { type: 'stopping' }, stamp);
+      // The API first, and awaited, so a request in flight is not left holding
+      // a listener the daemon is no longer behind, and a successor does not
+      // find its port still bound.
+      await apiListener?.close();
+      await listener.close();
+      // Then what the host runs: the clock, the sessions and their agents,
+      // the terminals, and the stores, so a successor is their only writer.
+      await host.close();
+    },
+    start: (line, token) => startDaemon(line, process.argv[1] as string, token, process.pid),
+    stop: (successor) => {
+      try { process.kill(successor.pid, 'SIGTERM'); }
+      catch { /* it went already, which is a stop */ }
+      forget([successor.pid]);
+    },
+    forget: () => { forget([process.pid]); },
+    log: stamp,
+    exit: (code) => process.exit(code),
+    later: (step) => { setTimeout(step, 0); },
+  });
+  process.on('SIGINT', way.shutdown);
+  process.on('SIGTERM', way.shutdown);
+  /*
+   * A restart, served or signalled: the recorded line and its token read over
+   * the configuration as it is now, before anything goes down; then, after the
+   * answer has gone, the same steps as a shutdown, the successor started with
+   * that line and token, and the exit. The token is the one the line reads
+   * now, so a changed token is the one the successor's record carries.
+   */
+  restart = checkedRestart(async (line) => secret(await optionsOfLine(line)).token, () => host.turning(), way);
+  /*
+   * `ahpd restart` at the terminal: a signal to the recorded process, which
+   * answers it here. A daemon run in the foreground never listens for them.
+   */
+  if (detached) {
+    const answer = (forced: boolean) => (): void => {
+      void answerRestartSignal(forced, {
+        self: process.pid, recorded: running, turning: () => host.turning(), log: stamp, restart,
+      });
+    };
+    process.on(RESTART_SIGNAL, answer(false));
+    process.on(FORCED_SIGNAL, answer(true));
+  }
+}
+
+/**
+ * The options a recorded line runs with, read over the configuration as it is
+ * now: what a daemon started again with that line is told.
+ */
+export async function optionsOfLine(argv: readonly string[]): Promise<Options> {
+  const run = declareRun(createRegistry());
+  const tokens = tokenize(optionTable(optionsOf(run), true), argv, { permissive: true });
+  return optionsFrom(await canonicalFromCli(run, { slots: {}, options: tokens.options }));
 }
 
 /**

@@ -179,6 +179,10 @@ export interface AutomationStore {
    */
   onDue?(observer: (event: { automation: string; origin: Bag }) => void): void;
 
-  /** Let go of the clock, so a daemon shutting down is not held open by one. */
+  /**
+   * Let go of the clock and of the file: nothing fires and nothing is written
+   * after, so a daemon shutting down is not held open by one and a successor
+   * reading the same file is its only writer.
+   */
   close?(): void;
 }

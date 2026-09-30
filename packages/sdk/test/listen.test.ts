@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { listen, serveRequests } from '../src/listen.js';
 import type { Listener } from '../src/types/listen.js';
@@ -116,4 +116,133 @@ it('serves plain requests on Node through the Node listener it was handed', asyn
   }, nothing);
   expect(await (await fetch(`http://127.0.0.1:${running.port}/`)).text()).toBe('node');
   expect(await knock(`ws://127.0.0.1:${running.port}`)).toBe('open');
+});
+
+it('lets go of the port on close, with a connection and a plain-request server open', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  const nodeRequest = (_request: unknown, response: { end(text: string): void }): void => { response.end('node'); };
+  const first = await listen({ port: 0, request: handler, nodeRequest }, nothing);
+  const socket = new WebSocket(`ws://127.0.0.1:${first.port}`);
+  await new Promise((opened) => { socket.on('open', opened); });
+  await first.close();
+  running = await listen({ port: first.port, request: handler, nodeRequest }, nothing);
+  expect(running.port).toBe(first.port);
+});
+
+/** The grace a busy connection gets on close, as `listen.ts` sets it. */
+const CLOSE_GRACE_MS = 2_000;
+
+/**
+ * How long a close took on a clock the test moves, 25 ms at a time with a real
+ * turn of the event loop between, so a close that waits for nothing settles
+ * well inside the grace however loaded the machine is.
+ */
+const clocked = async (close: () => void | Promise<void>): Promise<number> => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+  try {
+    let settled = false;
+    void Promise.resolve(close()).then(() => { settled = true; });
+    let moved = 0;
+    while (!settled && moved <= CLOSE_GRACE_MS) {
+      await new Promise((turn) => { setImmediate(turn); });
+      if (settled) break;
+      await vi.advanceTimersByTimeAsync(25);
+      moved += 25;
+    }
+    return moved;
+  }
+  finally {
+    vi.useRealTimers();
+  }
+};
+
+/** A Node handler that holds each response until the test lets it go, and says when a request has arrived. */
+const held = () => {
+  let arrived = (): void => {};
+  const came = new Promise<void>((done) => { arrived = done; });
+  let answer = (): void => {};
+  const nodeRequest = (_request: unknown, response: { end(text: string): void }): void => {
+    answer = () => { response.end('late'); };
+    arrived();
+  };
+  return { came, nodeRequest, answer: () => { answer(); } };
+};
+
+it('lets go of a plain-request port on close, with a kept-alive connection open', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  const nodeRequest = (_request: unknown, response: { end(text: string): void }): void => { response.end('node'); };
+  const first = await serveRequests({ port: 0, nodeRequest }, handler);
+  expect(await (await fetch(`http://127.0.0.1:${first.port}/`)).text()).toBe('node');
+  // An idle kept-alive connection is closed at once, not after the grace a busy one gets.
+  expect(await clocked(() => first.close())).toBeLessThan(CLOSE_GRACE_MS);
+  const again = await serveRequests({ port: first.port, nodeRequest }, handler);
+  expect(again.port).toBe(first.port);
+  await again.close();
+});
+
+it('lets go of a WebSocket-only port at once on close, with a kept-alive plain connection open', async () => {
+  const first = await listen({ port: 0 }, nothing);
+  const refused = await fetch(`http://127.0.0.1:${first.port}/`);
+  expect(refused.status).toBe(426);
+  expect(await refused.text()).toBe('ahpd speaks the Agent Host Protocol over WebSocket');
+  expect(await clocked(() => first.close())).toBeLessThan(CLOSE_GRACE_MS);
+  running = await listen({ port: first.port }, nothing);
+  expect(running.port).toBe(first.port);
+});
+
+it('lets a response in flight finish before it drops the connection', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  const request = held();
+  const first = await serveRequests({ port: 0, nodeRequest: request.nodeRequest }, handler);
+  const answered = fetch(`http://127.0.0.1:${first.port}/`).then((response) => response.text());
+  await request.came;
+  let settled = false;
+  const closed = Promise.resolve(first.close()).then(() => { settled = true; });
+  await new Promise((turn) => { setImmediate(turn); });
+  expect(settled).toBe(false);
+  request.answer();
+  expect(await answered).toBe('late');
+  await closed;
+  const again = await serveRequests({ port: first.port, nodeRequest: request.nodeRequest }, handler);
+  expect(again.port).toBe(first.port);
+  await again.close();
+});
+
+it('lets a plain request in flight on the WebSocket port finish before the close settles', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  const request = held();
+  const first = await listen({ port: 0, request: handler, nodeRequest: request.nodeRequest }, nothing);
+  const answered = fetch(`http://127.0.0.1:${first.port}/`).then((response) => response.text());
+  await request.came;
+  let settled = false;
+  const closed = Promise.resolve(first.close()).then(() => { settled = true; });
+  await new Promise((turn) => { setImmediate(turn); });
+  expect(settled).toBe(false);
+  request.answer();
+  expect(await answered).toBe('late');
+  await closed;
+  expect(settled).toBe(true);
+});
+
+it('drops a request still running two seconds into the close, and then settles', async () => {
+  const handler = async (): Promise<Response> => new Response('ok');
+  const request = held();
+  const first = await listen({ port: 0, request: handler, nodeRequest: request.nodeRequest }, nothing);
+  const asked = fetch(`http://127.0.0.1:${first.port}/`).then(() => 'answered', () => 'dropped');
+  await request.came;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+  try {
+    let settled = false;
+    const closed = Promise.resolve(first.close()).then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(CLOSE_GRACE_MS - 100);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    vi.useRealTimers();
+    await closed;
+    expect(settled).toBe(true);
+    expect(await asked).toBe('dropped');
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });

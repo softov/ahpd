@@ -97,6 +97,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   const due: ((event: { automation: string; origin: Bag }) => void)[] = [];
   const changed: ((event: { automation?: string; run?: string; removed?: string }) => void)[] = [];
   let timer: { cancel(): void } | undefined;
+  /** Closed: the clock is let go of, and nothing is fired or written again. */
+  let closed = false;
 
   /**
    * The schedules on one definition.
@@ -162,6 +164,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   };
 
   const save = (): void => {
+    if (closed) return;
     const held: Saved = {
       version: 1,
       automations: inner.list().map((one) => {
@@ -191,6 +194,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   const rearm = (): void => {
     timer?.cancel();
     timer = undefined;
+    if (closed) return;
     const at = now();
     let first: Date | undefined;
     for (const automation of inner.list()) {
@@ -211,6 +215,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
 
   /** Say what is due, then look again. */
   const fire = (): void => {
+    if (closed) return;
     const at = now();
     for (const automation of inner.list()) {
       const when = nextAt.get(automation.resource);
@@ -364,6 +369,6 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       catchUp(wasWaiting);
     },
 
-    close: () => { timer?.cancel(); timer = undefined; },
+    close: () => { closed = true; timer?.cancel(); timer = undefined; },
   };
 }

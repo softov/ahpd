@@ -92,4 +92,11 @@ export interface SessionStore {
    * ago.
    */
   forget(id: string): void;
+  /**
+   * Write what is waiting to be written, and nothing after.
+   *
+   * Called when the host closes, so a successor reading the same file is its
+   * only writer. Optional: a store that keeps nothing has nothing to finish.
+   */
+  close?(): void;
 }

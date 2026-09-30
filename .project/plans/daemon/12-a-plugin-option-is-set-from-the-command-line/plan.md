@@ -1,7 +1,7 @@
 ---
 title: A plugin option is set from the command line, in the file or for one run
 domain: daemon
-status: planned
+status: active
 priority: medium
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -43,6 +43,15 @@ The files read are the `refs` above.
 | `ahpd plugin enable <name>` and `disable <name>` set the entry's `enabled` | (defaulted: root config can turn a plugin on and off, and the terminal matches it) | 01 |
 | A set is checked against the plugin's `optionsSchema`, importing the module the loader would; a plugin that cannot be imported is written and said to be checked at the next start | (defaulted: refuse what is known bad, never block on what cannot be read) | 01 |
 | The commands have the grants and `deploymentTokenOnly` of `plugin install`, and say to restart as it does | (defaulted: the shape of `plugin install`) | 01 |
+| Each refuses a person in its own words: `change a plugin's options` for `plugin config`, `enable or disable a plugin` for `enable` and `disable` | Softov, review of daemon/12, 2026-09-30 | 01 |
+| `--unset` of an option the entry does not set leaves the file as it is and says the key was not set | Softov, review of daemon/12, 2026-09-30 | 01 |
+| `--plugin-option` refuses a plugin whose entry is `enabled: false`, as one this run does not load | Softov, review of daemon/12, 2026-09-30 | 02 |
+| For an entry with `enabled: false`, show, set and unset never import the module, served or at the terminal; a set is stored unchecked and says it is checked when the plugin is enabled and loads | Softov, 2026-09-30, asked "Should `plugin config` import a disabled plugin's code to check values against its schema?": "Never import a disabled one" | 01 |
+| A typed value keeps a number only when it reads back as typed, so a long id or `1.0` stays text; the docs say a JSON-quoted value is always a string | Softov, second review of daemon/12, 2026-09-30 | 01, 03 |
+| `plugin update` refuses a person as one who may not "update a plugin", and the grants table has its row | Softov, second review of daemon/12, 2026-09-30 | 01, 03 |
+| A typed object or array holding a whole number too large to keep exactly is refused, saying to quote it | Softov, third review of daemon/12, 2026-09-30 | 01, 03 |
+| Only a number that would not keep its value is refused: a whole number past what a double holds exactly, or one too large to be a number, each with its own words | Softov, fourth review of daemon/12, 2026-09-30 | 01, 03 |
+| A number is kept only when it reads back exactly as typed, at any depth: at the top it is text instead, and inside an object or array the value is refused, with its own words for one too large to be a number | Softov, fifth review of daemon/12, 2026-09-30 | 01, 03 |
 
 ## Proposed architecture
 
@@ -54,9 +63,9 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `ahpd plugin config`, `enable` and `disable`](task-01-plugin-config-enable-and-disable.md) | todo | - |
-| [02 - `--plugin-option`](task-02-plugin-option.md) | todo | - |
-| [03 - Docs](task-03-docs.md) | todo | 01, 02 |
+| [01 - `ahpd plugin config`, `enable` and `disable`](task-01-plugin-config-enable-and-disable.md) | implemented | - |
+| [02 - `--plugin-option`](task-02-plugin-option.md) | implemented | - |
+| [03 - Docs](task-03-docs.md) | implemented | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -64,10 +73,11 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-plugin-config-enable-and-disable.md](task-01-plugin-config-enable-and-disable.md).
-- **Open questions:** none.
-- **Watch out for:** a typed `--plugin` replaces the file's list; `--plugin-option` for a plugin not in the list is refused, naming it.
+- **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
+- **Reviews applied:** the review of 2026-09-30, the second, and the third, which refuses a typed value holding an inexact whole number, the fourth, which refuses only a number that would not keep its value, and the fifth, which holds a number to reading back as typed at every depth.
+- **Next action:** review; then `implemented.md` and `status: built`.
+- **Open questions:** none; served `plugin config` showing non-`writeOnly` values while `plugin list` and `config` mask every value is daemon/11's (task 04).
+- **Watch out for:** a typed `--plugin` replaces the file's list; `--plugin-option` for a plugin not in the list, or switched off, is refused, naming it.
 
 ## Final verification checklist
 

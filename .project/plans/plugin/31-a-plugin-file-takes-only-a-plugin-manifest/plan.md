@@ -1,7 +1,7 @@
 ---
 title: A plugin file takes the nearest manifest only when it is a plugin's
 domain: plugin
-status: planned
+status: active
 priority: low
 created: 2026-09-30
 revalidated: 2026-09-30
@@ -40,7 +40,7 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Only a plugin's manifest is taken](task-01-only-a-plugins-manifest-is-taken.md) | todo | - |
+| [01 - Only a plugin's manifest is taken](task-01-only-a-plugins-manifest-is-taken.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -48,8 +48,8 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-only-a-plugins-manifest-is-taken.md](task-01-only-a-plugins-manifest-is-taken.md).
+- **Done so far:** task 01 implemented, awaiting review.
+- **Next action:** review; then `implemented.md` and `status: built`.
 - **Open questions:** none.
 - **Watch out for:** the load and the listing must agree; both call `nearestManifest`.
 

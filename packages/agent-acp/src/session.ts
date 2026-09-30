@@ -1193,12 +1193,13 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       terminals.clear();
       const connection = live;
       live = undefined;
-      connection?.close();
+      const gone = connection?.close();
       // The catalogue's record is deliberately kept: the server still holds the
       // conversation and the transcript a row opens onto is this process's own
       // record of it. Only the live connection goes.
       // A turn still open has nobody left to answer it.
       if (active !== undefined) finish(String(active.id), 'cancelled');
+      return gone;
     },
   };
 }

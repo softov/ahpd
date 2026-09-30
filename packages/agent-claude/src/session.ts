@@ -3607,6 +3607,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
       try { rmSync(initScript, { force: true }); }
       catch { /* a script that was never written */ }
       handle.close();
+      /*
+       * The query's cleanup, which `close` starts and does not return: it
+       * settles once the CLI's process has exited, or after the SDK's own bound.
+       */
+      const disposed = (handle as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
+      return Promise.resolve(disposed).catch(() => undefined);
     },
   };
   return self;

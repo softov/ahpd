@@ -1,7 +1,8 @@
 /** Starting one of these in the background, and finding it again. */
 
 import { spawn } from 'node:child_process';
-import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
 
 /** What a detached daemon records about itself. */
@@ -21,7 +22,25 @@ export interface Running {
    * daemon's own words. Absent from a record an older daemon wrote.
    */
   automations?: string;
+  /**
+   * The line the child was started with, after the program: what a restart
+   * starts again. Absent from a record an older daemon wrote.
+   */
+  argv?: string[];
 }
+
+/**
+ * How long a start waits for the new daemon to say where it is listening.
+ * `ahpd restart` gives a successor longer than this, `SUCCESSOR_WAIT_MS`, so
+ * the restarting daemon's own answer always reaches it first.
+ */
+export const READY_TIMEOUT_MS = 20_000;
+
+/**
+ * Set in the environment of a daemon `start` spawns: the one process that will
+ * be recorded, and so the one that answers the restart signals.
+ */
+export const DETACHED_ENV = 'AHPD_DETACHED';
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
 const alive = (pid: number): boolean => {
@@ -38,28 +57,85 @@ const alive = (pid: number): boolean => {
 };
 
 /**
+ * Whether that pid may be a process: one there, or one this user may not
+ * signal (`EPERM`), which is somebody else's and not gone. What a sweep asks
+ * before it removes a file named by a pid.
+ */
+const present = (pid: number): boolean => {
+  if (pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  }
+  catch (error) { return (error as { code?: unknown }).code === 'EPERM'; }
+};
+
+/**
  * The daemon this user has running, if the record names one that still is.
  *
  * A stale record is cleared rather than reported: a `daemon.json` left behind
  * by a crash would otherwise have `start` refuse for ever, on the strength of
- * a process that is not there.
+ * a process that is not there. A file that holds no record at all, such as
+ * `null` or text that is not JSON, is cleared the same way.
  *
  * This is the one reader of the record, and a caller printing one takes `url`:
  * `connectUrl` carries the secret and belongs on no line.
  */
 export function running(): Running | undefined {
-  let found: Running;
-  try {
-    found = JSON.parse(readFileSync(daemonPath(), 'utf8')) as Running;
-  }
+  let text: string;
+  try { text = readFileSync(daemonPath(), 'utf8'); }
   catch { return undefined; }
-  if (typeof found?.pid !== 'number' || !alive(found.pid)) {
+  const found = recordIn(text);
+  if (found === undefined) {
+    // Not a record at all, so nobody's: it goes whatever it holds.
     try { unlinkSync(daemonPath()); }
     catch { /* it was already gone, which is what was wanted */ }
     return undefined;
   }
+  if (!alive(found.pid)) {
+    // Through `forget`, so a record another daemon claimed since the read stays.
+    forget([found.pid]);
+    return undefined;
+  }
   return found;
 }
+
+/** The record in that text: a JSON object with a numeric pid, or nothing. */
+const recordIn = (text: string): Running | undefined => {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text) as unknown; }
+  catch { return undefined; }
+  if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { pid?: unknown }).pid !== 'number') return undefined;
+  return parsed as Running;
+};
+
+/** The record as the file holds it, alive or not; nothing when there is none or it is not a record. */
+const recorded = (): Running | undefined => {
+  try { return recordIn(readFileSync(daemonPath(), 'utf8')); }
+  catch { return undefined; }
+};
+
+/** The temp file a process writes the record to before renaming it into place, by its pid. */
+const TEMP = /^daemon\.json\.(\d+)\.tmp$/u;
+
+/**
+ * Remove the temp files of processes that are gone.
+ *
+ * A temp is named by its writer's pid, so one process leaves at most one, and
+ * only when it died between the write and the rename; this clears those.
+ */
+const sweepTemps = (): void => {
+  const dir = dirname(daemonPath());
+  let names: string[];
+  try { names = readdirSync(dir); }
+  catch { return; }
+  for (const name of names) {
+    const pid = Number(TEMP.exec(name)?.[1]);
+    if (!Number.isInteger(pid) || pid === process.pid || present(pid)) continue;
+    try { unlinkSync(join(dir, name)); }
+    catch { /* another process swept it first */ }
+  }
+};
 
 /**
  * The URL a person connects with: the announced origin, with the token in the
@@ -83,7 +159,7 @@ export function readyUrl(origin: string, token?: string): string {
  * command line, because the directories may have come from the configuration
  * file and a record built from argv would name none of them.
  */
-export function recordOf(announced: string, pid: number, token?: string): Running {
+export function recordOf(announced: string, pid: number, token?: string, argv?: string[]): Running {
   const url = /ws:\/\/[^\s,]+/.exec(announced)?.[0] ?? announced;
   const automations = /^automations (.+)$/m.exec(announced)?.[1]?.trim();
   return {
@@ -94,7 +170,50 @@ export function recordOf(announced: string, pid: number, token?: string): Runnin
       .trim().split(',').map((one) => one.trim()).filter((one) => one !== ''),
     startedAt: new Date().toISOString(),
     ...(automations !== undefined ? { automations } : {}),
+    ...(argv !== undefined ? { argv } : {}),
   };
+}
+
+/**
+ * What `daemon.log` holds from byte `from` on, read from that offset rather
+ * than whole; empty when there is no log or nothing after it.
+ */
+export function logSince(from: number): string {
+  let fd: number;
+  try { fd = openSync(daemonLog(), 'r'); }
+  catch { return ''; }
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= from) return '';
+    const buffer = Buffer.alloc(size - from);
+    let at = 0;
+    while (at < buffer.length) {
+      const read = readSync(fd, buffer, at, buffer.length - at, from + at);
+      if (read === 0) break;
+      at += read;
+    }
+    return buffer.subarray(0, at).toString('utf8');
+  }
+  finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The announcement of the daemon `pid`, from its `ahpd on` line to the next
+ * one, in a log other processes also write to; nothing until it has written it.
+ *
+ * The announcement is one write holding a `pid` line, so the block that holds
+ * this pid's line is this daemon's, whatever other daemons wrote around it.
+ */
+export function announcementOf(log: string, pid: number): string | undefined {
+  const starts = [...log.matchAll(/^ahpd on ws:\/\//gmu)].map((found) => found.index);
+  const own = new RegExp(`^pid ${String(pid)}$`, 'mu');
+  for (const [at, start] of starts.entries()) {
+    const block = log.slice(start, starts[at + 1] ?? log.length);
+    if (own.test(block)) return block;
+  }
+  return undefined;
 }
 
 /**
@@ -114,10 +233,13 @@ export function statusLine(record: Pick<Running, 'url' | 'pid' | 'startedAt'>): 
  * Detached and with its streams let go, so it outlives the shell that started
  * it - which is the whole point, and the difference between this and running
  * `ahpd` in a terminal you then have to keep open.
+ *
+ * `replacing` is the pid of a daemon restarting itself, whose record stays
+ * until this one's is written, so a stop in between still reaches it.
  */
-export async function start(argv: string[], self: string, token?: string): Promise<Running> {
+export async function start(argv: string[], self: string, token?: string, replacing?: number): Promise<Running> {
   const already = running();
-  if (already) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
+  if (already && already.pid !== replacing) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
 
   ensureConfigDir();
   /*
@@ -151,6 +273,7 @@ export async function start(argv: string[], self: string, token?: string): Promi
   const child = spawn(process.execPath, [...process.execArgv, self, ...argv], {
     detached: true,
     stdio: ['ignore', log, log],
+    env: { ...process.env, [DETACHED_ENV]: '1' },
   });
   child.unref();
   closeSync(log);
@@ -164,13 +287,11 @@ export async function start(argv: string[], self: string, token?: string): Promi
   /** What it said about itself, so the record is its answer and not a guess. */
   let announced = '';
   await new Promise<string>((answer, fail) => {
-    const gaveUp = Date.now() + 20_000;
+    const gaveUp = Date.now() + READY_TIMEOUT_MS;
     const look = (): void => {
-      let said = '';
-      try { said = readFileSync(daemonLog(), 'utf8').slice(from); }
-      catch { /* not written yet */ }
-      const found = /ws:\/\/[^\s,]+/.exec(said);
-      if (found) { announced = said; answer(found[0]); return; }
+      const said = logSince(from);
+      const own = child.pid === undefined ? undefined : announcementOf(said, child.pid);
+      if (own !== undefined) { announced = own; answer(own); return; }
       if (child.exitCode !== null) {
         fail(new Error(`it exited with ${String(child.exitCode)}. See ${daemonLog()}`));
         return;
@@ -193,9 +314,58 @@ export async function start(argv: string[], self: string, token?: string): Promi
   // It announced where it was listening, so it started; this is for the type
   // rather than for the case, and `0` must never reach the record.
   if (child.pid === undefined) throw new Error('it started but has no process id');
-  const record = recordOf(announced, child.pid, token);
-  writeFileSync(daemonPath(), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const record = recordOf(announced, child.pid, token, argv);
+  /** Stop the child this start made, which no record will name. */
+  const unmade = (): void => {
+    try { process.kill(child.pid as number, 'SIGTERM'); }
+    catch { /* already gone */ }
+  };
+  let other: Running | undefined;
+  try {
+    other = claim(record, replacing);
+  }
+  catch (error) {
+    unmade();
+    throw error;
+  }
+  if (other !== undefined) {
+    unmade();
+    throw new Error(`another daemon, pid ${String(other.pid)}, was started in its place while it started`);
+  }
   return record;
+}
+
+/**
+ * Write `record` as the one running, unless the record names another live
+ * daemon than `replacing`, which is answered instead and left as it is.
+ *
+ * Checked again at the write rather than only before the spawn, because a
+ * start can take seconds and a person can `ahpd stop` and `ahpd start` in them.
+ */
+export function claim(record: Running, replacing?: number): Running | undefined {
+  const already = recorded();
+  if (already !== undefined && already.pid !== replacing && alive(already.pid)) return already;
+  sweepTemps();
+  // Written whole beside it and renamed over it, so a reader never sees half a record.
+  const written = `${daemonPath()}.${String(process.pid)}.tmp`;
+  writeFileSync(written, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  renameSync(written, daemonPath());
+  return undefined;
+}
+
+/**
+ * Forget where it was: the record goes, and the process is left alone.
+ *
+ * With `only`, the record goes only when it names one of those pids, so a
+ * daemon forgetting itself never takes another daemon's record with it.
+ */
+export function forget(only?: readonly number[]): void {
+  if (only !== undefined) {
+    const named: unknown = recorded()?.pid;
+    if (typeof named !== 'number' || !only.includes(named)) return;
+  }
+  try { unlinkSync(daemonPath()); }
+  catch { /* already gone */ }
 }
 
 /** Stop it, and forget where it was. Answers what was stopped, or nothing. */
@@ -204,7 +374,7 @@ export function stop(): Running | undefined {
   if (!found) return undefined;
   try { process.kill(found.pid, 'SIGTERM'); }
   catch { /* it went between the check and the signal, which is a stop */ }
-  try { unlinkSync(daemonPath()); }
-  catch { /* already gone */ }
+  // Only the record of the daemon stopped: a successor may have claimed it since.
+  forget([found.pid]);
   return found;
 }

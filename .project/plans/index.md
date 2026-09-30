@@ -28,8 +28,8 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 
 | [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | planned 2026-09-30; tasks 01-05 todo | daemon 09 | - |
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | planned 2026-09-29; tasks 01-06 todo | - | - |
-| [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | planned 2026-09-29; tasks 01-03 todo | - | - |
-| [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | planned 2026-09-29; tasks 01-03 todo | - | - |
+| [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |
+| [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |
 | [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | planned 2026-09-30; task 01 todo | - | - |
 
 Next free number in `daemon`: `15`.
@@ -148,7 +148,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
 
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
-| [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | planned 2026-09-30; task 01 todo | - | - |
+| [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 implemented | - | - |
 
 Next free number in `plugin`: `32`.
 

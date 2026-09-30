@@ -13,7 +13,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type AddressInfo } from 'node:net';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -190,8 +191,64 @@ const knock = (url: string): Promise<string> => new Promise((resolve) => {
   socket.on('error', (error: Error) => { resolve(error.message); });
 });
 
-const recordOf = (): { pid: number; url: string; connectUrl?: string } =>
+const recordOf = (): { pid: number; url: string; connectUrl?: string; argv?: string[] } =>
   JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; url: string };
+
+/** A backend whose catalogue is a file under the daemon's path, so it survives a restart. */
+const KEPT = join(import.meta.dirname, 'fixtures', 'plugin-kept', 'index.ts');
+/** A plugin whose `stopping` handler waits for the file `AHPD_RELEASE` names. */
+const SLOW_STOP = join(import.meta.dirname, 'fixtures', 'plugin-slow-stop', 'index.ts');
+/** A plugin that says whether the daemon's environment holds `AHPD_DETACHED`. */
+const ENV = join(import.meta.dirname, 'fixtures', 'plugin-env', 'index.ts');
+
+/** A port nothing is listening on as this returns. */
+const freePort = (): Promise<number> => new Promise((done, fail) => {
+  const probe = createServer();
+  probe.once('error', fail);
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address() as AddressInfo;
+    probe.close(() => { done(port); });
+  });
+});
+
+/** Requests sent one after another on one socket, and the results they were answered with. */
+const rpc = (url: string, calls: readonly { method: string; params: unknown }[]): Promise<unknown[]> => new Promise((done, fail) => {
+  const socket = new WebSocket(url);
+  const results: unknown[] = [];
+  const next = (): void => {
+    const call = calls[results.length];
+    if (call === undefined) { socket.close(); done(results); return; }
+    socket.send(JSON.stringify({ jsonrpc: '2.0', id: results.length + 1, ...call }));
+  };
+  socket.on('open', next);
+  socket.on('error', fail);
+  socket.on('message', (raw: Buffer) => {
+    const frame = JSON.parse(String(raw)) as { id?: number; result?: unknown; error?: { message: string } };
+    if (frame.id !== results.length + 1) return;
+    if (frame.error !== undefined) { socket.close(); fail(new Error(frame.error.message)); return; }
+    results.push(frame.result);
+    next();
+  });
+});
+const INITIALIZE = { method: 'initialize', params: { clientId: 'restart-test', protocolVersions: ['0.9.0'] } };
+
+/** A foreground daemon sent `signal` once it has announced itself, and the signal it ended on. */
+const signalled = (signal: NodeJS.Signals): Promise<NodeJS.Signals | null> => new Promise((done) => {
+  const child = spawn(
+    process.execPath,
+    [MAIN, '--port', '0', '--plugin', BACKEND, '--sessions', 'memory', '--automations', 'memory', '--no-update-check'],
+    { cwd: REPO, env: daemonEnv(), stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  child.stdin.end();
+  let stdout = '';
+  let sent = false;
+  const timer = setTimeout(() => { child.kill('SIGKILL'); }, 25000);
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += String(chunk);
+    if (!sent && stdout.includes('ahpd on ws://')) { sent = true; child.kill(signal); }
+  });
+  child.once('exit', (_code, ended) => { clearTimeout(timer); done(ended); });
+});
 
 describe('what a person types first', () => {
   it('answers --help and -h with the usage and a zero', async () => {
@@ -454,6 +511,201 @@ describe('start, stop and status', () => {
     expect(await knock(record.url)).not.toBe('open');
   }, 40000);
 
+  it('records the line the child was given, and not the parent\'s globals', async () => {
+    const began = await cli([
+      '--no-color', 'start', '--port', '0', '--path', home, '--plugin', BACKEND, '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; argv?: string[] };
+    spawned.push(record.pid);
+    expect(record.argv).toEqual(['--port', '0', '--path', home, '--plugin', BACKEND, '--no-update-check']);
+  }, 40000);
+
+  it('restarts a started daemon over HTTP with the line it was started with', async () => {
+    put({ http: true, plugins: [BACKEND] });
+    const began = await cli([
+      'start', '--config-file', config, '--port', '0', '--connection-token', 'abc',
+      '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf() as { pid: number; url: string; argv?: string[] };
+    spawned.push(before.pid);
+    const api = `http://127.0.0.1:${new URL(before.url).port}/api/restart`;
+    const answered = await fetch(api, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer abc' },
+      body: '{}',
+    });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toEqual({ restarting: true, pid: before.pid });
+
+    await gone(before.pid);
+    expect(alive(before.pid)).toBe(false);
+    // The successor writes its record once it has announced itself.
+    const until = Date.now() + 20000;
+    let after: { pid: number; argv?: string[]; connectUrl?: string } | undefined;
+    while (Date.now() < until) {
+      try { after = recordOf() as typeof after; }
+      catch { after = undefined; }
+      if (after !== undefined && after.pid !== before.pid) break;
+      await new Promise((wait) => setTimeout(wait, 100));
+    }
+    expect(after?.pid).not.toBe(before.pid);
+    if (after !== undefined) spawned.push(after.pid);
+    expect(after?.argv).toEqual(before.argv);
+    expect(await knock(String(after?.connectUrl))).toBe('open');
+  }, 60000);
+
+  it('forwards --plugin-option to the child, which loads with it', async () => {
+    // The schema fixture requires `command`, so it loads only when the flag reached the child.
+    const schema = join(import.meta.dirname, 'fixtures', 'plugin-schema', 'index.ts');
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--plugin', schema,
+      '--plugin-option', `${schema}.command=run`, '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; argv?: string[] };
+    spawned.push(record.pid);
+    expect(record.argv).toContain(`${schema}.command=run`);
+    const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
+    expect(log).toContain('plugins echo-plugin, schema');
+    expect(log).not.toContain('skipped');
+  }, 40000);
+
+  it('restarts a started daemon from the terminal with the line it was started with', async () => {
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf() as { pid: number; argv?: string[] };
+    spawned.push(before.pid);
+
+    const again = await cli(['restart']);
+    const after = recordOf() as { pid: number; url: string; argv?: string[] };
+    spawned.push(after.pid);
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(again.stdout).toBe(`ahpd on ${after.url} (pid ${String(after.pid)}), restarted from pid ${String(before.pid)}\n`);
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.argv).toEqual(before.argv);
+    await gone(before.pid);
+    expect(alive(before.pid)).toBe(false);
+
+    const forced = await cli(['restart', '--force']);
+    const last = recordOf() as { pid: number };
+    spawned.push(last.pid);
+    expect(forced.code).toBe(0);
+    expect(last.pid).not.toBe(after.pid);
+  }, 90000);
+
+  it('restarts from the terminal, and the successor carries the token its line reads now', async () => {
+    put({ plugins: [BACKEND], connectionToken: 'abc' });
+    const began = await cli([
+      'start', '--config-file', config, '--port', '0', '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf();
+    spawned.push(before.pid);
+    expect(before.connectUrl).toContain('tkn=abc');
+
+    put({ plugins: [BACKEND], connectionToken: 'xyz' });
+    const again = await cli(['restart']);
+    const after = recordOf();
+    spawned.push(after.pid);
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.connectUrl).toContain('tkn=xyz');
+    expect(await knock(String(after.connectUrl))).toBe('open');
+  }, 90000);
+
+  it('refuses a restart whose line cannot run over the file as it is now, and the daemon runs on', async () => {
+    put({ plugins: [BACKEND] });
+    const began = await cli([
+      'start', '--config-file', config, '--port', '0', '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf();
+    spawned.push(before.pid);
+
+    put('{ "plugins": [');
+    const again = await cli(['restart']);
+    expect(again.code).toBe(1);
+    expect(again.stderr).toContain('Its line cannot run now, so it was not stopped:');
+    expect(alive(before.pid)).toBe(true);
+    expect(recordOf().pid).toBe(before.pid);
+    expect(await knock(before.connectUrl as string)).toBe('open');
+  }, 60000);
+
+  it('restarts on a fixed port at the same URL, and a session made before is listed after', async () => {
+    const port = await freePort();
+    const began = await cli([
+      'start', '--port', String(port), '--path', home, '--plugin', KEPT, '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf();
+    spawned.push(before.pid);
+    expect(before.url).toBe(`ws://127.0.0.1:${String(port)}`);
+    await rpc(`${before.url}/`, [INITIALIZE, { method: 'createSession', params: { channel: 'ahp-session:/kept-1', provider: 'kept' } }]);
+
+    const again = await cli(['restart']);
+    const after = recordOf();
+    spawned.push(after.pid);
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.url).toBe(before.url);
+
+    const [, listed] = await rpc(`${after.url}/`, [INITIALIZE, { method: 'listSessions', params: {} }]) as [unknown, { items: { resource: string }[] }];
+    expect(listed.items.map((row) => row.resource)).toContain('kept:/kept-1');
+  }, 90000);
+
+  it('lets a stop sent while a restart is stopping win, and leaves no daemon running', async () => {
+    const release = join(home, 'release');
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--plugin', SLOW_STOP, '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ], { env: { AHPD_RELEASE: release } });
+    expect(began.code).toBe(0);
+    const before = recordOf();
+    spawned.push(before.pid);
+
+    const restarting = cli(['restart']);
+    // The receipt is written before the `stopping` handler, which holds until the file exists.
+    const log = join(home, 'ahpd', 'daemon.log');
+    const until = Date.now() + 10000;
+    while (!readFileSync(log, 'utf8').includes('restart: stopping (SIGHUP)') && Date.now() < until) {
+      await new Promise((wait) => setTimeout(wait, 25));
+    }
+    expect(readFileSync(log, 'utf8')).toContain('restart: stopping (SIGHUP)');
+    const stopped = await cli(['stop']);
+    expect(stopped.code).toBe(0);
+    writeFileSync(release, '');
+
+    const restarted = await restarting;
+    expect(restarted.code).toBe(1);
+    expect(restarted.stderr).toContain('stopped first');
+    await gone(before.pid);
+    expect(alive(before.pid)).toBe(false);
+    expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(false);
+    expect(announced().filter(alive)).toEqual([]);
+  }, 60000);
+
+  it('takes AHPD_DETACHED out of a started daemon\'s environment, so a session\'s shell never has it', async () => {
+    const began = await cli(['start', '--port', '0', '--plugin', BACKEND, '--plugin', ENV, '--sessions', 'memory', '--automations', 'memory', '--no-update-check']);
+    expect(began.code).toBe(0);
+    spawned.push(recordOf().pid);
+    const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
+    expect(log).toContain('AHPD_DETACHED unset');
+  }, 40000);
+
+  it('leaves a foreground daemon to the default for either restart signal, which ends it', async () => {
+    expect(await signalled('SIGHUP')).toBe('SIGHUP');
+    expect(await signalled('SIGUSR2')).toBe('SIGUSR2');
+  }, 60000);
+
+  it('says none is running to restart', async () => {
+    const said = await cli(['restart']);
+    expect(said.code).toBe(1);
+    expect(said.stderr).toContain('None running in the background');
+  });
+
   it('forwards a value typed before start, port and all', async () => {
     const began = await cli(['--port', '0', 'start', '--plugin', BACKEND, '--no-update-check']);
     expect(began.code).toBe(0);
@@ -584,6 +836,19 @@ describe('a daemon that binds a port', () => {
   }, 40000);
 });
 
+describe('plugin config', () => {
+  it('sets with three words and shows with two, in the file named', async () => {
+    const secret = join(import.meta.dirname, 'fixtures', 'plugin-secret', 'index.ts');
+    put({ plugins: [secret] });
+    const set = await cli(['plugin', 'config', secret, 'retries', '2', '--config-file', config]);
+    expect(set.code).toBe(0);
+    expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({ plugins: [{ name: secret, options: { retries: 2 } }] });
+    const shown = await cli(['plugin', 'config', secret, 'retries', '--config-file', config]);
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toBe('2\n');
+  }, 20000);
+});
+
 describe('config', () => {
   it('prints the file it read and what it says', async () => {
     put({ port: 1234, host: '0.0.0.0' });
@@ -681,7 +946,7 @@ describe('plugin', () => {
     for (const args of [['plugin'], ['plugin', 'toy', '--config-file', config], ['--json', 'plugin']]) {
       const said = await cli(args);
       expect(said.code).toBe(2);
-      expect(said.stderr).toBe('ahpd: plugin takes list, update, install or remove.\n');
+      expect(said.stderr).toBe('ahpd: plugin takes list, update, config, install, remove, enable or disable.\n');
       expect(said.stdout).toBe('');
     }
   });

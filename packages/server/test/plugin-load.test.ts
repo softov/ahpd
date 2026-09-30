@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadPlugins } from '../src/plugins.js';
@@ -119,5 +121,33 @@ describe('loadPlugins log', () => {
     expect(lines).toEqual(['plugin plugin-explodes loading']);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(new RegExp(`^plugin plugin-explodes could not be imported from ${join(fixtures, 'plugin-explodes', 'index.ts')} in \\d+ ms: .*the explodes fixture throws when imported`));
+  });
+});
+
+describe('a plugin file with no plugin manifest of its own', () => {
+  it('is named by its name export, and never by the package it sits in', async () => {
+    const said: string[] = [];
+    const { problems } = await loadPlugins(['./fixtures/plugin-throws/index.ts'], {
+      base: base(), configDir: fixtures, cwd: here, log: (line) => { said.push(line); },
+    });
+    expect(said).toContain('plugin plugin-throws loading');
+    expect(said.join('\n')).not.toContain('@ahpd/server');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('plugin throws failed');
+  });
+
+  it('is checked against no other package\'s range, and named by its file when it exports no name', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-no-manifest-'));
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'not-a-plugin', peerDependencies: { '@ahpd/sdk': '^99.0.0' } }));
+      mkdirSync(join(root, 'src'));
+      writeFileSync(join(root, 'src', 'loose.js'), 'export function apply() {}\n');
+      const { loaded, problems } = await load([join(root, 'src', 'loose.js')]);
+      expect(problems).toEqual([]);
+      expect(loaded.map((one) => one.name)).toEqual(['loose']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
