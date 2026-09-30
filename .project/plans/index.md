@@ -30,8 +30,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | planned 2026-09-29; tasks 01-06 todo | - | - |
 | [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | planned 2026-09-29; tasks 01-03 todo | - | - |
 | [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | planned 2026-09-29; tasks 01-03 todo | - | - |
+| [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | planned 2026-09-30; task 01 todo | - | - |
 
-Next free number in `daemon`: `14`.
+Next free number in `daemon`: `15`.
 
 ## host
 
@@ -73,8 +74,9 @@ Reference: [00-host.md](host/00-host.md)
 
 | [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | planned 2026-09-30; tasks 01-06 todo | - | - |
 | [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | planned 2026-09-29; tasks 01-02 todo | - | claude 10 |
+| [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | planned 2026-09-30; tasks 01-04 todo | host 31 | - |
 
-Next free number in `host`: `32`.
+Next free number in `host`: `33`.
 
 ## claude
 
