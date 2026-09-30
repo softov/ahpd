@@ -57,7 +57,7 @@
     "test": "cd ../.. && vitest run packages/agent-acp/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.8"
+    "@ahpd/sdk": ">=0.8"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

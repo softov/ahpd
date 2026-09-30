@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { satisfies } from '../src/compat.js';
@@ -71,4 +73,49 @@ describe('a plugin that declares a range', () => {
     expect(problems).toEqual([]);
     expect(loaded.map((one) => one.name)).toEqual(['no-peer']);
   });
+});
+
+describe('a plugin that names the oldest sdk it needs', () => {
+  /** A plugin in a scratch directory whose `@ahpd/sdk` peer range is `range`, loaded on a daemon at `version`. */
+  const loadWith = async (range: string, version: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-compat-'));
+    try {
+      mkdirSync(join(dir, 'plugin'));
+      writeFileSync(join(dir, 'plugin', 'package.json'), JSON.stringify({
+        name: 'oldest-sdk', version: '1.0.0', type: 'module',
+        peerDependencies: { '@ahpd/sdk': range }, ahpd: { entry: './index.js' },
+      }));
+      writeFileSync(join(dir, 'plugin', 'index.js'), "export const name = 'oldest-sdk';\nexport const apply = () => {};\n");
+      return await loadPlugins([join(dir, 'plugin')], {
+        base: { path: '/tmp/plugin-compat', agents: [echo({ path: '/tmp/plugin-compat' })] },
+        configDir: dir, cwd: dir, log: () => {}, version,
+      });
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('loads a plugin that takes >=0.8 on a 0.9 daemon', async () => {
+    const { loaded, problems } = await loadWith('>=0.8', '0.9.0');
+    expect(problems).toEqual([]);
+    expect(loaded.map((one) => one.name)).toEqual(['oldest-sdk']);
+  });
+
+  it('refuses a plugin that takes >=0.9 on a 0.8 daemon, with the loader\'s sentence', async () => {
+    const { loaded, problems } = await loadWith('>=0.9', '0.8.0');
+    expect(loaded).toEqual([]);
+    expect(problems).toEqual(['plugin oldest-sdk needs @ahpd/sdk >=0.9, this is 0.8.0']);
+  });
+
+  it.each(['agent-acp', 'agent-claude', 'agent-cofold', 'agent-pi', 'computer', 'tunnel-devtunnel'])(
+    'declares @ahpd/%s as taking any sdk from 0.8 on',
+    (name) => {
+      const manifest = JSON.parse(readFileSync(join(here, '../..', name, 'package.json'), 'utf8')) as {
+        peerDependencies: Record<string, string>;
+      };
+      expect(manifest.peerDependencies['@ahpd/sdk']).toBe('>=0.8');
+      expect(satisfies('0.9.0', manifest.peerDependencies['@ahpd/sdk'] as string)).toBe(true);
+    },
+  );
 });

@@ -3,7 +3,6 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { sdkVersion } from '@ahpd/sdk';
 import type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink, PluginSpec } from '@ahpd/sdk';
 
 /**
@@ -146,6 +145,12 @@ export interface DevContainerOptions {
    * is the thing inside the container - is the only way it runs in one.
    */
   plugins?: PluginSpec[];
+  /**
+   * The daemon's `@ahpd/sdk` version, `PluginContext.version`, which the
+   * server installed in a container is pinned to. Absent installs the
+   * published latest.
+   */
+  version?: string;
   /** Lines worth keeping. Nothing is logged without one. */
   log?: (line: string) => void;
 }
@@ -404,15 +409,17 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
         const present = await inside(one.workspaceFolder, `command -v ${quote(program)}`, sink);
         if (present.code !== 0) {
           /*
-           * The published server, pinned to this build where that is knowable.
+           * The published server, pinned to the daemon's version where that is
+           * knowable.
            *
-           * `sdkVersion` reads the version of whatever package encloses it,
-           * which is this repository's and moves with the server's. Where it
-           * cannot be read it says `unknown`, and `@ahpd/server@unknown` is a
-           * registry error about a version rather than about the install, so
-           * an unknown version takes the published latest instead.
+           * `version` is the daemon's `@ahpd/sdk` version, which the plugin
+           * reads from `PluginContext.version`; the `@ahpd/sdk` this package
+           * imports may be another copy, installed beside it. Where it is not
+           * given, or is `unknown`, `@ahpd/server@unknown` would be a registry
+           * error about a version rather than about the install, so the
+           * published latest is taken instead.
            */
-          const version = sdkVersion();
+          const version = options.version ?? 'unknown';
           const line = install ?? `npm i -g @ahpd/server${version === 'unknown' ? '' : `@${version}`} --allow-scripts=node-pty`;
           const installed = await inside(one.workspaceFolder, line, sink);
           if (installed.code !== 0) {

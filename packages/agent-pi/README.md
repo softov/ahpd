@@ -30,7 +30,7 @@ pi reads its model providers and credentials from its own settings, so nothing h
 ## In your own host
 
 ```bash
-pnpm add @ahpd/agent-pi @ahpd/sdk @microsoft/agent-host-protocol
+pnpm add @ahpd/agent-pi @ahpd/sdk
 ```
 
 ```ts

@@ -12,17 +12,20 @@
  * writes a file a person edits: every other key, the order they were in and
  * the entries this command did not touch have to survive being rewritten.
  *
- * The process boundary is `Runner`, so a test fakes npm. Nothing here reaches
- * for the network, the clock or the environment: a caller passes the
- * directory, the file and the version to pin to.
+ * The process boundary is `Runner` and the registry's is `Fetch`, so a test
+ * fakes npm and the registry. Nothing here reaches for the clock or the
+ * environment: a caller passes the directory, the file and the version to pin
+ * to.
  */
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { PluginSpec } from '@ahpd/sdk';
 import { asSpec } from './config.js';
 import { hasScheme, nameOf } from './plugins.js';
+import { askRegistry } from './update.js';
+import type { Fetch } from './update.js';
 
 /** What one run of a program left behind. */
 export interface Ran {
@@ -66,6 +69,28 @@ export const run: Runner = (program, argv) => new Promise((done) => {
   child.once('error', (error: Error) => { finish({ code: -1, stdout: '', stderr: error.message }); });
   child.once('close', (code: number | null) => { finish({ code: code ?? -1, stdout: '', stderr }); });
 });
+
+/**
+ * A failed npm call.
+ *
+ * `message` carries npm's own reason, for a caller that did not see npm run;
+ * `failed` is only what failed, for a caller whose terminal the runner has
+ * already written npm's error to.
+ */
+export class NpmFailure extends Error {
+  /** What failed, without npm's reason. */
+  readonly failed: string;
+  constructor(failed: string, reason: string) {
+    super(reason === '' ? failed : `${failed}: ${reason}`);
+    this.failed = failed;
+  }
+}
+
+/** The failure of one npm call, with its standard error as the reason, or its exit code when it said nothing. */
+const npmFailed = (failed: string, done: Ran): NpmFailure => {
+  const why = done.stderr.trim();
+  return new NpmFailure(failed, why === '' ? `exit ${String(done.code)}` : why);
+};
 
 /**
  * Whether a spec is a package name npm can install.
@@ -197,6 +222,53 @@ export const disableNames = (path: string, names: readonly string[]): string[] =
   return dropped;
 };
 
+/** The configuration directory's `package.json` `dependencies`, name to spec, in the order it lists them. */
+const dependenciesIn = (configDir: string): [string, string][] => {
+  const dependencies = readEntry(join(configDir, 'package.json')).dependencies;
+  if (typeof dependencies !== 'object' || dependencies === null || Array.isArray(dependencies)) return [];
+  return Object.entries(dependencies as Record<string, unknown>).map(([name, spec]) => [name, String(spec)]);
+};
+
+/**
+ * Whether a dependency's spec names a package from the npm registry.
+ *
+ * A path, a `file:` or `link:` spec, a git spec and an http(s) URL are
+ * somewhere a person chose, which no registry version replaces.
+ */
+const fromRegistry = (spec: string): boolean =>
+  !/^(?:\.|\/|~|file:|link:|git\+|git:|github:|https?:)/.test(spec);
+
+/** The version of a package installed in the configuration directory, or `undefined` when it has none. */
+const installedVersion = (configDir: string, name: string): string | undefined => {
+  const path = join(configDir, 'node_modules', name, 'package.json');
+  try {
+    const version = readEntry(path).version;
+    return typeof version === 'string' ? version : undefined;
+  }
+  catch {
+    return undefined;
+  }
+};
+
+/** The package every plugin peers, which ahpd installs itself at the daemon's version. */
+const SDK = '@ahpd/sdk';
+
+/** Why `@ahpd/sdk` is refused when it is named to install or update. */
+const SDK_IS_NOT_A_PLUGIN = `${SDK} is not a plugin: ahpd installs it at the daemon's version with every install and update.`;
+
+/**
+ * The npm arguments that put `@ahpd/sdk` at the daemon's version beside the
+ * packages being installed, with no peer checked.
+ *
+ * Every plugin declares `@ahpd/sdk` as a peer, and the configuration directory
+ * is one npm project, so npm would otherwise want one sdk that satisfies every
+ * installed plugin: a plugin on one minor would block installing or updating
+ * another on the next. Whether a plugin fits is the loader's question, asked
+ * of each plugin against the daemon when it loads. `pinned` leaves the sdk
+ * unpinned when the daemon's version is `unknown`.
+ */
+const daemonsSdk = (daemonVersion: string): string[] => ['--legacy-peer-deps', pinned(SDK, daemonVersion)];
+
 /** What `plugin install` was given and where it looks. */
 export interface InstallOptions {
   /** The configuration directory npm installs into, which is where a bare name is resolved from. */
@@ -209,17 +281,44 @@ export interface InstallOptions {
   enable: boolean;
   /** How npm is run. */
   run: Runner;
+  /** How the registry is asked for a manifest. */
+  fetch: Fetch;
   /** One line of this command's own output. */
   say(line: string): void;
 }
+
+/** A package name as the registry has it, which a path, a URL and git's `owner/repo` are not. */
+const REGISTRY_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
+
+/**
+ * Refuse a registry package whose manifest has no `ahpd` field, at the version
+ * `install` would ask npm for: an `@ahpd/` name at the daemon's version, any
+ * other at the version or tag written, or `latest`.
+ *
+ * A registry that does not answer, or has no such version, is npm's to report.
+ */
+const refuseNonPlugins = async (names: readonly string[], options: InstallOptions): Promise<void> => {
+  for (const name of names) {
+    const bare = packageOf(name);
+    if (!REGISTRY_NAME.test(bare)) continue;
+    const target = pinned(name, options.version);
+    const tag = target === bare ? 'latest' : target.slice(bare.length + 1);
+    const manifest = await askRegistry(`${bare.replace('/', '%2f')}/${encodeURIComponent(tag)}`, { fetch: options.fetch });
+    if (manifest === undefined) continue;
+    if (typeof manifest !== 'object' || manifest === null || !('ahpd' in manifest)) {
+      throw new Error(`${bare} is not an ahpd plugin: its package.json has no "ahpd" field.`);
+    }
+  }
+};
 
 /**
  * Install each package into the configuration directory, and name it.
  *
  * npm does the install, in the configuration directory, because that is the
  * directory a bare name resolves from and a global install is invisible to
- * it. Nothing is loaded and nothing is validated here: whether the package is
- * a plugin at all is what the next `ahpd plugin list` or the next run says.
+ * it. A registry package is refused first when its manifest has no `ahpd`
+ * field; nothing is loaded here, so whether the plugin works is what the next
+ * `ahpd plugin list` or the next run says.
  *
  * No `--allow-scripts` here, and that is a finding rather than an omission:
  * npm 12 refuses that flag on a project-scoped install (`--prefix`) and tells
@@ -235,13 +334,14 @@ export async function installPlugins(names: readonly string[], options: InstallO
     if (!isPackageName(name)) {
       throw new Error(`${name} is not a package name. install takes package names only; a path or a URL is used as written where it is named.`);
     }
+    if (packageOf(name) === SDK) throw new Error(SDK_IS_NOT_A_PLUGIN);
   }
+  await refuseNonPlugins(names, options);
   const wanted = names.map((name) => pinned(name, options.version));
   mkdirSync(options.configDir, { recursive: true });
-  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...wanted]);
+  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...daemonsSdk(options.version), ...wanted]);
   if (done.code !== 0) {
-    const why = done.stderr.trim();
-    throw new Error(`npm could not install ${names.join(', ')}: ${why === '' ? `exit ${String(done.code)}` : why}`);
+    throw npmFailed(`npm could not install ${names.join(', ')}`, done);
   }
   options.say(`Installed ${wanted.join(', ')} into ${options.configDir}.`);
   if (!options.enable) {
@@ -253,6 +353,80 @@ export async function installPlugins(names: readonly string[], options: InstallO
   options.say(added.length === 0
     ? `${options.configFile} already names ${packages.join(', ')}.`
     : `plugins += ${added.join(', ')} in ${options.configFile}.`);
+}
+
+/** What `plugin update` was given and where it looks. */
+export interface UpdateOptions {
+  /** The configuration directory whose installed packages are moved. */
+  configDir: string;
+  /** The daemon's own version, which every `@ahpd/` package is moved to. */
+  version: string;
+  /** How npm is run. */
+  run: Runner;
+  /** One line of this command's own output. */
+  say(line: string): void;
+}
+
+/** A package `plugin update` moved, with its version on disk before and after npm; absent is not installed. */
+export interface Moved {
+  name: string;
+  from?: string;
+  to?: string;
+}
+
+/**
+ * Move the packages installed in the configuration directory, in one npm call:
+ * every one for `all`, or only those named, each of which must be installed
+ * there.
+ *
+ * An `@ahpd/` package goes to the daemon's version, as `pinned` pins it; any
+ * other goes to `latest`, and a name that carries a version or a tag is passed
+ * as written. A package installed from outside the registry is left as it is.
+ * `config.json` is not touched. Says each package whose installed version
+ * changed, from the version before npm to the one npm left, or `Nothing to
+ * update.` when none did, and answers those packages.
+ */
+export async function updatePlugins(names: 'all' | readonly string[], options: UpdateOptions): Promise<Moved[]> {
+  const dependencies = dependenciesIn(options.configDir);
+  const specs = new Map(dependencies);
+  if (names !== 'all') {
+    for (const name of names) {
+      if (packageOf(name) === SDK) throw new Error(SDK_IS_NOT_A_PLUGIN);
+      if (!specs.has(packageOf(name))) throw new Error(`${packageOf(name)} is not installed in ${options.configDir}.`);
+    }
+  }
+  // The sdk is in `dependencies` because ahpd installs it, and moves with every
+  // call below; it is not a plugin to move or to report.
+  const asked = names === 'all' ? dependencies.map(([name]) => name).filter((name) => name !== SDK) : names;
+  if (asked.length === 0) {
+    options.say(`No plugin is installed in ${options.configDir}.`);
+    return [];
+  }
+  const moving: string[] = [];
+  for (const name of asked) {
+    const spec = specs.get(packageOf(name)) ?? '';
+    if (fromRegistry(spec)) moving.push(name);
+    else options.say(`${packageOf(name)}: ${spec}, left as installed`);
+  }
+  if (moving.length === 0) return [];
+  const targets = moving.map((name) => {
+    if (name !== packageOf(name)) return name;
+    return name.startsWith('@ahpd/') ? pinned(name, options.version) : `${name}@latest`;
+  });
+  const from = moving.map((name) => installedVersion(options.configDir, packageOf(name)));
+  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...daemonsSdk(options.version), ...targets]);
+  if (done.code !== 0) {
+    throw npmFailed(`npm could not update ${moving.map(packageOf).join(', ')}`, done);
+  }
+  const moved: Moved[] = [];
+  moving.forEach((name, at) => {
+    const to = installedVersion(options.configDir, packageOf(name));
+    if (to === from[at]) return;
+    moved.push({ name: packageOf(name), ...(from[at] === undefined ? {} : { from: from[at] }), ...(to === undefined ? {} : { to }) });
+    options.say(`${packageOf(name)}: ${from[at] ?? 'not installed'} to ${to ?? 'not installed'}`);
+  });
+  if (moved.length === 0) options.say('Nothing to update.');
+  return moved;
 }
 
 /** What `plugin remove` was given and where it looks. */
@@ -284,10 +458,12 @@ export async function removePlugins(names: readonly string[], options: RemoveOpt
     ? `${options.configFile} did not name ${packages.join(', ')}.`
     : `plugins -= ${dropped.join(', ')} in ${options.configFile}.`);
   if (!options.uninstall) return;
-  const done = await options.run('npm', ['uninstall', '--prefix', options.configDir, ...packages]);
+  // The sdk is the daemon's, installed beside every plugin, and stays.
+  const uninstalled = packages.filter((name) => name !== SDK);
+  if (uninstalled.length === 0) return;
+  const done = await options.run('npm', ['uninstall', '--prefix', options.configDir, ...uninstalled]);
   if (done.code !== 0) {
-    const why = done.stderr.trim();
-    throw new Error(`npm could not uninstall ${packages.join(', ')}: ${why === '' ? `exit ${String(done.code)}` : why}`);
+    throw npmFailed(`npm could not uninstall ${uninstalled.join(', ')}`, done);
   }
-  options.say(`Uninstalled ${packages.join(', ')} from ${options.configDir}.`);
+  options.say(`Uninstalled ${uninstalled.join(', ')} from ${options.configDir}.`);
 }

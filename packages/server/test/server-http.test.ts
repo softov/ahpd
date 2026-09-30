@@ -22,6 +22,7 @@ import type { Options } from '../src/commands/options.js';
 import { apiOrigins } from '../src/commands/run.js';
 import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
 import { apiHandler, withoutApi } from '../src/http.js';
+import { version } from '../src/version.js';
 
 const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
@@ -29,8 +30,11 @@ const MAIN = 'packages/server/src/main.ts';
 const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
 /** A directory holding an `npm` that can wait before it answers. */
 const FAKE_NPM = join(import.meta.dirname, 'fixtures', 'npm-fake');
+/** A registry nothing listens on, so an install's manifest check is left to the fake npm. */
+const NO_REGISTRY = 'http://127.0.0.1:1';
 const fakeNpm = (extra: Record<string, string> = {}): Record<string, string> => ({
   PATH: `${FAKE_NPM}:${process.env['PATH'] ?? ''}`,
+  npm_config_registry: NO_REGISTRY,
   ...extra,
 });
 
@@ -515,6 +519,41 @@ describe('a request signs in', () => {
     expect(asRoot.status).toBe(400);
   }, 30000);
 
+  it('serves a plugin update only to the deployment token, and answers what moved', async () => {
+    writeFileSync(join(home, 'ahpd', 'package.json'), JSON.stringify({ dependencies: { 'left-pad': '^1.0.0' } }));
+    mkdirSync(join(home, 'ahpd', 'node_modules', 'left-pad'), { recursive: true });
+    writeFileSync(join(home, 'ahpd', 'node_modules', 'left-pad', 'package.json'), JSON.stringify({ name: 'left-pad', version: '1.0.0' }));
+    const log = join(home, 'npm.log');
+    const directory = fileUsers({ path: usersFile });
+    await directory.add('root', ['admin']);
+    const admin = await directory.mint('root');
+    const one = await daemon(
+      { http: true, plugins: [BACKEND] },
+      ['--connection-token', 'root-secret', '--users', usersFile],
+      fakeNpm({ FAKE_NPM_LOG: log, FAKE_NPM_LANDS: 'left-pad 1.3.0' }),
+    );
+    const url = `http://127.0.0.1:${String(one.port)}/api/plugin/update`;
+    const refused = await post(url, admin, { name: ['all'] });
+    expect(refused.status).toBe(403);
+    expect((await refused.json() as { message: string }).message).toContain('only the deployment token may');
+
+    const neither = await post(url, 'root-secret', {});
+    expect(neither.status).toBe(400);
+    const mixed = await post(url, 'root-secret', { name: ['all', 'left-pad'] });
+    expect(mixed.status).toBe(400);
+    expect((await mixed.json() as { message: string }).message).toContain('ahpd plugin update all');
+
+    const moved = await post(url, 'root-secret', { name: ['left-pad'] });
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toEqual({ plugins: [{ name: 'left-pad', from: '1.0.0', to: '1.3.0' }], restart: true });
+    expect(readFileSync(log, 'utf8')).toContain(`start install --prefix ${join(home, 'ahpd')} --legacy-peer-deps @ahpd/sdk@${version()} left-pad@latest`);
+
+    // The same update again moves nothing: an empty list, and no restart.
+    const unmoved = await post(url, 'root-secret', { name: ['all'] });
+    expect(unmoved.status).toBe(200);
+    expect(await unmoved.json()).toEqual({ plugins: [] });
+  }, 30000);
+
   it('answers user list for a role that holds users:write', async () => {
     writeFileSync(usersFile, JSON.stringify({ roles: { keeper: ['users:write'] }, users: [] }));
     const directory = fileUsers({ path: usersFile });
@@ -601,6 +640,17 @@ describe('a request signs in', () => {
     // Each npm ends before the next one starts.
     const steps = readFileSync(log, 'utf8').trim().split('\n').map((line) => line.split(' ')[0]);
     expect(steps).toEqual(['start', 'end', 'start', 'end']);
+  }, 30000);
+
+  it('keeps npm\'s reason in a served install that fails', async () => {
+    const one = await daemon(
+      { http: true, plugins: [BACKEND] },
+      ['--connection-token', 'root-secret'],
+      fakeNpm({ FAKE_NPM_EXIT: '1', FAKE_NPM_STDERR: 'npm error code E404' }),
+    );
+    const answered = await post(`http://127.0.0.1:${String(one.port)}/api/plugin/install`, 'root-secret', { name: ['left-pad'] });
+    expect(answered.status).toBe(400);
+    expect((await answered.json() as { message: string }).message).toContain('npm error code E404');
   }, 30000);
 
   it('tells a served install to restart the daemon that answered', async () => {

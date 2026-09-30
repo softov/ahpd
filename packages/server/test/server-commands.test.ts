@@ -64,6 +64,7 @@ describe('the command registry', () => {
     expect(scopes('daemon.config')).toEqual(['config:write']);
     expect(scopes('plugin.install')).toEqual(['config:write']);
     expect(scopes('plugin.remove')).toEqual(['config:write']);
+    expect(scopes('plugin.update')).toEqual(['config:write']);
     for (const id of ['user.list', 'user.add', 'user.rm', 'user.token']) {
       expect(scopes(id)).toEqual(['users:write']);
     }

@@ -1,0 +1,100 @@
+---
+title: A plugin update moves all or the named plugins
+domain: daemon
+status: planned
+priority: high
+created: 2026-09-29
+revalidated: 2026-09-29
+requires: []
+refs:
+  - "[code://packages/server/src/commands/plugin.ts#L70-L126](../../../../packages/server/src/commands/plugin.ts#L70-L126) - `plugin install` and `plugin remove`, the shape `update` copies"
+  - "[code://packages/server/src/install.ts#L92-L97](../../../../packages/server/src/install.ts#L92-L97) - `pinned`"
+  - "[code://packages/server/src/install.ts#L233](../../../../packages/server/src/install.ts#L233) - `installPlugins`, and how npm's failure is reported"
+  - "[code://docs/DAEMON.md#L36-L70](../../../../docs/DAEMON.md#L36-L70) - the plugin commands and the 0.6 upgrade note"
+  - "npm://@cofold/terminal@^0.2.0 - `unknown command` for a command missing its required argument; fixed in cofold commands/03"
+---
+
+## Goal
+
+After upgrading the daemon, `ahpd plugin update` brings every installed plugin to the matching version in one step.
+An install npm refuses says which installed package blocks it and what to run, and `ahpd plugin install` with no name says a name is needed.
+
+## Reconnaissance
+
+The files read are the `refs` above.
+
+### Runtime path
+
+```
+npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> npm i @ahpd/agent-claude@0.8.0 ... in the config dir
+  -> ERESOLVE: @ahpd/agent-acp 0.7.0 (installed, not loaded) peers @ahpd/sdk ^0.7 -> ahpd prints npm's error twice
+```
+
+### Gaps
+
+- No command upgrades the plugins; a partial install can never resolve across a minor.
+- The failure repeats npm's whole error and never names the package that blocks it.
+- `ahpd plugin install` with no name reads `unknown command "plugin install". Did you mean "plugin install"?`.
+
+## Decisions locked in
+
+| Decision | Source |
+| --- | --- |
+| [`ahpd plugin update` takes `all` or the names to move](../../../decisions/plugin-update-takes-all-or-names.md) | Softov, 2026-09-29 |
+| [ahpd installs the daemon's own @ahpd/sdk version beside the plugins, and npm checks no peers](../../../decisions/the-daemon-installs-its-own-sdk-beside-the-plugins.md) | Softov, 2026-09-29 |
+
+| What | Source | Task |
+| --- | --- | --- |
+| `update all` moves every registry dependency in the configuration directory, `update <name>...` only those named; an `@ahpd/*` package goes to the daemon's version, as `pinned` does, any other to `latest` | [decision plugin-update-takes-all-or-names](../../../decisions/plugin-update-takes-all-or-names.md); (defaulted: the version rule is `pinned`'s) | 01 |
+| `update` has the CLI and HTTP surfaces `install` has, the same scope and `deploymentTokenOnly`, and says to restart as `install` does | (defaulted: the shape of `plugin install`) | 01 |
+| No resolve hook | [decision the-daemon-installs-its-own-sdk-beside-the-plugins](../../../decisions/the-daemon-installs-its-own-sdk-beside-the-plugins.md) | 06 |
+| Install and update run npm with `--legacy-peer-deps` and `@ahpd/sdk` at the daemon's version; no refusal names a blocking plugin | [decision the-daemon-installs-its-own-sdk-beside-the-plugins](../../../decisions/the-daemon-installs-its-own-sdk-beside-the-plugins.md) | 08 |
+| Our plugins' `@ahpd/sdk` peer range is `">=0.8"`, not `"^0.8"`, so a later daemon minor still loads them | Softov, 2026-09-29: "Something like requiresSdk: \">=2\" is enough in some cases and maybe necessary. right?", then asked "Change our six plugins' @ahpd/sdk peer range from \"^0.8\" to \">=0.8\"?": "Add it to daemon/09" | 09 |
+| `@microsoft/agent-host-protocol` is a `dependency` of `@ahpd/sdk`, not a peer: the sdk imports it at runtime, and `--legacy-peer-deps` leaves peers out | Softov, 2026-09-29, asked "Move it to the sdk's `dependencies` (same range ^0.9.0, no new package)?": "Make it a dependency" | 08 |
+| `plugin install` refuses, before npm, a registry package whose manifest at the version it would install has no `ahpd` field, read from `<registry>/<name>/<version or tag>`; `update` prints the versions npm installed | Softov, 2026-09-29, after `plugin install @softov/ahpc` enabled a package that is not a plugin: "maybe we need to check package.json?", then "this is possible? GET https://registry.npmjs.org/@ahpd%2Fagent-claude/latest or something alike" | 10 |
+| `update`'s JSON and HTTP answer lists only what moved, as `{ name, from, to }` | Softov's `plugin update all --json`, 2026-09-29: `plugins: ["@ahpd/agent-pi"]` beside `Nothing to update.` | 11 |
+| `update` moves only packages installed from the npm registry; a dependency whose spec is a path, a link, a git or an https URL is left as installed and named as left alone | Softov, 2026-09-29, asked "`plugin update` moves every dependency in the config dir. What about one installed from a local path or git?": "Leave it as installed" | 01 |
+| Any failed npm call ends at the terminal with what failed and not npm's text, which already streamed; over HTTP the error keeps npm's reason | Softov, 2026-09-29, asked "Any npm failure other than the peer refusal still prints npm's error twice at the terminal. Which copy goes?": "Terminal drops it" | 02 |
+| The JSON-RPC error path reads the code from an error named `RpcError` with a numeric `code` rather than `instanceof`; the computer plugin pins the container's server to `PluginContext.version` | [decision the-daemon-installs-its-own-sdk-beside-the-plugins](../../../decisions/the-daemon-installs-its-own-sdk-beside-the-plugins.md) | 06 |
+| `all` beside names is refused, saying the two forms | Softov, 2026-09-29, asked "The builder made `ahpd plugin update all <name>` (all beside names) a refusal. Keep it?": "Keep the refusal" | 01 |
+| `ahpd plugin install` with no name says the name is needed, fixed in `@cofold/terminal` for every command | Softov, 2026-09-29, asked "How should ahpd upgrade plugins, so a 0.7 to 0.8 upgrade works?", chosen option: "`plugin install` stays as it is, apart from the two message fixes" | 03 |
+
+## Proposed architecture
+
+- **Data flow** - `plugin update` reads the configuration directory's `package.json`, builds each name with its version, and runs one `npm install` there; `config.json` is not touched.
+- **Layer responsibilities** - server only; the missing-argument message is cofold's.
+- **Source-of-truth files** - [`code://packages/server/src/install.ts`](../../../../packages/server/src/install.ts)
+
+## Tasks
+
+| Task | Status | Depends on |
+| --- | --- | --- |
+| [01 - `ahpd plugin update`](task-01-plugin-update.md) | implemented | - |
+| [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | implemented | - |
+| [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | todo | cofold commands/03 released |
+| [04 - Docs](task-04-docs.md) | implemented | 01, 02, 06, 08 |
+| [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
+| [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | implemented | - |
+| [07 - Updating named plugins is refused while another is behind](task-07-update-one-refuses-a-plugin-behind.md) | dropped | 06 |
+| [08 - Install and update put the daemon's sdk beside the plugins](task-08-the-daemon-pins-the-sdk.md) | implemented | 06 |
+| [09 - Our plugins take any @ahpd/sdk from 0.8 on](task-09-a-plugin-names-its-oldest-sdk.md) | implemented | 08 |
+| [10 - Install refuses a package that is not a plugin](task-10-install-refuses-a-package-that-is-not-a-plugin.md) | implemented | 08 |
+| [11 - Update answers what moved](task-11-update-answers-what-moved.md) | implemented | 10 |
+
+## Risks and tradeoffs
+
+- A dependency the person pinned by hand to another version is moved too; `update` says each move it made.
+
+## Resume state
+
+- **Done so far:** in `/github/.worktrees/ahpd-fixes`, uncommitted: tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone.
+- **Next action:** Softov checks again; task 03 after the cofold release.
+- **Open questions:** none.
+- **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
+
+## Final verification checklist
+
+- [ ] A configuration directory with four 0.7.0 `@ahpd` plugins and a 0.8.0 daemon: `ahpd plugin update` makes one npm call naming all four at 0.8.0.
+- [ ] A refused install's message names the blocking package and `ahpd plugin update`, once.
+- [ ] `ahpd plugin install` with no name says a name is needed.
+- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.

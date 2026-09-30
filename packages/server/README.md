@@ -31,6 +31,8 @@ ahpd --plugin @ahpd/agent-claude --path /work/project
 
 `ahpd plugin install` runs `npm install` in the configuration directory, where a bare plugin name is resolved from, and adds the name to `plugins` in `config.json` so the next run loads it. A plugin installed with `npm i -g` is not seen.
 
+To upgrade, run `npm i -g @ahpd/server`, then `ahpd plugin update all` to move every installed plugin to the daemon's version (or `ahpd plugin update <name>...` for only some), then restart the daemon. ahpd installs the daemon's own `@ahpd/sdk` beside the plugins, so one plugin never blocks another, and a plugin whose `@ahpd/sdk` range leaves out the daemon's is refused when the daemon loads it.
+
 npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
 It listens on `ws://127.0.0.1:9187`. Run it with no arguments to serve the directory you are in.
@@ -47,6 +49,8 @@ ahpd status                 say whether one is running, and where
 ahpd config                 print the config file path and its contents
 ahpd plugin install <name>  install a plugin and add it to the config
 ahpd plugin list            list the configured plugins
+ahpd plugin update all      move every installed plugin to the daemon's version
+ahpd plugin update <name>   move only the plugins named
 ```
 
 `start` runs the same program detached. It writes its output to `daemon.log` and its pid and URL to `daemon.json`, both next to the config, which is where `status` reads from.

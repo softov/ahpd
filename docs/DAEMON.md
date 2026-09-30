@@ -44,11 +44,35 @@ ahpd plugin install @ahpd/agent-claude
 ```
 
 `ahpd plugin install` runs `npm install` in the configuration directory and
-adds the name to `plugins` in `config.json`, so the next run loads it. A plugin
-installed with `npm i -g` is invisible to that resolution. `--no-enable`
-installs without naming it, `--keep` on `remove` drops the name without
-uninstalling the package, and `--config-file` edits another file than the
-default one.
+adds the name to `plugins` in `config.json`, so the next run loads it. Before
+npm runs, it refuses a registry package whose `package.json` has no `"ahpd"`
+field. A plugin installed with `npm i -g` is invisible to that resolution.
+`--no-enable` installs without naming it, `--keep` on `remove` drops the name
+without uninstalling the package, and `--config-file` edits another file than
+the default one.
+
+Every plugin takes `@ahpd/sdk` as a peer, and states the oldest one it needs,
+such as `>=0.8`. ahpd installs the daemon's own `@ahpd/sdk` beside the plugins
+with every install and update, and asks npm to check no peer, so one plugin
+never blocks installing or updating another. Whether a plugin fits is asked when
+the daemon loads it: one whose range leaves out the daemon's `@ahpd/sdk`, such
+as a plugin for an older minor that says `^0.7`, is refused with its range and
+the daemon's version, and the others load. An upgrade is the daemon, then its
+plugins, then a restart:
+
+```bash
+npm i -g @ahpd/server
+ahpd plugin update all
+ahpd stop && ahpd start
+```
+
+`ahpd plugin update all` runs one `npm install` in the configuration directory
+naming every package installed there from the npm registry: each `@ahpd/*` one
+at the daemon's version, any other at `latest`. `ahpd plugin update <name>...`
+moves only the packages named, each of which must be installed there. One
+installed from a path, a link, git or a URL is left as it is. It says each move,
+or `Nothing to update.` when no version moved, and leaves `config.json` as it
+is. `@ahpd/sdk` is not a plugin, so `install` and `update` refuse it by name.
 
 `ahpd config` prints the directory if it is somewhere else, which it is when
 `XDG_CONFIG_HOME` says so. A path in `plugins` is resolved instead against the
@@ -89,6 +113,9 @@ ahpd plugin install <name>  install a plugin into the configuration directory
                             naming it, --config-file edits another file
 ahpd plugin remove <name>   drop it from the configuration and uninstall it,
                             unless --keep
+ahpd plugin update all      move every installed plugin to the daemon's
+                            version, in one npm call
+ahpd plugin update <name>   move only the plugins named
 ahpd user list              who is in the user file
 ahpd user add <id>          add a person, with --role and --issuer
 ahpd user token <id>        mint their credential, shown once; --url prints

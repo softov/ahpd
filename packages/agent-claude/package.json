@@ -60,7 +60,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@ahpd/sdk": "^0.8",
+    "@ahpd/sdk": ">=0.8",
     "@microsoft/agent-host-protocol": "^0.9.0"
   },
   "devDependencies": {

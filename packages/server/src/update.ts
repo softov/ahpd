@@ -67,6 +67,28 @@ export const registry = (env: NodeJS.ProcessEnv = process.env): string => {
   return named ? named.replace(/\/+$/, '') : 'https://registry.npmjs.org';
 };
 
+/** How the registry is asked: the global `fetch`, or a stand-in for it. */
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * One GET against the registry, answered as parsed JSON, or nothing.
+ *
+ * `path` follows the registry's base and is sent as written. Every failure is
+ * the same nothing: offline, a timeout, an answer that is not `ok`, and a body
+ * that is not JSON.
+ */
+export async function askRegistry(path: string, options: { registry?: string; timeoutMs?: number; fetch?: Fetch } = {}): Promise<unknown> {
+  try {
+    const answer = await (options.fetch ?? fetch)(`${options.registry ?? registry()}/${path}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
+    });
+    if (!answer.ok) return undefined;
+    return await answer.json() as unknown;
+  }
+  catch { return undefined; }
+}
+
 /** What the file says, or nothing: a missing, broken or misshapen file is the same answer. */
 export function readUpdate(): Update | undefined {
   try {
@@ -96,16 +118,10 @@ export const stale = (found: Update | undefined, now = Date.now(), maxAgeMs = MA
  * process that has better things to say.
  */
 export async function refreshUpdate(options: { name: string; registry?: string; timeoutMs?: number }): Promise<void> {
-  const at = `${options.registry ?? registry()}/-/package/${options.name}/dist-tags`;
+  const said = await askRegistry(`-/package/${options.name}/dist-tags`, options) as { latest?: unknown } | null | undefined;
+  if (typeof said?.latest !== 'string') return;
+  const record: Update = { name: options.name, latest: said.latest, checkedAt: new Date().toISOString() };
   try {
-    const answer = await fetch(at, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
-    });
-    if (!answer.ok) return;
-    const said = await answer.json() as { latest?: unknown } | null;
-    if (typeof said?.latest !== 'string') return;
-    const record: Update = { name: options.name, latest: said.latest, checkedAt: new Date().toISOString() };
     ensureConfigDir();
     writeFileSync(updatePath(), `${JSON.stringify(record, null, 2)}\n`);
   }

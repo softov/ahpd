@@ -299,7 +299,7 @@ else. There is no `manifest.json`.
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
-  "peerDependencies": { "@ahpd/sdk": "^0.8" },
+  "peerDependencies": { "@ahpd/sdk": ">=0.8" },
   "ahpd": { "entry": "./dist/index.js", "title": "Mine" }
 }
 ```
@@ -309,7 +309,7 @@ else. There is no `manifest.json`.
 | `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported |
 | `ahpd.title` | What `ahpd plugin list` prints, unless the module exports its own `title` |
 | `ahpd.options` | A required option the configuration must set before the plugin is `ready`. `true` or `{ "required": true }` means required. It is only reported by `ahpd plugin list`, which imports nothing; a load holds the options to the module's `optionsSchema` instead |
-| `peerDependencies["@ahpd/sdk"]` | The compatibility range, checked **before** the module is imported |
+| `peerDependencies["@ahpd/sdk"]` | The compatibility range, checked **before** the module is imported. It states the oldest `@ahpd/sdk` the plugin needs |
 
 Compatibility supports `*`, an exact version, `^`, `~`, `>=`, `<=`, `>`, `<`,
 `=`, and a space-separated conjunction such as `>=0.8 <0.9`. Anything it cannot

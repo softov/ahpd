@@ -3,15 +3,16 @@
  *
  * The listing reads the same flags a run does, through the same declaration, so
  * `--plugin` and `--no-plugins` mean here what they mean there, and nothing
- * below imports a plugin or builds a host. Installing and removing are about
- * the machine rather than a run, so they take only their own flags.
+ * below imports a plugin or builds a host. Installing, updating and removing
+ * are about the machine rather than a run, so they take only their own flags.
  */
 
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import { configDir, configPath } from '../config.js';
 import { running } from '../daemon.js';
-import { installPlugins, removePlugins, run as runProgram } from '../install.js';
+import { NpmFailure, installPlugins, removePlugins, run as runProgram, updatePlugins } from '../install.js';
+import type { Moved } from '../install.js';
 import { describePlugin, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
 import { withoutSpecSecrets, withoutUserinfoIn } from './config.js';
@@ -55,16 +56,26 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
   });
 
   /*
-   * The writes, one at a time: an install or a remove starts once the one before
-   * it has settled, failure or not, so two served requests never run npm in the
-   * same directory together or edit the configuration file between each
-   * other's steps.
+   * The writes, one at a time: an install, an update or a remove starts once
+   * the one before it has settled, failure or not, so two served requests never
+   * run npm in the same directory together or edit the configuration file
+   * between each other's steps.
    */
   let settled: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
     const turn = settled.then(work);
     settled = turn.catch(() => undefined);
     return turn;
+  };
+
+  /*
+   * What a failed write says. At the terminal npm's error has already been
+   * written there as npm ran, so only what failed is said; served, nothing
+   * reached the caller, so npm's reason goes with it.
+   */
+  const failure = (error: unknown): string => {
+    if (error instanceof NpmFailure && served === undefined) return error.failed;
+    return error instanceof Error ? error.message : String(error);
   };
 
   const write = (sub: 'install' | 'remove') => registry.action({
@@ -99,7 +110,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         if (sub === 'install') {
           await installPlugins(names, {
             configDir: configDir(), configFile: configFile ?? configPath(),
-            version: version(), enable: !context.flag('noEnable'), run: runProgram, say,
+            version: version(), enable: !context.flag('noEnable'), run: runProgram, fetch, say,
           });
         }
         else {
@@ -110,7 +121,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         }
       }
       catch (error) {
-        stop(error instanceof Error ? error.message : String(error));
+        stop(failure(error));
       }
       /*
        * The list a running daemon serves is the one it started with, and a
@@ -123,5 +134,43 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     }),
   });
 
-  return [list, write('install'), write('remove')];
+  const update = registry.action({
+    id: 'plugin.update',
+    summary: 'Move every installed plugin, or the ones named, to the version that matches this daemon',
+    description: 'One npm call in the configuration directory: every @ahpd package at the daemon\'s version, any other from the registry at latest, and one from a path, link, git or URL left as installed.',
+    surfaces: { cli: { pattern: ['plugin', 'update', ':name...'] }, http: { method: 'POST', path: '/plugin/update' } },
+    input: {
+      name: { type: 'array', items: { type: 'string' }, description: 'all, or a package name. One or more.' },
+    },
+    scopes: ['config:write'],
+    // An update runs code in this process as an install does, so over HTTP it
+    // is the deployment's own token and never a person.
+    meta: { deploymentTokenOnly: true },
+    run: (context) => oneAtATime(async () => {
+      const payload = context.globals['json'] === true || context.globals['quiet'] === true;
+      const say = (line: string): void => {
+        if (payload) context.error(line);
+        else context.write(`${line}\n`);
+      };
+      const asked = context.list<string>('name');
+      // `all` is a word of its own, so it is never one name among others.
+      if (asked.includes('all') && asked.length > 1) {
+        stop('Say which plugins to update: ahpd plugin update all, or ahpd plugin update <name>...');
+      }
+      let moved: Moved[] = [];
+      try {
+        moved = await updatePlugins(asked.length === 1 && asked[0] === 'all' ? 'all' : asked, {
+          configDir: configDir(), version: version(), run: runProgram, say,
+        });
+      }
+      catch (error) {
+        stop(failure(error));
+      }
+      const restart = moved.length > 0 && (served !== undefined || running() !== undefined);
+      if (restart) say('Restart the daemon to load the change: ahpd stop && ahpd start');
+      return output({ plugins: moved, ...(restart ? { restart: true } : {}) }, '');
+    }),
+  });
+
+  return [list, write('install'), write('remove'), update];
 };

@@ -650,6 +650,8 @@ export const apply: Plugin['apply'] = (host, options) => {
       // The same label the computers carry, so the CLI finds the folder's own
       // container rather than making a second one beside it.
       label,
+      // The daemon's version, which the server installed inside is pinned to.
+      version: host.version,
       /*
        * The computer a folder already is, so a relay finds rather than makes.
        *

@@ -182,7 +182,8 @@ it('installs a host when the image has none, and configures it either way', asyn
   // runs a checkout mounted into the container was told its image had no host
   // and watched a package it will never run being installed.
   expect(commands[0]).toBe(`command -v '${process.execPath}'`);
-  expect(commands[1]).toMatch(/^npm i -g @ahpd\/server@\d\S* --allow-scripts=node-pty$/);
+  // No version given, so the published latest.
+  expect(commands[1]).toBe('npm i -g @ahpd/server --allow-scripts=node-pty');
   // The backend, installed into the configuration directory inside the
   // container: a bare name is resolved from there and from nowhere else, so a
   // global install would leave the nested host exiting on startup.
@@ -207,6 +208,14 @@ it('installs a host when the image has none, and configures it either way', asyn
   expect(read().commands[4]).toContain('--path');
   expect(read().commands[4]).toContain('--config-file');
   expect(read().commands[4]).not.toContain('--port');
+  await until(() => where.said.length > 0 || where.closed.length > 0);
+});
+
+it('pins the host it installs to the version it was given', async () => {
+  wrote({ hostPresent: false, passthrough: [process.execPath] });
+  const where = sink();
+  await launcher({ version: '0.8.77' }).connect({ ...connect, workspaceFolder: workspace() }, where);
+  expect(read().commands[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
   await until(() => where.said.length > 0 || where.closed.length > 0);
 });
 

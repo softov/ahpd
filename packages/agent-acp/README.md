@@ -40,7 +40,7 @@ The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of
 ## In your own host
 
 ```bash
-pnpm add @ahpd/agent-acp @ahpd/sdk @microsoft/agent-host-protocol
+pnpm add @ahpd/agent-acp @ahpd/sdk
 ```
 
 ```ts

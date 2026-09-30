@@ -164,4 +164,51 @@ describe('an error the handler throws', () => {
       jsonrpc: '2.0', id: 3, error: { code: -32001, message: 'Nothing there' },
     });
   });
+
+  it('keeps the code and data of an error shaped like RpcError from another copy of the sdk', async () => {
+    /** `RpcError` as a second installed copy of the sdk declares it: the same shape, another class. */
+    class CopiedRpcError extends Error {
+      readonly code: number;
+      readonly data?: unknown;
+      constructor(code: number, message: string, data?: unknown) {
+        super(message);
+        this.name = 'RpcError';
+        this.code = code;
+        this.data = data;
+      }
+    }
+    const socket = wire();
+    const peer = createPeer(socket);
+    receive(JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'subscribe' }), peer, () => {
+      throw new CopiedRpcError(-32009, 'Not yours', { uri: 'x' });
+    });
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    expect(socket.written[0]).toEqual({
+      jsonrpc: '2.0', id: 4, error: { code: -32009, message: 'Not yours', data: { uri: 'x' } },
+    });
+  });
+
+  it('answers an error whose code is a number but is no RpcError, as an execFile failure is, as an internal error', async () => {
+    const socket = wire();
+    const peer = createPeer(socket);
+    receive(JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'subscribe' }), peer, () => {
+      throw Object.assign(new Error('Command failed: git status'), { code: 128 });
+    });
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    expect(socket.written[0]).toEqual({
+      jsonrpc: '2.0', id: 6, error: { code: -32603, message: 'Command failed: git status' },
+    });
+  });
+
+  it('answers a Node error whose code is a string as an internal error', async () => {
+    const socket = wire();
+    const peer = createPeer(socket);
+    receive(JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'subscribe' }), peer, () => {
+      throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT', data: 'not for the wire' });
+    });
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    expect(socket.written[0]).toEqual({
+      jsonrpc: '2.0', id: 5, error: { code: -32603, message: 'ENOENT: no such file' },
+    });
+  });
 });

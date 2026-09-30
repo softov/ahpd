@@ -1,10 +1,18 @@
 #!/bin/sh
-# A stand-in for npm: waits when the caller says to, says one line, and leaves
-# the code the caller named. With FAKE_NPM_LOG set it appends a line to that
+# A stand-in for npm: waits when the caller says to, says one line, writes
+# FAKE_NPM_STDERR to its standard error when set, and leaves the code the
+# caller named. With FAKE_NPM_LOG set it appends a line to that
 # file as it starts and as it ends, so a case can see whether two runs overlapped.
+# With FAKE_NPM_LANDS set to "<name> <version>", an install writes that
+# package's package.json under the --prefix directory's node_modules.
 
 [ -n "$FAKE_NPM_LOG" ] && echo "start $*" >> "$FAKE_NPM_LOG"
 [ -n "$FAKE_NPM_SLEEP" ] && sleep "$FAKE_NPM_SLEEP"
 echo "npm noise"
+if [ -n "$FAKE_NPM_LANDS" ] && [ "$1" = install ] && [ "$2" = --prefix ]; then
+  mkdir -p "$3/node_modules/${FAKE_NPM_LANDS% *}"
+  printf '{"name":"%s","version":"%s"}\n' "${FAKE_NPM_LANDS% *}" "${FAKE_NPM_LANDS#* }" > "$3/node_modules/${FAKE_NPM_LANDS% *}/package.json"
+fi
+[ -n "$FAKE_NPM_STDERR" ] && printf '%s\n' "$FAKE_NPM_STDERR" >&2
 [ -n "$FAKE_NPM_LOG" ] && echo "end $*" >> "$FAKE_NPM_LOG"
 exit "${FAKE_NPM_EXIT:-0}"

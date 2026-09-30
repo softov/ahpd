@@ -53,13 +53,10 @@
     "prepack": "tsc -p .",
     "test": "cd ../.. && node tools/schema.mjs && vitest run packages/sdk/test"
   },
+  "dependencies": {
+    "@microsoft/agent-host-protocol": "^0.9.0"
+  },
   "optionalDependencies": {
     "ws": "^8.18.0"
-  },
-  "peerDependencies": {
-    "@microsoft/agent-host-protocol": "^0.9.0"
-  },
-  "devDependencies": {
-    "@microsoft/agent-host-protocol": "^0.9.0"
   }
 }

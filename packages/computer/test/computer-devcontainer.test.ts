@@ -421,3 +421,31 @@ it('connect twice for one folder makes one container', async () => {
   expect(dockerHeld(dockerState).machines).toHaveLength(1);
   await answered(dockerState, 3);
 });
+
+it('installs the server in a container at the daemon\'s version, from the plugin\'s context', async () => {
+  const root = temp();
+  const devState = join(root, 'dev.json');
+  writeFileSync(devState, JSON.stringify({ calls: [], commands: [], hostPresent: false, passthrough: [process.execPath] }));
+  const { options, problems } = await loadPlugins(
+    [{ name: SOURCE, options: optionsOf(devState, join(root, 'docker.json'), {
+      devcontainer: {
+        command: process.execPath,
+        args: [DEV],
+        env: { DEVCONTAINER_FAKE_STATE: devState },
+        docker: process.execPath,
+        host: [process.execPath, HOST],
+        plugins: ['@ahpd/agent-cofold'],
+      },
+    }) }],
+    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: REPO, cwd: REPO, log: () => {}, version: '0.8.77' },
+  );
+  expect(problems).toEqual([]);
+  const closed: (string | undefined)[] = [];
+  const said: string[] = [];
+  await options.containers?.connect(
+    { connectionId: 'a', workspaceFolder: workspace(root), name: 'Box' },
+    { message: (t) => { said.push(t); }, output: () => {}, close: (why) => { closed.push(why); } },
+  );
+  expect(devHeld(devState).commands[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
+  for (let i = 0; i < 600 && said.length === 0 && closed.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
+});

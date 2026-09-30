@@ -2,8 +2,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { installPlugins, isPackageName, pinned, removePlugins, run as realRun } from '../src/install.js';
+import { installPlugins, isPackageName, pinned, removePlugins, run as realRun, updatePlugins } from '../src/install.js';
 import type { Ran, Runner } from '../src/install.js';
+import { registry } from '../src/update.js';
+import type { Fetch } from '../src/update.js';
 
 /*
  * `ahpd plugin install` and `ahpd plugin remove`, without npm.
@@ -24,14 +26,45 @@ beforeEach(() => {
 });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
-/** A runner that records every call and lets a verb fail. */
-const fake = (answers: Record<string, Ran> = {}) => {
+/**
+ * A runner that records every call and lets a verb fail. `lands` is what an
+ * install leaves in `node_modules`, as a package name and its version.
+ */
+const fake = (answers: Record<string, Ran> = {}, lands: Record<string, string> = {}) => {
   const calls: { program: string; argv: string[] }[] = [];
   const runner: Runner = async (program, argv) => {
     calls.push({ program, argv: [...argv] });
-    return answers[argv[0] ?? ''] ?? { code: 0, stdout: '', stderr: '' };
+    const answer = answers[argv[0] ?? ''] ?? { code: 0, stdout: '', stderr: '' };
+    if (argv[0] === 'install' && answer.code === 0) {
+      for (const [name, version] of Object.entries(lands)) {
+        mkdirSync(join(configDir, 'node_modules', name), { recursive: true });
+        writeFileSync(join(configDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+      }
+    }
+    return answer;
   };
   return { runner, calls };
+};
+
+/** A registry that answers every version's manifest with an `ahpd` field. */
+const aPlugin: Fetch = async () => Response.json({ ahpd: { entry: './dist/index.js' } });
+
+/**
+ * A registry with the manifests given, by the path after the registry's base:
+ * an object is a manifest, `404` is a missing version, and an `Error` is a
+ * request that never answered. Every path asked is recorded.
+ */
+const fakeRegistry = (answers: Record<string, object | 404 | Error>) => {
+  const asked: string[] = [];
+  const fetch: Fetch = async (url) => {
+    const path = String(url).slice(registry().length + 1);
+    asked.push(path);
+    const answer = answers[path];
+    if (answer instanceof Error) throw answer;
+    if (answer === undefined || answer === 404) return new Response('{"error":"Not found"}', { status: 404 });
+    return Response.json(answer);
+  };
+  return { fetch, asked };
 };
 
 const said: string[] = [];
@@ -67,7 +100,7 @@ it('recognises the specs it can install and refuses the rest', () => {
 it('installs into the configuration directory and names the packages there', async () => {
   const { runner, calls } = fake();
   await installPlugins(['@ahpd/agent-claude', 'left-pad@1'], {
-    configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
+    configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say,
   });
 
   const install = calls.find((one) => one.argv[0] === 'install');
@@ -76,7 +109,7 @@ it('installs into the configuration directory and names the packages there', asy
   // install, and the only thing it would have built here is the SDK's
   // optional node-pty, which the daemon gets from its own global install.
   expect(install?.argv).toEqual([
-    'install', '--prefix', configDir,
+    'install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@9.9.9',
     '@ahpd/agent-claude@9.9.9', 'left-pad@1',
   ]);
   // The list holds package names, which is what the loader resolves: a
@@ -87,7 +120,7 @@ it('installs into the configuration directory and names the packages there', asy
 
 it('names a scoped package without the version it was installed at', async () => {
   const { runner, calls } = fake();
-  await installPlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
+  await installPlugins(['@ahpd/agent-acp@0.7.0'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say });
   expect(calls.find((one) => one.argv[0] === 'install')?.argv.at(-1)).toBe('@ahpd/agent-acp@0.7.0');
   expect(read().plugins).toEqual(['@ahpd/agent-acp']);
 });
@@ -102,7 +135,7 @@ it('removes a name given with a version', async () => {
 
 it('refuses a path and a scheme before npm runs', async () => {
   const { runner, calls } = fake();
-  const options = { configDir, configFile, version: '9.9.9', enable: true, run: runner, say };
+  const options = { configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say };
   await expect(installPlugins(['./my-plugin'], options)).rejects.toThrow(/not a package name/);
   await expect(installPlugins(['npm:@ahpd/agent-claude'], options)).rejects.toThrow(/not a package name/);
   expect(calls).toEqual([]);
@@ -112,7 +145,7 @@ it('adds a name once, and keeps every other key and entry', async () => {
   write({ port: 1234, plugins: ['@ahpd/existing', { name: '@ahpd/configured', options: { token: 'shh' } }] });
   const { runner } = fake();
   await installPlugins(['@ahpd/existing', '@ahpd/agent-claude'], {
-    configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
+    configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say,
   });
 
   const held = read();
@@ -130,7 +163,7 @@ it('adds a name once, and keeps every other key and entry', async () => {
   expect(text.endsWith('\n')).toBe(true);
 
   // A second install of the same name changes nothing, file included.
-  await installPlugins(['@ahpd/agent-claude'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, say });
+  await installPlugins(['@ahpd/agent-claude'], { configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say });
   expect(readFileSync(configFile, 'utf8')).toBe(text);
 });
 
@@ -139,14 +172,14 @@ it('leaves the configuration alone with --no-enable', async () => {
   const before = readFileSync(configFile, 'utf8');
   const { runner } = fake();
   await installPlugins(['@ahpd/agent-claude'], {
-    configDir, configFile, version: '9.9.9', enable: false, run: runner, say,
+    configDir, configFile, version: '9.9.9', enable: false, run: runner, fetch: aPlugin, say,
   });
   expect(readFileSync(configFile, 'utf8')).toBe(before);
   // And one that is not there is not created, which is what the container
   // install relies on.
   rmSync(configFile);
   await installPlugins(['@ahpd/agent-claude'], {
-    configDir, configFile, version: '9.9.9', enable: false, run: runner, say,
+    configDir, configFile, version: '9.9.9', enable: false, run: runner, fetch: aPlugin, say,
   });
   expect(existsSync(configFile)).toBe(false);
 });
@@ -173,7 +206,7 @@ it('drops the name with --keep but leaves the package installed', async () => {
 it('refuses with npm\'s own words when the install fails', async () => {
   const { runner } = fake({ install: { code: 1, stdout: '', stderr: 'E404 no such package' } });
   await expect(installPlugins(['@ahpd/agent-claude'], {
-    configDir, configFile, version: '9.9.9', enable: true, run: runner, say,
+    configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say,
   })).rejects.toThrow(/@ahpd\/agent-claude: E404 no such package/);
   // Nothing was named, because nothing was installed.
   expect(existsSync(configFile)).toBe(false);
@@ -197,3 +230,235 @@ it('streams more from npm than one buffer holds', async () => {
     process.stderr.write = real;
   }
 }, 30000);
+
+/** A configuration directory as npm leaves it: `package.json` and each package's own. */
+const installed = (packages: Record<string, string>): void => {
+  mkdirSync(configDir, { recursive: true });
+  const dependencies = Object.fromEntries(Object.entries(packages).map(([name, version]) => [name, `^${version}`]));
+  writeFileSync(join(configDir, 'package.json'), `${JSON.stringify({ dependencies }, null, 2)}\n`);
+  for (const [name, version] of Object.entries(packages)) {
+    mkdirSync(join(configDir, 'node_modules', name), { recursive: true });
+    writeFileSync(join(configDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+  }
+};
+
+it('updates every installed package in one npm call, this project\'s to the daemon and the rest to latest', async () => {
+  installed({
+    '@ahpd/agent-acp': '0.7.0',
+    '@ahpd/agent-claude': '0.7.0',
+    '@ahpd/agent-cofold': '0.7.0',
+    '@ahpd/computer': '0.7.0',
+    'left-pad': '1.0.0',
+  });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-acp': '0.8.0', 'left-pad': '1.3.0' });
+  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+
+  expect(calls).toEqual([{
+    program: 'npm',
+    argv: [
+      'install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0',
+      '@ahpd/agent-acp@0.8.0', '@ahpd/agent-claude@0.8.0', '@ahpd/agent-cofold@0.8.0', '@ahpd/computer@0.8.0',
+      'left-pad@latest',
+    ],
+  }]);
+  // Each move, from the version that was installed to the one npm left, and
+  // nothing for a package npm did not move.
+  expect(said).toContain('@ahpd/agent-acp: 0.7.0 to 0.8.0');
+  expect(said).toContain('left-pad: 1.0.0 to 1.3.0');
+  expect(said.filter((line) => line.startsWith('@ahpd/agent-claude:'))).toEqual([]);
+});
+
+it('runs no npm when nothing is installed', async () => {
+  said.length = 0;
+  const { runner, calls } = fake();
+  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  installed({});
+  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  expect(calls).toEqual([]);
+  expect(said).toEqual([`No plugin is installed in ${configDir}.`, `No plugin is installed in ${configDir}.`]);
+});
+
+it('fails an update with npm\'s reason, once', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0' });
+  const { runner } = fake({ install: { code: 1, stdout: '', stderr: 'E404 no such package' } });
+  const failed = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }).catch((error: unknown) => error as Error);
+  expect(failed).toBeInstanceOf(Error);
+  expect((failed as Error).message).toBe('npm could not update @ahpd/agent-claude: E404 no such package');
+});
+
+it('leaves a package installed from outside the registry as it is, and says so', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0' });
+  const dependencies = {
+    '@ahpd/agent-claude': '^0.7.0',
+    'mine-path': '../mine',
+    'mine-file': 'file:../mine',
+    'mine-link': 'link:../mine',
+    'mine-git': 'git+https://example.test/mine.git',
+    'mine-github': 'github:someone/mine',
+    'mine-git-plain': 'git://example.test/mine.git',
+    'mine-tarball': 'https://example.test/mine.tgz',
+  };
+  writeFileSync(join(configDir, 'package.json'), JSON.stringify({ dependencies }));
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
+  const moved = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  expect(calls.map((one) => one.argv)).toEqual([['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0']]);
+  expect(moved).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  for (const [name, spec] of Object.entries(dependencies).slice(1)) {
+    expect(said).toContain(`${name}: ${spec}, left as installed`);
+  }
+});
+
+it('runs no npm when every package came from outside the registry', async () => {
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'package.json'), JSON.stringify({ dependencies: { mine: 'file:../mine' } }));
+  said.length = 0;
+  const { runner, calls } = fake();
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  expect(calls).toEqual([]);
+  expect(said).toContain('mine: file:../mine, left as installed');
+});
+
+it('updates only the packages it is named', async () => {
+  installed({
+    '@ahpd/agent-acp': '0.8.0',
+    '@ahpd/agent-claude': '0.7.0',
+    'left-pad': '1.0.0',
+  });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
+  expect(await updatePlugins(['@ahpd/agent-claude'], { configDir, version: '0.8.0', run: runner, say }))
+    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(calls.map((one) => one.argv)).toEqual([['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0']]);
+  expect(said).toEqual(['@ahpd/agent-claude: 0.7.0 to 0.8.0']);
+});
+
+it('refuses to update a name that is not installed, before npm runs', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0' });
+  const { runner, calls } = fake();
+  await expect(updatePlugins(['@ahpd/agent-claude', 'left-pad'], { configDir, version: '0.8.0', run: runner, say }))
+    .rejects.toThrow(`left-pad is not installed in ${configDir}`);
+  expect(calls).toEqual([]);
+});
+
+it('updates a named plugin beside another on an older minor, with the daemon\'s sdk and no peer check', async () => {
+  installed({ '@ahpd/agent-acp': '0.7.0', '@ahpd/agent-claude': '0.7.0', '@ahpd/sdk': '0.7.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-acp': '0.8.0' });
+  expect(await updatePlugins(['@ahpd/agent-acp'], { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: '@ahpd/agent-acp', from: '0.7.0', to: '0.8.0' }]);
+  expect(calls.map((one) => one.argv)).toEqual([
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-acp@0.8.0'],
+  ]);
+  expect(said).toEqual(['@ahpd/agent-acp: 0.7.0 to 0.8.0']);
+});
+
+it('moves the sdk with update all without calling it a plugin', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0', '@ahpd/sdk': '0.7.0', 'mine': '1.0.0' });
+  writeFileSync(join(configDir, 'package.json'), JSON.stringify({
+    dependencies: { '@ahpd/agent-claude': '^0.7.0', '@ahpd/sdk': 'file:../sdk', mine: 'file:../mine' },
+  }));
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(calls.map((one) => one.argv)).toEqual([
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
+  ]);
+  expect(said).toEqual(['mine: file:../mine, left as installed', '@ahpd/agent-claude: 0.7.0 to 0.8.0']);
+});
+
+it('names the sdk unpinned when the daemon\'s version is unknown', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0' });
+  const { runner, calls } = fake();
+  await installPlugins(['left-pad'], { configDir, configFile, version: 'unknown', enable: false, run: runner, fetch: aPlugin, say });
+  await updatePlugins('all', { configDir, version: 'unknown', run: runner, say });
+  expect(calls.map((one) => one.argv.slice(3, 5))).toEqual([
+    ['--legacy-peer-deps', '@ahpd/sdk'],
+    ['--legacy-peer-deps', '@ahpd/sdk'],
+  ]);
+});
+
+it('refuses to install or update the sdk by name, before npm runs', async () => {
+  installed({ '@ahpd/agent-claude': '0.8.0', '@ahpd/sdk': '0.8.0' });
+  const { runner, calls } = fake();
+  const refusal = "@ahpd/sdk is not a plugin: ahpd installs it at the daemon's version with every install and update.";
+  await expect(installPlugins(['@ahpd/sdk'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch: aPlugin, say })).rejects.toThrow(refusal);
+  await expect(installPlugins(['left-pad', '@ahpd/sdk@0.7.0'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch: aPlugin, say })).rejects.toThrow(refusal);
+  await expect(updatePlugins(['@ahpd/sdk'], { configDir, version: '0.8.0', run: runner, say })).rejects.toThrow(refusal);
+  expect(calls).toEqual([]);
+});
+
+it('never uninstalls the sdk', async () => {
+  write({ plugins: ['@ahpd/a'] });
+  const { runner, calls } = fake();
+  await removePlugins(['@ahpd/a', '@ahpd/sdk'], { configDir, configFile, uninstall: true, run: runner, say });
+  expect(calls.map((one) => one.argv)).toEqual([['uninstall', '--prefix', configDir, '@ahpd/a']]);
+  calls.length = 0;
+  await removePlugins(['@ahpd/sdk'], { configDir, configFile, uninstall: true, run: runner, say });
+  expect(calls).toEqual([]);
+});
+
+it('refuses a registry package with no ahpd field before npm runs, asking at the version it would install', async () => {
+  const { runner, calls } = fake();
+  const { fetch, asked } = fakeRegistry({
+    '@ahpd%2fagent-claude/0.8.0': { name: '@ahpd/agent-claude', version: '0.8.0', ahpd: { entry: './dist/index.js' } },
+    '@softov%2fahpc/latest': { name: '@softov/ahpc', version: '0.3.0', bin: { ahpc: './dist/main.js' } },
+  });
+  await expect(installPlugins(['@ahpd/agent-claude', '@softov/ahpc'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch, say }))
+    .rejects.toThrow('@softov/ahpc is not an ahpd plugin: its package.json has no "ahpd" field.');
+  expect(calls).toEqual([]);
+  expect(asked).toEqual(['@ahpd%2fagent-claude/0.8.0', '@softov%2fahpc/latest']);
+  expect(existsSync(configFile)).toBe(false);
+});
+
+it('installs a package whose manifest has an ahpd field, asked at the version or tag written', async () => {
+  const { runner, calls } = fake();
+  const { fetch, asked } = fakeRegistry({
+    '@ahpd%2fagent-claude/0.8.0': { ahpd: { entry: './dist/index.js' } },
+    'mine/1.2.0': { ahpd: {} },
+    '@acme%2fagent-mine/next': { ahpd: {} },
+  });
+  await installPlugins(['@ahpd/agent-claude', 'mine@1.2.0', '@acme/agent-mine@next'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch, say });
+  expect(asked).toEqual(['@ahpd%2fagent-claude/0.8.0', 'mine/1.2.0', '@acme%2fagent-mine/next']);
+  expect(calls).toHaveLength(1);
+  expect(read().plugins).toEqual(['@ahpd/agent-claude', 'mine', '@acme/agent-mine']);
+});
+
+it('never asks the registry about a path or a git spec', async () => {
+  const { runner, calls } = fake();
+  const { fetch, asked } = fakeRegistry({});
+  const options = { configDir, configFile, version: '0.8.0', enable: false, run: runner, fetch, say };
+  await expect(installPlugins(['./my-plugin'], options)).rejects.toThrow(/not a package name/);
+  // `owner/repo` is GitHub's shorthand to npm, and npm resolves it.
+  await installPlugins(['someone/my-plugin'], options);
+  expect(asked).toEqual([]);
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['someone/my-plugin']);
+});
+
+it('leaves the install to npm when the registry cannot be asked or has no such version', async () => {
+  const { runner, calls } = fake();
+  const { fetch, asked } = fakeRegistry({ 'offline/latest': new TypeError('fetch failed'), 'missing/latest': 404 });
+  await installPlugins(['offline', 'missing'], { configDir, configFile, version: '0.8.0', enable: false, run: runner, fetch, say });
+  expect(asked).toEqual(['offline/latest', 'missing/latest']);
+  expect(calls.map((one) => one.argv.slice(-2))).toEqual([['offline', 'missing']]);
+});
+
+it('says each update from the version on disk before npm to the one on disk after, and nothing for one that did not move', async () => {
+  installed({ '@ahpd/agent-acp': '0.8.0', 'left-pad': '0.6.0' });
+  said.length = 0;
+  const { runner } = fake({}, { 'left-pad': '0.7.1' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: 'left-pad', from: '0.6.0', to: '0.7.1' }]);
+  expect(said).toEqual(['left-pad: 0.6.0 to 0.7.1']);
+});
+
+it('says there was nothing to update when npm moved no version', async () => {
+  installed({ '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' });
+  said.length = 0;
+  const { runner, calls } = fake();
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  expect(calls).toHaveLength(1);
+  expect(said).toEqual(['Nothing to update.']);
+  said.length = 0;
+  expect(await updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  expect(said).toEqual(['Nothing to update.']);
+});

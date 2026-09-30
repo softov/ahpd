@@ -24,6 +24,8 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
+| [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; tasks 01, 02, 04, 06, 08, 09, 10, 11 implemented, 05 and 07 dropped; 03 waits on cofold | - | - |
+
 | [10 - `ahpd init` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | draft 2026-09-29; four open questions | daemon 09 | - |
 
 Next free number in `daemon`: `11`.

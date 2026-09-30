@@ -41,7 +41,7 @@ With no model named anywhere, the providers, keys and model come from cofold's o
 ## In your own host
 
 ```bash
-pnpm add @ahpd/agent-cofold @ahpd/sdk @microsoft/agent-host-protocol
+pnpm add @ahpd/agent-cofold @ahpd/sdk
 ```
 
 ```ts

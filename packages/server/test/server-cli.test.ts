@@ -26,8 +26,11 @@ const MAIN = 'packages/server/src/main.ts';
 const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
 /** A directory holding an `npm` that says one line and leaves the code `FAKE_NPM_EXIT` names. */
 const FAKE_NPM = join(import.meta.dirname, 'fixtures', 'npm-fake');
+/** A registry nothing listens on, so an install's manifest check is left to the fake npm. */
+const NO_REGISTRY = 'http://127.0.0.1:1';
 const fakeNpm = (code: number): Record<string, string> => ({
   PATH: `${FAKE_NPM}:${process.env['PATH'] ?? ''}`,
+  npm_config_registry: NO_REGISTRY,
   FAKE_NPM_EXIT: String(code),
 });
 
@@ -662,8 +665,8 @@ describe('plugin', () => {
     expect(said.stderr).not.toContain('plugin-echo from');
   }, 20000);
 
-  it('refuses install and remove with nothing named', async () => {
-    for (const sub of ['install', 'remove']) {
+  it('refuses install, remove and update with nothing named', async () => {
+    for (const sub of ['install', 'remove', 'update']) {
       const said = await cli(['plugin', sub, '--config-file', config]);
       expect(said.code).toBe(2);
     }
@@ -678,7 +681,7 @@ describe('plugin', () => {
     for (const args of [['plugin'], ['plugin', 'toy', '--config-file', config], ['--json', 'plugin']]) {
       const said = await cli(args);
       expect(said.code).toBe(2);
-      expect(said.stderr).toBe('ahpd: plugin takes list, install or remove.\n');
+      expect(said.stderr).toBe('ahpd: plugin takes list, update, install or remove.\n');
       expect(said.stdout).toBe('');
     }
   });
@@ -696,6 +699,23 @@ describe('plugin', () => {
     expect(said.stdout).toContain('plugins -= some-plugin');
     expect(readFileSync(config, 'utf8')).not.toContain('some-plugin');
   });
+
+  it('a failed npm says what failed at the terminal, and npm\'s error only as npm said it', async () => {
+    writeFileSync(join(home, 'ahpd', 'package.json'), JSON.stringify({ dependencies: { 'some-plugin': '^1.0.0' } }));
+    put({ plugins: ['some-plugin'] });
+    const env = { ...fakeNpm(1), FAKE_NPM_STDERR: 'npm error code E404' };
+    const runs: [string, string[]][] = [
+      ['npm could not install some-plugin', ['plugin', 'install', 'some-plugin', '--config-file', config]],
+      ['npm could not update some-plugin', ['plugin', 'update', 'all']],
+      ['npm could not uninstall some-plugin', ['plugin', 'remove', 'some-plugin', '--config-file', config]],
+    ];
+    for (const [failed, args] of runs) {
+      const said = await cli(args, { env });
+      expect(said.code).toBe(2);
+      expect(said.stderr).toContain(failed);
+      expect(said.stderr.split('npm error code E404')).toHaveLength(2);
+    }
+  }, 30000);
 
   it('install --json writes only JSON', async () => {
     const said = await cli(

@@ -37,6 +37,20 @@ export class RpcError extends Error {
   }
 }
 
+/**
+ * Whether an error is an `RpcError`: named `RpcError`, with a numeric `code`.
+ *
+ * By shape rather than `instanceof`: a plugin may throw the `RpcError` of its
+ * own installed copy of this package, which is another class with the same
+ * fields and the same `name`. The name is part of the check because a numeric
+ * `code` alone is not one: an `execFile` failure carries the child's exit
+ * code there, and a Node error's `code` is a string such as `ENOENT`.
+ */
+const rpcShaped = (error: unknown): error is { code: number; data?: unknown } =>
+  typeof error === 'object' && error !== null
+  && (error as { name?: unknown }).name === 'RpcError'
+  && typeof (error as { code?: unknown }).code === 'number';
+
 /** How long a question to a client waits before it is given up on. */
 export const ANSWER_TIMEOUT = 30_000;
 
@@ -206,15 +220,15 @@ export function receive(raw: string, peer: Peer, handle: Handler): void {
       if (id !== undefined) peer.send({ jsonrpc: '2.0', id, result: result ?? {} });
     } catch (error) {
       if (id === undefined) return;
-      const code = error instanceof RpcError ? error.code : INTERNAL_ERROR;
+      const shaped = rpcShaped(error);
       const text = error instanceof Error ? error.message : String(error);
       peer.send({
         jsonrpc: '2.0',
         id,
         error: {
-          code,
+          code: shaped ? error.code : INTERNAL_ERROR,
           message: text,
-          ...(error instanceof RpcError && error.data !== undefined ? { data: error.data } : {}),
+          ...(shaped && error.data !== undefined ? { data: error.data } : {}),
         },
       });
     }

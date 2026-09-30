@@ -13,10 +13,10 @@ Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/sdk`
 ## Install
 
 ```bash
-pnpm add @ahpd/sdk @microsoft/agent-host-protocol
+pnpm add @ahpd/sdk
 ```
 
-The protocol package is a peer dependency. This package uses runtime values from it, so keep one copy in the dependency tree.
+The protocol package, `@microsoft/agent-host-protocol`, is a dependency and comes with it.
 
 ## Use
 
