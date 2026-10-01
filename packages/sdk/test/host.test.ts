@@ -2460,7 +2460,7 @@ describe('a session read from its transcript', () => {
     // The sentence the row draws, and the answer to whether anybody is being
     // asked. Both required, and a transcript full of calls without them is a
     // transcript of rows with nothing on them.
-    expect(call?.invocationMessage).toBe('ls');
+    expect(call?.invocationMessage).toEqual({ markdown: 'Running `ls`' });
     expect(call?.confirmed).toBe('not-needed');
     // MCP's content blocks, which carry a `type`.
     expect(call?.content).toEqual([{ type: 'text', text: 'boom' }]);
@@ -2845,8 +2845,9 @@ describe('one tool call, one row', () => {
     // `pending-confirmation` and draws it as a question nobody put.
     const ready = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady');
     expect(ready?.action.confirmed).toBe('not-needed');
-    // Drawn by what it runs on, as the same call read back from its transcript is.
-    expect(ready?.action.invocationMessage).toBe('ls');
+    // Drawn by the call's description, or VS Code's line when it has none, as
+    // the same call read back from its transcript is.
+    expect(ready?.action.invocationMessage).toEqual({ markdown: 'Running `ls`' });
     expect(ready?.action.toolInput).toBe('ls');
   });
 
@@ -2855,7 +2856,7 @@ describe('one tool call, one row', () => {
     await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a b' }] } });
     await settle();
     const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
-    expect((done?.action.result as Record<string, unknown>).pastTenseMessage).toBe('ls');
+    expect((done?.action.result as Record<string, unknown>).pastTenseMessage).toEqual({ markdown: 'Ran `ls`' });
   });
 
   it('says the same on the call as it says in the action', async () => {
@@ -2872,7 +2873,7 @@ describe('one tool call, one row', () => {
      * calls was a transcript full of rows with no sentence to draw and no
      * answer to whether anybody had approved them.
      */
-    expect(call.invocationMessage).toBe('ls');
+    expect(call.invocationMessage).toEqual({ markdown: 'Running `ls`' });
     expect(call.confirmed).toBe('not-needed');
   });
 
@@ -2914,8 +2915,8 @@ describe('one tool call, one row', () => {
     const asking = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady').at(-1);
     expect(asking?.action.toolCallId).toBe('toolu_1');
     expect(asking?.action.confirmed).toBeUndefined();
-    // The CLI's own sentence, which is better than one rebuilt here.
-    expect(asking?.action.invocationMessage).toBe('Claude wants to run ls');
+    // The row's line; the CLI's own sentence is the card's title.
+    expect(asking?.action.invocationMessage).toEqual({ markdown: 'Running `ls`' });
   });
 
   it('answers the agent, and says so', async () => {

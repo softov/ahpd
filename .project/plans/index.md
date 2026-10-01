@@ -75,8 +75,9 @@ Reference: [00-host.md](host/00-host.md)
 | [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | active 2026-09-30; tasks 01-04 and 07-10 implemented, 05 doing (checks by hand left), 06 todo | - | - |
 | [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | active 2026-09-30; tasks 01, 02 implemented | - | claude 10 |
 | [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | planned 2026-09-30; tasks 01-04 todo | host 31 | - |
+| [33 - A session tool acts as the person it works for, within VS Code's limits, and can be switched off](host/33-a-session-tool-acts-as-the-person-it-works-for/plan.md) | high | planned 2026-09-30; task files to write, tasks 01-03 todo | host 30 | - |
 
-Next free number in `host`: `33`.
+Next free number in `host`: `34`.
 
 ## claude
 
@@ -92,9 +93,11 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/06-a-stop-in-a-worker-chat-stops-that-worker/implemented.md)) | claude 04 | - |
 | [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | built 2026-09-28 ([implemented.md](claude/07-a-turn-ends-with-no-call-left-open/implemented.md)) | - | - |
 
+| [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | active 2026-09-30; tasks 01-04 implemented, awaiting review | - | - |
+
 | [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | - | - |
 | [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | host 31 | - |
-| [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | planned 2026-09-30; tasks 01-02 todo | claude 08 | ahpapp chat/01 |
+| [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | planned 2026-09-30; tasks 01-03 todo | claude 08 | ahpapp chat/01 |
 
 Next free number in `claude`: `12`.
 

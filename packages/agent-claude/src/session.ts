@@ -5,8 +5,9 @@ import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
+import { lineOf, pastLineOf, summarize, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
-import type { ActiveTurn, McpServerState, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
+import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, SubagentChat, SubagentRequest, WireTurn } from '@ahpd/sdk';
 import type { Asked, Spawned } from './spawn.js';
@@ -158,21 +159,6 @@ function keptLabel(suggestions: unknown[]): string {
     return `Always allow${where}`;
   });
   return said.join('; ');
-}
-
-/**
- * What a tool call is *about*, in one line.
- *
- * The only thing separating twenty identical rows, so it is worth doing per
- * tool: `Bash` is its command, the file tools are their path. A row reading
- * `{"file_path":"/very/long/…","offset":0}` is a row nobody reads.
- */
-function summarize(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  if (name === 'Read' || name === 'Write' || name === 'Edit') return str(input.file_path);
-  if (name === 'Glob' || name === 'Grep') return str(input.pattern);
-  if (name === 'Task' || name === 'Agent') return str(input.description);
-  return Object.keys(input).length > 0 ? JSON.stringify(input).slice(0, 400) : undefined;
 }
 
 function resultText(content: unknown): string | undefined {
@@ -1040,6 +1026,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         one.settle({ behavior: 'deny', message: 'The turn ended before this ran' });
         inputNeededRemoved(one.id);
       }
+      if (id !== undefined) pastLines.delete(id);
       const streamingCall = was === 'streaming';
       part.toolCall = {
         status: 'cancelled',
@@ -1556,7 +1543,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         const open = scope.parts.get(id);
         if (open !== undefined && str(bag(open.toolCall).status) !== 'streaming') continue;
         const name = str(block.name) ?? 'tool';
-        const command = summarize(name, bag(block.input));
+        const line = lineOf(name, bag(block.input));
+        pastLines.set(id, pastLineOf(name, bag(block.input)));
+        const input = toolInputOf(name, bag(block.input));
         const from = serverOf(name);
         /*
          * A spawning call, whose input is the only place the harness says what
@@ -1631,9 +1620,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
            * no answer to whether anybody had approved it. The two have to say
            * the same thing, and this is the half that was not being said.
            */
-          invocationMessage: command ?? name,
+          invocationMessage: line,
           confirmed: 'not-needed',
-          ...(command ? { toolInput: command } : {}),
+          ...(input !== undefined ? { toolInput: input } : {}),
         } satisfies OnWire<ToolCallRunningState>;
         if (open === undefined) {
           const part: Bag = { id, kind: 'toolCall', toolCall: call };
@@ -1644,10 +1633,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
           // The half-written json is what `toolInput` now says properly, and
           // a client that kept both would draw the arguments twice.
           call.status = 'running';
-          call.invocationMessage = command ?? name;
+          call.invocationMessage = line;
           call.confirmed = 'not-needed';
           delete call.partialInput;
-          if (command) call.toolInput = command;
+          if (input !== undefined) call.toolInput = input;
           if (spawned !== undefined) call._meta = { ...bag(call._meta), ...described };
         }
         if (scope === mainScope) doing(busyWith(name, bag(block.input)));
@@ -1680,14 +1669,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
           turnId: turn.id,
           toolCallId: id,
           ...(contributor ? { contributor } : {}),
-          // What the call runs on, as the same call read back from its
-          // transcript is drawn, falling back to the tool's name.
-          invocationMessage: command ?? name,
+          // What the call does, as the same call read back from its
+          // transcript is drawn.
+          invocationMessage: line,
           // Nothing is being asked here - `canUseTool` is what asks. Without
           // this the reducer moves every tool call in the transcript into
           // `pending-confirmation` and draws it as a question nobody put.
           confirmed: 'not-needed',
-          ...(command ? { toolInput: command } : {}),
+          ...(input !== undefined ? { toolInput: input } : {}),
           // The whole bag, because an action's `_meta` replaces the call's.
           ...(spawned !== undefined ? { _meta: bag(call._meta) } : {}),
         });
@@ -1733,11 +1722,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * and `pastTenseMessage` are required; `content` blocks are MCP's, and
        * carry a `type`.
        *
-       * The past-tense sentence is the CLI's own invocation message, which is
-       * the best text there is: the alternative is a sentence rebuilt here out
-       * of a tool name, and the CLI knows what it asked for.
+       * The past-tense line is made from the call's input when it was known,
+       * the same line whether the call succeeded or failed: a failure is
+       * `success`. The row line is read back only as plain text, for a call
+       * whose input never arrived.
        */
-      const said = str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      const said = (id === undefined ? undefined : pastLines.get(id)) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      if (id !== undefined) pastLines.delete(id);
       /*
        * The link survives the result.
        *
@@ -1934,18 +1925,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
         return;
       }
 
-      const command = summarize(toolName, raw);
+      const input = toolInputOf(toolName, raw);
       const displayName = str(about.displayName) ?? toolName;
-      /*
-       * The sentence a person reads, which is not the input.
-       *
-       * The CLI renders one - "Claude wants to run …" - and it is better than
-       * anything rebuilt here. Its subtitle is sometimes the input itself
-       * though, and a client draws the intention *above* the input, so a
-       * sentence that is the input is the command printed twice.
-       */
-      const said = str(about.title) ?? str(about.description);
-      const invocationMessage = said !== undefined && said !== command ? said : displayName;
+      // The card reads the row's line; the CLI's own sentence is its title.
+      const invocationMessage = lineOf(toolName, raw);
+      pastLines.set(id, pastLineOf(toolName, raw));
       const confirmationTitle = str(about.title) ?? `Run ${displayName}?`;
 
       // The call the assistant message opened, if it arrived first. Which of
@@ -1956,7 +1940,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         toolCallId: id,
         toolName,
         displayName,
-        ...(command ? { toolInput: command } : {}),
+        ...(input !== undefined ? { toolInput: input } : {}),
         ...(meta ? { _meta: meta } : {}),
       } as Bag;
       /*
@@ -1971,6 +1955,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
         { id: 'allow-always', label: keptLabel(suggestions), kind: 'approve', group: 1 },
         { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
       ];
+      // A call still streaming has only its half-written json, and the
+      // assistant message that would complete it skips a call no longer
+      // streaming: the whole input is given here, as the action gives it.
+      if (held && str(call.status) === 'streaming') {
+        delete call.partialInput;
+        if (input !== undefined) call.toolInput = input;
+      }
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
       if (options !== undefined) call.options = options;
@@ -1993,7 +1984,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         toolCallId: id,
         invocationMessage,
         confirmationTitle,
-        ...(command ? { toolInput: command } : {}),
+        ...(input !== undefined ? { toolInput: input } : {}),
         ...(options !== undefined ? { options } : {}),
       });
 
@@ -2453,6 +2444,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   /** Which file each running edit tool is changing, by its call id. */
   const editing = new Map<string, string>();
+
+  /** The line each call's row draws once it has ended, by its call id, made from its input. */
+  const pastLines = new Map<string, StringOrMarkdown>();
 
   /** The server name behind an `mcp:` customization id, if it is one. */
   const serverNamed = (id: string): string | undefined =>
@@ -3596,6 +3590,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     close: () => {
       closed = true;
       ended.clear();
+      pastLines.clear();
       spawning.clear();
       background.clear();
       wake?.();

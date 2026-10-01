@@ -52,6 +52,7 @@ client: message.agent = { uri } -> host chat/turnStarted -> messageFrom(message)
 | A built-in agent's uri is `claude-internal:/agent/<name>`, and `general-purpose` is not listed | https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L339-L393 | 02 |
 | A uri resolves to the file's frontmatter `name`, its basename when that fails, or the last segment of a `claude-internal:` uri; a file removed since passes its basename | https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L206-L252 | 03 |
 | The agent is not stored per session: the next message carries it again | (defaulted: the protocol sends it on every message, so nothing is lost across a restart) | 03 |
+| A restored session reopens on its saved model and reports it, as VS Code restores `claude.model` | Softov, 2026-09-30, asked "A restored Claude session doesn't report its last model until the next message. Should I add a task so it reopens on its saved model, as VS Code does?": "Add to claude/09"; https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L75 | 05 |
 
 ## Proposed architecture
 
@@ -66,7 +67,8 @@ client: message.agent = { uri } -> host chat/turnStarted -> messageFrom(message)
 | [01 - The picked agent reaches the backend](task-01-the-picked-agent-reaches-the-backend.md) | todo | - |
 | [02 - Built-in agents are listed as VS Code lists them](task-02-built-in-agents-are-listed-as-vscode-lists-them.md) | todo | - |
 | [03 - The query runs on the picked agent](task-03-the-query-runs-on-the-picked-agent.md) | todo | 01, 02 |
-| [04 - Docs](task-04-docs.md) | todo | 03 |
+| [04 - Docs](task-04-docs.md) | todo | 03, 05 |
+| [05 - A restored session reopens on its model](task-05-a-restored-session-reopens-on-its-model.md) | todo | - |
 
 ## Risks and tradeoffs
 

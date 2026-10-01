@@ -39,6 +39,7 @@ The files read are the `refs` above.
 | A completed AskUserQuestion's `toolInput` is the input the tool ran with: its questions plus `answers`, keyed by question text, a multi-select as an array, as the SDK is handed them | Softov, 2026-09-30, asked "Plan the answered-questions layout?": "claude/11 + ahpapp"; the shape is the SDK's and VS Code's `{ ...input, answers }` | 01, 02 |
 | A replayed call takes the answers from the transcript's `toolUseResult.answers`; a call with none keeps its input as sent | (defaulted: the transcript is the only record after a restart) | 02 |
 | A denied or cancelled question keeps its input as sent | (defaulted: nothing was answered) | 01 |
+| [A restored AskUserQuestion is drawn as the answered question](../../../decisions/a-restored-question-is-drawn-answered.md): a restored turn carries the answered `inputRequest` part, built by the code the live question uses | Softov, 2026-09-30, asked "Should ahpd rebuild the answered question on restore?": "Rebuild it, in claude/11" | 03 |
 
 ## Proposed architecture
 
@@ -52,6 +53,7 @@ The files read are the `refs` above.
 | --- | --- | --- |
 | [01 - A live answered question carries its answers](task-01-a-live-answered-question-carries-its-answers.md) | todo | claude/08 |
 | [02 - A replayed answered question carries its answers](task-02-a-replayed-answered-question-carries-its-answers.md) | todo | 01 |
+| [03 - A restored question is drawn as the answered question](task-03-a-restored-question-is-drawn-answered.md) | todo | 02 |
 
 ## Risks and tradeoffs
 
@@ -62,10 +64,10 @@ The files read are the `refs` above.
 - **Done so far:** nothing.
 - **Next action:** [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md), after claude/08 is committed.
 - **Open questions:** none.
-- **Watch out for:** ahpapp's chat/01 draws from this; keep the answer values as the SDK has them, strings and arrays of strings.
+- **Watch out for:** VS Code hides a completed AskUserQuestion row and draws only the `inputRequest` part, so tasks 01 and 02 alone change nothing in VS Code. ahpapp's chat/01 draws from this; keep the answer values as the SDK has them, strings and arrays of strings.
 
 ## Final verification checklist
 
-- [ ] A live and a replayed answered AskUserQuestion carry the same `toolInput.answers`.
+- [ ] A live and a replayed answered AskUserQuestion carry the same `toolInput.answers` and the same answered `inputRequest` part.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 - [ ] `plans/index.md` updated.

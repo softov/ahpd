@@ -4,6 +4,7 @@ import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { lineOf, pastLineOf, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 
 /**
@@ -23,14 +24,6 @@ import { toolMetaOf } from './kinds.js';
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-
-function summarize(name: string, input: Bag): string | undefined {
-  if (name === 'Bash') return str(input.command);
-  if (name === 'Read' || name === 'Write' || name === 'Edit') return str(input.file_path);
-  if (name === 'Glob' || name === 'Grep') return str(input.pattern);
-  if (name === 'Task' || name === 'Agent') return str(input.description);
-  return Object.keys(input).length > 0 ? JSON.stringify(input).slice(0, 400) : undefined;
-}
 
 function resultText(content: unknown): string | undefined {
   if (typeof content === 'string') return content;
@@ -249,8 +242,8 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
          */
         const ok = block.is_error !== true;
         call.status = 'completed';
+        // The past tense the call was built with stands: a failure is `success`.
         call.success = ok;
-        call.pastTenseMessage = str(call.invocationMessage) ?? str(call.displayName) ?? 'the tool';
         const text = resultText(block.content);
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
@@ -315,7 +308,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         parts.push({ id, kind: 'reasoning', content: str(block.thinking) ?? '' } satisfies OnWire<ResponsePart>);
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
-        const command = summarize(name, bag(block.input));
+        const input = toolInputOf(name, bag(block.input));
         const meta = toolMetaOf(name);
         /*
          * Checked against the state it claims to be in, at the moment it is
@@ -334,7 +327,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
           // Completed unless a result says otherwise: the session is over, so
           // a call still reading `running` would be a spinner that never stops.
           status: 'completed',
-          ...(command ? { toolInput: command } : {}),
+          ...(input !== undefined ? { toolInput: input } : {}),
           // The same hint a live call carries, so a transcript read back off
           // disk draws its shell commands as shell commands.
           ...(meta ? { _meta: meta } : {}),
@@ -350,10 +343,10 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
            * recorded is one that finished with nothing to report, not one
            * that failed.
            */
-          invocationMessage: command ?? name,
+          invocationMessage: lineOf(name, bag(block.input)),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: command ?? name,
+          pastTenseMessage: pastLineOf(name, bag(block.input)),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
         // The part is not re-checked: `call` is a `Bag` from here on, because
