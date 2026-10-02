@@ -13,13 +13,17 @@
  * of a turn is a client.
  */
 
+import type { SessionInputRequestKind } from '@microsoft/agent-host-protocol';
+
 import type { PluginContext } from './plugin.js';
 
 /**
  * Every moment a plugin may subscribe to.
  *
- * The set is closed and written down in one place. An event that only repeats
- * a state action a client already receives is refused rather than added.
+ * The set is closed and written down in one place. An event that repeats a
+ * state action a client already receives is added only for a moment a plugin
+ * acts on without watching the session - a turn's two ends, a session that
+ * began waiting on a person - and never for a per-token delta.
  */
 export type EventName =
   | 'session_start'
@@ -28,6 +32,8 @@ export type EventName =
   | 'turn_end'
   | 'message'
   | 'tool_call'
+  | 'input_needed_set'
+  | 'input_needed_removed'
   | 'client_connect'
   | 'client_disconnect'
   | 'authenticated'
@@ -78,6 +84,38 @@ export interface TurnEndEvent {
   turn: string;
   /** `complete` when the backend finished it, `cancelled` when somebody stopped it. */
   status: 'complete' | 'cancelled';
+}
+
+/**
+ * A session began waiting on a person, or a new thing was added to what it is
+ * already waiting on.
+ *
+ * The protocol's action is an upsert keyed by `id`, so a backend that sets the
+ * same entry again raises the event again. Dedupe by `id` rather than counting.
+ */
+export interface InputNeededSetEvent {
+  type: 'input_needed_set';
+  /** The session channel URI. */
+  session: string;
+  /** The chat the request lives in. */
+  chat: string;
+  /** The request's id, the key its removal names. */
+  id: string;
+  /** The protocol's own `SessionInputRequestKind`, as the backend sent it. */
+  kind: `${SessionInputRequestKind}`;
+}
+
+/**
+ * A session stopped waiting on one of its requests.
+ *
+ * The `id` is the one the matching `input_needed_set` carried.
+ */
+export interface InputNeededRemovedEvent {
+  type: 'input_needed_removed';
+  /** The session channel URI. */
+  session: string;
+  /** The `id` of the request that is no longer wanted. */
+  id: string;
 }
 
 /** A message a client sent as a turn. */
@@ -207,6 +245,8 @@ export type HostEvent =
   | TurnEndEvent
   | MessageEvent
   | ToolCallEvent
+  | InputNeededSetEvent
+  | InputNeededRemovedEvent
   | ClientConnectEvent
   | ClientDisconnectEvent
   | AuthenticatedEvent

@@ -5,9 +5,11 @@ import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
+import type { Bag } from '../src/types/common.js';
 import type { EventName, HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { ResourceStore } from '../src/types/resources.js';
+import type { Emit } from '../src/types/session.js';
 import type { TerminalStore } from '../src/types/terminals.js';
 import type { PluginContext } from '../src/types/plugin.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -27,6 +29,7 @@ const AUTOMATIONS = 'ahp-automations://';
 
 const EVENT_NAMES: readonly EventName[] = [
   'session_start', 'session_end', 'turn_start', 'turn_end', 'message', 'tool_call',
+  'input_needed_set', 'input_needed_removed',
   'client_connect', 'client_disconnect', 'authenticated', 'automation_fire',
   'resource_write', 'terminal_open', 'log',
 ];
@@ -52,11 +55,14 @@ const wait = async (ms: number): Promise<void> => { await new Promise((r) => { s
 const context = (): PluginContext => ({ path: DIR, paths: [DIR], version: sdkVersion(), log: () => {}, say: () => {} });
 
 /** One host, one plugin subscribed to everything, and what it saw. */
-function watched(extra: Partial<HostOptions> = {}) {
+function watched(extra: Partial<HostOptions> = {}, breaks?: EventName) {
   const seen: HostEvent[] = [];
   const lines: string[] = [];
   const { host: plugin, contribution } = pluginHost('probe', context());
-  for (const name of EVENT_NAMES) plugin.on(name, (event) => { seen.push(event); });
+  for (const name of EVENT_NAMES) plugin.on(name, (event) => {
+    seen.push(event);
+    if (name === breaks) throw new Error('probe broke');
+  });
 
   const base: HostOptions = {
     path: DIR,
@@ -97,6 +103,27 @@ const tooler = (outcome: (said: string) => void): Agent => {
     },
   };
 };
+
+/**
+ * A backend that hands its emitter to the test, so the test decides when a
+ * session begins and stops waiting on a person.
+ */
+function asker(): { agent: Agent; say: (action: Bag) => void } {
+  const inner = echo({ path: DIR, pace: 0 });
+  let emit: Emit | undefined;
+  return {
+    agent: {
+      ...inner,
+      provider: 'asker',
+      displayName: 'Asker',
+      create: (start) => {
+        emit = start.emit;
+        return inner.create(start);
+      },
+    },
+    say: (action) => { emit?.('session', action); },
+  };
+}
 
 const probeTool = (run: () => Promise<string> | string): HostTool => ({
   definition: { name: 'probe_tool', description: 'A tool the test calls.', inputSchema: { type: 'object', properties: {} } },
@@ -280,6 +307,65 @@ it('fires automation_fire when an automation starts a session', async () => {
   const fired = of(seen, 'automation_fire');
   expect(fired).toHaveLength(1);
   expect(fired[0]).toMatchObject({ automation: 'ahp-automation:/nightly' });
+});
+
+it('fires input_needed_set and input_needed_removed as the backend asks and answers', async () => {
+  const { agent, say } = asker();
+  const { seen, client } = watched({ agents: [agent] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/ask', provider: 'asker' } });
+  await settle();
+
+  const request = { id: 'ask-1', chat: 'ahp-chat:/ask', kind: 'chatInput' };
+  say({ type: 'session/inputNeededSet', request });
+  // The protocol's action is an upsert keyed by `id`, so a backend that sets
+  // the same entry again says it again; the handler is what dedupes.
+  say({ type: 'session/inputNeededSet', request });
+  say({ type: 'session/inputNeededRemoved', id: 'ask-1' });
+  await settle();
+
+  // Both ends repeat an action the client also received, and both are here
+  // because a plugin that says so watches nothing else. In the order sent.
+  const about = seen.filter((event) => event.type === 'input_needed_set' || event.type === 'input_needed_removed');
+  expect(about.map((event) => event.type)).toEqual(['input_needed_set', 'input_needed_set', 'input_needed_removed']);
+  expect(about[0]).toMatchObject({ session: 'asker:/ask', chat: 'ahp-chat:/ask', id: 'ask-1', kind: 'chatInput' });
+  expect(about[2]).toMatchObject({ session: 'asker:/ask', id: 'ask-1' });
+});
+
+it('leaves the event out when the backend sends no id to raise it about', async () => {
+  const { agent, say } = asker();
+  const { seen, client } = watched({ agents: [agent] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'asker' } });
+  await settle();
+
+  say({ type: 'session/inputNeededSet', request: { chat: 'ahp-chat:/bare', kind: 'chatInput' } });
+  say({ type: 'session/inputNeededRemoved' });
+  await settle();
+
+  // An event carrying empty strings is a notifier told about a session it
+  // cannot name, and the client already has the action.
+  expect(of(seen, 'input_needed_set')).toHaveLength(0);
+  expect(of(seen, 'input_needed_removed')).toHaveLength(0);
+});
+
+it('reports a handler that throws on input_needed_set and still reaches the client', async () => {
+  const { agent, say } = asker();
+  const { lines, client, peer: p } = watched({ agents: [agent] }, 'input_needed_set');
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/broken', provider: 'asker' } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/broken' } });
+  await settle();
+
+  say({ type: 'session/inputNeededSet', request: { id: 'ask-2', chat: 'ahp-chat:/broken', kind: 'toolConfirmation' } });
+  await settle();
+
+  expect(lines.filter((line) => line.includes('probe failed at input_needed_set: probe broke'))).toHaveLength(1);
+  const answered = p.notes
+    .filter((one) => one.method === 'action')
+    .map((one) => one.params as { channel: string; action: Record<string, unknown> })
+    .filter((one) => one.channel === 'ahp-session:/broken');
+  expect(answered.map((one) => one.action.type)).toContain('session/inputNeededSet');
 });
 
 it('fires log with the same line onEvent receives', async () => {

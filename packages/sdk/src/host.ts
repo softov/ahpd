@@ -18,7 +18,7 @@
  */
 
 import { annotationsReducer, chatReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import type { AnnotationsAction, AnnotationsState, ChangesetFile, ChatAction, ChatState, TerminalInfo, ToolDefinition, Turn } from '@microsoft/agent-host-protocol';
+import type { AnnotationsAction, AnnotationsState, ChangesetFile, ChatAction, ChatState, SessionInputRequestKind, TerminalInfo, ToolDefinition, Turn } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { notServed } from './resources.js';
@@ -3594,6 +3594,28 @@ export function createHost(options: HostOptions): Host {
             turn: String(action.turnId ?? ''),
             status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
           });
+        }
+        /*
+         * A session that began, or stopped, waiting on a person. The set is an
+         * upsert keyed by `id`, so setting one entry again raises it again.
+         */
+        if (action.type === 'session/inputNeededSet') {
+          const request = (action.request ?? {}) as Bag;
+          const id = String(request.id ?? '');
+          const chat = String(request.chat ?? '');
+          if (id !== '' && chat !== '') {
+            void fire({
+              type: 'input_needed_set',
+              session: uri,
+              chat,
+              id,
+              kind: request.kind as `${SessionInputRequestKind}`,
+            });
+          }
+        }
+        else if (action.type === 'session/inputNeededRemoved') {
+          const id = String(action.id ?? '');
+          if (id !== '') void fire({ type: 'input_needed_removed', session: uri, id });
         }
         /*
          * And the run this session was started for, when the turn that was it

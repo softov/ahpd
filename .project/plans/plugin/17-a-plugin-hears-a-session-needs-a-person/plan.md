@@ -1,7 +1,7 @@
 ---
 title: A plugin hears when a session needs a person
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-01
@@ -77,9 +77,9 @@ backend emit('session', session/inputNeededRemoved) -> host.ts emit -> dispatch
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host raises input needed set and removed](task-01-the-host-raises-input-needed.md) | todo | - |
-| [02 - Docs](task-02-docs.md) | todo | 01 |
-| [03 - Naming a plugin states the @ahpd/<name> convention](task-03-naming-a-plugin.md) | todo | - |
+| [01 - The host raises input needed set and removed](task-01-the-host-raises-input-needed.md) | done | - |
+| [02 - Docs](task-02-docs.md) | done | 01 |
+| [03 - Naming a plugin states the @ahpd/<name> convention](task-03-naming-a-plugin.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -88,14 +88,13 @@ backend emit('session', session/inputNeededRemoved) -> host.ts emit -> dispatch
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-raises-input-needed.md](task-01-the-host-raises-input-needed.md).
+- **Done so far:** built 2026-10-01; see [implemented.md](implemented.md).
+- **Next action:** the notify plugin.
 - **Open questions:** none.
-- **Watch out for:** the event's `kind` is the spec's `SessionInputRequestKind` value as the backend sent it, not a word this host invents.
 
 ## Final verification checklist
 
-- [ ] A fixture plugin subscribed to both events is called once for each action a scripted backend emits, with the session, chat, id and kind.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/PLUGINS.md` lists both events, and "Naming a plugin" states the convention.
-- [ ] `plans/index.md` updated.
+- [x] A fixture plugin subscribed to both events is called once for each action a scripted backend emits, with the session, chat, id and kind.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `docs/PLUGINS.md` lists both events, and "Naming a plugin" states the convention.
+- [x] `plans/index.md` updated.

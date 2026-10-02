@@ -1,6 +1,6 @@
 ---
 title: The host raises input needed set and removed
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -35,4 +35,12 @@ A plugin that subscribes to `input_needed_set` and `input_needed_removed` is cal
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+Done. `EventName` carries `input_needed_set` and `input_needed_removed`, `HostEvent` gains `InputNeededSetEvent` and `InputNeededRemovedEvent`, and both are exported from `types/index.ts`. `kind` is typed `` `${SessionInputRequestKind}` ``, the const enum widened to the strings the backend sends, the same way `automations.ts` types `origin.kind`.
+
+In `emit`, the two `fire` calls sit beside the turn events, after the dispatch, guarded on a non-empty `id` and, for the set, a non-empty `chat`.
+
+Tests: three cases in `plugin-events-fire.test.ts` on a scripted backend that hands the test its emitter - a set, the same set again and a removal arrive as two sets and one removal in order with the session, chat, id and kind; a set and a removal with no id raise nothing; and a handler that throws on `input_needed_set` is reported against `probe` while the action still reaches a subscribed client.
+
+`pnpm test` 2040 passed, `pnpm exec tsc --noEmit` clean, `pnpm boundary` clean.
 

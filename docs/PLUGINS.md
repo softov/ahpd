@@ -270,6 +270,8 @@ does not stop the next handler or the action it observed.
 | `turn_end` | `session`, `chat`, `turn`, `status` (`complete` or `cancelled`) |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
+| `input_needed_set` | `session`, `chat`, `id`, `kind` |
+| `input_needed_removed` | `session`, `id` |
 | `client_connect` | `client` |
 | `client_disconnect` | `client` |
 | `authenticated` | `client`, `resource` |
@@ -287,6 +289,14 @@ Both are awaited like any other event, so a handler that takes three seconds to 
 There is no per-token event: a plugin that wants the live stream of a turn is a
 client. The `chat` on a turn event is the host's own chat URI, which is not
 always the alias a client addressed it by.
+
+An event may repeat a state action a client also receives, and is added only
+for a moment a plugin acts on without watching the session - a turn's two ends,
+a session that began or stopped waiting on a person - decision
+[`a-plugin-hears-input-needed-though-a-client-does-too`](../.project/decisions/a-plugin-hears-input-needed-though-a-client-does-too.md).
+`input_needed_set` is raised once per action, and the protocol's action is an
+upsert keyed by `id`, so a handler that tracks what a session is waiting on
+dedupes by `id` rather than counting.
 
 ## The manifest
 
@@ -321,6 +331,11 @@ The module is still the contract: `entry` says what to import, `apply` says what
 it is.
 
 ## Naming a plugin
+
+A plugin this repository ships is `@ahpd/<name>`, as `@ahpd/computer` is, and an
+agent backend is `@ahpd/agent-<name>`, as `@ahpd/agent-acp` is; a plugin from
+elsewhere takes its author's scope - decision
+[`plugin-packages-are-named-ahpd-name`](../.project/decisions/plugin-packages-are-named-ahpd-name.md).
 
 ```bash
 ahpd --plugin @acme/agent-mine              # an installed package

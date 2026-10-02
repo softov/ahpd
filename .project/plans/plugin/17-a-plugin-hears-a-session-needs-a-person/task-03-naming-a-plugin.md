@@ -1,6 +1,6 @@
 ---
 title: Naming a plugin states the @ahpd/<name> convention
-status: todo
+status: done
 depends: []
 layer: "docs"
 refs:
@@ -25,4 +25,8 @@ refs:
 - Read by hand.
 
 ## Resume
+
+Done. A paragraph at the top of "Naming a plugin", before the command line, saying a plugin from this repository is `@ahpd/<name>` with `@ahpd/computer` as the example, an agent backend is `@ahpd/agent-<name>` with `@ahpd/agent-acp`, and a plugin from elsewhere takes its author's scope. It links `plugin-packages-are-named-ahpd-name`.
+
+It runs to more than the two lines the step asked for, because the third-party case needed a clause of its own and the decision link a fourth; the examples are the two the task named. Read by hand.
 
