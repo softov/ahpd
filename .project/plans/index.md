@@ -83,8 +83,9 @@ Reference: [00-host.md](host/00-host.md)
 | [36 - Users, teams, projects and roles are resources a client lists and edits](host/36-people-are-resources-a-client-manages/plan.md) | medium | built 2026-10-02 ([implemented.md](host/36-people-are-resources-a-client-manages/implemented.md)) | host 35 | ahpapp people/01, usage 04 |
 | [37 - A session two harnesses both list is listed once, under the harness it runs on](host/37-a-session-is-listed-once-under-its-own-harness/plan.md) | high | built 2026-10-02 ([implemented.md](host/37-a-session-is-listed-once-under-its-own-harness/implemented.md)) | claude 12 | - |
 | [38 - A client sees who owns a session and who sent each turn](host/38-a-client-sees-who-sent-each-turn/plan.md) | medium | built 2026-10-02 ([implemented.md](host/38-a-client-sees-who-sent-each-turn/implemented.md)) | host 34 | ahpapp chat/02 |
+| [39 - The pull request pill and the worktree's files come back in VS Code 1.140](host/39-what-vs-code-1140-stopped-reading/plan.md) | high | built 2026-10-02 ([implemented.md](host/39-what-vs-code-1140-stopped-reading/implemented.md)) | - | ahpc and ahpapp send the include files as a list |
 
-Next free number in `host`: `39`.
+Next free number in `host`: `40`.
 
 ## claude
 

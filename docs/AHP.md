@@ -82,7 +82,7 @@ is.
 | `fetchTurns` | ✅ | Newest 50 in the snapshot and a cursor for the rest. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
 | `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@` against the files this host serves, relative to the session's own directory. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message) - and a skill carries `_meta.isSkill: true` beside it, which is what keeps one in an automation's text in the reference client's editor. |
 | `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions. `ahpd://users` is the one resource whose token this host verifies itself, against its own user directory; every other resource keeps the unverified pass-through a backend or an MCP server needs. An empty token takes it back, which is the protocol's word for signing out; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. A token the directory does not know answers `-32007`. See [Users](USERS.md). |
-| `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes six worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
+| `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes seven worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key of this host's own with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. A plugin's key is answered by whoever registered it - `@ahpd/computer` lists the machines it made - and `resolveSessionConfig` asks that answerer once with an empty query to seed the property's `enum`, so a client can label the value it holds before opening anything. A key with nobody registered is an enum a client already has, answered with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status. A result may carry a `followUp`. An operation that writes needs no grant, exactly as the resource half does not. |
 | `resourceRead` | 🧩 | The `resources` port, anywhere on the machine. The changeset source is asked first, because the `before` side of an edit is not a file on disk. |
@@ -624,7 +624,7 @@ anybody had approved it - `ToolCallState` requires both.
 | read and archived | kept per session and told to every client, including for rows no agent is running for |
 | whose a session is | `_meta.owner` on the row and on the session state, in the same typed references a turn's sender is - `user:<id>` or `root:<host>`. It belongs to the session store rather than to the transcript, so it is still there after a daemon comes back. Absent on a host given no users directory, which has nobody to name, and on a session begun before this was kept |
 | project and branch | `project` on every row from the path alone, and `_meta.git` beside it when the host was given `gitBranches()` - `branchName`, `upstreamBranchName`, the ahead and behind counts, `uncommittedChanges`, and `baseBranchName` for a worktree |
-| pull request | `_meta.github` when the host was given `githubPullRequests()`: `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
+| pull request | Published twice when the host was given `githubPullRequests()`: under `_meta.githubData[key]`, with the key named by `_meta.workingDirectoryKeys[workingDirectory]`, and beside it under `_meta.github`. The key is the working directory's own `file://` URI, which is what the row's `project.uri` already spells it, and publishing it is what makes it authoritative - a window that has no key for a working directory derives one, and one that does takes the host's. The state itself is `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. `_meta.github` is still there for a client that reads that one, and is the same object. `_meta.git` is unchanged and is not per folder: a session here has one folder, and the window still reads `_meta.git` for it. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
 | what the agent recorded | `_meta['agentHost/sessionArtifacts']` on the session and its row: the artifacts and references the agent recorded with the reference host's `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references`, offered under those names with its schemas and answers, and kept by the session store across a restart. The window draws them as pills beside the input, and takes one off with its own request, `vscode/removeSessionArtifact`, which `initialize` says it may make under `_meta['vscode.removeSessionArtifact']`. The reference host's instruction for when to record one goes into the agent's system prompt, since the CLI's prompt takes an `append` |
 | when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
 
@@ -709,6 +709,27 @@ clean tree nobody named for a day - the window forgetting a handle is not the
 same as a person being done with the branch. The handles live for the daemon's
 run: a restart forgets them, and the trees stand until a session or the window
 takes them down.
+
+A new tree carries what git checked out and nothing else: a checkout has no
+`.env`, no `node_modules`, and none of the local configuration the thing needs
+to run, so the isolation would work and the session inside it could not build -
+a failure the person meets after choosing it rather than while choosing it.
+`worktreeIncludeFiles` is what is brought along after the checkout: a list of
+patterns, in `.gitignore` syntax, for the git-ignored files to copy in. A
+comma-separated string is read as one list. The copy is best effort, one pattern at a time - a pattern that
+matches nothing is the ordinary case, and a session that refused to start over
+a missing optional file would be worse than one without it.
+`worktreeSymlinkFolders` is the same idea for folders, and reaches them by
+linking rather than copying: a list of `.gitignore` patterns for the git-ignored
+folders to point at the checkout's, which is what makes `node_modules` - the
+one a build cannot do without - available at once rather than minutes and
+gigabytes later. A link is one directory reached from two places, so a write
+into it from inside the worktree is a write into the checkout, which is what
+naming the patterns is agreeing to and why only git-ignored folders are
+eligible. The links are made before the copy, as the reference makes them, and
+the pass is best effort as a whole: a pattern that cannot be linked leaves the
+tree without it rather than stopping a session. Both are read when the worktree
+is made and neither moves once the session has started.
 
 ### What the window asks a host about itself
 

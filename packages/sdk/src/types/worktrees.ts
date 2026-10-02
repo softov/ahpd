@@ -37,6 +37,25 @@ export interface Worktree {
    * meets after choosing it rather than while choosing it.
    */
   include?: string[];
+  /**
+   * Git-ignored folders to link in, as patterns relative to the repository.
+   *
+   * `.gitignore` syntax, so `node_modules/` means every directory of that
+   * name at any depth rather than only the one at the root. A folder that is
+   * already there is left alone, and only git-ignored folders are eligible:
+   * what a link is for is the checkout's build output and installed
+   * dependencies, which git carries nothing of.
+   *
+   * What it costs is that a linked folder is one directory reached from two
+   * places. A write into it from inside the worktree is a write into the
+   * checkout, and a delete is a delete in both - which is the right trade for
+   * a `node_modules` nobody edits by hand and the wrong one for anything else.
+   * This is what the person naming the patterns is agreeing to.
+   *
+   * Run before `include`, and best effort: a link that cannot be made leaves
+   * the tree without it rather than stopping the session.
+   */
+  symlink?: string[];
 }
 
 /**

@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../src/worktrees.js';
+import { memorySessions } from '../src/sessions.js';
 import { fileResources } from '../src/resources.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Worktrees } from '../src/types/worktrees.js';
@@ -27,7 +28,7 @@ afterEach(() => {
   made = [];
 });
 
-/** A repository with one commit, a branch, and a file git was told to ignore. */
+/** A repository with one commit, a branch, and files git was told to ignore. */
 function repository(): string {
   // Two levels, so the `<repo>.worktrees` sibling is inside the served root
   // rather than beside it - which is the arrangement a host has to serve.
@@ -40,8 +41,17 @@ function repository(): string {
   run('config', 'user.email', 'test@example.com');
   run('config', 'user.name', 'Test');
   writeFileSync(join(dir, 'tracked.txt'), 'tracked\n');
-  writeFileSync(join(dir, '.gitignore'), '.env\n');
+  writeFileSync(join(dir, '.gitignore'), '.env\nnode_modules/\n');
   writeFileSync(join(dir, '.env'), 'SECRET=1\n');
+  // An ignored folder with something in it, which is what a link has to reach
+  // and what a shallow copy of a directory would be measured against.
+  mkdirSync(join(dir, 'node_modules', 'dep'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules', 'dep', 'index.js'), 'installed\n');
+  // The same folder name at a depth, which is what makes `node_modules/` in a
+  // `.gitignore` mean every directory of that name rather than the one at the
+  // root.
+  mkdirSync(join(dir, 'packages', 'app', 'node_modules', 'dep'), { recursive: true });
+  writeFileSync(join(dir, 'packages', 'app', 'node_modules', 'dep', 'index.js'), 'installed\n');
   run('add', '-A');
   run('commit', '-q', '-m', 'first');
   run('branch', 'release');
@@ -208,27 +218,223 @@ describe('a session with a working tree of its own', () => {
   });
 
   it('brings along the files a checkout leaves behind', async () => {
+    // Both spellings of the same key, and both are real: the schema declares
+    // a list now and the reader still splits a comma-separated string, so a
+    // client that has not moved keeps what it asked for. A test that only sent
+    // the list would pass with the string path removed.
+    for (const sent of [['.env'], '.env']) {
+      const root = repository();
+      const { client } = await joined(root);
+      await client.handle({
+        method: 'createSession',
+        params: {
+          channel: 'ahp-session:/carried',
+          provider: 'echo',
+          workingDirectories: [`file://${project(root)}`],
+          config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: sent },
+        },
+      });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
+        snapshot: { state: { workingDirectories: string[] } };
+      }).snapshot.state;
+      const where = state.workingDirectories[0]?.replace('file://', '') ?? '';
+      // In the worktree and not in the project it came from, which is the whole
+      // assertion: the original has a `.env` already.
+      expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+      // Without this the isolation works and the session inside it cannot run
+      // anything - a failure the person meets after choosing it.
+      expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
+    }
+  });
+
+  it('reads a session stored with the old spelling back as the list it names', async () => {
     const root = repository();
-    const { client } = await joined(root);
-    await client.handle({
+    const store = memorySessions();
+    /*
+     * The same agent across two hosts, which is what a restart looks like from
+     * here: the backend still lists the session it ran, and the store still
+     * holds what the host wrote when it ran.
+     *
+     * Publishing the key as a list is what the reference backend does, and it
+     * is what puts the check in front of the stored value at all: a key no
+     * property declares is handed back as stored, so a schema that stayed
+     * silent would answer this test without any of it happening.
+     */
+    const agent = { ...echo({ path: join(root, 'project'), pace: 0 }), schema: () => ({ properties: { worktreeIncludeFiles: { type: 'array' } } }) };
+    const first = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+    const a = first.accept(peer());
+    await a.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    const uri = 'ahp-session:/stored';
+    await a.handle({
       method: 'createSession',
       params: {
-        channel: 'ahp-session:/carried',
-        provider: 'echo',
+        channel: uri, provider: 'echo',
         workingDirectories: [`file://${project(root)}`],
         config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: '.env' },
       },
     });
-    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
+    const live = (await a.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    // One turn through, which is what puts the session in the catalogue: a
+    // session nothing ever said to was never run and never had anything
+    // written down about it.
+    a.handle({
+      method: 'dispatchAction',
+      params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 60); });
+    await a.handle({ method: 'disposeSession', params: { channel: uri } });
+    const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string }[];
+    };
+    const id = rows.items[0]?.resource.replace('echo:/', '') ?? '';
+
+    // What a host that declared the key a string would have written, which is
+    // what is on disk now that this host declares it a list.
+    store.setConfig(id, { worktreeIncludeFiles: '.env, .env.local' });
+
+    const second = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+    const b = second.accept(peer());
+    await b.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    await b.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const state = (await b.handle({ method: 'subscribe', params: { channel: `echo:/${id}` } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    /*
+     * Read as the list it spells, rather than refused by an array-typed
+     * property and replaced with the default - which is none, so the session
+     * would silently arrive at a worktree with nothing brought along.
+     */
+    expect(state.config.values.worktreeIncludeFiles).toEqual(['.env', '.env.local']);
+  });
+
+  it('makes the worktree anyway when the patterns are neither spelling', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    // A value off the wire is `unknown`, and the narrowing is where it is
+    // used: an entry that is not a pattern is dropped rather than refused, and
+    // the session still starts.
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/odd',
+        provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: ['.env', 7] },
+      },
+    });
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/odd' } }) as {
       snapshot: { state: { workingDirectories: string[] } };
     }).snapshot.state;
     const where = state.workingDirectories[0]?.replace('file://', '') ?? '';
-    // In the worktree and not in the project it came from, which is the whole
-    // assertion: the original has a `.env` already.
     expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
-    // Without this the isolation works and the session inside it cannot run
-    // anything - a failure the person meets after choosing it.
+    // The pattern that was a pattern still arrived.
     expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
+  });
+
+  it('links the ignored folders a tree is told to, rather than copying them', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/linked';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['node_modules'] },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    /*
+     * A link, and not a copy.
+     *
+     * Copying `node_modules` is minutes and gigabytes for a tree that then has
+     * its own dependencies drifting out of step with the checkout's; a link is
+     * one directory the agent can build against at once.
+     */
+    expect(lstatSync(join(where, 'node_modules')).isSymbolicLink()).toBe(true);
+    // Reading through it lands on the checkout's own file rather than on a
+    // copy of it, which is the whole point and the whole cost.
+    expect(readFileSync(join(where, 'node_modules', 'dep', 'index.js'), 'utf8')).toBe('installed\n');
+    expect(readFileSync(join(project(root), 'node_modules', 'dep', 'index.js'), 'utf8')).toBe('installed\n');
+    // And the session is still running in it, which is what best effort buys.
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+  });
+
+  it('makes the tree anyway when a pattern names nothing, or something tracked', async () => {
+    for (const pattern of ['nothing/here', 'tracked.txt']) {
+      const root = repository();
+      const { client } = await joined(root);
+      const uri = `ahp-session:/refused-${pattern.replace(/\W/g, '')}`;
+      await client.handle({
+        method: 'createSession',
+        params: {
+          channel: uri, provider: 'echo',
+          workingDirectories: [`file://${project(root)}`],
+          config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: [pattern] },
+        },
+      });
+      const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { workingDirectories: string[] } };
+      }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+      expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+      // Nothing linked, and the checkout's own file left where git put it: a
+      // bad pattern is not a reason a session will not start.
+      expect(existsSync(join(where, '.git'))).toBe(true);
+      expect(readFileSync(join(where, 'tracked.txt'), 'utf8')).toBe('tracked\n');
+      expect(existsSync(join(project(root), 'node_modules'))).toBe(true);
+    }
+  });
+
+  it('links an ignored folder at any depth, which is what .gitignore syntax means', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/deep';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['node_modules'] },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    /*
+     * Both, and this is why the patterns are matched by git rather than by the
+     * shallow glob the include copy uses. `node_modules/` means every directory
+     * of that name at any depth; a glob over one directory would have answered
+     * for the root and stopped there, and the session would still fail to
+     * build from the package below.
+     */
+    expect(lstatSync(join(where, 'node_modules')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(where, 'packages', 'app', 'node_modules')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(where, 'packages', 'app', 'node_modules', 'dep', 'index.js'), 'utf8')).toBe('installed\n');
+  });
+
+  it('drops a pattern reaching outside the repository and links the rest anyway', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const uri = 'ahp-session:/reaching';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', worktreeSymlinkFolders: ['../elsewhere', 'node_modules'] },
+      },
+    });
+    const where = ((await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state.workingDirectories[0] ?? '').replace('file://', '');
+    // One pattern a person should not have been able to send is not a reason to
+    // refuse the one beside it, and not a reason the session will not start.
+    expect(lstatSync(join(where, 'node_modules')).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
   });
 
   it('says on the session why its directory is where it is', async () => {
@@ -292,7 +498,7 @@ describe('a session with a working tree of its own', () => {
       snapshot: {
         state: {
           config: {
-            schema: { properties: Record<string, { readOnly?: boolean; enum?: string[] }> };
+            schema: { properties: Record<string, { readOnly?: boolean; sessionMutable?: boolean; enum?: string[]; type?: string }> };
             values: Record<string, string>;
           };
         };
@@ -301,6 +507,21 @@ describe('a session with a working tree of its own', () => {
     expect(config.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
     expect(config.schema.properties.branch?.enum).toContain('main');
     expect(config.schema.properties.worktreeIncludeFiles).toBeDefined();
+    // A list, which is what 1.140 sends and what it reads back - and not
+    // `readOnly`, which would be a control neither a client nor a person at
+    // ahpc can open.
+    expect(config.schema.properties.worktreeIncludeFiles?.type).toBe('array');
+    expect(config.schema.properties.worktreeIncludeFiles?.readOnly).toBeUndefined();
+    /*
+     * The seventh of the host's own. `readOnly` here and not on the files above
+     * because it carries a preference the client already holds rather than a
+     * question for a person, which is the same reason the three branch rows are
+     * `readOnly`. `sessionMutable: false` closes it once the session has begun,
+     * because the links are made when the worktree is.
+     */
+    expect(config.schema.properties.worktreeSymlinkFolders?.type).toBe('array');
+    expect(config.schema.properties.worktreeSymlinkFolders?.readOnly).toBe(true);
+    expect(config.schema.properties.worktreeSymlinkFolders?.sessionMutable).toBe(false);
     expect(config.values.isolation).toBe('folder');
     expect(config.values.branch).toBe('main');
   });

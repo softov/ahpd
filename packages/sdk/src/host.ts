@@ -1648,7 +1648,7 @@ export function createHost(options: HostOptions): Host {
    * as a worktree said nothing anywhere about why its directory was where it
    * was, and a client had to infer it from the path.
    */
-  const decided = new Map<string, Record<string, string>>();
+  const decided = new Map<string, Record<string, unknown>>();
   /**
    * A session's restart in flight, by session URI.
    *
@@ -2935,7 +2935,10 @@ export function createHost(options: HostOptions): Host {
    * reference host's key and field names (`ISessionGitHubState`).
    *
    * Per directory, like the git facts, since a pull request is a branch's
-   * and the branch is the directory's. `pullRequestBranchName` says which
+   * and the branch is the directory's. Published under the directory's own
+   * `file://` URI as the folder key, which `metaOf` names in
+   * `_meta.workingDirectoryKeys` so a client looks the key up rather than
+   * derives one that may not match. `pullRequestBranchName` says which
    * branch the URLs were found on, so a row on another branch does not draw
    * them; `pullRequestStateUrl` says which URL the state is of.
    */
@@ -2963,23 +2966,40 @@ export function createHost(options: HostOptions): Host {
     const github = githubFacts.get(dir);
     const artifacts = kept.artifacts(idOf(uri));
     const baseline = kept.pullRequests(idOf(uri));
-    if (told === undefined && github === undefined && artifacts === undefined && baseline === undefined) return undefined;
+    // The directory's facts and the session's baseline meet here: the
+    // baseline is one session's and the facts are every session's in the
+    // directory, and `session/metaChanged` carries the whole map. Composed
+    // once because two keys below carry the same thing, and a second
+    // composition is a second thing that can drift.
+    const facts = github === undefined && baseline === undefined
+      ? undefined
+      : {
+        ...github,
+        ...(baseline === undefined ? {} : {
+          initialPullRequestUrls: baseline.initialPullRequestUrls,
+          associatedPullRequestUrls: baseline.associatedPullRequestUrls,
+        }),
+      };
+    if (told === undefined && facts === undefined && artifacts === undefined) return undefined;
+    // The folder the state belongs to, and the key it is published under. One
+    // string for both, so a client that reads the key it was given and a
+    // client that derives the key from the working directory arrive at the
+    // same entry.
+    const folder = `file://${dir}`;
     return {
       ...told,
-      // The directory's facts and the session's baseline meet here: the
-      // baseline is one session's and the facts are every session's in the
-      // directory, and `session/metaChanged` carries the whole map.
-      ...(github !== undefined || baseline !== undefined
-        ? {
-          github: {
-            ...github,
-            ...(baseline === undefined ? {} : {
-              initialPullRequestUrls: baseline.initialPullRequestUrls,
-              associatedPullRequestUrls: baseline.associatedPullRequestUrls,
-            }),
-          },
-        }
-        : {}),
+      /*
+       * The same state under the three names it is read by: `githubData`
+       * keyed by the folder, with `workingDirectoryKeys` saying which folder,
+       * and `github` for a client that has not moved to the per-folder map.
+       */
+      ...(facts === undefined
+        ? {}
+        : {
+          github: facts,
+          githubData: { [folder]: facts },
+          workingDirectoryKeys: { [folder]: folder },
+        }),
       // The session's own, beside the directory's: what the agent recorded
       // as worth coming back to, under the key the reference client reads.
       ...(artifacts !== undefined && artifacts.length > 0 ? { [ARTIFACTS_META]: artifacts } : {}),
@@ -4124,12 +4144,12 @@ export function createHost(options: HostOptions): Host {
    * The config properties this host owns, rather than the backend.
    *
    * The protocol's schema is deliberately generic - a backend advertises
-   * whatever names it likes - and these six are the conventional ones the
+   * whatever names it likes - and these seven are the conventional ones the
    * *host* answers, named in the reference client's `sessionConfigKeys.ts` as
    * host-owned and "not passed to agents". So they are merged over what the
    * backend said and stripped back out before it is handed anything.
    *
-   * `scope` is a seventh of the same kind, and is offered whenever there is a
+   * `scope` is an eighth of the same kind, and is offered whenever there is a
    * person rather than only under a `worktrees` port.
    */
   /**
@@ -4142,7 +4162,7 @@ export function createHost(options: HostOptions): Host {
   const SEEDS = 20;
   const isolating = async (where: string | undefined, chosen?: string): Promise<{
     schema: Bag;
-    defaults: Record<string, string>;
+    defaults: Record<string, unknown>;
     repository?: string;
   }> => {
     const port = options.worktrees;
@@ -4164,7 +4184,8 @@ export function createHost(options: HostOptions): Host {
         // being asked.
         isolation: 'folder',
         ...(base !== undefined ? { branch: base } : {}),
-        worktreeIncludeFiles: '',
+        worktreeIncludeFiles: [],
+        worktreeSymlinkFolders: [],
         worktreeBranchPrefix: '',
         worktreeCreateNewBranch: 'true',
         worktreeBranchTrack: 'false',
@@ -4224,15 +4245,43 @@ export function createHost(options: HostOptions): Host {
            * anything. Offering `isolation` without this is offering a feature
            * that fails after the person chose it.
            *
-           * A string of comma-separated patterns rather than an array,
-           * because every other value in this bag is a string and a client
-           * draws what the type says.
+           * An array of patterns, as the reference host declares it and its
+           * window sends it. A comma-separated string is read as the list it
+           * spells, for a client that sends one.
            */
           worktreeIncludeFiles: {
-            type: 'string',
+            type: 'array',
             title: 'Files to bring along',
-            description: 'Comma-separated patterns for git-ignored files to copy into the worktree, such as .env',
-            default: '',
+            description: 'Patterns, in .gitignore syntax, for git-ignored files to copy into the worktree, such as .env',
+            items: { type: 'string', title: 'Pattern' },
+            default: [],
+            // Not `readOnly`, which the reference marks it: ahpc lets a person
+            // type it, and a row a client cannot open is a row a person
+            // cannot either.
+            sessionMutable: false,
+          },
+          /*
+           * The folders a checkout does not carry, shared rather than copied.
+           *
+           * `node_modules` is the reason. Copying it is minutes and gigabytes
+           * for a tree that then has its own dependencies to drift out of step
+           * with the checkout's; a link is one directory the agent can build
+           * against immediately. What it costs is that a write into it is a
+           * write into the checkout too, which is why only git-ignored folders
+           * are eligible - and why the control is `readOnly`, like the three
+           * below it: it carries a preference the client already holds rather
+           * than a question to put in front of somebody.
+           *
+           * Two passes rather than one, as the reference runs two: a folder
+           * that is linked should not also be copied.
+           */
+          worktreeSymlinkFolders: {
+            type: 'array',
+            title: 'Folders to share',
+            description: 'Patterns, in .gitignore syntax, for git-ignored folders to link into the worktree, such as node_modules',
+            items: { type: 'string', title: 'Pattern' },
+            default: [],
+            readOnly: true,
             sessionMutable: false,
           },
           /*
@@ -4286,7 +4335,7 @@ export function createHost(options: HostOptions): Host {
    * is `sessionMutable: false`, which is what stops the control once the
    * session has started rather than before it has.
    */
-  const mergedConfig = (uri: string, theirs: unknown, mine: Record<string, string>): Bag => {
+  const mergedConfig = (uri: string, theirs: unknown, mine: Record<string, unknown>): Bag => {
     const held = (typeof theirs === 'object' && theirs !== null ? theirs : {}) as Bag;
     const schema = (typeof held.schema === 'object' && held.schema !== null ? held.schema : {}) as Bag;
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
@@ -4315,7 +4364,7 @@ export function createHost(options: HostOptions): Host {
    * protocol's own field for this: a client hides such a control once the
    * session has started, and this host refuses the change.
    */
-  const hostSchema = (uri: string, mine: Record<string, string>): Bag => {
+  const hostSchema = (uri: string, mine: Record<string, unknown>): Bag => {
     const properties = ((offered.get(uri)?.properties ?? {}) as Bag);
     return Object.fromEntries(
       Object.entries(mine)
@@ -4467,7 +4516,7 @@ export function createHost(options: HostOptions): Host {
     offered.set(uri, { ...mine.schema, properties: { ...properties, ...scoped.properties } });
     const mine_ = { ...mine.defaults, ...scoped.defaults, ...mineOf(config) };
     decided.set(uri, mine_);
-    charge(uri, principal, mine_.scope);
+    charge(uri, principal, typeof mine_.scope === 'string' ? mine_.scope : undefined);
   };
 
   /**
@@ -4658,8 +4707,19 @@ export function createHost(options: HostOptions): Host {
       : {}) as Bag;
     const held: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(kept.config(id) ?? {})) {
-      if (properties[key] === undefined || accepts(properties[key], value)) {
-        held[key] = value;
+      /*
+       * A stored `worktreeIncludeFiles` string, read as the list it spells.
+       *
+       * The property is an array of patterns, and a session may hold the
+       * comma-separated string form, which the array type would refuse and
+       * replace with the default. The check below still runs, so a stored
+       * value that is neither spelling is still refused.
+       */
+      const given = key === 'worktreeIncludeFiles' && typeof value === 'string'
+        ? value.split(',').map((one) => one.trim()).filter((one) => one !== '')
+        : value;
+      if (properties[key] === undefined || accepts(properties[key], given)) {
+        held[key] = given;
         continue;
       }
       const said = `${id}\u0000${key}\u0000${JSON.stringify(value)}`;
@@ -4670,11 +4730,15 @@ export function createHost(options: HostOptions): Host {
     return held;
   };
 
-  /** What this host answered, as strings, for saying back on the session. */
-  const mineOf = (config: Record<string, unknown>): Record<string, string> => Object.fromEntries(
+  /** What this host answered, in the shape it answered it, for saying back on the session. */
+  const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
     Object.entries(config)
-      .filter(([key, value]) => HOSTS_OWN.includes(key) && typeof value === 'string')
-      .map(([key, value]) => [key, value as string]),
+      // A string, or a list of strings for the two pattern keys, which a
+      // session says back in the shape it was given.
+      .filter(([key, value]) => HOSTS_OWN.includes(key)
+        && (typeof value === 'string'
+          || (Array.isArray(value) && value.every((one) => typeof one === 'string'))))
+      .map(([key, value]) => [key, value]),
   );
 
   /**
@@ -5017,7 +5081,7 @@ export function createHost(options: HostOptions): Host {
 
   /** The host's own keys, which a backend has never heard of. */
   const HOSTS_OWN = [
-    'isolation', 'branch', 'worktreeIncludeFiles',
+    'isolation', 'branch', 'worktreeIncludeFiles', 'worktreeSymlinkFolders',
     'worktreeBranchPrefix', 'worktreeCreateNewBranch', 'worktreeBranchTrack',
     'scope',
   ];
@@ -5057,13 +5121,26 @@ export function createHost(options: HostOptions): Host {
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository), worktreeFor(branch ?? base));
-    // Read as a string, because that is what the schema for it says. A config
-    // value is `unknown` on the wire - the protocol declares the bag
-    // `Record<string, unknown>` and `permissions` is an object - so a key
-    // this host declared a string is narrowed where it is used rather than
-    // assumed everywhere.
-    const patterns = typeof config.worktreeIncludeFiles === 'string' ? config.worktreeIncludeFiles : '';
-    const include = patterns.split(',').map((one) => one.trim()).filter((one) => one !== '');
+    // Read as either spelling: the array the schema declares, or a
+    // comma-separated string. A config value is `unknown` on the wire - the
+    // protocol declares the bag `Record<string, unknown>` and `permissions` is
+    // an object - so a key this host declared is narrowed where it is used
+    // rather than assumed everywhere.
+    const patterns = config.worktreeIncludeFiles;
+    const include = (Array.isArray(patterns)
+      ? patterns.filter((one): one is string => typeof one === 'string')
+      : typeof patterns === 'string' ? patterns.split(',') : [])
+      .map((one) => one.trim()).filter((one) => one !== '');
+    /*
+     * The folders to link, read as an array only.
+     *
+     * Narrowed the same way, since a value from the wire is `unknown`, and
+     * handed on as a list of its own.
+     */
+    const wanted = config.worktreeSymlinkFolders;
+    const symlink = (Array.isArray(wanted)
+      ? wanted.filter((one): one is string => typeof one === 'string')
+      : []).map((one) => one.trim()).filter((one) => one !== '');
     await port.create({
       repository,
       base,
@@ -5071,6 +5148,7 @@ export function createHost(options: HostOptions): Host {
       ...(said('worktreeBranchTrack') === 'true' ? { track: true } : {}),
       path,
       ...(include.length > 0 ? { include } : {}),
+      ...(symlink.length > 0 ? { symlink } : {}),
     });
     // The branch is remembered rather than derived from the directory later:
     // a prefix a client asked for changes the name, and guessing it wrong at
@@ -10008,12 +10086,21 @@ export function createHost(options: HostOptions): Host {
              */
             const moved = [...ours, ...fixed];
             if ((moved.length > 0 || rescoped.length > 0) && owning !== undefined) {
-              const bad = [...ours, ...rescoped].find(([, value]) => typeof value !== 'string');
+              /*
+               * A value of the wrong shape for its key, which is a different
+               * thing from a value that is fixed. The two pattern keys take a
+               * list; `isolation`, the branch and the three branch rows take a
+               * string, and a list sent for one of those is a mistake worth
+               * saying so about.
+               */
+              const listOf = (key: string): boolean => key === 'worktreeIncludeFiles' || key === 'worktreeSymlinkFolders';
+              const bad = [...ours, ...rescoped].find(([key, value]) => typeof value !== 'string'
+                && !(listOf(key) && Array.isArray(value) && value.every((one) => typeof one === 'string')));
               const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
               if (bad !== undefined) {
                 for (const [key] of moved) undo(key);
                 for (const [key] of rescoped) undo(key);
-                no(`${bad[0]} takes a string`);
+                no(`${bad[0]} takes ${listOf(bad[0]) ? 'a list of patterns' : 'a string'}`);
               }
               else if (started) {
                 for (const [key] of moved) undo(key);
@@ -10022,7 +10109,7 @@ export function createHost(options: HostOptions): Host {
               }
               else {
                 const mine = { ...settled };
-                for (const [key, value] of [...ours, ...rescoped]) mine[key] = value as string;
+                for (const [key, value] of [...ours, ...rescoped]) mine[key] = value;
                 decided.set(session.uri, mine);
                 /*
                  * What the work is charged to is decided with the rest of the
@@ -10044,7 +10131,7 @@ export function createHost(options: HostOptions): Host {
                   if (owner?.startsWith('user:') === true && person === undefined) {
                     charged.set(session.uri, { refusal: `${owner.slice('user:'.length)} has to sign in once before this session's scope can change` });
                   }
-                  else charge(session.uri, person, mine.scope);
+                  else charge(session.uri, person, typeof mine.scope === 'string' ? mine.scope : undefined);
                 }
                 const uri = session.uri;
                 /** What the clients are told, once the decision is in force. */

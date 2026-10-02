@@ -7339,6 +7339,17 @@ describe('what GitHub knows about the branch', () => {
     expect((state._meta?.github as { associatedPullRequestUrls?: string[] }).associatedPullRequestUrls).toEqual([]);
     // Beside the git facts, not instead of them: `_meta` is one map.
     expect((state._meta?.git as { branchName: string }).branchName).toBe('fix/kqueue');
+    /*
+     * And under the per-folder names the 1.140 window reads.
+     *
+     * `githubData` keyed by the folder, with `workingDirectoryKeys` naming
+     * which working directory that folder is. The key is the working
+     * directory's own `file://` URI, which is what the summary's
+     * `project.uri` already spells it, so the key the host publishes and the
+     * string a client looks it up by are one string.
+     */
+    expect(state._meta?.workingDirectoryKeys).toEqual({ 'file:///home/softov': 'file:///home/softov' });
+    expect(state._meta?.githubData).toEqual({ 'file:///home/softov': state._meta?.github });
     // Asked as the person who lent the token.
     expect(asked.at(-1)?.token).toBe('gho_x');
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
@@ -7354,11 +7365,31 @@ describe('what GitHub knows about the branch', () => {
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
     await settle(8);
     const moved = actions(p, 'ahp-session:/pr').filter((one) => one.action.type === 'session/metaChanged').at(-1);
-    const meta = moved?.action._meta as { git?: { branchName?: string }; github?: { pullRequestState?: string } } | undefined;
+    const meta = moved?.action._meta as {
+      git?: { branchName?: string };
+      github?: { pullRequestState?: string };
+      githubData?: Record<string, { pullRequestState?: string }>;
+      workingDirectoryKeys?: Record<string, string>;
+    } | undefined;
     expect(meta?.github?.pullRequestState).toBe('merged');
     expect(meta?.git?.branchName).toBe('fix/kqueue');
+    // The frame carries the whole map, so the per-folder keys move with it -
+    // or a producer that wrote its own part would have erased the git facts.
+    expect(meta?.workingDirectoryKeys).toEqual({ 'file:///home/softov': 'file:///home/softov' });
+    expect(meta?.githubData?.['file:///home/softov']?.pullRequestState).toBe('merged');
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    expect(((row?.params as { changes: { _meta?: { github?: { pullRequestState?: string } } } }).changes._meta)?.github?.pullRequestState).toBe('merged');
+    const rowMeta = (row?.params as {
+      changes: {
+        _meta?: {
+          github?: { pullRequestState?: string };
+          githubData?: Record<string, { pullRequestState?: string }>;
+          workingDirectoryKeys?: Record<string, string>;
+        };
+      };
+    }).changes._meta;
+    expect(rowMeta?.github?.pullRequestState).toBe('merged');
+    expect(rowMeta?.workingDirectoryKeys).toEqual({ 'file:///home/softov': 'file:///home/softov' });
+    expect(rowMeta?.githubData?.['file:///home/softov']?.pullRequestState).toBe('merged');
   });
 
   it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {
@@ -7395,7 +7426,7 @@ describe('what GitHub knows about the branch', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'claude' } });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
-      snapshot: { state: { _meta?: { github?: Record<string, unknown> } } };
+      snapshot: { state: { _meta?: { github?: Record<string, unknown>; githubData?: Record<string, Record<string, unknown>> } } };
     }).snapshot.state;
     // The key is there with an empty array: a branch that had no pull request
     // is a captured answer, which a client can tell from a host that never
@@ -7403,6 +7434,49 @@ describe('what GitHub knows about the branch', () => {
     expect(state._meta?.github).toHaveProperty('initialPullRequestUrls');
     expect((state._meta?.github as { initialPullRequestUrls?: unknown }).initialPullRequestUrls).toEqual([]);
     expect((state._meta?.github as { associatedPullRequestUrls?: unknown }).associatedPullRequestUrls).toEqual([]);
+    // And the same empty baseline is a captured answer per folder too.
+    expect(state._meta?.githubData?.['file:///home/softov']).toBe(state._meta?.github);
+    expect((state._meta?.githubData?.['file:///home/softov'] as { initialPullRequestUrls?: unknown }).initialPullRequestUrls)
+      .toEqual([]);
+  });
+
+  it('publishes no GitHub state at all where there is no GitHub port', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      // A directory with git facts and no pull request port: `_meta` is not
+      // empty, but nothing about GitHub was ever captured.
+      directories: facts(onBranch('main')),
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/quiet', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/quiet' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    // A key published with nothing under it tells the window the folder is
+    // known and has no state, which is a different answer from one never
+    // published. The git facts are what is there.
+    expect(state._meta?.git).toBeDefined();
+    expect(state._meta?.github).toBeUndefined();
+    expect(state._meta?.githubData).toBeUndefined();
+    expect(state._meta?.workingDirectoryKeys).toBeUndefined();
+  });
+
+  it('has no `_meta` at all for a directory that has answered nothing', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(undefined),
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/silent', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/silent' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    // No folder key for a folder this host knows nothing about.
+    expect(state._meta).toBeUndefined();
   });
 });
 
