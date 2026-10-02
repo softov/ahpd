@@ -6,6 +6,19 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 Current progress and pending items only. [plans/index.md](../plans/index.md) is the backlog.
 
+## Now: usage control and people (2026-10-02)
+
+- On main, unpushed: [usage/02](../plans/usage/02-a-turn-writes-what-it-used/plan.md) `79ac6c5`, [usage/03](../plans/usage/03-a-machine-writes-its-up-time/plan.md) `bff867b`, Softov's `keptLabel` `ee386ec`, [host/37](../plans/host/37-a-session-is-listed-once-under-its-own-harness/plan.md) `7552054` (all built); the ideas cleanup and the vault idea `b2d7bae`, `b848db6`; the [usage/04](../plans/usage/04-usage-is-read-through-a-scheme/plan.md) plan with its task files `2ee2a8b`.
+- Worktrees still open under `/github/.worktrees/`:
+  - `ahpd-host36` - [host/36](../plans/host/36-people-are-resources-a-client-manages/plan.md) being implemented (agent resumed after a stopped run). Both open questions answered and locked in the branch's copy of the plan.
+  - `ahpd-host38` - host/38 plan (owner and sender on the wire); task files being written. 
+- ahpapp main `6ae695c` has the plans chat/02 (task files, 2 open questions), people/01, usage/01, policy/01 (draft).
+- usage/04 has 3 open questions in its Resume state for Softov.
+- Build order: host/36, usage/04, host/38, then ahpapp chat/02, people/01, usage/01.
+- Still to plan to finish usage control: usage/05 (prices), proxy/02 (listener), and policy in three plans (store and allow/deny; limits and charge rules; mid-turn debit and cancel). The rules draft (file:///github/ahp-review/prospect/ahp-user-rules.md) has 3 open questions for Softov first.
+- Ideas added: [presets are harnesses](../ideas/presets-are-harnesses.md), [repositories are resources](../ideas/repositories-are-resources.md), and the [vault](../ideas/a-secret-store.md) shape Softov set; repositories wait on the vault.
+- Runner scripts for agents live in the session scratchpad: `run-plan.sh`, `run-fix.sh`, `run-tasks.sh` (writes task files only). Agents set tasks `implemented`; closing, commit and merge are done after review, merge only on Softov's OK.
+
 ## Now
 
 - 0.8.0 is published. Softov's checks 1 to 5 pass; checks 6 to 21 wait.
