@@ -263,6 +263,16 @@ export const sessionsPath = (): string => join(configDir(), 'sessions.json');
 export const policiesPath = (): string => join(configDir(), 'policies.json');
 
 /**
+ * Where what this host adds on top of a backend is kept, one file per session.
+ *
+ * A folder rather than the single file beside it, and the same reasoning: what
+ * the daemon keeps follows the sessions that exist rather than every session it
+ * ever saw, and a change to one of them is one write. `sessions.json` is what
+ * a daemon before this layout left behind, and is read once on the way here.
+ */
+export const sessionsDir = (): string => join(configDir(), 'sessions');
+
+/**
  * Where what npm last said about this package is kept.
  *
  * Written by the daemon after it asks the registry, and read by the startup

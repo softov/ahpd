@@ -1,7 +1,7 @@
 ---
 title: The session store is a file per session, and it forgets what no longer exists
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-09-30
 revalidated: 2026-09-30
@@ -47,7 +47,7 @@ The files read are the `refs` above.
 | --- | --- | --- |
 | A pull request baseline is written only for a session that is live in this daemon, created, resumed or opened, not for every catalogue row | Softov, 2026-09-30, asked about the baseline-only rows: "Only when opened" | 04 |
 | A disposed chat's title is removed from the store | (defaulted: the research found it left behind; nothing reads it after) | 04 |
-| Pruning runs only after a listing that every backend answered; a backend that failed leaves its rows alone | (defaulted: a failed listing must not erase records) | 02 |
+| Pruning runs only after a listing that every backend answered, and only for a row that listing covered: a backend that answered owns it, and the directory it ran in is one that backend catalogues. A row whose directory or provider no listing named is kept | (defaulted: a failed listing must not erase records, and a listing speaks only for the directories it read) | 02 |
 | All files are read at start, synchronously, as today | (defaulted: catalogue readers call `flags(id)` per row) | 01 |
 
 ## Proposed architecture
@@ -60,10 +60,10 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A file per session](task-01-a-file-per-session.md) | todo | host/31 |
-| [02 - Rows for gone sessions are pruned](task-02-rows-for-gone-sessions-are-pruned.md) | todo | 01 |
-| [03 - sessions.json migrates once](task-03-sessions-json-migrates-once.md) | todo | 01 |
-| [04 - No baseline for an unopened session, no title for a closed chat](task-04-no-baseline-or-title-left-behind.md) | todo | - |
+| [01 - A file per session](task-01-a-file-per-session.md) | done | host/31 |
+| [02 - Rows for gone sessions are pruned](task-02-rows-for-gone-sessions-are-pruned.md) | done | 01 |
+| [03 - sessions.json migrates once](task-03-sessions-json-migrates-once.md) | done | 01 |
+| [04 - No baseline for an unopened session, no title for a closed chat](task-04-no-baseline-or-title-left-behind.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,14 +72,11 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-04-no-baseline-or-title-left-behind.md](task-04-no-baseline-or-title-left-behind.md) may go first; 01 after host/31 is committed.
-- **Open questions:** none.
-- **Watch out for:** host/31 changes what `setConfig` writes (JSON values); build on it, not beside it.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md) and [deferred.md](deferred.md).
 
 ## Final verification checklist
 
-- [ ] A daemon started over today's `sessions.json` ends with `sessions/` holding one file per row and `sessions.json.migrated`.
-- [ ] Deleting a transcript outside ahpd and listing again removes its file.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] A daemon started over today's `sessions.json` ends with `sessions/` holding one file per row and `sessions.json.migrated`.
+- [x] Deleting a transcript outside ahpd and listing again removes its file.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

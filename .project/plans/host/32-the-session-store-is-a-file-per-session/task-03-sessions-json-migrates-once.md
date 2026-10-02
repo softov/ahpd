@@ -1,6 +1,6 @@
 ---
 title: sessions.json migrates once
-status: todo
+status: done
 depends: [task-01-a-file-per-session.md]
 layer: "server"
 refs:
@@ -26,5 +26,3 @@ A daemon that finds `sessions.json` and no `sessions/` splits every row into a f
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

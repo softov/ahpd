@@ -1,7 +1,7 @@
 /** The two `SessionStore` implementations: one that forgets, one that does not. */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Scope } from './scopes.js';
 import type { PullRequestBaseline, SessionStore } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
@@ -37,6 +37,10 @@ export function memorySessions(): SessionStore & Held {
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
+  const forget = (id: string): void => {
+    flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id);
+    providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id);
+  };
   return {
     flags: (id) => flags.get(id) ?? 0,
     setFlags: (id, value) => { flags.set(id, value); },
@@ -82,20 +86,28 @@ export function memorySessions(): SessionStore & Held {
       const held = senders.get(id);
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id); providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
+    forget,
+    prune: (gone) => {
+      // Every id any of the nine holds, since a session is remembered under
+      // whichever of them was written last and nothing else names it.
+      for (const id of new Set([...flags.keys(), ...config.keys(), ...scope.keys(), ...owners.keys(),
+        ...senders.keys(), ...providers.keys(), ...artifacts.keys(), ...pullRequests.keys(), ...chatTitles.keys()])) {
+        if (gone(id)) forget(id);
+      }
+    },
   };
 }
 
 export interface FileSessionOptions {
   /**
-   * Where to keep it.
+   * Where to keep them: a directory holding one file per session.
    *
-   * A path rather than a directory, and the caller's decision rather than this
-   * module's: where a daemon's state belongs is a daemon's question, and a
-   * library that reached for `$XDG_STATE_HOME` would be answering it for a
-   * host embedded in an editor too.
+   * A path rather than a directory this module picks, and the caller's decision
+   * rather than this module's: where a daemon's state belongs is a daemon's
+   * question, and a library that reached for `$XDG_STATE_HOME` would be
+   * answering it for a host embedded in an editor too.
    */
-  file: string;
+  dir: string;
   /** Somewhere to say that it could not be read or written. */
   onProblem?(message: string): void;
 }
@@ -109,22 +121,34 @@ export interface FileSessionOptions {
 const ownerOf = (value: unknown): Owner | undefined =>
   typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
 
-/** What is persisted. Versioned, so a later shape can be recognised rather than guessed at. */
+/** What is persisted for one session. Versioned, so a later shape can be recognised rather than guessed at. */
 interface Saved {
   version: 1;
-  sessions: {
-    id: string;
-    flags?: number;
-    config?: Record<string, unknown>;
-    scope?: Scope | null;
-    owner?: string;
-    senders?: Record<string, string>;
-    provider?: string;
-    artifacts?: Record<string, unknown>[];
-    pullRequests?: PullRequestBaseline;
-    chatTitles?: Record<string, string>;
-  }[];
+  id: string;
+  flags?: number;
+  config?: Record<string, unknown>;
+  scope?: Scope | null;
+  owner?: string;
+  senders?: Record<string, string>;
+  provider?: string;
+  artifacts?: Record<string, unknown>[];
+  pullRequests?: PullRequestBaseline;
+  chatTitles?: Record<string, string>;
 }
+
+/**
+ * An id as the name of the file that holds it, and the name back as an id.
+ *
+ * An id is an opaque key - anything a backend chose, slashes and colons
+ * included - and a file name is not. Percent-encoding is what turns one into the
+ * other and reads back as what it was; the id stays the key it always was, and
+ * a name this version did not write decodes to nothing worth guessing at.
+ */
+const fileNameOf = (id: string): string => `${encodeURIComponent(id)}.json`;
+const idIn = (name: string): string | undefined => {
+  try { return decodeURIComponent(name); }
+  catch { return undefined; }
+};
 
 /**
  * The same store, written down.
@@ -132,73 +156,93 @@ interface Saved {
  * Composed on `memorySessions` rather than reimplemented, so there is one
  * answer to what a flag is and this file is only the reading and the writing.
  *
+ * **One file per session.** What the daemon keeps follows the sessions that
+ * exist rather than every session it ever saw: a change writes the one file it
+ * belongs to, and a session that goes leaves nothing behind.
+ *
  * **Read once, at construction, and synchronously.** Every reader of this is
  * synchronous - a catalogue of a hundred rows asks a hundred times while
  * answering one request - so there is no point at which an async load could
- * have finished before the first question. A daemon reads one small file at
+ * have finished before the first question. A daemon reads its folder at
  * startup and never again.
  *
  * **Written after the change, not during it.** A write is a rename over the
  * old file, and doing that inside every `setFlags` would put a `fsync` in the
  * path of somebody moving the highlight down a list. Coalesced onto the next
- * tick instead: many changes in one turn become one file.
+ * tick instead: many changes in one turn become one pass over what moved.
  *
- * A file that cannot be read is a warning and an empty store, never a refusal.
+ * A file that cannot be read is a warning and an empty row, never a refusal.
  * Losing which sessions were archived is worth saying out loud; refusing to
  * start a daemon over it is not.
  */
 export function fileSessions(options: FileSessionOptions): SessionStore {
   const inner = memorySessions();
-  const file = options.file;
+  const dir = options.dir;
   const told = (message: string): void => { options.onProblem?.(message); };
   /** Every id this store has heard of, because the port has no way to list them. */
-  const known = new Set<string>();
+  const heard = new Set<string>();
+  /** The ids that moved since the last save, and so the files to write. */
+  const dirty = new Set<string>();
   let writing: ReturnType<typeof setTimeout> | undefined;
   /** Closed: what was waiting has been written, and nothing is written again. */
   let closed = false;
 
+  /**
+   * What one session is written down as, or nothing where there is nothing to
+   * write: a session somebody looked at and left alone is not remembered.
+   */
+  const rowOf = (id: string): Saved | undefined => {
+    const flags = inner.flags(id);
+    const config = inner.config(id);
+    const scope = inner.scope(id);
+    const owner = inner.owner(id);
+    const senders = inner.sendersOf(id);
+    const provider = inner.provider(id);
+    const artifacts = inner.artifacts(id);
+    const pullRequests = inner.pullRequests(id);
+    const chatTitles = inner.chatTitlesOf(id);
+    if (flags === 0 && config === undefined && scope === undefined && owner === undefined
+      && senders === undefined && provider === undefined && artifacts === undefined
+      && pullRequests === undefined && chatTitles === undefined) return undefined;
+    return {
+      version: 1,
+      id,
+      ...(flags === 0 ? {} : { flags }),
+      ...(config === undefined ? {} : { config }),
+      ...(scope === undefined ? {} : { scope }),
+      ...(owner === undefined ? {} : { owner }),
+      ...(senders === undefined ? {} : { senders }),
+      ...(provider === undefined ? {} : { provider }),
+      ...(artifacts === undefined ? {} : { artifacts }),
+      ...(pullRequests === undefined ? {} : { pullRequests }),
+      ...(chatTitles === undefined ? {} : { chatTitles }),
+    };
+  };
+
   const save = (): void => {
     if (closed) return;
-    const held: Saved = {
-      version: 1,
-      sessions: [...known].map((id) => {
-        const flags = inner.flags(id);
-        const config = inner.config(id);
-        const scope = inner.scope(id);
-        const owner = inner.owner(id);
-        const senders = inner.sendersOf(id);
-        const provider = inner.provider(id);
-        const artifacts = inner.artifacts(id);
-        const pullRequests = inner.pullRequests(id);
-        const chatTitles = inner.chatTitlesOf(id);
-        return {
-          id,
-          ...(flags === 0 ? {} : { flags }),
-          ...(config === undefined ? {} : { config }),
-          ...(scope === undefined ? {} : { scope }),
-          ...(owner === undefined ? {} : { owner }),
-          ...(senders === undefined || Object.keys(senders).length === 0 ? {} : { senders }),
-          ...(provider === undefined ? {} : { provider }),
-          ...(artifacts === undefined ? {} : { artifacts }),
-          ...(pullRequests === undefined ? {} : { pullRequests }),
-          ...(chatTitles === undefined || Object.keys(chatTitles).length === 0 ? {} : { chatTitles }),
-        };
-      // A row with none of them is a session somebody looked at and left
-      // alone, which is nothing to remember.
-      }).filter((row) => row.flags !== undefined || row.config !== undefined || row.scope !== undefined
-        || row.owner !== undefined || row.senders !== undefined || row.provider !== undefined
-        || row.artifacts !== undefined || row.pullRequests !== undefined || row.chatTitles !== undefined),
-    };
-    try {
-      mkdirSync(dirname(file), { recursive: true });
-      // Written beside and moved into place, so a daemon killed mid-write
-      // leaves the last good file rather than half of this one.
-      const temporary = `${file}.${process.pid}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, file);
-    }
-    catch (error) {
-      told(`Could not write ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    const waiting = [...dirty];
+    dirty.clear();
+    for (const id of waiting) {
+      const row = rowOf(id);
+      const file = join(dir, fileNameOf(id));
+      try {
+        // Nothing left to say about this one, which is a session disposed or a
+        // flag read and cleared: its file goes with it.
+        if (row === undefined) {
+          rmSync(file, { force: true });
+          continue;
+        }
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        // Written beside and moved into place, so a daemon killed mid-write
+        // leaves the last good file rather than half of this one.
+        const temporary = `${file}.${process.pid}.tmp`;
+        writeFileSync(temporary, `${JSON.stringify(row, null, 2)}\n`, { mode: 0o600 });
+        renameSync(temporary, file);
+      }
+      catch (error) {
+        told(`Could not write ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   };
 
@@ -211,24 +255,30 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   };
 
   const load = (): void => {
-    let text: string;
-    try { text = readFileSync(file, 'utf8'); }
+    let names: string[];
+    try { names = readdirSync(dir); }
     // Not there yet, which is what a first run looks like.
     catch { return; }
-    let read: unknown;
-    try { read = JSON.parse(text); }
-    catch (error) {
-      told(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
-    const saved = read as Partial<Saved>;
-    if (saved.version !== 1 || !Array.isArray(saved.sessions)) {
-      told(`Ignoring ${file}: it is not a session store this version can read.`);
-      return;
-    }
-    for (const row of saved.sessions) {
-      if (typeof row?.id !== 'string' || row.id === '') continue;
-      known.add(row.id);
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      // A name that is not an id this version could have written is not one of
+      // its files.
+      if (idIn(name.slice(0, -'.json'.length)) === undefined) continue;
+      const file = join(dir, name);
+      let row: Saved | undefined;
+      try {
+        const read: unknown = JSON.parse(readFileSync(file, 'utf8'));
+        if ((read as Partial<Saved>).version === 1 && typeof (read as Partial<Saved>).id === 'string')
+          row = read as Saved;
+        else told(`Ignoring ${file}: it is not a session store this version can read.`);
+      }
+      catch (error) {
+        told(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      // One file this version cannot read is one session it does not know, and
+      // the rest of the folder still does.
+      if (row === undefined) continue;
+      heard.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)) inner.setConfig(row.id, row.config);
       // A scope is a team and optionally a project. A row written by a version
@@ -283,23 +333,33 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   return {
     flags: (id) => inner.flags(id),
     config: (id) => inner.config(id),
-    setFlags: (id, value) => { known.add(id); inner.setFlags(id, value); later(); },
-    setConfig: (id, values) => { known.add(id); inner.setConfig(id, values); later(); },
+    setFlags: (id, value) => { heard.add(id); inner.setFlags(id, value); dirty.add(id); later(); },
+    setConfig: (id, values) => { heard.add(id); inner.setConfig(id, values); dirty.add(id); later(); },
     scope: (id) => inner.scope(id),
-    setScope: (id, value) => { known.add(id); inner.setScope(id, value); later(); },
+    setScope: (id, value) => { heard.add(id); inner.setScope(id, value); dirty.add(id); later(); },
     owner: (id) => inner.owner(id),
-    setOwner: (id, value) => { known.add(id); inner.setOwner(id, value); later(); },
+    setOwner: (id, value) => { heard.add(id); inner.setOwner(id, value); dirty.add(id); later(); },
     sender: (id, turnId) => inner.sender(id, turnId),
-    setSender: (id, turnId, value) => { known.add(id); inner.setSender(id, turnId, value); later(); },
+    setSender: (id, turnId, value) => { heard.add(id); inner.setSender(id, turnId, value); dirty.add(id); later(); },
     provider: (id) => inner.provider(id),
-    setProvider: (id, value) => { known.add(id); inner.setProvider(id, value); later(); },
+    setProvider: (id, value) => { heard.add(id); inner.setProvider(id, value); dirty.add(id); later(); },
     artifacts: (id) => inner.artifacts(id),
-    setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
+    setArtifacts: (id, values) => { heard.add(id); inner.setArtifacts(id, values); dirty.add(id); later(); },
     pullRequests: (id) => inner.pullRequests(id),
-    setPullRequests: (id, value) => { known.add(id); inner.setPullRequests(id, value); later(); },
+    setPullRequests: (id, value) => { heard.add(id); inner.setPullRequests(id, value); dirty.add(id); later(); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
-    setChatTitle: (id, chatUri, title) => { known.add(id); inner.setChatTitle(id, chatUri, title); later(); },
-    forget: (id) => { known.delete(id); inner.forget(id); later(); },
+    setChatTitle: (id, chatUri, title) => { heard.add(id); inner.setChatTitle(id, chatUri, title); dirty.add(id); later(); },
+    forget: (id) => { heard.delete(id); inner.forget(id); dirty.add(id); later(); },
+    prune: (gone) => {
+      for (const id of [...heard]) {
+        if (!gone(id)) continue;
+        heard.delete(id);
+        inner.forget(id);
+        // The file goes with the row, by the same path a `forget` takes.
+        dirty.add(id);
+      }
+      later();
+    },
     close: () => {
       if (closed) return;
       if (writing !== undefined) {
@@ -310,4 +370,73 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       closed = true;
     },
   };
+}
+
+export interface SessionMigrationOptions {
+  /** The folder the store keeps one file per session in. */
+  dir: string;
+  /** The one file a daemon before this layout left behind. */
+  file: string;
+  /** Somewhere to say that it could not be read or written. */
+  onProblem?(message: string): void;
+}
+
+/** What the one file held, before the store was a file per session. */
+interface Whole {
+  version: 1;
+  sessions: Omit<Saved, 'version'>[];
+}
+
+/**
+ * Split a store written as one file into a file per session, once.
+ *
+ * A daemon that carried every session it ever saw has them all in one file, and
+ * the store this version opens reads a folder. So the rows become that folder's
+ * files and the old file is renamed out of the way, which is what says it has
+ * been read: a daemon that finds the folder already there leaves both alone,
+ * and so does one that finds no file.
+ *
+ * Every row's values are carried as they were written. A config a later version
+ * would refuse is a person's setting and is read back as the store reads any
+ * other stored value.
+ *
+ * A file this version cannot read is left exactly as it is and named in a
+ * warning: it is the only copy of what somebody archived, and guessing at it is
+ * worse than leaving it for a daemon that can read it.
+ */
+export function migrateSessions(options: SessionMigrationOptions): void {
+  const said = (message: string): void => { options.onProblem?.(message); };
+  // A folder means the split has already happened, whatever became of the file.
+  if (existsSync(options.dir)) return;
+  let text: string;
+  try { text = readFileSync(options.file, 'utf8'); }
+  // Not there, which is what a first run looks like.
+  catch { return; }
+  let read: unknown;
+  try { read = JSON.parse(text); }
+  catch (error) {
+    said(`Could not read ${options.file}: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  const whole = read as Partial<Whole>;
+  if (whole.version !== 1 || !Array.isArray(whole.sessions)) {
+    said(`Ignoring ${options.file}: it is not a session store this version can read.`);
+    return;
+  }
+  try {
+    mkdirSync(options.dir, { recursive: true, mode: 0o700 });
+    for (const row of whole.sessions) {
+      if (typeof row?.id !== 'string' || row.id === '') continue;
+      const file = join(options.dir, fileNameOf(row.id));
+      const temporary = `${file}.${process.pid}.tmp`;
+      writeFileSync(temporary, `${JSON.stringify({ ...row, version: 1 }, null, 2)}\n`, { mode: 0o600 });
+      renameSync(temporary, file);
+    }
+    // Renamed rather than deleted, and only once every row is a file: a
+    // daemon that is killed halfway has to find something to start from again.
+    renameSync(options.file, `${options.file}.migrated`);
+  }
+  catch (error) {
+    said(`Could not migrate ${options.file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

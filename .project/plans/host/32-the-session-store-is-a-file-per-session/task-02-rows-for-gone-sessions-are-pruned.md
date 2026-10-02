@@ -1,6 +1,6 @@
 ---
 title: Rows for gone sessions are pruned
-status: todo
+status: done
 depends: [task-01-a-file-per-session.md]
 layer: "sdk"
 refs:
@@ -10,7 +10,7 @@ refs:
 
 ## Objective
 
-`SessionStore` has optional `prune(known: Set<string>)`; after a catalogue listing that every backend answered, the host calls it with every listed and live id, and the file store removes the rest; a listing with a failed backend prunes nothing.
+`SessionStore` has optional `prune(gone: (id: string) => boolean)`; after a catalogue listing that every backend answered, the host asks about each stored id, and the file store removes the ones it answers true for; a listing with a failed backend prunes nothing, and neither does a row no listing covered.
 
 ## Files
 
@@ -28,5 +28,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

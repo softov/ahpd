@@ -9,7 +9,7 @@
  * file.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -21,7 +21,7 @@ import type { Peer } from '../src/types/rpc.js';
 import type { Bag } from '../src/types/common.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { Principal, Users } from '../src/types/users.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, Listed } from '../src/types/agent.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
@@ -34,6 +34,18 @@ const HOST = 'builder';
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-store-')); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+/**
+ * What one session's own file holds, or nothing when it has no file.
+ *
+ * One file per session is the store's whole shape, so what a case asserts is
+ * the file itself - its name included, since the name is what the id had to be
+ * made safe for.
+ */
+const row = (dir: string, id: string): unknown => {
+  try { return JSON.parse(readFileSync(join(dir, `${encodeURIComponent(id)}.json`), 'utf8')); }
+  catch { return undefined; }
+};
 
 const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
   const notes: { method: string; params: unknown }[] = [];
@@ -206,50 +218,84 @@ it('forgets it when the store is the one that forgets', async () => {
 });
 
 it('remembers it across a restart when the store writes it down', async () => {
-  const file = join(root, 'sessions.json');
-  const first = await running(fileSessions({ file }));
+  const dir = join(root, 'sessions');
+  const first = await running(fileSessions({ dir }));
   await archive(first.client);
   // The write is coalesced onto the next tick, so this is the restart
   // happening after it rather than a test waiting for nothing.
   await new Promise((tick) => { setTimeout(tick, 5); });
 
-  const second = await running(fileSessions({ file }));
+  const second = await running(fileSessions({ dir }));
   expect(await statusOf(second.client) & ARCHIVED).toBe(ARCHIVED);
 });
 
-it('writes nothing for a session nobody flagged', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
-  // Read and then cleared: back where it started, so there is nothing about
-  // this session worth a line in a file a daemon carries for months.
+it('keeps one file per session, and writes only the one that changed', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setFlags('a', READ);
+  store.setFlags('b', ARCHIVED);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(readdirSync(dir).sort()).toEqual(['a.json', 'b.json']);
+
+  // A change to one is one write: what the daemon keeps follows the sessions
+  // that exist, and rewriting every row to say one of them moved is what this
+  // store stopped doing.
+  const before = statSync(join(dir, 'b.json')).mtimeMs;
+  await new Promise((tick) => { setTimeout(tick, 20); });
+  store.setFlags('a', READ | ARCHIVED);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', flags: READ | ARCHIVED });
+  expect(statSync(join(dir, 'b.json')).mtimeMs).toBe(before);
+});
+
+it('reads back an id that is not a file name as it stands', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  // An id is an opaque key, and these are the two a backend is most likely to
+  // hand out: a fragment and a URI.
+  for (const id of ['claude:/one', 'agent-host:session/two', 'a b']) store.setProvider(id, 'claude');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(readdirSync(dir).sort()).toEqual(['a%20b.json', 'agent-host%3Asession%2Ftwo.json', 'claude%3A%2Fone.json']);
+
+  const second = fileSessions({ dir });
+  for (const id of ['claude:/one', 'agent-host:session/two', 'a b']) expect(second.provider(id)).toBe('claude');
+});
+
+it('writes nothing for a session nobody flagged', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  // Read and then cleared: back where it started, so there is nothing about
+  // this session worth a file a daemon carries for months.
+  store.setFlags('a', READ);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', flags: READ });
   store.setFlags('a', 0);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'a')).toBeUndefined();
 });
 
 it('forgets a session that was disposed, rather than keeping its bits for ever', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   const { client } = await running(store);
   await archive(client);
   await client.handle({ method: 'disposeSession', params: { channel: SESSION } });
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'one')).toBeUndefined();
 });
 
-it('keeps what the agent recorded, and drops the slot when the last entry goes', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+it('keeps what the agent recorded, and drops the file when the last entry goes', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   const one = { id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' };
   store.setArtifacts('a', [one]);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([{ id: 'a', artifacts: [one] }]);
-  // Read back by a second store on the same file, which is what a restart is.
-  expect(fileSessions({ file }).artifacts('a')).toEqual([one]);
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', artifacts: [one] });
+  // Read back by a second store on the same folder, which is what a restart is.
+  expect(fileSessions({ dir }).artifacts('a')).toEqual([one]);
   store.setArtifacts('a', []);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'a')).toBeUndefined();
   expect(memorySessions().artifacts('a')).toBeUndefined();
 });
 
@@ -262,36 +308,35 @@ it('keeps the settings a session was given, so a resumed one still has them', as
 });
 
 it('keeps the scope a session is charged to across a restart, and forgets it with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setScope('a', { team: 'backend', project: 'ahpd' });
   store.setScope('b', { team: 'frontend' });
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', scope: { team: 'backend', project: 'ahpd' } },
-    { id: 'b', scope: { team: 'frontend' } },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', scope: { team: 'backend', project: 'ahpd' } });
+  expect(row(dir, 'b')).toEqual({ version: 1, id: 'b', scope: { team: 'frontend' } });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.scope('a')).toEqual({ team: 'backend', project: 'ahpd' });
   expect(second.scope('b')).toEqual({ team: 'frontend' });
   expect(second.scope('nobody')).toBeUndefined();
   // Charged to nothing on purpose is kept as `null`, apart from never decided.
   second.setScope('c', null);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ file }).scope('c')).toBeNull();
+  expect(fileSessions({ dir }).scope('c')).toBeNull();
   second.setScope('a', undefined);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ file }).scope('a')).toBeUndefined();
+  expect(fileSessions({ dir }).scope('a')).toBeUndefined();
   second.forget('b');
   second.forget('c');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'b')).toBeUndefined();
+  expect(row(dir, 'c')).toBeUndefined();
 });
 
 it('keeps a session\'s pull request baseline across a restart, empty included, and forgets it with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   const inherited = { initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/7'], associatedPullRequestUrls: [] };
   // An all-empty baseline is a captured answer - the branch had none - and is
   // not the same as a session nobody asked about.
@@ -300,113 +345,111 @@ it('keeps a session\'s pull request baseline across a restart, empty included, a
   store.setPullRequests('b', none);
   store.setPullRequests('c', { initialPullRequestUrls: [], associatedPullRequestUrls: [] });
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', pullRequests: inherited },
-    { id: 'b', pullRequests: none },
-    { id: 'c', pullRequests: { initialPullRequestUrls: [], associatedPullRequestUrls: [] } },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', pullRequests: inherited });
+  expect(row(dir, 'b')).toEqual({ version: 1, id: 'b', pullRequests: none });
+  expect(row(dir, 'c')).toEqual({
+    version: 1, id: 'c', pullRequests: { initialPullRequestUrls: [], associatedPullRequestUrls: [] },
+  });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.pullRequests('a')).toEqual(inherited);
   expect(second.pullRequests('b')).toEqual(none);
   expect(second.pullRequests('c')).toEqual({ initialPullRequestUrls: [], associatedPullRequestUrls: [] });
   expect(second.pullRequests('nobody')).toBeUndefined();
   second.forget('a');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  const after = fileSessions({ file });
+  const after = fileSessions({ dir });
   expect(after.pullRequests('a')).toBeUndefined();
   expect(after.pullRequests('b')).toEqual(none);
 });
 
 it('keeps whose work a session is across a restart, and forgets it with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setOwner('a', 'user:ana');
   store.setOwner('b', 'root:builder');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', owner: 'user:ana' },
-    { id: 'b', owner: 'root:builder' },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', owner: 'user:ana' });
+  expect(row(dir, 'b')).toEqual({ version: 1, id: 'b', owner: 'root:builder' });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.owner('a')).toBe('user:ana');
   expect(second.owner('b')).toBe('root:builder');
   expect(second.owner('nobody')).toBeUndefined();
   second.setOwner('a', undefined);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ file }).owner('a')).toBeUndefined();
+  expect(fileSessions({ dir }).owner('a')).toBeUndefined();
   second.forget('b');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'b')).toBeUndefined();
   expect(memorySessions().owner('a')).toBeUndefined();
 });
 
 it('keeps who sent each turn across a restart, and forgets it with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setOwner('a', 'user:ana');
   // Two turns, two people, one session: the turn is the only thing that says
   // which of them it was.
   store.setSender('a', 'turn-1', 'user:ana');
   store.setSender('a', 'turn-2', 'user:bo');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', owner: 'user:ana', senders: { 'turn-1': 'user:ana', 'turn-2': 'user:bo' } },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({
+    version: 1, id: 'a', owner: 'user:ana', senders: { 'turn-1': 'user:ana', 'turn-2': 'user:bo' },
+  });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.sender('a', 'turn-1')).toBe('user:ana');
   expect(second.sender('a', 'turn-2')).toBe('user:bo');
   expect(second.sender('a', 'turn-never')).toBeUndefined();
   expect(second.sender('nobody', 'turn-1')).toBeUndefined();
-  // A sender cleared with `undefined` leaves nothing worth a line, the way a
+  // A sender cleared with `undefined` leaves nothing worth a file, the way a
   // flag read and cleared does.
   second.setSender('a', 'turn-1', undefined);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ file }).sender('a', 'turn-1')).toBeUndefined();
+  expect(fileSessions({ dir }).sender('a', 'turn-1')).toBeUndefined();
   second.forget('a');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'a')).toBeUndefined();
   expect(memorySessions().sender('a', 'turn-2')).toBeUndefined();
 });
 
 it('keeps which harness a session runs on across a restart, and forgets it with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setProvider('a', 'claude');
   store.setProvider('b', 'claude-openrouter');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', provider: 'claude' },
-    { id: 'b', provider: 'claude-openrouter' },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', provider: 'claude' });
+  expect(row(dir, 'b')).toEqual({ version: 1, id: 'b', provider: 'claude-openrouter' });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.provider('a')).toBe('claude');
   expect(second.provider('b')).toBe('claude-openrouter');
   expect(second.provider('nobody')).toBeUndefined();
   second.setProvider('a', undefined);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ file }).provider('a')).toBeUndefined();
+  expect(fileSessions({ dir }).provider('a')).toBeUndefined();
   second.forget('b');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(row(dir, 'b')).toBeUndefined();
   expect(memorySessions().provider('a')).toBeUndefined();
 });
 
 it('reads a row written before harnesses were kept as one nothing was recorded for', () => {
-  const file = join(root, 'sessions.json');
-  // A version 1 file from a host that had never heard of two harnesses. An
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  // A version 1 row from a host that had never heard of two harnesses. An
   // upgrade must not drop the sessions in it, so the missing field is read as
   // no answer rather than as a refusal.
-  writeFileSync(file, JSON.stringify({ version: 1, sessions: [{ id: 'a', flags: READ }] }));
-  const store = fileSessions({ file });
+  writeFileSync(join(dir, 'a.json'), JSON.stringify({ version: 1, id: 'a', flags: READ }));
+  const store = fileSessions({ dir });
   expect(store.flags('a')).toBe(READ);
   expect(store.provider('a')).toBeUndefined();
   // And one that is not a name at all is ignored rather than guessed at.
-  writeFileSync(file, JSON.stringify({ version: 1, sessions: [{ id: 'b', provider: '' }, { id: 'c', provider: 7 }] }));
-  const other = fileSessions({ file });
+  writeFileSync(join(dir, 'b.json'), JSON.stringify({ version: 1, id: 'b', provider: '' }));
+  writeFileSync(join(dir, 'c.json'), JSON.stringify({ version: 1, id: 'c', provider: 7 }));
+  const other = fileSessions({ dir });
   expect(other.provider('b')).toBeUndefined();
   expect(other.provider('c')).toBeUndefined();
 });
@@ -417,20 +460,19 @@ it('records no harness on a host with no session yet', () => {
 });
 
 it('reads a row that names no owner as one nobody owns', () => {
-  const file = join(root, 'sessions.json');
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
   // What a version that did not record owners wrote, and a row whose owner is
   // not a typed reference: both are ignored rather than guessed at. A turn's
   // sender is held to the same rule, one value at a time.
-  writeFileSync(file, JSON.stringify({
-    version: 1,
-    sessions: [
-      { id: 'a', flags: READ },
-      { id: 'b', owner: 'ana' },
-      { id: 'c', owner: 'user:' },
-      { id: 'd', owner: 'user:ana', senders: { t1: 'ana', t2: 'user:', t3: 'user:bo' } },
-    ],
-  }));
-  const store = fileSessions({ file });
+  const write = (id: string, one: Record<string, unknown>): void => {
+    writeFileSync(join(dir, `${id}.json`), JSON.stringify({ version: 1, id, ...one }));
+  };
+  write('a', { flags: READ });
+  write('b', { owner: 'ana' });
+  write('c', { owner: 'user:' });
+  write('d', { owner: 'user:ana', senders: { t1: 'ana', t2: 'user:', t3: 'user:bo' } });
+  const store = fileSessions({ dir });
   expect(store.flags('a')).toBe(READ);
   expect(store.owner('a')).toBeUndefined();
   expect(store.owner('b')).toBeUndefined();
@@ -459,8 +501,8 @@ it('names the person who created a session, and the host itself for a root conne
 });
 
 it('keeps the owner beside a session a later daemon resumes', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   await running(store, { principal: ana });
   // The write is coalesced onto the next tick, so this is the restart happening
   // after it rather than a test waiting for nothing.
@@ -468,12 +510,12 @@ it('keeps the owner beside a session a later daemon resumes', async () => {
 
   // A second host on the same file is a daemon that came back, and the session
   // it was asked about still says who it belongs to.
-  expect(fileSessions({ file }).owner('one')).toBe('user:ana');
+  expect(fileSessions({ dir }).owner('one')).toBe('user:ana');
 });
 
 it('says on the wire who sent a turn and whose a session is, and keeps it past a restart', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   const { client } = await running(store, { principal: ana });
   const chat = await chatOf(client);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
@@ -495,7 +537,7 @@ it('says on the wire who sent a turn and whose a session is, and keeps it past a
    * store on this file, and not the map this host let go of at turn end.
    */
   await new Promise((tick) => { setTimeout(tick, 5); });
-  const after = fileSessions({ file });
+  const after = fileSessions({ dir });
   expect(after.owner('one')).toBe('user:ana');
   expect(after.sender('one', 'turn-1')).toBe('user:ana');
 });
@@ -565,43 +607,116 @@ it('says who sent a turn on the oldest page too, not only on the tail window', a
 });
 
 it('keeps the titles chats were given, and forgets them with the session', async () => {
-  const file = join(root, 'sessions.json');
-  const store = fileSessions({ file });
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
   store.setChatTitle('a', 'ahp-chat:/one', 'Kqueue port');
   store.setChatTitle('a', 'ahp-chat:/two', 'Tests');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
-    { id: 'a', chatTitles: { 'ahp-chat:/one': 'Kqueue port', 'ahp-chat:/two': 'Tests' } },
-  ]);
-  // Read back by a second store on the same file, which is what a restart is.
-  const second = fileSessions({ file });
+  expect(row(dir, 'a')).toEqual({
+    version: 1, id: 'a', chatTitles: { 'ahp-chat:/one': 'Kqueue port', 'ahp-chat:/two': 'Tests' },
+  });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
   expect(second.chatTitle('a', 'ahp-chat:/one')).toBe('Kqueue port');
   expect(second.chatTitle('a', 'ahp-chat:/two')).toBe('Tests');
   expect(second.chatTitle('a', 'ahp-chat:/nobody')).toBeUndefined();
   second.forget('a');
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
-  expect(fileSessions({ file }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
+  expect(row(dir, 'a')).toBeUndefined();
+  expect(fileSessions({ dir }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
 });
 
-it('starts empty and says so when the file cannot be read', () => {
-  const file = join(root, 'sessions.json');
-  writeFileSync(file, 'this is not json');
+it('starts empty and says so when a file cannot be read', () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.json'), 'this is not json');
   const said: string[] = [];
-  const store = fileSessions({ file, onProblem: (message) => said.push(message) });
+  const store = fileSessions({ dir, onProblem: (message) => said.push(message) });
   // A warning and an empty store, never a refusal: losing which rows were
   // archived is worth saying out loud, and is not worth refusing to start over.
   expect(store.flags('anything')).toBe(0);
   expect(said.join(' ')).toContain('Could not read');
 });
 
-it('ignores a file written by a version that shaped it differently', () => {
-  const file = join(root, 'sessions.json');
-  writeFileSync(file, JSON.stringify({ version: 2, sessions: [{ id: 'a', flags: 64 }] }));
+it('skips a file it cannot read and reads the others', () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.json'), 'this is not json');
+  writeFileSync(join(dir, 'b.json'), JSON.stringify({ version: 1, id: 'b', flags: READ }));
   const said: string[] = [];
-  const store = fileSessions({ file, onProblem: (message) => said.push(message) });
+  const store = fileSessions({ dir, onProblem: (message) => said.push(message) });
+  expect(store.flags('a')).toBe(0);
+  expect(store.flags('b')).toBe(READ);
+  expect(said.join(' ')).toContain('Could not read');
+});
+
+it('ignores a file written by a version that shaped it differently', () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.json'), JSON.stringify({ version: 2, id: 'a', flags: 64 }));
+  const said: string[] = [];
+  const store = fileSessions({ dir, onProblem: (message) => said.push(message) });
   expect(store.flags('a')).toBe(0);
   expect(said.join(' ')).toContain('not a session store this version can read');
+});
+
+it('forgets a session in a directory it read, and keeps one in a directory it did not', async () => {
+  const dir = join(root, 'sessions');
+  const worktree = join(root, '.worktrees', 'ahpd');
+  // Two rows a daemon that ran both of these sessions carries, with the provider
+  // it recorded for each: one opened here, one opened in a git worktree.
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'near.json'), JSON.stringify({ version: 1, id: 'near', flags: ARCHIVED, provider: 'echo' }));
+  writeFileSync(join(dir, 'far.json'), JSON.stringify({ version: 1, id: 'far', flags: ARCHIVED, provider: 'echo' }));
+  const store = fileSessions({ dir });
+
+  /*
+   * What a real catalogue is: the paths the harness was configured with, and
+   * nothing else. A session opened in a worktree ran somewhere no listing has
+   * ever read, which is why its row must not be read as a session that went.
+   */
+  let offered: Listed[] = [
+    { id: 'near', title: 'Near', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', workingDirectories: [`file://${root}`] },
+    { id: 'far', title: 'Far', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', workingDirectories: [`file://${worktree}`] },
+  ];
+  const { client } = await running(store, undefined, { ...echo({ path: root, pace: 0 }), list: async () => offered });
+  // Both listed once, so this host knows where each of them ran.
+  await client.handle({ method: 'listSessions', params: { channel: ROOT } });
+  // Then both transcripts are deleted outside ahpd, and no backend lists either.
+  offered = [];
+  await client.handle({ method: 'listSessions', params: { channel: ROOT } });
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'near')).toBeUndefined();
+  expect(store.flags('near')).toBe(0);
+  // The one in the worktree was never in anything this host read, so its owner
+  // and its bits are still worth keeping.
+  expect(row(dir, 'far')).toMatchObject({ version: 1, id: 'far', flags: ARCHIVED });
+  expect(store.flags('far')).toBe(ARCHIVED);
+});
+
+it('forgets nothing when a backend refused to list', async () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'gone.json'), JSON.stringify({ version: 1, id: 'gone', flags: ARCHIVED }));
+  const store = fileSessions({ dir });
+  // A second harness that is not signed in lists nothing, and says so by
+  // refusing: every row it would have offered would look like a transcript
+  // deleted outside this host, so nothing at all may go.
+  const offline: Agent = {
+    ...echo({ path: root, pace: 0 }),
+    provider: 'offline',
+    list: async () => { throw new Error('not signed in'); },
+  };
+  const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 }), offline], sessions: store });
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+  });
+  await client.handle({ method: 'listSessions', params: { channel: ROOT } });
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'gone')).toEqual({ version: 1, id: 'gone', flags: ARCHIVED });
+  expect(store.flags('gone')).toBe(ARCHIVED);
 });
 
 it('says a write failed rather than throwing out of a flag being set', async () => {
@@ -616,7 +731,7 @@ it('says a write failed rather than throwing out of a flag being set', async () 
    */
   writeFileSync(join(root, 'blocked'), 'not a directory');
   const said: string[] = [];
-  const store = fileSessions({ file: join(root, 'blocked', 'sessions.json'), onProblem: (m) => said.push(m) });
+  const store = fileSessions({ dir: join(root, 'blocked', 'sessions'), onProblem: (m) => said.push(m) });
   expect(() => store.setFlags('a', ARCHIVED)).not.toThrow();
   await new Promise((tick) => { setTimeout(tick, 5); });
   expect(said.join(' ')).toContain('Could not write');

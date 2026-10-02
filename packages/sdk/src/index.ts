@@ -48,7 +48,7 @@ export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
 export { githubPullRequests } from './github.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
-export { fileSessions, memorySessions } from './sessions.js';
+export { fileSessions, memorySessions, migrateSessions } from './sessions.js';
 export type { FileSessionOptions } from './sessions.js';
 export { fileUsage, usageProvider } from './usage.js';
 export type { FileUsageOptions, UsageProvider, UsageProviderOptions } from './usage.js';

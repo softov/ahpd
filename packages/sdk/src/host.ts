@@ -4056,6 +4056,24 @@ export function createHost(options: HostOptions): Host {
           claimed.add(own);
       }
     }
+    /**
+     * Whether this listing can say what is gone, and where it looked.
+     *
+     * A backend that refused lists nothing, and every row it would have offered
+     * would look the same as a transcript deleted outside this host. So a
+     * listing only prunes when every backend answered and at least one of them
+     * was asked - a listing from no backend at all is not a listing.
+     *
+     * What each answered backend read is kept beside that, since a listing only
+     * speaks for the directories it read. Claude's catalogue is its configured
+     * paths and nothing else, so a session opened in a git worktree is one no
+     * listing has ever offered, and a row for it is not a session that is gone.
+     */
+    let answered = 0;
+    let refused = false;
+    /** The providers that answered, and every directory they read. */
+    const spoken = new Set<string>();
+    const read = new Set<string>();
     /** Every agent's row for an id, in the order the agents were loaded. */
     const offered = new Map<string, { agent: Agent; row: Listed }[]>();
     for (const agent of agents.values()) {
@@ -4064,7 +4082,12 @@ export function createHost(options: HostOptions): Host {
       // One backend refusing is not the catalogue refusing. The others still
       // have rows, and a list that failed because a second harness is not
       // signed in is a client that can open nothing.
-      const rows = await agent.list().catch(() => []);
+      answered += 1;
+      const rows = await agent.list().catch(() => { refused = true; return undefined; });
+      if (rows === undefined)
+        continue;
+      spoken.add(agent.provider);
+      for (const dir_ of agent.directories?.() ?? []) read.add(dir_);
       for (const row of rows) {
         if (claimed.has(row.id))
           continue;
@@ -4139,6 +4162,28 @@ export function createHost(options: HostOptions): Host {
         ...describes(uri),
       });
     }
+    /*
+     * What no backend lists any more is gone - a transcript deleted outside
+     * this host - and what is kept for it is for a row nothing can open again.
+     *
+     * A listing only speaks for what it read, and a backend reads the paths it
+     * was configured with: a row in a directory none of them serves - a session
+     * opened in a git worktree - is one no listing could have offered, and this
+     * host cannot say it is gone. Nor can it say so of a row whose directory or
+     * whose provider nothing has ever named. Both are kept: what is kept for
+     * them is the owner, the title and the senders of a session somebody opened.
+     */
+    const gone = (id: string): boolean => {
+      if (claimed.has(id) || offered.has(id))
+        return false;
+      const provider = kept.provider(id);
+      if (provider === undefined || !spoken.has(provider))
+        return false;
+      const named = names.get(id);
+      const dir_ = named === undefined ? undefined : dirOf(named);
+      return dir_ !== undefined && read.has(dir_);
+    };
+    if (answered > 0 && !refused) kept.prune?.(gone);
     return found;
   };
   /**
@@ -8817,6 +8862,11 @@ export function createHost(options: HostOptions): Host {
           madeFrom.delete(chatUri);
           links.forgetChat(chatUri);
           held?.chats.delete(chatUri);
+          // And the name this chat was given. The store is what keeps a chat's
+          // own title rather than the catalogue's derived one, so a chat that
+          // has gone takes its title with it rather than leaving it for a chat
+          // opened under that name years from now.
+          kept.setChatTitle(idOf(found.uri), chatUri, '');
           if (held && held.defaultChat === chatUri) {
             held.defaultChat = [...held.chats.keys()][0] as string;
             dispatch(found.uri, { type: 'session/defaultChatChanged', defaultChat: held.defaultChat });

@@ -1,6 +1,6 @@
 ---
 title: No baseline for an unopened session, no title for a closed chat
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -26,5 +26,3 @@ A GitHub answer writes a baseline only for sessions live in this daemon; a dispo
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

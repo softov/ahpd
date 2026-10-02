@@ -152,6 +152,24 @@ export interface SessionStore {
    */
   forget(id: string): void;
   /**
+   * Forget every session `gone` says is gone, and keep the rest.
+   *
+   * Called after a catalogue listing that every backend answered. A session no
+   * backend lists any more is a transcript deleted outside this host, and what
+   * is kept for it - an archived bit, a chat's title - is for a row nothing can
+   * open again.
+   *
+   * Asked per id rather than handed a list, because the answer is the host's
+   * and only the host has it: whether a listing covered this row at all. A row
+   * whose directory and provider no listing has named is one nothing looked
+   * for, and `gone` says no.
+   *
+   * Optional, and a store that keeps nothing has nothing to prune. A store that
+   * does not implement it keeps everything, which is the answer of a host
+   * embedded in something that owns its own copies.
+   */
+  prune?(gone: (id: string) => boolean): void;
+  /**
    * Write what is waiting to be written, and nothing after.
    *
    * Called when the host closes, so a successor reading the same file is its

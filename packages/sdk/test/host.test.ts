@@ -2565,19 +2565,19 @@ describe('a session read from its transcript', () => {
 });
 
 describe('a session\'s config across a restart', () => {
-  /** A temporary `sessions.json`, removed after the test. */
+  /** A temporary `sessions/` folder, removed after the test. */
   let root: string;
-  let file: string;
+  let dir: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'ahpd-config-'));
-    file = join(root, 'sessions.json');
+    dir = join(root, 'sessions');
   });
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
-  /** A host on the store file, introduced. */
+  /** A host on the store folder, introduced. */
   const hostOnFile = async () => {
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
@@ -2600,10 +2600,11 @@ describe('a session\'s config across a restart', () => {
     return sessionQueries().at(-1)?.options;
   };
 
-  /** What the store file holds for one session. */
-  const stored = (id: string) => (JSON.parse(readFileSync(file, 'utf8')) as {
-    sessions: { id: string; config?: Record<string, unknown> }[];
-  }).sessions.find((row) => row.id === id)?.config;
+  /** What the store folder holds for one session. */
+  const stored = (id: string) => {
+    try { return (JSON.parse(readFileSync(join(dir, `${id}.json`), 'utf8')) as { config?: Record<string, unknown> }).config; }
+    catch { return undefined; }
+  };
 
   it('resumes a session with the config it was created with', async () => {
     const client = await hostOnFile();
@@ -3280,11 +3281,11 @@ describe('what it says it is doing', () => {
   it('brings a renamed peer chat back with its title after a restart on the same file', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-title-'));
     try {
-      const file = join(root, 'sessions.json');
+      const dir = join(root, 'sessions');
       const uri = 'ahp-session:/titled';
       const peerChat = 'ahp-chat:/peer';
       const first = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const pa = peer();
       const a = first.accept(pa);
@@ -3302,7 +3303,7 @@ describe('what it says it is doing', () => {
 
       // A second host on the same file, which is what a restart is.
       const second = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ file }),
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const b = second.accept(peer());
       await b.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -3349,6 +3350,30 @@ describe('what it says it is doing', () => {
     });
     await settle();
     expect(store.chatTitlesOf(id)).toEqual({ [chatOf(`claude:/${id}`)]: 'Paging, again' });
+  });
+
+  it('takes a chat\'s title with the chat, rather than leaving it for the next one', async () => {
+    const store = memorySessions();
+    const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/titled';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const peerChat = 'ahp-chat:/peer';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: peerChat, action: { type: 'session/titleChanged', title: 'Tests' } },
+    });
+    await settle();
+    const id = 'titled';
+    expect(store.chatTitlesOf(id)).toEqual({ [peerChat]: 'Tests' });
+
+    await client.handle({ method: 'disposeChat', params: { channel: peerChat } });
+    await settle();
+    // The session is still here; the chat and the name that was its own are not.
+    expect(store.chatTitlesOf(id)).toBeUndefined();
   });
 
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {
@@ -7442,6 +7467,28 @@ describe('what GitHub knows about the branch', () => {
     expect(state._meta?.githubData?.['file:///home/softov']).toBe(state._meta?.github);
     expect((state._meta?.githubData?.['file:///home/softov'] as { initialPullRequestUrls?: unknown }).initialPullRequestUrls)
       .toEqual([]);
+  });
+
+  it('captures a baseline for a session it is running, and for no row nobody opened', async () => {
+    const url = 'https://github.com/softov/ahpd/pull/7';
+    const { port } = lookup(() => [{ url, state: 'open' as const }]);
+    // A transcript on disk that this host is not running and that nobody has
+    // opened. A baseline written for it would say this is the branch the
+    // session began on, which is a branch nobody ever asked about.
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Browsed', lastModified: 1_700_000_000_000, cwd: '/home/softov' });
+    const store = memorySessions();
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('main')), github: port, sessions: store,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await settle();
+
+    // Only the listing, which the GitHub answer went past.
+    expect(store.pullRequests('browsed')).toBeUndefined();
+    expect(store.pullRequests('live')).toEqual({ initialPullRequestUrls: [url], associatedPullRequestUrls: [] });
   });
 
   it('publishes no GitHub state at all where there is no GitHub port', async () => {

@@ -1,6 +1,6 @@
 ---
 title: A file per session
-status: todo
+status: done
 depends: []
 layer: "sdk, server"
 refs:
@@ -27,5 +27,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

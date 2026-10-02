@@ -12,7 +12,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import type { HostOptions, Tap, Usage } from '@ahpd/sdk';
+import type { HostOptions, SessionStore, Tap, Usage } from '@ahpd/sdk';
 import {
   AGENT_CLASH,
   createHost,
@@ -31,6 +31,7 @@ import {
   listen,
   memoryAutomations,
   memorySessions,
+  migrateSessions,
   overStdio,
   peopleProviders,
   raise,
@@ -40,7 +41,7 @@ import {
   usageProvider,
 } from '@ahpd/sdk';
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
-import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsPath, signInIdentifier, urlHost } from '../config.js';
+import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
@@ -77,6 +78,20 @@ export function apiOrigins(host: string, resource: string | undefined, port: num
     origins.push(at.origin);
   }
   return { authorities, origins };
+}
+
+/**
+ * What this daemon keeps between restarts, over whatever an earlier one left.
+ *
+ * `sessions.json` is split into a file per session once, before the store
+ * opens, so a daemon that carried every session it ever saw does not go on
+ * carrying the one file that held them as well. The split is this daemon's
+ * business because where its files live is, and the store this version opens
+ * only knows the folder.
+ */
+export function daemonSessions(told: (message: string) => void): SessionStore {
+  migrateSessions({ dir: sessionsDir(), file: sessionsPath(), onProblem: told });
+  return fileSessions({ dir: sessionsDir(), onProblem: told });
 }
 
 /**
@@ -423,10 +438,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     sessions: options.sessions === 'memory'
       ? memorySessions()
-      : fileSessions({
-        file: sessionsPath(),
-        onProblem: (message) => process.stdout.write(`${message}\n`),
-      }),
+      : daemonSessions((message) => process.stdout.write(`${message}\n`)),
     /*
      * Automations, with a clock unless asked otherwise.
      *

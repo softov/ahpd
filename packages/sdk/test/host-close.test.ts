@@ -49,12 +49,13 @@ const peer = (): Peer => ({
 
 describe('the stores, closed', () => {
   it('writes a session change that was waiting, and none after', async () => {
-    const file = join(dir, 'sessions.json');
-    const store = fileSessions({ file });
+    const sessions = join(dir, 'sessions');
+    const store = fileSessions({ dir: sessions });
     store.setFlags('a', 1);
     store.close?.();
     // Written at the close, not on the tick it was waiting for.
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 1, sessions: [{ id: 'a', flags: 1 }] });
+    const file = join(sessions, 'a.json');
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ version: 1, id: 'a', flags: 1 });
     const before = readFileSync(file, 'utf8');
     store.setFlags('b', 2);
     await new Promise((done) => { setTimeout(done, 10); });
@@ -93,12 +94,12 @@ describe('Host.close', () => {
         return { ...session, close: () => { closed.push(start.uri); session.close(); } };
       },
     };
-    const sessionsFile = join(dir, 'sessions.json');
+    const sessionsDir = join(dir, 'sessions');
     const automationsFile = join(dir, 'automations.json');
     const clock = clockwork();
     const automations = scheduledAutomations({ file: automationsFile, now: () => new Date('2026-09-01T08:00:00Z'), timer: clock.timer });
     automations.create('ahp-automation:/one', nightly());
-    const host = createHost({ path: dir, agents: [agent], sessions: fileSessions({ file: sessionsFile }), automations });
+    const host = createHost({ path: dir, agents: [agent], sessions: fileSessions({ dir: sessionsDir }), automations });
     const client = host.accept(peer());
     await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
@@ -108,7 +109,10 @@ describe('Host.close', () => {
     const once = host.close();
     expect(host.close()).toBe(once);
     await once;
-    const read = (): string | null => (existsSync(sessionsFile) ? readFileSync(sessionsFile, 'utf8') : null);
+    const read = (): string | null => {
+      const file = join(sessionsDir, 'one.json');
+      return existsSync(file) ? readFileSync(file, 'utf8') : null;
+    };
     const sessionsAfter = read();
     expect(closed).toEqual(['echo:/one']);
     expect(clock.armed).toBeUndefined();
@@ -142,8 +146,8 @@ describe('Host.close', () => {
         };
       },
     };
-    const sessionsFile = join(dir, 'sessions.json');
-    const host = createHost({ path: dir, agents: [agent], sessions: fileSessions({ file: sessionsFile }) });
+    const sessionsDir = join(dir, 'sessions');
+    const host = createHost({ path: dir, agents: [agent], sessions: fileSessions({ dir: sessionsDir }) });
     const client = host.accept(peer());
     await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
@@ -349,7 +353,7 @@ describe('Host.close refuses what would start', () => {
     const base = echo({ path: dir, pace: 0 });
     const agent: Agent = { ...base, create: (start) => ({ ...base.create(start), close: () => { throw new Error('the agent would not go'); } }) };
     const closedStores: string[] = [];
-    const sessions = { ...fileSessions({ file: join(dir, 'sessions.json') }), close: () => { closedStores.push('sessions'); } };
+    const sessions = { ...fileSessions({ dir: join(dir, 'sessions') }), close: () => { closedStores.push('sessions'); } };
     const automations = { onDue: () => {}, run: async () => undefined, close: () => { closedStores.push('automations'); throw new Error('the clock stuck'); } };
     const host = createHost({
       path: dir, agents: [agent], sessions, automations: automations as never, onEvent: (line: string) => { said.push(line); },
