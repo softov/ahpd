@@ -98,7 +98,7 @@ const manifest: Record<string, unknown> = {
       items: {
         type: 'object',
         properties: {
-          amount: line('Amount', 'How much, in the measure. Never negative.'),
+          amount: { type: 'number', minimum: 0, title: 'Amount', description: 'How much, in the measure. Never negative.' },
           measure: line('Measure', '`usd`, `tokens`, `calls`, `turns`, `hours` or `sessions`, of the ones the kind takes.'),
           period: line('Period', '`day`, `week`, `month` or `total`.'),
           pool: line('Pool', '`shared` for one total for the group, `each` for one per member.'),
@@ -106,7 +106,7 @@ const manifest: Record<string, unknown> = {
       },
     },
     pool: line('Pool', 'A name several rows draw from one total under.'),
-    cap: line('Cap', 'Whether the row counts and never pays. Enforced later; stored now.'),
+    cap: { type: 'boolean', title: 'Cap', description: 'Whether the row counts and never pays. Enforced later; stored now.' },
     from: line('From', 'When the row starts, as an ISO 8601 instant or a `YYYY-MM-DD` day.'),
     until: line('Until', 'When the row ends, as an ISO 8601 instant or a `YYYY-MM-DD` day. A bare day includes all of it.'),
   },
