@@ -247,6 +247,51 @@ it('keeps whose work a session is across a restart, and forgets it with the sess
   expect(memorySessions().owner('a')).toBeUndefined();
 });
 
+it('keeps which harness a session runs on across a restart, and forgets it with the session', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  store.setProvider('a', 'claude');
+  store.setProvider('b', 'claude-openrouter');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
+    { id: 'a', provider: 'claude' },
+    { id: 'b', provider: 'claude-openrouter' },
+  ]);
+  // Read back by a second store on the same file, which is what a restart is.
+  const second = fileSessions({ file });
+  expect(second.provider('a')).toBe('claude');
+  expect(second.provider('b')).toBe('claude-openrouter');
+  expect(second.provider('nobody')).toBeUndefined();
+  second.setProvider('a', undefined);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ file }).provider('a')).toBeUndefined();
+  second.forget('b');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(memorySessions().provider('a')).toBeUndefined();
+});
+
+it('reads a row written before harnesses were kept as one nothing was recorded for', () => {
+  const file = join(root, 'sessions.json');
+  // A version 1 file from a host that had never heard of two harnesses. An
+  // upgrade must not drop the sessions in it, so the missing field is read as
+  // no answer rather than as a refusal.
+  writeFileSync(file, JSON.stringify({ version: 1, sessions: [{ id: 'a', flags: READ }] }));
+  const store = fileSessions({ file });
+  expect(store.flags('a')).toBe(READ);
+  expect(store.provider('a')).toBeUndefined();
+  // And one that is not a name at all is ignored rather than guessed at.
+  writeFileSync(file, JSON.stringify({ version: 1, sessions: [{ id: 'b', provider: '' }, { id: 'c', provider: 7 }] }));
+  const other = fileSessions({ file });
+  expect(other.provider('b')).toBeUndefined();
+  expect(other.provider('c')).toBeUndefined();
+});
+
+it('records no harness on a host with no session yet', () => {
+  const store = memorySessions();
+  expect(store.provider('one')).toBeUndefined();
+});
+
 it('reads a row that names no owner as one nobody owns', () => {
   const file = join(root, 'sessions.json');
   // What a version that did not record owners wrote, and a row whose owner is

@@ -83,6 +83,19 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setOwner(id: string, value: Owner | undefined): void;
   /**
+   * Which harness this session runs on, or nothing where none was recorded.
+   *
+   * Two harnesses can read the same transcripts, so an id on its own says
+   * neither whose a row is nor which endpoint resumes it. Only the host knows:
+   * a transcript is written by whichever CLI answered, and says nothing about
+   * the plugin that started it. Undefined for a session made before this was
+   * recorded, and for one whose harness is not loaded - a listing falls back to
+   * the first agent that lists it rather than dropping it.
+   */
+  provider(id: string): string | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setProvider(id: string, value: string | undefined): void;
+  /**
    * What the agent recorded as worth coming back to, or nothing where it
    * recorded nothing.
    *

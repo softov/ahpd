@@ -31,6 +31,7 @@ export function memorySessions(): SessionStore & HeldChatTitles {
   const config = new Map<string, Record<string, unknown>>();
   const scope = new Map<string, Scope | null>();
   const owners = new Map<string, Owner>();
+  const providers = new Map<string, string>();
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
@@ -43,6 +44,8 @@ export function memorySessions(): SessionStore & HeldChatTitles {
     setScope: (id, value) => { if (value === undefined) scope.delete(id); else scope.set(id, value); },
     owner: (id) => owners.get(id),
     setOwner: (id, value) => { if (value === undefined) owners.delete(id); else owners.set(id, value); },
+    provider: (id) => providers.get(id),
+    setProvider: (id, value) => { if (value === undefined) providers.delete(id); else providers.set(id, value); },
     artifacts: (id) => artifacts.get(id),
     setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
     pullRequests: (id) => pullRequests.get(id),
@@ -62,7 +65,7 @@ export function memorySessions(): SessionStore & HeldChatTitles {
       const held = chatTitles.get(id);
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
+    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
   };
 }
 
@@ -98,6 +101,7 @@ interface Saved {
     config?: Record<string, unknown>;
     scope?: Scope | null;
     owner?: string;
+    provider?: string;
     artifacts?: Record<string, unknown>[];
     pullRequests?: PullRequestBaseline;
     chatTitles?: Record<string, string>;
@@ -144,6 +148,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
         const config = inner.config(id);
         const scope = inner.scope(id);
         const owner = inner.owner(id);
+        const provider = inner.provider(id);
         const artifacts = inner.artifacts(id);
         const pullRequests = inner.pullRequests(id);
         const chatTitles = inner.chatTitlesOf(id);
@@ -153,6 +158,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           ...(config === undefined ? {} : { config }),
           ...(scope === undefined ? {} : { scope }),
           ...(owner === undefined ? {} : { owner }),
+          ...(provider === undefined ? {} : { provider }),
           ...(artifacts === undefined ? {} : { artifacts }),
           ...(pullRequests === undefined ? {} : { pullRequests }),
           ...(chatTitles === undefined || Object.keys(chatTitles).length === 0 ? {} : { chatTitles }),
@@ -160,8 +166,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       // A row with none of them is a session somebody looked at and left
       // alone, which is nothing to remember.
       }).filter((row) => row.flags !== undefined || row.config !== undefined || row.scope !== undefined
-        || row.owner !== undefined || row.artifacts !== undefined || row.pullRequests !== undefined
-        || row.chatTitles !== undefined),
+        || row.owner !== undefined || row.provider !== undefined || row.artifacts !== undefined
+        || row.pullRequests !== undefined || row.chatTitles !== undefined),
     };
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -217,6 +223,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       }
       const owner = ownerOf(row.owner);
       if (owner !== undefined) inner.setOwner(row.id, owner);
+      // A harness is named by whatever string the agent called itself, so any
+      // non-empty one is taken as it stands. A row written before providers
+      // were kept has none, and reads as a session nothing was recorded for.
+      if (typeof row.provider === 'string' && row.provider !== '') inner.setProvider(row.id, row.provider);
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
       // Only an object with two arrays of strings is a baseline this version
       // understands; anything else is ignored rather than guessed at.
@@ -250,6 +260,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setScope: (id, value) => { known.add(id); inner.setScope(id, value); later(); },
     owner: (id) => inner.owner(id),
     setOwner: (id, value) => { known.add(id); inner.setOwner(id, value); later(); },
+    provider: (id) => inner.provider(id),
+    setProvider: (id, value) => { known.add(id); inner.setProvider(id, value); later(); },
     artifacts: (id) => inner.artifacts(id),
     setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
     pullRequests: (id) => inner.pullRequests(id),

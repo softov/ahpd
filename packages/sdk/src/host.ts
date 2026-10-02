@@ -50,7 +50,7 @@ import type { HostEvent } from './types/events.js';
 import { raise } from './plugins.js';
 import type { Grant, Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
-import type { Agent, BoundTool } from './types/agent.js';
+import type { Agent, BoundTool, Listed } from './types/agent.js';
 import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { RunEnding, StartSession } from './types/automations.js';
@@ -3499,6 +3499,22 @@ export function createHost(options: HostOptions): Host {
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
   };
 
+  /**
+   * Which harness a session runs on, written down under every id it answers to.
+   *
+   * The host's own and the agent's, which are one name unless the backend chose
+   * a different id for the transcript it writes. Written when a session starts
+   * rather than when it is listed: two agents can read the same transcripts, a
+   * listing is a read, and a session that was never recorded still has to open
+   * somewhere. A backend that names its own id only once a turn has run is
+   * recorded at the end of that turn instead, in the chat's own emit.
+   */
+  const keepProvider = (uri: string, agent: Agent, session: Session): void => {
+    kept.setProvider(idOf(uri), agent.provider);
+    const own = session.agentId();
+    if (own !== undefined && own !== '') kept.setProvider(own, agent.provider);
+  };
+
   const spawn = (
     agent: Agent,
     uri: string,
@@ -3701,6 +3717,21 @@ export function createHost(options: HostOptions): Host {
           });
         }
         /*
+         * The harness a transcript is written under, kept as soon as the
+         * backend has said what that id is.
+         *
+         * Claude names the transcript from the stream, so a fork, and a
+         * session whose id the host chose and the backend did not, have no id
+         * of their own until a turn has run - and a fork has none at all,
+         * because `keepProvider` is called before anything is said. Only when
+         * the store does not already say it: a row rewritten on every turn is
+         * a store written to for nothing.
+         */
+        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
+          const own = byChat.get(chatUri)?.chat.agentId();
+          if (own !== undefined && own !== '' && kept.provider(own) !== agent.provider) kept.setProvider(own, agent.provider);
+        }
+        /*
          * The session's list of chats, when one of them has moved.
          *
          * Only on a change: a chat says something on every delta, and a
@@ -3893,6 +3924,10 @@ export function createHost(options: HostOptions): Host {
    * twice, once as the channel being talked to and once as the file it is
    * writing. The live row wins and the file it claims is dropped: they are one
    * conversation, and the row somebody can open is the useful half.
+   *
+   * Two harnesses reading one directory overlap the same way. A row is
+   * gathered from every agent first and then given to one of them, so the
+   * catalogue says whose it is instead of saying it twice.
    */
   const listing = async (): Promise<Summary[]> => {
     const claimed = new Set<string>();
@@ -3904,7 +3939,8 @@ export function createHost(options: HostOptions): Host {
           claimed.add(own);
       }
     }
-    const found: Summary[] = [];
+    /** Every agent's row for an id, in the order the agents were loaded. */
+    const offered = new Map<string, { agent: Agent; row: Listed }[]>();
     for (const agent of agents.values()) {
       if (!agent.list)
         continue;
@@ -3915,28 +3951,49 @@ export function createHost(options: HostOptions): Host {
       for (const row of rows) {
         if (claimed.has(row.id))
           continue;
-        const resource = `${agent.provider}:/${row.id}`;
-        // Remembered as it is listed: opening a row asks its backend for the
-        // transcript, and the URI says neither whose it is nor where it ran.
-        names.set(row.id, resource);
-        owners.set(resource, agent);
-        wheres.set(resource, row.workingDirectories);
-        births.set(resource, row.createdAt);
-        moves.set(resource, row.modifiedAt);
-        found.push({
-          resource,
-          provider: agent.provider,
-          title: row.title,
-          // Nothing this host started is running yet, so activity is idle and
-          // the only bits set are the client's own.
-          status: Status.Idle | kept.flags(row.id),
-          createdAt: row.createdAt,
-          modifiedAt: row.modifiedAt,
-          workingDirectories: row.workingDirectories,
-          ...changesOf(resource),
-          ...describes(resource),
-        });
+        const both = offered.get(row.id);
+        if (both === undefined) offered.set(row.id, [{ agent, row }]);
+        else both.push({ agent, row });
       }
+    }
+    const found: Summary[] = [];
+    for (const [id, both] of offered) {
+      /*
+       * Whose this row is, which two harnesses reading one directory cannot
+       * say between them: a transcript names the CLI that wrote it and not the
+       * plugin that started it. The host recorded the answer when the session
+       * ran, and that is the one loaded agent it names. A session recorded for
+       * an agent this host is not serving, and one recorded before anything
+       * was, both go to the first agent that listed it - which is where a
+       * session that predates the record, or outlives its harness, opens.
+       */
+      const recorded = kept.provider(id);
+      const one = both.find((it) => it.agent.provider === recorded) ?? both[0];
+      // Never empty: an id is in the map only because an agent listed it.
+      if (one === undefined) continue;
+      const agent = one.agent;
+      const row = one.row;
+      const resource = `${agent.provider}:/${id}`;
+      // Remembered as it is listed: opening a row asks its backend for the
+      // transcript, and the URI says neither whose it is nor where it ran.
+      names.set(id, resource);
+      owners.set(resource, agent);
+      wheres.set(resource, row.workingDirectories);
+      births.set(resource, row.createdAt);
+      moves.set(resource, row.modifiedAt);
+      found.push({
+        resource,
+        provider: agent.provider,
+        title: row.title,
+        // Nothing this host started is running yet, so activity is idle and
+        // the only bits set are the client's own.
+        status: Status.Idle | kept.flags(id),
+        createdAt: row.createdAt,
+        modifiedAt: row.modifiedAt,
+        workingDirectories: row.workingDirectories,
+        ...changesOf(resource),
+        ...describes(resource),
+      });
     }
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
@@ -6364,6 +6421,9 @@ export function createHost(options: HostOptions): Host {
       // What it was made with, so a resume after a restart starts from the
       // same place rather than from the defaults.
       if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });
+      // Which harness this one runs on, so a catalogue two agents both list
+      // can say whose row it is.
+      keepProvider(uri, agent, lead);
     }
     catch (error) {
       // The backend's own words. It is the thing that knows which
@@ -9500,6 +9560,7 @@ export function createHost(options: HostOptions): Host {
             else if (was !== undefined) charged.set(named, { scope: was });
             else charge(named, connection.principal, typeof restored.scope === 'string' ? restored.scope : undefined);
             const session = spawn(owner, named, chatUriFor(named), restored, { resume: id, seed }, ran);
+            keepProvider(named, owner, session);
             log(`resumed ${named}`);
             dispatch(named, { type: 'session/ready' });
             summaryMoved(named);
