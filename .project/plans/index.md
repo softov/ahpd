@@ -155,7 +155,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
 | [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 implemented | - | - |
 
-| [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | active 2026-10-01; p1, p2 built, p3, p4 planned | - | the agent meter |
+| [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 
 Next free number in `plugin`: `33`.
 
