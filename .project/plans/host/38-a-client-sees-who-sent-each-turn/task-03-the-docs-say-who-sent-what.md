@@ -1,6 +1,6 @@
 ---
 title: The docs say who sent what
-status: todo
+status: done
 depends: [01, 02]
 layer: "docs"
 refs:
@@ -41,5 +41,3 @@ A client written against these three keys does not have to read the host's sourc
 - Read by hand against a running host: with `users` given, a `chat/turnStarted` frame and a catalogue row from `pnpm wire -- <file>` between them show every claim in steps 1 and 4, and `npm run wire` reports no defect in them.
 - Read by hand against a host without one: no `_meta.sender` and no `_meta.owner` anywhere in the same capture, which is what step 5 promises.
 - Every other row in those two tables is unchanged, and `docs/PLUGINS.md` still reads as it does: a plugin and a client read the same sender from two different surfaces, and saying so once here is what stops the next reader from assuming they are one thing.
-
-## Resume

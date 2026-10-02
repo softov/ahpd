@@ -1,6 +1,6 @@
 ---
 title: A turn and a session say who, on the wire
-status: todo
+status: done
 depends: [01]
 layer: "sdk"
 refs:
@@ -31,7 +31,7 @@ Both are `_meta` keys the protocol already declares where they land, and where t
 
 ## Steps
 
-1. **Depends on the plan's open question, where a historic turn's sender rides.** The protocol declares `_meta` on `Message` and on `ChatTurnStartedAction` and on `SessionSummary` and `SessionState`, and declares none on `Turn`, on `ActiveTurn` or on `ChatTurnsLoadedAction`. Around the proposed answer, write `withSender(session: string, turns: Bag[]): Bag[]` beside `stampedCalls` at 2117: for each turn, `kept.sender(idOf(session), String(turn.id ?? ''))`, and where there is a sender and the turn's `message` is an object, return `{ ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), sender } } }`. The rest of the shape is `stampedCalls` exactly, including the `touched` flag: a copy where something moved and the backend's own object everywhere else, because `chatState()` is the agent's answer and not a place this host writes into.
+1. The protocol declares `_meta` on `Message` and on `ChatTurnStartedAction` and on `SessionSummary` and `SessionState`, and declares none on `Turn`, on `ActiveTurn` or on `ChatTurnsLoadedAction`. Around the proposed answer, write `withSender(session: string, turns: Bag[]): Bag[]` beside `stampedCalls` at 2117: for each turn, `kept.sender(idOf(session), String(turn.id ?? ''))`, and where there is a sender and the turn's `message` is an object, return `{ ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), sender } } }`. The rest of the shape is `stampedCalls` exactly, including the `touched` flag: a copy where something moved and the backend's own object everywhere else, because `chatState()` is the agent's answer and not a place this host writes into.
 2. `state.turns` and `state.activeTurn` at 6119 and 6122 take the new helper, wrapped round what is already there so both stamps land on the same array. The running turn is a turn like any other and says the same thing; a client drawing it is the client that has just been told who asked.
 3. The browsed session's page at 6183 and a worker chat's at 6164 are the other two, and they are the two that only a store can answer, which is the point: a turn this process did not run is a turn the file has the answer for. A worker's own turn is not stamped, because no sender was ever recorded for it, which is the same absence as a turn sent before this was kept.
 4. `fetchTurns` at 7294 stamps `page.turns` before the dispatch, against `idOf(sessionFor(channel))` the way line 7271 reads the session. The action has no `_meta` of its own to put anything in, so the turns are the whole of it; a client that paged back through a conversation must not find the sender gone on the oldest page.
@@ -47,5 +47,3 @@ Both are `_meta` keys the protocol already declares where they land, and where t
 - `packages/sdk/test/wire.test.ts` - the assertion `expect(found).toEqual([])` is the whole point of the task and must still hold. That host is built with no `users`, so its capture is the negative case: no `_meta.sender` on any turn and no `_meta.owner` on any row, on every one of the frames it records. A host that sent either here would be an undeclared key and fail.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by that test on every run; read the diff, which should be empty apart from the values the test deliberately steadies. It is an output, never an input.
 - `npm test` - `tools/schema.mjs` regenerates the strict schema the checker reads, so the run proves the keys landed where the package declares them rather than where this host would like them.
-
-## Resume

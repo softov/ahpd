@@ -183,6 +183,15 @@ export interface SessionOptions {
    * is a filesystem and a session has none.
    */
   onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
+  /**
+   * A turn this session has written under an id of its own.
+   *
+   * `Start.onTurnRecorded` handed down: a backend that names a turn its own way
+   * in its own transcript says so here, once, and the host keeps what it holds
+   * against that turn under the other id as well. Absent on a host that passes
+   * no such callback.
+   */
+  onTurnRecorded?(turnId: string, transcriptId: string): void;
   /** Called once the agent has reported what it can do. */
   onHandshake?(): void;
 }

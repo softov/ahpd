@@ -2126,6 +2126,23 @@ export function createHost(options: HostOptions): Host {
     });
     return touched ? { ...turn, responseParts: next } : turn;
   });
+  /**
+   * A turn with the sender who asked it, and every turn without one left as it
+   * is.
+   *
+   * `_meta` is the protocol's own place for a message's context and only the
+   * message declares one - `Turn` and `ActiveTurn` do not - so a turn read out
+   * of a session says who sent it the way the live action does, on the thing
+   * the client was handed. A copy where a sender was found and the backend's
+   * own object everywhere else, because `chatState()` is the agent's answer
+   * and not a place this host writes into.
+   */
+  const withSender = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+    const sender = kept.sender(idOf(session), String(turn.id ?? ''));
+    const message = turn.message as Bag | undefined;
+    if (sender === undefined || typeof message !== 'object' || message === null) return turn;
+    return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), sender } } };
+  });
   /** A turn or a tool call moving, as far as telemetry is concerned. */
   const telemetered = (channel: string, action: Record<string, unknown>): void => {
     const type = String(action.type ?? '');
@@ -3028,7 +3045,16 @@ export function createHost(options: HostOptions): Host {
    */
   const describes = (uri: string): Bag => {
     const dir = dirOf(uri);
-    if (dir === undefined) return {};
+    /*
+     * Whose a session is, as a typed reference, and nothing where nobody owns
+     * it - a host with no users directory has no person to name.
+     *
+     * Read before the early return below, because a session in no directory is
+     * exactly the one that still says whose it is, and `metaOf` answers only
+     * for a session that is somewhere.
+     */
+    const owner = kept.owner(idOf(uri));
+    if (dir === undefined) return owner === undefined ? {} : { _meta: { owner } };
     /*
      * The project's name is the directory's own, not its path.
      *
@@ -3042,10 +3068,11 @@ export function createHost(options: HostOptions): Host {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const told = metaOf(uri);
-    const summary = options.changes?.summary(dir);
     return {
       project,
-      ...(told ? { _meta: told } : {}),
+      ...(told === undefined && owner === undefined
+        ? {}
+        : { _meta: { ...told, ...(owner === undefined ? {} : { owner }) } }),
       // Not `changes`: `SessionSummary` declares it and `SessionState` does
       // not, so it goes on the row rather than in both - which is the rule
       // this helper states and had broken.
@@ -3612,24 +3639,42 @@ export function createHost(options: HostOptions): Host {
        */
       subagent: (toolCallId: string, request: SubagentRequest) => openSubagent(uri, chatUri, toolCallId, request),
       emit: (channel, action) => {
-        dispatch(channel === 'chat' ? chatUri : uri, action);
-        // A tool call that finished may have written to this session's tree, so
-        // the changeset is re-read then rather than waiting for the turn's end.
-        if (action.type === 'chat/toolCallComplete') {
-          const dir = dirOf(uri);
-          if (dir !== undefined) void refreshWatched(dir);
-        }
+        const where = channel === 'chat' ? chatUri : uri;
         /*
          * Who sent this turn, and a queued one finding out which turn it became.
          *
          * The sender was recorded against the queued message's id, because that
          * is the only id a queued message has; the backend names the turn it
-         * ran as, and the sender follows it there.
+         * ran as, and the sender follows it there. Read before the dispatch
+         * below, because an action that goes out before the move is the action
+         * a client sees with nothing on it.
          */
         const turn = String(action.turnId ?? '');
         if (action.type === 'chat/turnStarted' && typeof action.queuedMessageId === 'string') {
           const waiting = senders.get(action.queuedMessageId);
           if (waiting !== undefined) senders.set(turn, waiting);
+        }
+        const sender = senderOf(turn);
+        /*
+         * Who asked, on the wire and on disk.
+         *
+         * The action carries it because `chat/turnStarted` is one of the few
+         * that declares a `_meta`; the store keeps it because the in-memory
+         * entry is let go of when the turn ends and a session read out of its
+         * transcript asks the store, not this map. Nothing is written and
+         * nothing is sent where there is nobody to name, so a host with no
+         * users directory sends exactly what it sent before.
+         */
+        if (sender !== undefined && action.type === 'chat/turnStarted') {
+          kept.setSender(idOf(uri), turn, sender);
+          dispatch(where, { ...action, _meta: { ...(action._meta as Bag | undefined), sender } });
+        }
+        else dispatch(where, action);
+        // A tool call that finished may have written to this session's tree, so
+        // the changeset is re-read then rather than waiting for the turn's end.
+        if (action.type === 'chat/toolCallComplete') {
+          const dir = dirOf(uri);
+          if (dir !== undefined) void refreshWatched(dir);
         }
         /*
          * What this turn used, kept against it until it ends.
@@ -3651,9 +3696,8 @@ export function createHost(options: HostOptions): Host {
           else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
             || action.type === 'chat/error') metering.ended(turn);
         }
-        const sender = senderOf(turn);
         // A turn that has ended is let go of, once what a usage record will want
-        // has been read off it.
+        // has been read off it and what a history needs is the store's.
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') senders.delete(turn);
         // The two ends of a turn, as the host sees them: the backend saying it
         // began, and saying it finished or was stopped. A per-token delta is
@@ -3789,6 +3833,28 @@ export function createHost(options: HostOptions): Host {
         const dir = dirOf(uri);
         if (dir === undefined) return;
         options.changes?.observe?.(dir, uri, turnId, path, phase);
+      },
+      /*
+       * A turn the backend has written under an id of its own.
+       *
+       * What the host keeps against a turn is kept against the id the client
+       * chose it by, and a backend whose transcript names turns its own way -
+       * Claude names every turn by the CLI's frame uuid - is read back by that
+       * other id after a restart, finding nothing. So the sender is kept under
+       * it as well, rather than the host learning one backend's transcript
+       * format: decision
+       * `a-backend-says-which-transcript-id-a-turn-was-written-as`.
+       *
+       * The in-memory entry first, because a turn still running is only in
+       * that map, and the store after it for the turn a backend names once
+       * the turn is over. Nothing where the two ids agree, which is every
+       * backend that keeps the ids it was given, and nothing where nobody sent
+       * the turn.
+       */
+      onTurnRecorded: (turnId, transcriptId) => {
+        if (transcriptId === turnId) return;
+        const sender = senderOf(turnId) ?? kept.sender(idOf(uri), turnId);
+        if (sender !== undefined) kept.setSender(idOf(uri), transcriptId, sender);
       },
       onHandshake: () => { learnModels(uri); },
     });
@@ -4322,8 +4388,8 @@ export function createHost(options: HostOptions): Host {
    *
    * By turn rather than by session because two people can be talking in one
    * session and only the turn says which of them it was, and it lasts as long
-   * as the turn does - a turn that has ended is let go of, and nothing is kept
-   * for a session's history, where the usage record will already have it.
+   * as the turn does: a turn that has ended is let go of, and what a session's
+   * history needs afterwards is the store's, not this.
    */
   const senders = new Map<string, Owner>();
 
@@ -6116,10 +6182,11 @@ export function createHost(options: HostOptions): Host {
         : [];
       const state: Bag = { ...talking.chat.chatState(), ...startedBy(talking.uri, channel) };
       if (Array.isArray(state.turns)) {
-        state.turns = stampedCalls(talking.uri, linkedTurns(talking.uri, state.turns as Bag[], restored));
+        const turns = linkedTurns(talking.uri, state.turns as Bag[], restored);
+        state.turns = withSender(talking.uri, stampedCalls(talking.uri, turns));
       }
       if (typeof state.activeTurn === 'object' && state.activeTurn !== null) {
-        state.activeTurn = stampedCalls(talking.uri, [state.activeTurn as Bag])[0];
+        state.activeTurn = withSender(talking.uri, stampedCalls(talking.uri, [state.activeTurn as Bag]))[0];
       }
       return value({ resource: channel, state, fromSeq: serverSeq });
     }
@@ -6161,11 +6228,11 @@ export function createHost(options: HostOptions): Host {
             origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
             interactivity: 'read-only',
             // With each worker it spawned linked from the call that ran it.
-            ...tail(stampedCalls(owning, linkedTurns(
+            ...tail(withSender(owning, stampedCalls(owning, linkedTurns(
               owning,
               (one.turns ?? []) as Bag[],
               workers.filter((held) => String(held.parentToolCallId ?? '') === wanted),
-            ))),
+            )))),
             queuedMessages: [],
           },
           fromSeq: serverSeq,
@@ -6180,7 +6247,7 @@ export function createHost(options: HostOptions): Host {
             status: Status.Idle,
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             ...startedBy(nameOf(id)),
-            ...tail(stampedCalls(owning, linkedTurns(owning, turns, workers))),
+            ...tail(withSender(owning, stampedCalls(owning, linkedTurns(owning, turns, workers)))),
             queuedMessages: [],
             // Held here rather than by a chat, because there is no chat. A
             // client that typed into this row and came back finds what it
@@ -7315,7 +7382,10 @@ export function createHost(options: HostOptions): Host {
           }
           dispatch(channel, {
             type: 'chat/turnsLoaded',
-            turns: page.turns,
+            // The action declares no `_meta` of its own, so the turns are the
+            // whole of it: a client paging back through a conversation must not
+            // find the sender gone on the oldest page.
+            turns: withSender(idOf(sessionFor(channel)), page.turns),
             ...(page.turnsNextCursor ? { turnsNextCursor: page.turnsNextCursor } : {}),
           });
           return {};

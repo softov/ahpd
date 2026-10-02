@@ -1,7 +1,7 @@
 ---
 title: A client sees who owns a session and who sent each turn
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -9,7 +9,8 @@ requires:
   - plans/host/34-work-says-who-owns-it/plan.md
 changes: []
 creates: []
-decisions: []
+decisions:
+  - decisions/a-backend-says-which-transcript-id-a-turn-was-written-as.md
 refs:
   - "[code://packages/sdk/src/host.ts#L3614-L3679](../../../../packages/sdk/src/host.ts#L3614-L3679) - the per-chat emit, where a turn's sender is read, `dispatch` happens and `turn_start` fired"
   - "[code://packages/sdk/src/host.ts#L4322-L4331](../../../../packages/sdk/src/host.ts#L4322-L4331) - `senders` and `senderOf`, held only while a turn runs"
@@ -53,26 +54,26 @@ session owner -> SessionStore.owner -> never on a summary
 | The session store keeps each turn's sender by turn id, so history carries it after a restart | (defaulted: the only way a historic turn can say who sent it; host/34 kept nothing past the turn) | 01 |
 | A host with no users directory sends neither | host/34: no owner is recorded there | 01, 02 |
 | A turn sent before this was kept has no `_meta.sender` | (defaulted: nothing to read) | 02 |
+| A historic turn's sender rides on its message, `turn.message._meta.sender`, in snapshots and `chat/turnsLoaded`; the live `chat/turnStarted` carries `action._meta.sender`. `Turn`, `ActiveTurn` and `ChatTurnsLoadedAction` declare no `_meta` | Softov, 2026-10-02, asked "Where does a turn's sender ride?": "On the message" | 02 |
+| [A backend says which transcript id a turn was written under, and the host keeps the sender under that id too](../../../decisions/a-backend-says-which-transcript-id-a-turn-was-written-as.md) | Softov, 2026-10-02, asked "How should Claude's turns keep their sender after a restart?": "Claude tells us its id" | 02 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The store keeps who sent each turn](task-01-the-store-keeps-who-sent-each-turn.md) | todo | - |
-| [02 - A turn and a session say who, on the wire](task-02-a-turn-and-a-session-say-who-on-the-wire.md) | todo | 01 |
-| [03 - The docs say who sent what](task-03-the-docs-say-who-sent-what.md) | todo | 01, 02 |
+| [01 - The store keeps who sent each turn](task-01-the-store-keeps-who-sent-each-turn.md) | done | - |
+| [02 - A turn and a session say who, on the wire](task-02-a-turn-and-a-session-say-who-on-the-wire.md) | done | 01 |
+| [03 - The docs say who sent what](task-03-the-docs-say-who-sent-what.md) | done | 01, 02 |
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-02; the three task files written 2026-10-02.
-- **Next action:** [task-01-the-store-keeps-who-sent-each-turn.md](task-01-the-store-keeps-who-sent-each-turn.md).
-- **Open questions:**
-  1. `Turn` and `ActiveTurn` declare no `_meta`, and `ChatTurnsLoadedAction` declares none, while `tools/schema.mjs` closes every object with `additionalProperties: false`. So `_meta.sender` written on a historic turn is an undeclared key and `packages/sdk/test/wire.test.ts` fails on it. Where does a historic turn's sender ride - proposed: on the turn's `message`, which declares `_meta`, so a client reads `turn.message._meta.sender` in a snapshot and in `chat/turnsLoaded`, and `action._meta.sender` on the live `chat/turnStarted`. The other way is to ask the protocol package for `Turn._meta`, which is a change in another repository and holds this plan behind a version bump.
-- **Watch out for:** the emit dispatches the action before the queued sender moves, so the move has to go above the dispatch before anything can be stamped onto what goes out.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
+- **Next action:** none.
+- **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A turn sent by `user:ana` carries `_meta.sender: "user:ana"` live and after a restart.
-- [ ] A session summary carries its owner.
-- [ ] A host with no users directory sends neither.
-- [ ] `plans/index.md` updated.
+- [x] A turn sent by `user:ana` carries `_meta.sender: "user:ana"` live and after a restart.
+- [x] A session summary carries its owner.
+- [x] A host with no users directory sends neither.
+- [x] `plans/index.md` updated.

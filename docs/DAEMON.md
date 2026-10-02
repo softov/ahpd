@@ -218,7 +218,7 @@ anything has been let go of.
 | `--advanced-tools` | Offer the tools that declare they need advanced permission, such as the computer's three. Off by default |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
-| `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits and a session's settings go |
+| `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `memory` is why a restart forgets the last two |
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
 | `--no-plugins` | Load none, whatever the configuration file says |

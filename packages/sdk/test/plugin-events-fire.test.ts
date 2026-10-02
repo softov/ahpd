@@ -275,6 +275,38 @@ it('names who sent each turn, and a queued message keeps its sender when it runs
   expect(of(seen, 'turn_end').map(asked)).toEqual(started);
 });
 
+it('says on the wire who sent a turn, and says nothing on a host with nobody to name', async () => {
+  /** The `chat/turnStarted` frame a client was sent, out of what it saw. */
+  const started = (notes: { method: string; params: unknown }[]): Bag | undefined => notes
+    .filter((note) => note.method === 'action')
+    .map((note) => (note.params as { action: Bag }).action)
+    .find((action) => action.type === 'chat/turnStarted');
+
+  const named = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory() });
+  const chat = 'ahp-chat:/who';
+  const on = peer();
+  const ana = named.host.accept(on, PEOPLE.ana);
+  await hello(ana);
+  await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'echo' } });
+  // Watching the chat first, because an action goes to whoever is listening.
+  await ana.handle({ method: 'subscribe', params: { channel: chat } });
+  await send(ana, chat, 'turn-who', 'hello there');
+  await wait(100);
+  expect(started(on.notes)).toMatchObject({ _meta: { sender: 'user:ana' } });
+
+  // And the absence, which is the whole of what a host with no directory has
+  // to say: the action the protocol has, with nothing of this host's on it.
+  const alone = watched();
+  await hello(alone.client);
+  await alone.client.handle({ method: 'createSession', params: { channel: 'ahp-session:/alone', provider: 'echo' } });
+  await alone.client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/alone' } });
+  await send(alone.client, 'ahp-chat:/alone', 'turn-nobody', 'hello there');
+  await wait(100);
+  const quiet = started(alone.peer.notes);
+  expect(quiet).toMatchObject({ type: 'chat/turnStarted' });
+  expect(quiet?._meta).toBeUndefined();
+});
+
 it('names the maker of an automation as the sender of the turn it started', async () => {
   const store = memoryAutomations();
   const { seen, host } = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), automations: store });

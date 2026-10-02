@@ -13,8 +13,9 @@ import type { Owner } from './types/usage.js';
  * the whole slot down needs them all, and that is the one question only the
  * store that holds them can answer.
  */
-interface HeldChatTitles {
+interface Held {
   chatTitlesOf(id: string): Record<string, string> | undefined;
+  sendersOf(id: string): Record<string, Owner> | undefined;
 }
 
 /**
@@ -26,11 +27,12 @@ interface HeldChatTitles {
  * unread - which is a real answer for a host that was never meant to outlive
  * the thing that started it, and the wrong one for a daemon.
  */
-export function memorySessions(): SessionStore & HeldChatTitles {
+export function memorySessions(): SessionStore & Held {
   const flags = new Map<string, number>();
   const config = new Map<string, Record<string, unknown>>();
   const scope = new Map<string, Scope | null>();
   const owners = new Map<string, Owner>();
+  const senders = new Map<string, Map<string, Owner>>();
   const providers = new Map<string, string>();
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
@@ -44,6 +46,17 @@ export function memorySessions(): SessionStore & HeldChatTitles {
     setScope: (id, value) => { if (value === undefined) scope.delete(id); else scope.set(id, value); },
     owner: (id) => owners.get(id),
     setOwner: (id, value) => { if (value === undefined) owners.delete(id); else owners.set(id, value); },
+    sender: (id, turnId) => senders.get(id)?.get(turnId),
+    setSender: (id, turnId, value) => {
+      const held = senders.get(id);
+      if (value === undefined) {
+        held?.delete(turnId);
+        if (held !== undefined && held.size === 0) senders.delete(id);
+        return;
+      }
+      if (held === undefined) senders.set(id, new Map([[turnId, value]]));
+      else held.set(turnId, value);
+    },
     provider: (id) => providers.get(id),
     setProvider: (id, value) => { if (value === undefined) providers.delete(id); else providers.set(id, value); },
     artifacts: (id) => artifacts.get(id),
@@ -65,7 +78,11 @@ export function memorySessions(): SessionStore & HeldChatTitles {
       const held = chatTitles.get(id);
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
+    sendersOf: (id) => {
+      const held = senders.get(id);
+      return held === undefined ? undefined : Object.fromEntries(held);
+    },
+    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id); providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
   };
 }
 
@@ -101,6 +118,7 @@ interface Saved {
     config?: Record<string, unknown>;
     scope?: Scope | null;
     owner?: string;
+    senders?: Record<string, string>;
     provider?: string;
     artifacts?: Record<string, unknown>[];
     pullRequests?: PullRequestBaseline;
@@ -148,6 +166,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
         const config = inner.config(id);
         const scope = inner.scope(id);
         const owner = inner.owner(id);
+        const senders = inner.sendersOf(id);
         const provider = inner.provider(id);
         const artifacts = inner.artifacts(id);
         const pullRequests = inner.pullRequests(id);
@@ -158,6 +177,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           ...(config === undefined ? {} : { config }),
           ...(scope === undefined ? {} : { scope }),
           ...(owner === undefined ? {} : { owner }),
+          ...(senders === undefined || Object.keys(senders).length === 0 ? {} : { senders }),
           ...(provider === undefined ? {} : { provider }),
           ...(artifacts === undefined ? {} : { artifacts }),
           ...(pullRequests === undefined ? {} : { pullRequests }),
@@ -166,8 +186,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       // A row with none of them is a session somebody looked at and left
       // alone, which is nothing to remember.
       }).filter((row) => row.flags !== undefined || row.config !== undefined || row.scope !== undefined
-        || row.owner !== undefined || row.provider !== undefined || row.artifacts !== undefined
-        || row.pullRequests !== undefined || row.chatTitles !== undefined),
+        || row.owner !== undefined || row.senders !== undefined || row.provider !== undefined
+        || row.artifacts !== undefined || row.pullRequests !== undefined || row.chatTitles !== undefined),
     };
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -223,6 +243,15 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       }
       const owner = ownerOf(row.owner);
       if (owner !== undefined) inner.setOwner(row.id, owner);
+      // A turn's sender is a typed reference or it is nothing, one value at a
+      // time: a row written by something that meant something else is ignored
+      // rather than guessed at, as an owner that is not one already is.
+      if (typeof row.senders === 'object' && row.senders !== null && !Array.isArray(row.senders)) {
+        for (const [turnId, sender] of Object.entries(row.senders)) {
+          const who = ownerOf(sender);
+          if (who !== undefined) inner.setSender(row.id, turnId, who);
+        }
+      }
       // A harness is named by whatever string the agent called itself, so any
       // non-empty one is taken as it stands. A row written before providers
       // were kept has none, and reads as a session nothing was recorded for.
@@ -260,6 +289,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setScope: (id, value) => { known.add(id); inner.setScope(id, value); later(); },
     owner: (id) => inner.owner(id),
     setOwner: (id, value) => { known.add(id); inner.setOwner(id, value); later(); },
+    sender: (id, turnId) => inner.sender(id, turnId),
+    setSender: (id, turnId, value) => { known.add(id); inner.setSender(id, turnId, value); later(); },
     provider: (id) => inner.provider(id),
     setProvider: (id, value) => { known.add(id); inner.setProvider(id, value); later(); },
     artifacts: (id) => inner.artifacts(id),

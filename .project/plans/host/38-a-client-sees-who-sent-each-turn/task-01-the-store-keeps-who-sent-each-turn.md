@@ -1,6 +1,6 @@
 ---
 title: The store keeps who sent each turn
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -44,5 +44,3 @@ Nothing is written and nothing is sent where there is nobody to name: a host wit
 - The same file, the "reads a row that names no owner as one nobody owns" case (line 295) extended with a `senders` map holding a value that is not a typed reference, which reads back as nothing.
 - `packages/sdk/test/plugin-events-fire.test.ts` - a new case beside "names who sent each turn, and a queued message keeps its sender when it runs" (line 242), reading the wire rather than the plugin events: the host is built with `users: directory()` and a client accepted under `PEOPLE.ana` that subscribes to its chat first, and the `chat/turnStarted` frame in `peer.notes` carries `_meta.sender: 'user:ana'`. The same case with no `users` in `watched()` carries no `_meta` at all.
 - `npm test` - `tools/schema.mjs` regenerates the strict schema and `packages/sdk/test/wire.test.ts` asserts no undeclared key on any frame, which is the check that would catch `_meta` put somewhere the protocol does not declare it. That host is built without `users`, so it also holds the absence: nothing on its capture may carry `_meta.sender`.
-
-## Resume

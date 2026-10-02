@@ -2826,8 +2826,23 @@ export function createSession(options: ClaudeSessionOptions): Session {
           // turn are tool results, and cutting at one of those would resume
           // halfway through work the agent had already started.
           const said = str(message.uuid);
-          if (active && said !== undefined && !cuts.has(String(active.id))) cuts.set(String(active.id), said);
-          results(bag(message.message), str(message.parent_tool_use_id) ?? '');
+          const parent = str(message.parent_tool_use_id) ?? '';
+          if (active && said !== undefined && !cuts.has(String(active.id))) {
+            cuts.set(String(active.id), said);
+            /*
+             * The same echo, said as the id this turn is written down under.
+             *
+             * The CLI names every turn in the transcript by its own uuid, so
+             * what the host keeps against the id a client chose is not what a
+             * history read back asks about - decision
+             * `a-backend-says-which-transcript-id-a-turn-was-written-as`. Only
+             * the lead turn's own echo says it: a worker's echo is a uuid in
+             * the lead turn's transcript too, and a turn named after a
+             * worker's prompt is not a turn a client can find.
+             */
+            if (parent === '') options.onTurnRecorded?.(String(active.id), said);
+          }
+          results(bag(message.message), parent);
           continue;
         }
 

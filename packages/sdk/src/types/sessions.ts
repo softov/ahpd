@@ -83,6 +83,17 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setOwner(id: string, value: Owner | undefined): void;
   /**
+   * Who sent one of this session's turns, as the same typed reference.
+   *
+   * Keyed by turn as well as by session because two people can be talking in
+   * one session and only the turn says which of them it was. Undefined is the
+   * answer for a turn nobody was recorded as having sent: one sent before this
+   * was kept, and a worker's turn this host opened rather than a person asked.
+   */
+  sender(id: string, turnId: string): Owner | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setSender(id: string, turnId: string, value: Owner | undefined): void;
+  /**
    * Which harness this session runs on, or nothing where none was recorded.
    *
    * Two harnesses can read the same transcripts, so an id on its own says

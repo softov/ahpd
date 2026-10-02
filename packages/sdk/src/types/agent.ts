@@ -201,6 +201,20 @@ export interface Start {
    * it, and a host with no changeset source does not pass one.
    */
   onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
+  /**
+   * A turn this backend has written under an id of its own.
+   *
+   * The host names a turn when a client sends one, and what this host keeps
+   * against that turn, such as its sender, is what a later read asks for. A backend whose own record names turns its own way, as Claude's
+   * transcript names every turn by the CLI's uuid, is asked again for what it
+   * wrote them down as, so the host keeps the same record under that id too
+   * rather than having to learn the backend's format.
+   *
+   * Optional both ways, like `onFileEdit`: a backend whose transcript keeps the
+   * ids it was given never calls it, and a backend that never called it has a
+   * turn that is only findable by the id the client sent.
+   */
+  onTurnRecorded?(turnId: string, transcriptId: string): void;
   /** Called once the backend has reported what it can do. */
   onHandshake?(): void;
   /**
