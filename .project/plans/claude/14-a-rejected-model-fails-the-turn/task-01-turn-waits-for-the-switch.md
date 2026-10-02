@@ -1,6 +1,6 @@
 ---
 title: The turn waits for the model switch
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -17,6 +17,7 @@ Turns that start while the switch is pending wait behind it, so two turns cannot
 ## Files
 
 - `UPDATE: packages/agent-claude/src/session.ts` - `beginTurn` and its two callers.
+- `CREATE: packages/agent-claude/test/agent-claude-model-refusal.test.ts` - the cases below.
 
 ## Validation
 

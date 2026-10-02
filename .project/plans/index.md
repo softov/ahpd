@@ -105,7 +105,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | planned 2026-09-30; tasks 01-03 todo | claude 08 | ahpapp chat/01 |
 | [12 - A second Claude harness runs on another endpoint, named on its own and keyed from the daemon's environment](claude/12-a-second-claude-runs-on-another-endpoint/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/12-a-second-claude-runs-on-another-endpoint/implemented.md)) | claude 10 | - |
 | [13 - A Claude harness offers the models it is told, written or fetched from an endpoint](claude/13-a-claude-harness-offers-the-models-it-is-told/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/13-a-claude-harness-offers-the-models-it-is-told/implemented.md)) | claude 12 | - |
-| [14 - A model the CLI rejects fails the turn that asked for it](claude/14-a-rejected-model-fails-the-turn/plan.md) | high | planned | claude 13 | - |
+| [14 - A model the CLI rejects fails the turn that asked for it](claude/14-a-rejected-model-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](claude/14-a-rejected-model-fails-the-turn/implemented.md)) | claude 13 | - |
 
 Next free number in `claude`: `14`.
 

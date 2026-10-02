@@ -711,6 +711,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
   let chosen: string | undefined;
+  /**
+   * The turn `beginTurn` is starting, from the moment it waits on a switch until
+   * it is running or refused.
+   *
+   * Until the CLI has taken the model there is no `active`, but the turn has
+   * begun: it is this session's, and one started beside it would reach the CLI
+   * beside this one. Held here rather than as a chain of switches, so every
+   * question of whether a turn is running is asked of one thing.
+   */
+  let beginning: string | undefined;
+  /** Whether a turn of this session is running, or is part-way into becoming one. */
+  const busy = (): boolean => active !== undefined || beginning !== undefined;
   /** The config in force, by key. What `session/configChanged` merges into. */
   /*
    * What this session was told to run as.
@@ -2305,7 +2317,63 @@ export function createSession(options: ClaudeSessionOptions): Session {
    */
   const ends = new Map<string, string>();
 
-  const beginTurn = (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): void => {
+  /**
+   * A turn that never reaches the CLI, recorded as one that started and failed.
+   *
+   * The ordinary lifecycle compressed. Both events rather than the error alone,
+   * because `queuedMessageId` rides on the first: a turn taken from the queue
+   * has to clear its waiting row, and a client that is only told about the
+   * failure keeps showing a message it already sent.
+   */
+  const refuseTurn = (turnId: string, text: string, why: string, queuedMessageId?: string, from?: MessageFrom): void => {
+    const turn = {
+      id: turnId,
+      startedAt: new Date().toISOString(),
+      message: {
+        text,
+        origin: from?.origin ?? { kind: 'user' },
+        ...(from?._meta ? { _meta: from._meta } : {}),
+      },
+      responseParts: [],
+      state: 'error',
+      duration: 0,
+    } as unknown as Bag;
+    const part = addFailure(turn, why);
+    turns.push(turn);
+    failed = why;
+    emit('chat', {
+      type: 'chat/turnStarted',
+      turnId,
+      startedAt: turn.startedAt,
+      message: turn.message,
+      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
+    });
+    emit('chat', { type: 'chat/error', turnId, duration: 0, part });
+    doing(undefined);
+    touch();
+  };
+
+  /**
+   * Ask the CLI for a model, and say why it would not take it if it will not.
+   *
+   * `setModel` is the one call here that decides what the CLI will run, so a
+   * turn that asked for a model the CLI refuses cannot be answered by whatever
+   * the session was on before and still be the turn that was asked for. A
+   * refusal is the reason to fail the turn with, and the model is not left
+   * changed - so `chosen` stays where it was for the next turn.
+   */
+  const take = async (id: string): Promise<string | undefined> => {
+    try {
+      await handle.setModel(id === 'default' ? undefined : id);
+      return undefined;
+    }
+    catch (error: unknown) {
+      const why = error instanceof Error ? error.message : String(error);
+      return `The harness would not take model ${id}: ${why}`;
+    }
+  };
+
+  const beginTurn = async (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): Promise<void> => {
     /*
      * A session whose CLI has exited answers at once, and says why.
      *
@@ -2316,44 +2384,34 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * says the CLI never started.
      */
     if (gone !== undefined) {
-      const turn = {
-        id: turnId,
-        startedAt: new Date().toISOString(),
-        message: {
-          text,
-          origin: from?.origin ?? { kind: 'user' },
-          ...(from?._meta ? { _meta: from._meta } : {}),
-        },
-        responseParts: [],
-        state: 'error',
-        duration: 0,
-      } as unknown as Bag;
-      const part = addFailure(turn, gone);
-      turns.push(turn);
-      failed = gone;
-      /*
-       * Started and then failed, which is the ordinary lifecycle compressed.
-       *
-       * Both events rather than the error alone, because `queuedMessageId`
-       * rides on the first: a turn taken from the queue has to clear its
-       * waiting row, and a client that is only told about the failure keeps
-       * showing a message it already sent.
-       */
-      emit('chat', {
-        type: 'chat/turnStarted',
-        turnId,
-        startedAt: turn.startedAt,
-        message: turn.message,
-        ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-      });
-      emit('chat', { type: 'chat/error', turnId, duration: 0, part });
-      doing(undefined);
-      touch();
+      refuseTurn(turnId, text, gone, queuedMessageId, from);
       return;
     }
+    /*
+     * The model this turn names, taken before the prompt goes out and before
+     * the turn is credited to it.
+     *
+     * The turn is busy for as long as this takes - named in `beginning` from
+     * here, so a message queued behind it waits rather than reaching the CLI
+     * first - and the marker comes off again whichever way the switch went,
+     * because a turn that ends is a turn the next one may start behind.
+     */
     if (model !== undefined && model.id !== chosen) {
+      beginning = turnId;
+      const refused = await take(model.id);
+      beginning = undefined;
+      if (refused !== undefined) {
+        refuseTurn(turnId, text, refused, queuedMessageId, from);
+        /*
+         * The queue keeps going, which it does for any other turn that ends.
+         *
+         * Not the way an exited CLI's turn does, because that session has
+         * nothing left to answer what is behind it, and this one does.
+         */
+        startNext();
+        return;
+      }
       chosen = model.id;
-      void handle.setModel(model.id === 'default' ? undefined : model.id).catch(() => {});
     }
     /*
      * The form the model came with, which is one key here.
@@ -2419,10 +2477,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
    *
    * Called wherever a turn ends, which is the only place it can be: a queue
    * that waited for a client to notice would be a list, and every client
-   * watching this chat would have to agree about which of them sends it.
+   * watching this chat would have to agree about which of them sends it. A
+   * turn still switching its model is running as far as this is concerned.
    */
   const startNext = (): void => {
-    if (active || closed)
+    if (busy() || closed)
       return;
     const next = queued.shift();
     if (!next)
@@ -2454,7 +2513,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     const from: MessageFrom = {};
     if (message.origin !== undefined) from.origin = bag(message.origin) as NonNullable<MessageFrom['origin']>;
     if (message._meta !== undefined) from._meta = bag(message._meta);
-    beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from);
+    void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from);
   };
 
   /**
@@ -3264,9 +3323,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * race the next turn onto whichever call landed last. Leaving it is the
      * behaviour that can be explained; silently ignoring the field is the one
      * that cannot, because the transcript would then credit a turn to a model
-     * that never ran it.
+     * that never ran it. The switch is awaited rather than fired, so a turn
+     * naming a model the CLI will not take fails with its reason instead of
+     * being labelled with it and answered by another one.
      */
-    begin: (turnId, text, model, from) => beginTurn(turnId, text, model, undefined, from),
+    begin: (turnId, text, model, from) => { void beginTurn(turnId, text, model, undefined, from); },
     setTitle: (said) => { if (said !== '') title = said; },
 
     /**
@@ -3287,7 +3348,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * itself, not the text of it: when its turn comes `startNext` runs it
        * rather than handing `!ping` to the CLI.
        */
-      if (active || (queuedAs !== undefined && queued.length > 0)) {
+      if (busy() || (queuedAs !== undefined && queued.length > 0)) {
         const id = queuedAs ?? turnId;
         const message = { text: `!${command}`, origin: { kind: 'user' } };
         const entry = { id, command: { text: command, run }, message };
@@ -3411,7 +3472,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * having to type it a second time.
      */
     resume: (turnId) => {
-      if (active !== undefined) return false;
+      if (busy()) return false;
       const last = turns.at(-1);
       if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') return false;
       turns.pop();
