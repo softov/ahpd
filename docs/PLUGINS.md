@@ -84,6 +84,7 @@ against its contract before it is recorded.
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
+| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record` and `total` |
 
 ### A backend's worker chats
 
@@ -218,10 +219,20 @@ nothing behaves exactly as it did before the field existed.
 | `path` | The first directory the host serves |
 | `paths` | Every directory the host serves |
 | `version` | The `@ahpd/sdk` version actually in use |
+| `hostName` | What this host is called, for the work nobody started as themselves |
+| `configDir` | The folder the daemon keeps its own configuration in, where a plugin that has to keep a record puts its file |
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
 
 `log` is stderr and a person reads it. `say` is stdout, which is what `ahpd status` parses, so it is where a plugin that made the host reachable somewhere new puts that address - a line only the log knows is an address nobody pastes. Say it while `listening` is being handled; the announcement is written once that event has been handled and a line offered after it is dropped.
+
+### Writing a usage record
+
+`host.recordUsage(entry)` keeps one `UsageEntry` in the host's `usage` port: a model call (`kind: 'model'`) or a stretch a computer was up (`kind: 'computer'`). It is how a plugin says what its work cost, and the store is the host's own, so every record a daemon keeps lands in one place whichever plugin wrote it.
+
+The entry names `pools` - the keys it is charged to - and the reader charges nothing else. Build them as the decision `agent-usage-is-charged-to-owner-team-and-project-pools` says: the owner as written (`user:<id>`, `root:<host>`), `team:<team>` and `project:<team>:<project>`, each only when the record has it.
+
+Two hosts behave differently on purpose. One whose daemon carries a `usage` store keeps the record. One with no store records nothing and does not fail, because there is nowhere to write rather than a plugin that got it wrong. A store that *is* there and refuses the write throws at the caller, so say what to do with that inside your own plugin.
 
 ### What is not a kind
 

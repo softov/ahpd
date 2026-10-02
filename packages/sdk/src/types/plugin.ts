@@ -18,6 +18,7 @@ import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
 import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
+import type { UsageEntry } from './usage.js';
 
 /**
  * The `HostOptions` keys that hold one value, one plugin at a time.
@@ -83,6 +84,22 @@ export interface PluginContext {
   readonly paths: string[];
   /** The version of `@ahpd/sdk` actually in use, which is what a peer range is checked against. */
   readonly version: string;
+  /**
+   * What this host is called, for the work nobody started as themselves.
+   *
+   * The same name `root:<hostName>` records against, which is what a plugin
+   * charges work it cannot name an owner for to. A daemon that named none
+   * leaves it `host`, exactly as the host itself does.
+   */
+  readonly hostName: string;
+  /**
+   * Where the daemon keeps its own configuration.
+   *
+   * The folder its other stores are in, and where a plugin that has to keep a
+   * record of its own puts it: a file here belongs to this daemon and travels
+   * nowhere else - decision `a-dev-container-owner-is-kept-beside-the-config`.
+   */
+  readonly configDir: string;
   /** One line to the daemon's log. */
   log(message: string): void;
   /**
@@ -132,6 +149,22 @@ export interface PluginHost extends PluginContext {
    * empty record, which is a machine with nothing added to it.
    */
   machineNeeds(provider: string): Record<string, MachineNeed> | undefined;
+  /**
+   * Keep one usage record, in the host's `usage` port.
+   *
+   * The way a plugin says what it cost: a computer records the time it spent
+   * up, and a backend that meters itself records what its turns used - decision
+   * `usage-and-computer-time-are-two-records-behind-one-port`. The record is
+   * `UsageEntry`, either kind, and the store is the host's own rather than a
+   * plugin's, so every record a daemon keeps lands in one place.
+   *
+   * Resolved when it is called rather than at load, because the store belongs
+   * to the host and not to this: the plugin that registers one may load after
+   * this one, and the port may not exist at all. A host with no `usage` port
+   * records nothing and does not fail - there is nowhere to write, which is a
+   * host nobody has asked to keep usage rather than a plugin that got it wrong.
+   */
+  recordUsage(entry: UsageEntry): Promise<void>;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */

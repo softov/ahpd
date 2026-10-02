@@ -28,7 +28,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Usage } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -324,6 +324,15 @@ export interface LoadOneOptions {
   paths: string[];
   /** The `@ahpd/sdk` version a peer range is checked against. */
   version: string;
+  /**
+   * The daemon's own configuration directory, where a plugin keeps a record it
+   * has to outlive its process.
+   *
+   * Required rather than defaulted, because the only thing that knows the
+   * folder is the daemon, and a plugin handed one it made up would keep its
+   * record somewhere nothing else looks.
+   */
+  configDir: string;
   /** One line per notable thing, for the daemon's log. */
   log(message: string): void;
   /**
@@ -344,6 +353,21 @@ export interface LoadOneOptions {
    * and a machine is made long after both have applied.
    */
   agents?: () => Agent[];
+  /**
+   * What this host is called, for the work a plugin charges to `root:<host>`.
+   *
+   * Optional here and defaulted on `PluginContext`, because only the daemon
+   * knows the machine's hostname, and `root:host` is what the host itself
+   * records when nobody named one.
+   */
+  hostName?: string;
+  /**
+   * Where a plugin's usage records go, read when one is written.
+   *
+   * A function for the reason `agents` is one: the port belongs to the host and
+   * is not complete while any one plugin is applying.
+   */
+  usage?: () => Usage | undefined;
 }
 
 /** What one `loadOne` managed: a plugin, or the reasons it is not one. */
@@ -519,9 +543,14 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     path: options.path,
     paths: options.paths,
     version: options.version,
+    hostName: options.hostName ?? 'host',
+    configDir: options.configDir,
     log: options.log,
     say: options.say ?? (() => {}),
-  }, options.agents === undefined ? {} : { agents: options.agents });
+  }, {
+    ...(options.agents === undefined ? {} : { agents: options.agents }),
+    ...(options.usage === undefined ? {} : { usage: options.usage }),
+  });
   try {
     await apply.call(plugin, host, values);
   }
@@ -600,6 +629,15 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
    */
   const known: Agent[] = [...options.base.agents];
 
+  /*
+   * The host this daemon ends up with, which a usage record is written to.
+   *
+   * Assigned once the fold has run and read at write time rather than now,
+   * because the fold may have replaced the daemon's store with a plugin's, and
+   * a recorder still holding the daemon's own would write where nobody reads.
+   */
+  let reached: HostOptions | undefined;
+
   for (const spec of specs) {
     if (typeof spec !== 'string' && spec.enabled === false) continue;
     let resolved: Resolved;
@@ -614,9 +652,12 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       path: options.base.path,
       paths,
       version,
+      configDir: options.configDir,
       log: options.log,
       ...(options.say === undefined ? {} : { say: options.say }),
       agents: () => known,
+      ...(options.base.hostName === undefined ? {} : { hostName: options.base.hostName }),
+      usage: () => reached?.usage,
     });
     problems.push(...one.problems);
     if (one.loaded !== undefined) loaded.push(one.loaded);
@@ -628,6 +669,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
 
   const folded = foldHostOptions(options.base, contributions);
   problems.push(...folded.problems);
+  reached = folded.options;
   return { options: folded.options, contributions, problems, loaded };
 }
 

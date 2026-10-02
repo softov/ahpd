@@ -1,7 +1,7 @@
 ---
 title: A machine records who created it and writes the time it was up, charged to its owner
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -14,6 +14,8 @@ decisions:
   - decisions/a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time.md
   - decisions/agent-usage-is-charged-to-owner-team-and-project-pools.md
   - decisions/usage-and-computer-time-are-two-records-behind-one-port.md
+  - decisions/a-dev-container-owner-is-kept-beside-the-config.md
+  - decisions/a-relay-container-is-owned-by-who-connected.md
 refs:
   - "[code://packages/sdk/src/types/computers.ts](../../../../packages/sdk/src/types/computers.ts) - `MachineSource` and `ComputerPort.create`, where the owner is handed over"
   - "[code://packages/sdk/src/types/plugin.ts#L206](../../../../packages/sdk/src/types/plugin.ts#L206) - `registerUsage`; a plugin has no way to write a record yet"
@@ -32,10 +34,12 @@ Each machine the computer plugin makes carries its creator as its owner, and eve
 | --- | --- | --- |
 | [The creator owns a machine and pays for its up time](../../../decisions/a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time.md) | Softov, 2026-10-02 | 01, 02 |
 | [Pools are owner, team and project](../../../decisions/agent-usage-is-charged-to-owner-team-and-project-pools.md) | Softov, 2026-10-02 | 02 |
+| [A CLI-made machine's owner is kept in `computers.json` beside the config](../../../decisions/a-dev-container-owner-is-kept-beside-the-config.md) | Softov, 2026-10-02 | 01 |
+| [A relay container is owned by who connected, and metered](../../../decisions/a-relay-container-is-owned-by-who-connected.md) | Softov, 2026-10-02 | 01, 02 |
 
 | What | Source | Task |
 | --- | --- | --- |
-| The owner is stored on the machine itself (a label), so it survives a daemon restart | the decision's consequences | 01 |
+| The owner is stored with the machine (a label on a `docker run` machine), so it survives a daemon restart | the decision's consequences | 01 |
 | A machine made for a session also stores that session's team and project, and its records name them | (defaulted: the work that made it is charged under that scope) | 01, 02 |
 | A plugin writes records through a host-provided recorder, not the store itself | (defaulted: the store is the daemon's port; a plugin reports, the host writes) | 02 |
 | A stretch is written when it ends: the machine stops, is removed, or the daemon stops; at start the daemon opens a stretch for each running machine from that moment | (defaulted: a crash loses the open stretch, see deferred) | 02 |
@@ -45,18 +49,18 @@ Each machine the computer plugin makes carries its creator as its owner, and eve
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A machine knows who created it](task-01-a-machine-knows-its-creator.md) | todo | - |
-| [02 - The computer plugin writes up time](task-02-the-plugin-writes-up-time.md) | todo | 01 |
+| [01 - A machine knows who created it](task-01-a-machine-knows-its-creator.md) | done | - |
+| [02 - The computer plugin writes up time](task-02-the-plugin-writes-up-time.md) | done | 01 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** both tasks; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A machine made for a session and one made directly each carry their creator, and keep it across a daemon restart.
-- [ ] Start then stop writes one record with the right `seconds`, owner and pools; a daemon stop closes open stretches and a start reopens them.
-- [ ] A machine with no owner is charged to `root:<host>`.
-- [ ] `usage/00-usage.md` updated; `plans/index.md` updated.
+- [x] A machine made for a session and one made directly each carry their creator, and keep it across a daemon restart.
+- [x] Start then stop writes one record with the right `seconds`, owner and pools; a daemon stop closes open stretches and a start reopens them.
+- [x] A machine with no owner is charged to `root:<host>`.
+- [x] `usage/00-usage.md` updated; `plans/index.md` updated.

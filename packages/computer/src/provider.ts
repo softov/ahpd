@@ -1,5 +1,5 @@
 import { RpcError } from '@ahpd/sdk';
-import type { Entry, MachineNeed, Metadata, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
+import type { Entry, MachineNeed, Metadata, Owner, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
 import { bodyText, MANIFEST_SCHEMA, manifestOf } from './manifest.js';
 import type { Profile } from './manifest.js';
 import type { ComputerRuntime } from './runtime.js';
@@ -59,7 +59,7 @@ export interface ComputerProvider extends ResourceProvider {
   list(uri: string): Promise<Entry[]>;
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
-  write(uri: string, content: Write): Promise<void>;
+  write(uri: string, content: Write, owner?: Owner): Promise<void>;
   remove(uri: string, recursive?: boolean): Promise<void>;
   describe(): SchemeDescription;
 }
@@ -260,8 +260,13 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
      * writes twice with `createOnly` gets `-32010` and one that writes over a
      * machine without it is refused the same way: a machine is not a file and
      * has nothing to splice.
+     *
+     * `owner` is whoever asked, which the machine keeps as a label: its time up
+     * is charged to them, so the record of who made it has to outlive the
+     * request - decision
+     * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
      */
-    write: async (uri, content) => {
+    write: async (uri, content, owner) => {
       const held = at(uri);
       /*
        * A write to `state` acts on the machine rather than making one.
@@ -296,6 +301,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.images === undefined ? {} : { images: options.images }),
         ...(options.needsOf === undefined ? {} : { needsOf: options.needsOf }),
         ...(options.needValues === undefined ? {} : { needValues: options.needValues }),
+        ...(owner === undefined ? {} : { owner }),
       });
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);

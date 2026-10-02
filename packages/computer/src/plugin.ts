@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { ComputerPort, MachineNeed, MachineSource, Plugin, PluginSpec } from '@ahpd/sdk';
+import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
 import { manifestOf } from './manifest.js';
 import type { Profile } from './manifest.js';
-import { devcontainerFolder, dockerRuntime, preparedFor, profileOf } from './runtime.js';
+import { claimedOf, devcontainerFolder, dockerRuntime, isRunning, preparedFor, profileOf } from './runtime.js';
+import type { ComputerRuntime, MachineSpec } from './runtime.js';
+import { claimOwned, forgetOwned, ownedOf } from './owners.js';
 import { computerTools } from './tools.js';
 
 /**
@@ -163,6 +165,35 @@ interface Disposable {
 }
 
 /**
+ * Who a stretch of up time is charged to, as the machine itself said.
+ *
+ * Read while the machine is still there: a machine that is removed leaves
+ * nothing behind to read, and a stretch whose owner cannot be named would
+ * charge the host for work somebody else made.
+ */
+interface Claim {
+  /** The owner as the machine carried it, or the host where it carried none. */
+  owner: Owner;
+  team?: string;
+  project?: string;
+}
+
+/**
+ * The pools a stretch is charged to.
+ *
+ * The owner as written, the team and the project within it, each only when the
+ * record has it - decision
+ * `agent-usage-is-charged-to-owner-team-and-project-pools`.
+ */
+const poolsOf = (claimed: Claim): string[] => [
+  claimed.owner,
+  ...(claimed.team === undefined ? [] : [`team:${claimed.team}`]),
+  ...(claimed.team === undefined || claimed.project === undefined
+    ? []
+    : [`project:${claimed.team}:${claimed.project}`]),
+];
+
+/**
  * Where a path on this host is inside one machine, or nothing.
  *
  * A caller's working directory is this host's, and a `-w` of a host path is a
@@ -286,12 +317,148 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(containerEnv === undefined ? {} : { env: containerEnv }),
   };
 
-  const made = dockerRuntime({
+  const dockered = dockerRuntime({
     command,
     label,
     devcontainerCli: cliOptions,
     ...(args === undefined ? {} : { args }),
     ...(env === undefined ? {} : { env }),
+  });
+
+  /** What the daemon's own record said, in this plugin's own log. */
+  const noted = (line: string): void => { host.log(`${name}: ${line}`); };
+
+  /*
+   * One open stretch of up time per running machine.
+   *
+   * What a machine costs is known only once it is no longer up, so a stretch
+   * opens when a machine starts and is written whole when it stops: `at` is when
+   * it began and `seconds` how long it ran - decision
+   * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`. The
+   * epoch it began at is the whole of it that is held, because the owner is read
+   * at the other end, where the machine's own labels are still there to read.
+   */
+  const stretches = new Map<string, number>();
+
+  /** Begin a machine's stretch, ignoring one already open for it. */
+  const open = (id: string): void => {
+    if (!stretches.has(id)) stretches.set(id, Date.now());
+  };
+
+  /**
+   * Who a machine's time is charged to, as the machine itself said.
+   *
+   * The machine's and not this daemon's: it outlives the daemon, and a machine
+   * found already running carries the label whoever created it left on it. A
+   * machine the Dev Container CLI made carries no label, because the CLI can
+   * only label through the pairs that identify a container, so its creator is
+   * in the file beside the configuration - decision
+   * `a-dev-container-owner-is-kept-beside-the-config`. One made outside ahpd is
+   * in neither, and is the host's own.
+   */
+  const claimOf = async (id: string): Promise<Claim> => {
+    const found = await dockered.inspect(id);
+    const labels = found === undefined ? {} : claimedOf(found);
+    const said = labels.owner === undefined ? ownedOf(host.configDir, id, noted) : labels;
+    return {
+      owner: said?.owner ?? `root:${host.hostName}`,
+      ...(said?.team === undefined ? {} : { team: said.team }),
+      ...(said?.project === undefined ? {} : { project: said.project }),
+    };
+  };
+
+  /**
+   * End a machine's stretch and write it, or do nothing when it had none.
+   *
+   * `claimed` was read while the machine was still there, because whatever
+   * ended it may have taken the labels with it. A store that refuses the write
+   * is reported and nothing more: losing a stretch is not a reason to fail the
+   * stop or the removal that was asked for.
+   */
+  const close = async (id: string, claimed: Claim): Promise<void> => {
+    const started = stretches.get(id);
+    if (started === undefined) return;
+    stretches.delete(id);
+    try {
+      await host.recordUsage({
+        kind: 'computer',
+        source: 'computer',
+        at: new Date(started).toISOString(),
+        // To the millisecond it was measured in, so a machine that was up for
+        // less than a second is not written as zero.
+        seconds: Math.round(Date.now() - started) / 1000,
+        computer: id,
+        owner: claimed.owner,
+        ...(claimed.team === undefined ? {} : { team: claimed.team }),
+        ...(claimed.project === undefined ? {} : { project: claimed.project }),
+        pools: poolsOf(claimed),
+      });
+    }
+    catch (error) {
+      host.log(`${name}: could not write the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  /**
+   * The runtime, with a stretch around every change of state.
+   *
+   * One wrapper rather than one per caller, because a machine can be started,
+   * stopped and destroyed by three different things - the `state` leaf a client
+   * writes, the tools a model calls, and the timer that takes a disposable away
+   * - and up time is the same however it ended.
+   */
+  const made: ComputerRuntime = {
+    ...dockered,
+    run: async (spec: MachineSpec) => {
+      const machine = await dockered.run(spec);
+      /*
+       * Whose a machine the Dev Container CLI made belongs to, in the file.
+       *
+       * A `docker run` machine has it on a label and the runtime put it there;
+       * this one the CLI could only be asked to identify, so the record is
+       * written here, under the id the listing answers it by - decision
+       * `a-dev-container-owner-is-kept-beside-the-config`.
+       */
+      if (spec.devcontainer !== undefined && spec.owner !== undefined) {
+        claimOwned(host.configDir, machine.id, {
+          owner: spec.owner,
+          ...(spec.team === undefined ? {} : { team: spec.team }),
+          ...(spec.project === undefined ? {} : { project: spec.project }),
+        }, noted);
+      }
+      open(machine.id);
+      return machine;
+    },
+    start: async (id) => {
+      await dockered.start(id);
+      open(id);
+    },
+    restart: async (id) => {
+      await close(id, await claimOf(id));
+      await dockered.restart(id);
+      open(id);
+    },
+    stop: async (id) => {
+      await dockered.stop(id);
+      await close(id, await claimOf(id));
+    },
+    remove: async (id) => {
+      const claimed = await claimOf(id);
+      await dockered.remove(id);
+      // The machine is gone, and so is the record kept beside the config: an
+      // entry for an id nothing holds is a claim on a machine that may be made
+      // again.
+      forgetOwned(host.configDir, id, noted);
+      await close(id, claimed);
+    },
+  };
+
+  // The daemon is stopping, so this is the last moment every machine still up
+  // can say how long it has been. A crash does not get here, and loses the
+  // stretch that was open: a machine up across one is charged nothing until it
+  // is next stopped.
+  host.on('stopping', async () => {
+    for (const id of [...stretches.keys()]) await close(id, await claimOf(id));
   });
 
   /*
@@ -352,8 +519,13 @@ export const apply: Plugin['apply'] = (host, options) => {
    * default stands then. A machine the listing cannot reach is answered for
    * where a listing is asked for, so nothing is said here.
    */
-  void made.list().then((running) => {
-    for (const one of running) {
+  void made.list().then((found) => {
+    for (const one of found) {
+      // Up before this daemon was watching, and still up: its stretch starts
+      // now, because the stretch a daemon before this one was keeping is one
+      // that daemon's to write. A machine that is stopped is not up, and a
+      // stretch for it would be a stretch that only ever ends.
+      if (isRunning(one)) open(one.id);
       if (one.disposable === undefined) continue;
       const delay = profiles?.[one.disposable.profile]?.disposableDelay ?? defaults.disposableDelay;
       watch(one.id, one.disposable.profile, delay);
@@ -530,6 +702,12 @@ export const apply: Plugin['apply'] = (host, options) => {
           needsOf: needsFor(asked),
           for: asked.provider,
           devcontainer: folder,
+          // Whose it is, which this machine cannot carry as a label: the record
+          // is in the file beside the configuration, keyed by the id the CLI
+          // made.
+          ...(asked.owner === undefined ? {} : { owner: asked.owner }),
+          ...(asked.team === undefined ? {} : { team: asked.team }),
+          ...(asked.project === undefined ? {} : { project: asked.project }),
         });
         try {
           // The CLI decides the container's name, so the id is the one it made
@@ -573,6 +751,14 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(needValues === undefined ? {} : { needValues }),
         needsOf: needsFor(asked),
         for: asked.provider,
+        /*
+         * Whose the machine is, which the host hands down from the session that
+         * asked for it and the machine keeps as a label - decision
+         * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+         */
+        ...(asked.owner === undefined ? {} : { owner: asked.owner }),
+        ...(asked.team === undefined ? {} : { team: asked.team }),
+        ...(asked.project === undefined ? {} : { project: asked.project }),
       });
       try {
         await made.run({
@@ -641,7 +827,19 @@ export const apply: Plugin['apply'] = (host, options) => {
    * `a-dev-container-is-made-by-the-dev-container-cli`.
    */
   if (container !== false) {
-    host.registerContainers(devContainer({
+    /*
+     * The computer a folder already is, so a relay finds rather than makes.
+     *
+     * The runtime is the only thing that knows what is listed, and the launcher
+     * cannot ask it without owning a Docker command of its own - which would be
+     * a second place the label is spelled. The same answer names the container
+     * a relay just brought up, which is what the launcher's own result calls a
+     * container id rather than a machine.
+     */
+    const machineFor = async (folder: string): Promise<string | undefined> =>
+      (await made.list()).find((one) => one.folder === folder)?.id;
+
+    const relay = devContainer({
       ...cliOptions,
       ...(hostCommand === undefined ? {} : { host: hostCommand }),
       ...(held.docker === undefined ? {} : { docker: held.docker as string }),
@@ -652,15 +850,32 @@ export const apply: Plugin['apply'] = (host, options) => {
       label,
       // The daemon's version, which the server installed inside is pinned to.
       version: host.version,
+      existing: machineFor,
+    });
+
+    host.registerContainers({
+      ...relay,
       /*
-       * The computer a folder already is, so a relay finds rather than makes.
+       * The container a connection brought up, as a machine of this host.
        *
-       * The runtime is the only thing that knows what is listed, and the
-       * launcher cannot ask it without owning a Docker command of its own -
-       * which would be a second place the label is spelled.
+       * A relay container is a computer like any other: the host fills the
+       * connection's owner into the ask, and the first creator pays, so a
+       * container a session made earlier keeps the owner it was made with -
+       * decision `a-relay-container-is-owned-by-who-connected`. Its stretch
+       * opens here rather than at the next listing, so a container this
+       * connection started is metered from now.
        */
-      existing: async (folder: string) => (await made.list()).find((one) => one.folder === folder)?.id,
-    }));
+      connect: async (asked, sink) => {
+        const result = await relay.connect(asked, sink);
+        const id = await machineFor(asked.workspaceFolder);
+        if (id === undefined) return result;
+        if (asked.owner !== undefined) {
+          claimOwned(host.configDir, id, { owner: asked.owner }, noted);
+        }
+        open(id);
+        return result;
+      },
+    });
   }
 
   if (sessionSetting) {

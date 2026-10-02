@@ -23,7 +23,7 @@ import type { PluginContext } from '../src/types/plugin.js';
 const temp = (): string => mkdtempSync(join(tmpdir(), 'ahpd-needs-'));
 
 const context = (): PluginContext => ({
-  path: temp(), paths: [temp()], version: sdkVersion(), log: () => {}, say: () => {},
+  path: temp(), paths: [temp()], version: sdkVersion(), hostName: 'test', configDir: '/tmp/needs', log: () => {}, say: () => {},
 });
 
 it('accepts a need of each kind, and a mount without a target is not one', () => {

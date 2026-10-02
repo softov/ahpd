@@ -4,6 +4,8 @@ import type {
   ContentEncoding, ResourceChangeType, ResourceType, ResourceWriteMode,
 } from '@microsoft/agent-host-protocol';
 
+import type { Owner } from './usage.js';
+
 /*
  * The vocabularies below are the protocol's own, taken as `${Enum}` rather
  * than written out.
@@ -149,8 +151,17 @@ export interface ResourceStore {
    * own business: a symlink, a directory, a parent that is not there.
    */
 
-  /** Write, create or splice one file. */
-  write?(uri: string, content: Write): Promise<void>;
+  /**
+   * Write, create or splice one file.
+   *
+   * `owner` is the connection that asked, as a typed reference - decision
+   * `work-is-owned-by-a-typed-reference`. Absent on a host with no users
+   * directory, and on a connection that is neither a person nor the root one.
+   * The `file:` store has no use for it; a scheme whose objects cost money does,
+   * and a `computer:` machine writes its own up time against it - decision
+   * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+   */
+  write?(uri: string, content: Write, owner?: Owner): Promise<void>;
   /** Remove a file, or a directory when `recursive`. */
   remove?(uri: string, recursive?: boolean): Promise<void>;
   /** Make a directory, and the parents it needs. */

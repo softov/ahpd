@@ -21,6 +21,8 @@ const context = (): PluginContext => ({
   path: '/tmp/validate',
   paths: ['/tmp/validate'],
   version: sdkVersion(),
+  hostName: 'test',
+  configDir: '/tmp/validate',
   log: () => {},
   say: () => {},
 });

@@ -19,6 +19,8 @@ const context = (): PluginContext => ({
   path: '/tmp/events',
   paths: ['/tmp/events'],
   version: sdkVersion(),
+  hostName: 'test',
+  configDir: '/tmp/events',
   log: () => {},
   say: () => {},
 });

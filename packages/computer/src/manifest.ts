@@ -5,7 +5,7 @@ import { hasDefinition } from './devcontainer.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
-import type { MachineNeed, ResolvedNeed } from '@ahpd/sdk';
+import type { MachineNeed, Owner, ResolvedNeed } from '@ahpd/sdk';
 import type { MachineSpec } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
 
@@ -175,6 +175,27 @@ export interface ManifestDefaults {
    * operator's own route is not the gate a hand-written body passes through.
    */
   devcontainer?: string;
+  /**
+   * Whose the machine is, as a typed reference, recorded on it.
+   *
+   * Whoever asked for it - the connection's owner on a body a person wrote, the
+   * session's on one a session asked for - because a machine's up time is
+   * charged to its owner and the owner has to outlive the daemon that made it -
+   * decision `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+   * Not a body field: a manifest says what to make, and who asked is not
+   * something a client chooses.
+   */
+  owner?: Owner;
+  /**
+   * The team and project the asking session's work is charged under, recorded
+   * on it beside the owner.
+   *
+   * A machine made for a session carries the scope that session settled on, so
+   * a total for a team says what that team's sessions spent the machines too.
+   */
+  team?: string;
+  /** The project within `team`; team work has none. */
+  project?: string;
 }
 
 /**
@@ -620,5 +641,10 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(agents.length === 0 ? {} : { agents }),
     ...(folder === undefined ? {} : { folder }),
     ...(workdir === undefined ? {} : { workdir }),
+    // Who the machine is, which nothing in the body can say: the host hands it
+    // down and the machine keeps it.
+    ...(defaults.owner === undefined ? {} : { owner: defaults.owner }),
+    ...(defaults.team === undefined ? {} : { team: defaults.team }),
+    ...(defaults.project === undefined ? {} : { project: defaults.project }),
   };
 };

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import type { Owner } from '@ahpd/sdk';
 import { cliOf, DEVCONTAINER_FOLDER, hasDefinition, idLabels, parseUp, runCli } from './devcontainer.js';
 import type { Cli, CliOptions } from './devcontainer.js';
 
@@ -50,6 +51,16 @@ export interface Machine {
    * to a second session. Absent for every machine made any other way.
    */
   disposable?: { profile: string; alone: boolean };
+  /**
+   * Whose the machine is, and what its work is charged under.
+   *
+   * Read back from the machine's own labels rather than from a table this
+   * process keeps, so a daemon that restarted - or one that did not make the
+   * machine - still says who is paying for the time it spends up.
+   */
+  owner?: Owner;
+  team?: string;
+  project?: string;
 }
 
 /** What to make. */
@@ -148,6 +159,22 @@ export interface MachineSpec {
   folder?: string;
   /** Where a command starts inside the machine. */
   workdir?: string;
+  /**
+   * Whose the machine is, recorded as a label, and what its work is charged
+   * under beside it.
+   *
+   * The owner is a typed reference as the usage rules spell one, and it is the
+   * owner of every stretch this machine spends up - decision
+   * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`. Stored
+   * rather than remembered because it has to survive the daemon that made it:
+   * a machine outlives the process that started it, and a meter that only knew
+   * what this run created would charge nothing for a machine it found.
+   */
+  owner?: Owner;
+  /** The team the machine was made for a session's work in, as a label. */
+  team?: string;
+  /** The project within that team, as a label. */
+  project?: string;
 }
 
 /** What running a command inside a machine answered. */
@@ -381,12 +408,51 @@ export const MACHINE_ALONE = 'ahpd.disposable.alone';
  */
 export const MACHINE_PROFILE = 'ahpd.profile';
 
+/**
+ * The labels a machine carries so that whoever made it is still known later.
+ *
+ * One each rather than one packed value, for the reason the disposable pair
+ * above is two: what a reader asks is a question in its own right - whose is
+ * this machine, which team is its work in - and an answer that had to be
+ * unpacked out of a shared string would be a value that could be half right.
+ * The owner is written as it is spelled everywhere else, so a reader tells a
+ * person from the host by the prefix.
+ */
+export const MACHINE_OWNER = 'ahpd.owner';
+export const MACHINE_TEAM = 'ahpd.team';
+export const MACHINE_PROJECT = 'ahpd.project';
+
+/** A typed reference a label held, or nothing when it names no kind. */
+export const ownerSaid = (value: unknown): Owner | undefined =>
+  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
+
+/**
+ * Whose a machine is and what its work is charged under, from its own labels.
+ *
+ * Every field absent on a machine made before this existed, and the owner
+ * absent on one made outside ahpd at all - which is a machine with no recorded
+ * owner rather than one somebody owns.
+ */
+export const claimedBy = (labels: Record<string, unknown>): {
+  owner?: Owner;
+  team?: string;
+  project?: string;
+} => {
+  const owner = ownerSaid(labels[MACHINE_OWNER]);
+  const team = labels[MACHINE_TEAM];
+  const project = labels[MACHINE_PROJECT];
+  return {
+    ...(owner === undefined ? {} : { owner }),
+    ...(typeof team === 'string' && team !== '' ? { team } : {}),
+    ...(typeof project === 'string' && project !== '' ? { project } : {}),
+  };
+};
+
 /** The agents in a label value, as a list. */
 const agentsSaid = (value: unknown): string[] =>
   (typeof value === 'string'
     ? value.split(',').map((one) => one.trim()).filter((one) => one !== '')
     : []);
-
 /** The labels `docker inspect` recorded, as a flat record. */
 const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
   const config = (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
@@ -396,6 +462,15 @@ const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
 /** The agents a machine was prepared for, from the record `inspect` answered. */
 export const preparedFor = (found: Record<string, unknown>): string[] =>
   agentsSaid(labelsOf(found)[MACHINE_AGENTS]);
+
+/**
+ * Whose a machine is, from the record `inspect` answered.
+ *
+ * `claimedBy` over the flat labels a listing reads; this is the same answer for
+ * the one machine, which is what a caller holding a single record asks.
+ */
+export const claimedOf = (found: Record<string, unknown>): ReturnType<typeof claimedBy> =>
+  claimedBy(labelsOf(found));
 
 /**
  * The folder whose `devcontainer.json` made a machine, from its own label.
@@ -473,6 +548,17 @@ const disposableListed = (labels: string): { profile: string; alone: boolean } |
 };
 
 /**
+ * Whether a machine from a listing is up.
+ *
+ * A listing is `docker ps -a`, so it holds what is stopped beside what is
+ * running, and the two are told apart by the runtime's own words: `Up ...` for
+ * one that is up, `Exited ...` for one that is not. The word this package
+ * writes on a machine it just made is the same answer in the other spelling.
+ */
+export const isRunning = (machine: Machine): boolean =>
+  machine.status === 'running' || machine.status.startsWith('Up ');
+
+/**
  * Machines, on Docker.
  *
  * Every call is one run of the `docker` program. A failure that is not
@@ -526,6 +612,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           ...(folder === undefined || folder === '' ? {} : { folder }),
           agents: agentsListed(labels),
           ...(disposable === undefined ? {} : { disposable }),
+          // Who is paying for these, said by the machine itself rather than by
+          // whatever this daemon happens to remember making.
+          ...claimedBy(labelsListed(labels)),
         };
       })
       .filter((one) => one.id !== ''),
@@ -625,6 +714,13 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (spec.profile !== undefined && spec.profile !== '') {
         flags.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
       }
+      // And who the machine belongs to, which has to survive the same restart
+      // the recipe does: the time it spends up is charged to this owner, and a
+      // daemon that finds a machine nobody remembers making still has to know
+      // whose it is.
+      if (spec.owner !== undefined) flags.push('--label', `${MACHINE_OWNER}=${spec.owner}`);
+      if (spec.team !== undefined) flags.push('--label', `${MACHINE_TEAM}=${spec.team}`);
+      if (spec.project !== undefined) flags.push('--label', `${MACHINE_PROJECT}=${spec.project}`);
       if (spec.cpus !== undefined) flags.push('--cpus', spec.cpus);
       if (spec.memory !== undefined) flags.push('--memory', spec.memory);
       for (const mount of spec.mounts ?? []) flags.push('-v', mount);

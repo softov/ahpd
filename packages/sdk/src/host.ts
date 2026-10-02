@@ -40,7 +40,7 @@ import { debugLogs, hostLogPath } from './debuglogs.js';
 import type { LogFile } from './debuglogs.js';
 import { lookup } from 'node:dns/promises';
 import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
-import type { ContainerConnectResult, ContainerSink } from './types/containers.js';
+import type { ContainerConnect, ContainerConnectResult, ContainerSink } from './types/containers.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
 import type { MessageFrom, Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
@@ -4773,7 +4773,7 @@ export function createHost(options: HostOptions): Host {
        * backend that has no way to enter it. A session that already has its
        * machine is left exactly as it was.
        */
-      await placedIn(uri, held.agent.provider, held.config, to);
+      await placedIn(uri, held.agent.provider, held.config, to, kept.owner(idOf(uri)));
       spawn(
         held.agent,
         uri,
@@ -4972,12 +4972,18 @@ export function createHost(options: HostOptions): Host {
    * the same machine is what stops a pre-turn restart from making a second one.
    * A different source before the first turn is refused rather than silently
    * kept, because a machine is where the session is running.
+   *
+   * `owner` is whose the machine is - whoever asked for it, which is what the
+   * time it spends up is later charged to - and the session's own scope rides
+   * along so the machine carries it too - decision
+   * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
    */
   const placedIn = async (
     uri: string,
     provider: string,
     config: Record<string, unknown>,
     where: string | undefined,
+    owner?: Owner,
   ): Promise<void> => {
     const said = computerSource(config.computer);
     if (said === undefined) return;
@@ -4990,9 +4996,13 @@ export function createHost(options: HostOptions): Host {
       return;
     }
     const agent = agents.get(provider);
+    const scope = charged.get(uri)?.scope;
     const machine = await openComputer(options.computers, said, {
       session: uri,
       provider,
+      ...(owner === undefined ? {} : { owner }),
+      ...(scope?.team === undefined ? {} : { team: scope.team }),
+      ...(scope?.project === undefined ? {} : { project: scope.project }),
       ...(where === undefined ? {} : { folder: where }),
       ...(agent?.machine === undefined ? {} : { needs: agent.machine() }),
     });
@@ -6420,7 +6430,7 @@ export function createHost(options: HostOptions): Host {
     await settle(uri, wanted.workingDirectory, config);
     // A source in the config is made into a machine before anything runs, the
     // same step a client's `createSession` takes.
-    await placedIn(uri, provider, config, where);
+    await placedIn(uri, provider, config, where, wanted.owner);
     openSession(
       uri,
       provider,
@@ -6809,14 +6819,16 @@ export function createHost(options: HostOptions): Host {
       const CONTAINER_TAIL = 24;
 
       /**
-       * The three strings a connect carries, checked once.
+       * The three strings a connect carries from the client, checked once.
        *
        * A `connectionId` is a name a client chose, so it is bounded: non-empty,
        * no NUL, and short enough to be an identifier rather than a payload.
        * Whether the folder exists and has a container definition is the
        * launcher's to answer, because that is a question about a filesystem.
+       * The owner is not among them: the client does not name one, and the
+       * call below fills it from the connection the ask arrived on.
        */
-      const containerAsk = (params: Record<string, unknown>): { connectionId: string; workspaceFolder: string; name: string } => {
+      const containerAsk = (params: Record<string, unknown>): ContainerConnect => {
         const id = typeof params.connectionId === 'string' ? params.connectionId : '';
         if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
           throw new RpcError(-32602, 'connectionId must be a non-empty identifier');
@@ -7825,6 +7837,15 @@ export function createHost(options: HostOptions): Host {
         resourceWrite: async (params) => {
           const uri = String(params.uri ?? '');
           const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
+          /*
+           * Whose the write is, handed on to the store.
+           *
+           * The `file:` store has no use for it. A plugin's scheme may: what a
+           * write makes is sometimes charged to whoever asked, and a machine
+           * made by a `computer:` write is up from then on - decision
+           * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+           */
+          const owner = ownerFor(connection);
           await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
             data: String(params.data ?? ''),
             encoding,
@@ -7843,7 +7864,7 @@ export function createHost(options: HostOptions): Host {
             ...(typeof params.position === 'number' ? { position: params.position } : {}),
             ...(params.createOnly === true ? { createOnly: true } : {}),
             ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
-          });
+          }, owner);
           void fire({ type: 'resource_write', uri });
           log(`${connection.clientId} wrote ${uri}`);
           wroteThrough(uri);
@@ -8112,7 +8133,7 @@ export function createHost(options: HostOptions): Host {
             // A `disposable:<profile>` setting is a machine made for this
             // session, with this harness's needs and this folder, before the
             // backend is started with it.
-            await placedIn(uri, provider, config, running);
+            await placedIn(uri, provider, config, running, ownerFor(connection));
             // This connection's tokens and no other's. A client that pushed
             // nothing gets a session on the daemon's own credentials, which is
             // how every session worked before there was anything to push.
@@ -8632,7 +8653,16 @@ export function createHost(options: HostOptions): Host {
           };
           let result: ContainerConnectResult;
           try {
-            result = await launcher.connect(one, sink);
+            /*
+             * Whose the container is, which the client cannot say.
+             *
+             * The connection is the whole of the answer: a person who has signed
+             * in owns what their relay runs, and a connection the host made for
+             * itself is the host - decision
+             * `a-relay-container-is-owned-by-who-connected`.
+             */
+            const owner = ownerFor(connection);
+            result = await launcher.connect(owner === undefined ? one : { ...one, owner }, sink);
             log(`dev container ${one.connectionId} up: ${result.address} (${result.remoteWorkspaceFolder})`);
           }
           catch (error) {

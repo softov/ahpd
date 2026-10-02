@@ -1,6 +1,6 @@
 ---
 title: The computer plugin writes up time
-status: todo
+status: done
 depends: [task-01-a-machine-knows-its-creator.md]
 layer: "sdk, computer"
 refs:
@@ -23,6 +23,6 @@ Closing writes `{ kind: 'computer', source: 'computer', at: <stretch start>, sec
 
 ## Validation
 
-- `packages/computer/test/`: start then stop writes one record with the right seconds, owner and pools; plugin stop closes open stretches; a running machine at start opens one; an unowned machine is `root:<host>`; no usage port writes nothing.
+- `packages/computer/test/`: start then stop writes one record with the right seconds, owner and pools; plugin stop closes open stretches; a running machine at start opens one and a stopped one does not; a relay container is charged to whoever connected; an unowned machine is `root:<host>`; no usage port writes nothing.
 
 ## Resume

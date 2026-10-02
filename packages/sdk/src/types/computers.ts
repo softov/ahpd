@@ -13,6 +13,7 @@
  */
 
 import type { MachineNeed } from './machine.js';
+import type { Owner } from './usage.js';
 
 /** A command to spawn, and where. */
 export interface Spawn {
@@ -84,6 +85,26 @@ export interface MachineSource {
   folder?: string;
   /** What the session's agent says a machine needs, as its `machine()` answered. */
   needs?: Record<string, MachineNeed>;
+  /**
+   * Whose the machine is, and who pays for the time it is up.
+   *
+   * Whoever asked for it: the session's owner when a session named a source, and
+   * the connection's when a person made the machine directly - decision
+   * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+   * Absent where this host has nobody to name, which is a machine with no
+   * recorded owner rather than one somebody is.
+   */
+  owner?: Owner;
+  /**
+   * The team the asking session's work is charged under.
+   *
+   * Beside `project`, and only for a machine made for a session: the scope is
+   * what the work inside the machine is charged to, and a machine made directly
+   * has no session to charge.
+   */
+  team?: string;
+  /** The project the asking session's work is charged under. */
+  project?: string;
 }
 
 /**

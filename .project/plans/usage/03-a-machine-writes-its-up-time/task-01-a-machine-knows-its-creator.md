@@ -1,6 +1,6 @@
 ---
 title: A machine knows who created it
-status: todo
+status: done
 depends: []
 layer: "sdk, computer"
 refs:
@@ -17,11 +17,11 @@ The computer plugin stores them as labels on the machine (`ahpd.owner`, `ahpd.te
 ## Files
 
 - `UPDATE: packages/sdk/src/types/computers.ts`, `packages/sdk/src/host.ts` - the fields and who fills them.
-- `UPDATE: packages/computer/src/plugin.ts`, `packages/computer/src/devcontainer.ts` - the labels.
+- `UPDATE: packages/computer/src/plugin.ts`, `packages/computer/src/devcontainer.ts` - where the owner is kept.
 
 ## Validation
 
 - `packages/sdk/test/`: a session-made machine's source carries the session's owner and scope; a direct create carries the connection's owner.
-- `packages/computer/test/`: the labels are written at create and read back.
+- `packages/computer/test/`: the owner is written at create and read back.
 
 ## Resume

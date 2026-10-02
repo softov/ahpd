@@ -12,6 +12,8 @@
  * `a-dev-container-is-made-by-the-dev-container-cli`.
  */
 
+import type { Owner } from './usage.js';
+
 /** What a client asks for: one connection, one folder, one name for it. */
 export interface ContainerConnect {
   /**
@@ -32,6 +34,16 @@ export interface ContainerConnect {
   workspaceFolder: string;
   /** What the client calls this container on screen. */
   name: string;
+  /**
+   * Whose the container is, when the connection is somebody's.
+   *
+   * The client does not send it and is never asked: the host fills it from the
+   * connection the relay was made on, because that is who owns what the
+   * container runs - decision `a-relay-container-is-owned-by-who-connected`.
+   * Absent on a connection with nobody to name, and the container is then the
+   * host's own.
+   */
+  owner?: Owner;
 }
 
 /** What a client is told once the container is up and a host is running in it. */

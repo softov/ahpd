@@ -16,6 +16,7 @@ import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
+import type { Usage } from './types/usage.js';
 import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
 
 /**
@@ -260,6 +261,15 @@ export interface HostRecordingOptions {
    * after the one that makes machines, and a machine is made long after both.
    */
   agents?: () => Agent[];
+  /**
+   * Where a plugin's usage records go, read when `recordUsage` is called.
+   *
+   * A function, and `undefined` for the store, for the same reason `agents` is
+   * a function: the port belongs to the host and not to this plugin, so the
+   * plugin that registers one may load after this one, and a daemon may have
+   * none at all.
+   */
+  usage?: () => Usage | undefined;
 }
 
 /**
@@ -315,6 +325,17 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     machineNeeds: (provider) => {
       const agent = options.agents?.().find((one) => one.provider === provider);
       return agent === undefined ? undefined : agent.machine?.() ?? {};
+    },
+    /*
+     * Read from the live port rather than a snapshot, and dropped rather than
+     * thrown when there is none: a host nobody asked to keep usage on is not a
+     * plugin that got it wrong, and a meter that failed a machine's shutdown
+     * over a missing store would lose the machine too.
+     */
+    recordUsage: async (entry) => {
+      const usage = options.usage?.();
+      if (usage === undefined) return;
+      await usage.record(entry);
     },
     registerAgent(agent) {
       checkAgent(agent, by);

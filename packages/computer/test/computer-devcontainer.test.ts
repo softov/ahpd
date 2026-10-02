@@ -105,9 +105,9 @@ const optionsOf = (devState: string, dockerState: string, more: Record<string, u
   ...more,
 });
 
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = []) => loadPlugins(
+const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = REPO) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
-  { base: { path: '/tmp/computer-devcontainer', agents, resources: fileResources() }, configDir: REPO, cwd: REPO, log: () => {} },
+  { base: { path: '/tmp/computer-devcontainer', agents, resources: fileResources() }, configDir, cwd: REPO, log: () => {} },
 );
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
@@ -344,7 +344,7 @@ it('makes it at session start, with the harness needs as --mount and --remote-en
       config: { directory: configDir, target: '/ahpd/config', required: true },
       key: { name: 'ANTHROPIC_API_KEY', default: 'from-the-agent' },
     }),
-  ]);
+  ], join(dir, 'config'));
   const { client, open } = await room(loaded);
   const opened = await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder) as {
     snapshot: { state: { config?: { values?: Record<string, unknown> } } };
@@ -389,7 +389,7 @@ it('connect twice for one folder makes one container', async () => {
       install: false,
       plugins: ['@ahpd/agent-cofold'],
     },
-  }), [agentWith()]);
+  }), [agentWith()], join(dir, 'config'));
 
   const p = peer();
   const client = createHost(loaded).accept(p);
@@ -437,7 +437,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
         plugins: ['@ahpd/agent-cofold'],
       },
     }) }],
-    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: REPO, cwd: REPO, log: () => {}, version: '0.8.77' },
+    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.8.77' },
   );
   expect(problems).toEqual([]);
   const closed: (string | undefined)[] = [];

@@ -11,6 +11,7 @@ The host now writes one `ModelUse` per turn from what the harness reported while
 
 - [`code://packages/sdk`](../../../packages/sdk) - the host and its ports; the `usage` port and the meter that feeds it live here.
 - [`code://packages/server`](../../../packages/server) - the composition root that wires the default store.
+- [`code://packages/computer`](../../../packages/computer) - the computer plugin, which writes each machine's up time.
 
 ## Contracts
 
@@ -27,16 +28,23 @@ backend chat/turnComplete|turnCancelled|error -> meter -> usage.record -> one Mo
 
 `usage.per: "report"` in the daemon configuration is the same path with the record written as each report arrives rather than at the turn's end, each holding what that report added since the one before it.
 
+```
+computer plugin: machine run|start -> open stretch; stop|remove|restart|daemon stopping -> recordUsage -> usage.record -> one ComputerTime
+```
+
+A machine's owner is its `ahpd.owner` label (`docker run`), else its entry in `computers.json` in the config folder (Dev Container CLI and relay), else `root:<host>`.
+
 A worker's chat reports through `sendSubagent`, not the session's own emit, so a turn that delegated to a worker is billed once and not twice.
 
 ## Tests
 
 - [`code://packages/sdk/test/sessions.test.ts`](../../../packages/sdk/test/sessions.test.ts) - the versioned file store pattern a usage store copies.
 - [`code://packages/sdk/test/usage-meter.test.ts`](../../../packages/sdk/test/usage-meter.test.ts) - what a turn is charged, and for whom, driven through a real host.
+- [`code://packages/computer/test/computer-uptime.test.ts`](../../../packages/computer/test/computer-uptime.test.ts) - a machine's stretches and who they are charged to.
 
 ## Known gaps
 
-- Computer time has no record yet: the record kind exists and nothing writes it.
+- A stretch open when the daemon crashes is lost, and a machine stopped outside ahpd stays open until the plugin next sees it (usage/03 deferred).
 - A report that names no model and a turn that asked for none is written with an empty `model.name` (decision `a-model-record-with-no-model-named-has-an-empty-name`).
 - Per report, a count that came down is written as the value it is now, so a harness that recounts overstates rather than understates.
 - The policy rules are a draft: file:///github/ahp-review/prospect/ahp-user-rules.md.

@@ -48,6 +48,8 @@ function built(subscriptions: Subscription[]) {
       path: DIR,
       paths: [DIR],
       version: sdkVersion(),
+      hostName: 'test',
+      configDir: DIR,
       log: (line) => { ctxLines.push(`${one.by}: ${line}`); },
       say: () => {},
     };

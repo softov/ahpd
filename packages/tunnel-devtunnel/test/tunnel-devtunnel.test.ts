@@ -45,7 +45,7 @@ const runner = (answers: Record<string, Result | Result[]>): Runner & { calls: s
 };
 
 const context = (over: Partial<PluginContext> = {}): PluginContext => ({
-  path: '/work', paths: ['/work'], version: '0.6.3', log: () => {}, say: () => {}, ...over,
+  path: '/work', paths: ['/work'], version: '0.6.3', hostName: 'test', configDir: '/work', log: () => {}, say: () => {}, ...over,
 });
 
 // The convention ----------------------------------------------------------

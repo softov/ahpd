@@ -84,7 +84,10 @@ if (verb === 'ps') {
     process.stdout.write(`${JSON.stringify({
       Names: machine.name,
       Image: machine.image,
-      Status: 'Up 1 second',
+      // As `docker ps` words it: `Up ...` for a container that is running,
+      // `Exited ...` for one that is not, which is what tells a listing's rows
+      // apart. The listing is `ps -a`, so it holds both.
+      Status: (machine.state ?? 'running') === 'running' ? 'Up 1 second' : 'Exited (0) 2 minutes ago',
       CreatedAt: '2026-09-22 00:00:00 +0000',
       // As `docker ps --format '{{json .}}'` reports it: one comma-separated
       // column, which is where the runtime reads the `ahpd.agents` label from
