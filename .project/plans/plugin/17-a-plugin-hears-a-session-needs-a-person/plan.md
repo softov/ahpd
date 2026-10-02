@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-01
 requires:
   - plans/plugin/02-plugins-subscribe-to-host-events/plan.md
 changes: []
@@ -13,11 +13,11 @@ decisions:
   - decisions/a-plugin-hears-input-needed-though-a-client-does-too.md
 refs:
   - "[code://packages/sdk/src/types/events.ts#L18-L39](../../../../packages/sdk/src/types/events.ts#L18-L39) - `EventName` and the rule it states, which this plan rewrites"
-  - "[code://packages/sdk/src/host.ts#L2992-L3007](../../../../packages/sdk/src/host.ts#L2992-L3007) - `emit`, where `turn_start` and `turn_end` are raised from the backend's own actions; the new events are raised beside them"
+  - "[code://packages/sdk/src/host.ts#L3575-L3597](../../../../packages/sdk/src/host.ts#L3575-L3597) - `emit`, where `turn_start` and `turn_end` are raised from the backend's own actions; the new events are raised beside them"
   - "[code://packages/agent-claude/src/session.ts](../../../../packages/agent-claude/src/session.ts) - one backend that emits `session/inputNeededSet`"
   - "[code://packages/agent-acp/src/session.ts](../../../../packages/agent-acp/src/session.ts) - another"
   - "[code://packages/agent-cofold/src/mapping.ts](../../../../packages/agent-cofold/src/mapping.ts) - and the third"
-  - "[code://docs/PLUGINS.md#L200-L249](../../../../docs/PLUGINS.md#L200-L249) - the Events section and its table"
+  - "[code://docs/PLUGINS.md#L241-L290](../../../../docs/PLUGINS.md#L241-L290) - the Events section and its table"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/session-channel.md#aggregated-input-requests - `session/inputNeededSet` and `session/inputNeededRemoved`, and the entry's `id`, `chat` and `kind`
 ---
 
@@ -60,7 +60,7 @@ backend emit('session', session/inputNeededRemoved) -> host.ts emit -> dispatch
 | --- | --- | --- |
 | The events are `input_needed_set` and `input_needed_removed`, named after the spec's actions | decision 1 | 01 |
 | `input_needed_set` carries `session`, `chat`, `id` and `kind`; `input_needed_removed` carries `session` and `id` | the spec's `SessionInputRequestBase` and `SessionInputNeededRemovedAction` | 01 |
-| Raised in `emit`, after the action is dispatched, as `turn_end` is | [`code://packages/sdk/src/host.ts#L2992-L3007`](../../../../packages/sdk/src/host.ts#L2992-L3007) | 01 |
+| Raised in `emit`, after the action is dispatched, as `turn_end` is | [`code://packages/sdk/src/host.ts#L3575-L3597`](../../../../packages/sdk/src/host.ts#L3575-L3597) | 01 |
 | The rule in `events.ts` is rewritten to what decision 1 says | decision 1 | 01 |
 | `docs/PLUGINS.md` lists both events | the Events table lists every event | 02 |
 | "Naming a plugin" states the `@ahpd/<name>` convention | Softov, 2026-09-26 | 03 |

@@ -4,7 +4,7 @@ status: accepted
 date: 2026-09-26
 refs:
   - "[code://packages/sdk/src/types/events.ts#L18-L24](../../packages/sdk/src/types/events.ts#L18-L24) - the rule this bends: an event that only repeats a state action a client already receives is refused"
-  - "[code://packages/sdk/src/host.ts#L2992-L3007](../../packages/sdk/src/host.ts#L2992-L3007) - `emit`, where `turn_start` and `turn_end` already repeat `chat/turnStarted` and `chat/turnComplete`"
+  - "[code://packages/sdk/src/host.ts#L3575-L3597](../../packages/sdk/src/host.ts#L3575-L3597) - `emit`, where `turn_start` and `turn_end` already repeat `chat/turnStarted` and `chat/turnComplete`"
   - "[code://.project/decisions/plugin-events-are-observed-not-answered.md](plugin-events-are-observed-not-answered.md) - why an in-process client is not the only route to what a plugin observes"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/session-channel.md#aggregated-input-requests - `session/inputNeededSet` and `session/inputNeededRemoved`, the roll-up of every block across a session's chats
 ---

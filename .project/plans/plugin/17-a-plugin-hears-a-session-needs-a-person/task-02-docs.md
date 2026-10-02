@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-the-host-raises-input-needed.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L200-L249](../../../../docs/PLUGINS.md#L200-L249) - the Events section and its table"
+  - "[code://docs/PLUGINS.md#L241-L290](../../../../docs/PLUGINS.md#L241-L290) - the Events section and its table"
 ---
 
 ## Objective
@@ -13,7 +13,7 @@ refs:
 
 ## Files
 
-- `UPDATE: docs/PLUGINS.md:200-249` - two rows in the events table, and the sentence about which events repeat a client's action.
+- `UPDATE: docs/PLUGINS.md:241-290` - two rows in the events table, and the sentence about which events repeat a client's action.
 
 ## Steps
 
