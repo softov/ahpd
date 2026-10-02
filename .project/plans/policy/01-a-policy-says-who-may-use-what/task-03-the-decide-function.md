@@ -1,6 +1,6 @@
 ---
 title: The decide function, the draft's four steps
-status: todo
+status: done
 depends: [task-01-the-policy-row-and-the-policies-port.md]
 layer: "sdk"
 refs:
@@ -43,7 +43,3 @@ It is one function, so the `model` kind a proxy call is checked against is decid
 - The refusals say what refused them: a deny names its id, and no candidate names the kind and what was asked. A test asserts the sentence contains the id rather than the whole string, so policy/02 can add a limit to it.
 - `pnpm exec vitest run packages/sdk/test/decide.test.ts`
 - `pnpm typecheck`, `pnpm boundary`
-
-## Resume
-
-Nothing done yet.

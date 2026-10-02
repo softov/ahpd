@@ -69,6 +69,16 @@ export interface Options {
    * a deployment is rather than about one run.
    */
   usageTimezone?: string;
+  /**
+   * Whether the policies saying who may use which agent, model and computer are
+   * enforced.
+   *
+   * `policies.check` in the file, and off unless it says otherwise. It has no
+   * flag, as the decision to refuse somebody is one an operator makes about a
+   * deployment rather than about one run - decision
+   * `policy-checks-are-switched-on-by-a-daemon-option`.
+   */
+  policiesCheck: boolean;
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
   /**
@@ -245,6 +255,13 @@ export const serverFields = {
     description: 'Append every frame, both directions, to this file as JSON lines.',
     cli: { value: 'FILE' },
   },
+  policies: {
+    type: 'object',
+    properties: {
+      check: { type: 'boolean' },
+    },
+    description: 'Whether the policies saying who may use which agent, model and computer are enforced: check refuses a session and a turn that no policy allows, naming the policy that refused it. Off by default, and the rows are written and listed either way. Set in the configuration file only.',
+  },
   http: {
     type: ['object', 'boolean'],
     properties: {
@@ -282,7 +299,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['http', 'usage', 'proxy'] as const;
+const FILE_ONLY = ['http', 'usage', 'proxy', 'policies'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'pluginOptions'] as const;
@@ -598,6 +615,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     sessions: given('sessions') ?? 'file',
     usagePer: given('usage')?.per ?? 'turn',
     ...(usageZone === undefined ? {} : { usageTimezone: usageZone }),
+    policiesCheck: given('policies')?.check ?? false,
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
     proxy,

@@ -1,6 +1,6 @@
 ---
 title: A policy row, checked on the way in, and the policies port
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -53,7 +53,3 @@ A row written through the port comes back exactly as it was written, and nothing
 - `pnpm exec vitest run packages/sdk/test/policies.test.ts packages/sdk/test/plugin-fold.test.ts`
 - `pnpm typecheck`, `pnpm boundary`
 - By hand: nothing in this task refuses a session or a turn. A host built with the port and no check reads it and nothing else.
-
-## Resume
-
-Nothing done yet.

@@ -1,7 +1,7 @@
 ---
 title: A policy says who may use which agent, model and computer
 domain: policy
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -80,6 +80,7 @@ policy:/ list, policy:/<id> read and write -> [new] policies port -> policies.js
 | --- | --- | --- |
 | 1 | [Policies are kept behind a port and edited through a policy scheme](../../../decisions/policies-are-a-scheme-clients-edit.md) | Softov, 2026-10-02 |
 | 2 | [Policy checks are switched on by a daemon option](../../../decisions/policy-checks-are-switched-on-by-a-daemon-option.md) | Softov, 2026-10-02 |
+| 3 | [A deny binds only when everything it names was asked, while an allow skips what was not](../../../decisions/a-deny-binds-only-what-was-asked.md) | Softov, 2026-10-02 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -103,10 +104,10 @@ policy:/ list, policy:/<id> read and write -> [new] policies port -> policies.js
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The policy row and the policies port](task-01-the-policy-row-and-the-policies-port.md) | todo | - |
-| [02 - The policy: scheme and the policy grant](task-02-the-policy-scheme-and-its-grant.md) | todo | 01 |
-| [03 - The decide function, the draft's four steps](task-03-the-decide-function.md) | todo | 01 |
-| [04 - The switch, and the checks at a session and at a turn](task-04-the-switch-and-the-two-checks.md) | todo | 01, 02, 03 |
+| [01 - The policy row and the policies port](task-01-the-policy-row-and-the-policies-port.md) | done | - |
+| [02 - The policy: scheme and the policy grant](task-02-the-policy-scheme-and-its-grant.md) | done | 01 |
+| [03 - The decide function, the draft's four steps](task-03-the-decide-function.md) | done | 01 |
+| [04 - The switch, and the checks at a session and at a turn](task-04-the-switch-and-the-two-checks.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -115,15 +116,12 @@ policy:/ list, policy:/<id> read and write -> [new] policies port -> policies.js
 
 ## Resume state
 
-- **Done so far:** plan written 2026-10-02; the four task files written 2026-10-02.
-- **Next action:** task 01, the policy row, its validation and the `policies` port with the file and memory stores.
-- **Open questions:** none.
-- **Watch out for:** `beginOrRun` is synchronous and `decide` is not, so the turn's check has to be awaited by wrapping the two call sites rather than by making `beginOrRun` answer a promise.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md) and [deferred.md](deferred.md).
 
 ## Final verification checklist
 
-- [ ] The draft's examples 15, 16, 19, 21, 22, 26 and 27 decide as the draft says, as tests (limits aside).
-- [ ] Off by default: an existing host with no policies behaves as before.
-- [ ] A client with `policy:write` writes a policy through `policy:` and reads it back after a restart.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm boundary` pass.
-- [ ] `plans/index.md` updated.
+- [x] The draft's examples 15, 16, 19, 21, 22, 26 and 27 decide as the draft says, as tests (limits aside).
+- [x] Off by default: an existing host with no policies behaves as before.
+- [x] A client with `policy:write` writes a policy through `policy:` and reads it back after a restart.
+- [x] `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm boundary` pass.
+- [x] `plans/index.md` updated.

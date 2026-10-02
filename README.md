@@ -400,6 +400,7 @@ For the command-by-command compatibility matrix, see [`docs/AHP.md`](docs/AHP.md
 | [docs/COMPUTER.md](docs/COMPUTER.md)       | Disposable computers (Docker and KVM)                     |
 | [docs/CONTAINERS.md](docs/CONTAINERS.md)   | Dev containers                                            |
 | [docs/USERS.md](docs/USERS.md)             | Users and authorization                                   |
+| [docs/POLICY.md](docs/POLICY.md)           | Who may use which agent, model and computer                |
 | [REFERENCE.md](REFERENCE.md)               | Protocol/reference-host decisions                         |
 | [DEVELOPER.md](DEVELOPER.md)               | How to run and develop the project from source            |
 

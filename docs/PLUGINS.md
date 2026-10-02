@@ -85,6 +85,7 @@ against its contract before it is recorded.
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
 | `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
+| `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 
 ### A backend's worker chats
 
@@ -233,6 +234,16 @@ nothing behaves exactly as it did before the field existed.
 The entry names `pools` - the keys it is charged to - and the reader charges nothing else. Build them as the decision `agent-usage-is-charged-to-owner-team-and-project-pools` says: the owner as written (`user:<id>`, `root:<host>`), `team:<team>` and `project:<team>:<project>`, each only when the record has it.
 
 Two hosts behave differently on purpose. One whose daemon carries a `usage` store keeps the record. One with no store records nothing and does not fail, because there is nowhere to write rather than a plugin that got it wrong. A store that *is* there and refuses the write throws at the caller, so say what to do with that inside your own plugin.
+
+### What a policies store has to answer
+
+`registerPolicies(store)` contributes `HostOptions.policies`, the rows that say which agents, models and computers each person, team, project or everyone may use. Four calls, all promises: `list()` answers every row, `get(id)` and `remove(id)` work on one by id, and `put(policy)` names one or edits the one already there.
+
+An id is unique across the store rather than per scope, because `policy://<id>` is one address and two rows behind it cannot both be read back. A body that is not a row is refused: call `checkPolicy(body)` from `@ahpd/sdk` first and it answers the row it holds, or throws an `RpcError(-32602)` naming the field that is wrong - the same check the `policy:` scheme makes, so a row a client writes and a row a plugin validates are the same rules.
+
+`filePolicies({ file })` is the store that ships with the SDK and the daemon's own is `policies.json` in the config folder; take it over with `registerPolicies(yours, 'replace')` for a sqlite or a postgresql several daemons share. Nothing here is read until the daemon is switched on, so a plugin taking the port over changes where the rows are kept and not whether they bind.
+
+The row, the scheme and the switch are in [POLICY.md](POLICY.md).
 
 ### What is not a kind
 

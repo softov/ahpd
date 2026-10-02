@@ -47,6 +47,10 @@ export const SUBJECTS = [
   // question about cost and is nobody else's by default - decision
   // `usage-is-read-through-a-usage-scheme`.
   'usage',
+  // Who may use which agent, model and computer, which is a question about what
+  // a host allows rather than what it may be told - decision
+  // `policies-are-a-scheme-clients-edit`.
+  'policy',
 ] as const;
 
 /** `<subject>:<verb>`, with `*` in either position. */

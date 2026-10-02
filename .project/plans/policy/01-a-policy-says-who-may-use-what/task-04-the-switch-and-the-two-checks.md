@@ -1,6 +1,6 @@
 ---
 title: The switch, and the checks at a session and at a turn
-status: todo
+status: done
 depends: [task-01-the-policy-row-and-the-policies-port.md, task-02-the-policy-scheme-and-its-grant.md, task-03-the-decide-function.md]
 layer: "sdk"
 refs:
@@ -61,7 +61,3 @@ The checks run at a session's creation and at each turn's start, over the three 
 - `pnpm exec vitest run packages/sdk/test/policy-checks.test.ts packages/server/test/policy-option.test.ts`
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary`
 - By hand: nothing here reads a `limit`, a `pool` or a `cap`, and the `usage` port is asked nothing by the checks. A policy that is stored with a limit it has already spent still allows, which is policy/02's work and is said as such in `docs/POLICY.md`.
-
-## Resume
-
-Nothing done yet.

@@ -19,6 +19,8 @@ import {
   fileResources,
   fileSessions,
   fileUsage,
+  filePolicies,
+  policyProviders,
   fileUsers,
   gitBranches,
   gitChanges,
@@ -38,7 +40,7 @@ import {
   usageProvider,
 } from '@ahpd/sdk';
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
-import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier, urlHost } from '../config.js';
+import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsPath, signInIdentifier, urlHost } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
@@ -219,6 +221,27 @@ export async function runForeground(options: Options): Promise<void> {
   // This daemon's own once a plugin has folded in a store of its own; before
   // the host is built, a request finds the daemon's.
   let metered: Usage = store;
+  /*
+   * The policies saying who may use which agent, model and computer.
+   *
+   * One file beside the configuration, held whatever `policies.check` says: the
+   * store and the gate are separate, so a daemon switched off still serves the
+   * `policy:` scheme a client writes through, and an operator can fill the store
+   * in before turning anything on. The store is read at construction, which is
+   * when a daemon reads one small file and never again.
+   */
+  const policies = filePolicies({
+    file: policiesPath(),
+    onProblem: (message) => process.stdout.write(`${message}\n`),
+  });
+  /*
+   * A daemon switched on with nothing in the store refuses everybody but root,
+   * and says so once at start rather than at the first refusal.
+   */
+  const startingChecks = async (): Promise<void> => {
+    if (!options.policiesCheck || (await policies.list()).length > 0) return;
+    stamp('the policy checks are on and the store holds no policy, so every session and turn but root\'s is refused');
+  };
 
   /*
    * The daemon's own facts, for the commands it serves.
@@ -321,16 +344,26 @@ export async function runForeground(options: Options): Promise<void> {
      */
     ...(users === undefined ? {} : { users }),
     /*
-     * People, teams, projects and roles, as four resource schemes.
+     * People, teams, projects and roles, as four resource schemes, and the
+     * policies beside them as a fifth.
      *
      * The same directory the gate above asks, served the way `computer:` is: a
      * client lists `team://` and writes `team://backend`, and the host answers
      * `team:read` and `team:write` for it as it does for any other scheme -
-     * decision `people-are-resource-schemes-with-a-grant-each`. Absent with no
-     * directory, so an install that never configured people advertises no
-     * screen over an empty root.
+     * decision `people-are-resource-schemes-with-a-grant-each`. The people
+     * schemes are absent with no directory, so an install that never configured
+     * people advertises no screen over an empty root.
+     *
+     * `policy:` is served either way, because the store and the gate are
+     * separate: a daemon whose checks are off, or that has nobody to check,
+     * still holds the rows and still lets an operator write them. One object
+     * rather than two spreads of the same key, which would leave `policy:` off
+     * the install that has people and turn it on everywhere else.
      */
-    ...(users === undefined ? {} : { resourceProviders: peopleProviders(users) }),
+    resourceProviders: {
+      ...(users === undefined ? {} : peopleProviders(users)),
+      ...policyProviders(policies),
+    },
     /*
      * The host's own tools, offered to every session's model.
      *
@@ -389,6 +422,12 @@ export async function runForeground(options: Options): Promise<void> {
     // Whether that is one record per turn or one per report, which `usage.per`
     // in the configuration file chose.
     usagePer: options.usagePer,
+    // The policies themselves, and whether anything is refused by them. The
+    // store is always there so the `policy:` scheme above has somewhere to
+    // write; the switch is off unless `policies.check` in the configuration
+    // said otherwise.
+    policies,
+    policiesCheck: options.policiesCheck,
     /*
      * When, as well as what.
      *
@@ -595,6 +634,8 @@ export async function runForeground(options: Options): Promise<void> {
       stamp,
     );
   }
+
+  await startingChecks();
 
   /*
    * Where this host says what it is.

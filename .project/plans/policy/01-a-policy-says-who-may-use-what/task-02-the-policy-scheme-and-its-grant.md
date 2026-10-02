@@ -1,6 +1,6 @@
 ---
 title: The policy: scheme and the policy grant
-status: todo
+status: done
 depends: [task-01-the-policy-row-and-the-policies-port.md]
 layer: "sdk"
 refs:
@@ -44,7 +44,3 @@ Nothing in this task decides anything: a policy written here is stored and read 
 - `pnpm exec vitest run packages/sdk/test/policy-scheme.test.ts packages/sdk/test/people.test.ts`
 - `pnpm typecheck`, `pnpm boundary`
 - By hand: `pnpm exec vitest run packages/sdk/test/users-gate.test.ts` still passes, which is the test that a method is in `NEEDS` or `UNGATED`, and the subject list is the only list a plugin reads for what a role may hold.
-
-## Resume
-
-Nothing done yet.

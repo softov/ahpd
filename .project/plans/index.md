@@ -260,7 +260,7 @@ Reference: [00-policy.md](policy/00-policy.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - A policy says who may use which agent, model and computer](policy/01-a-policy-says-who-may-use-what/plan.md) | high | draft 2026-10-02; task files to write | host 36 | policy 02, proxy 02 |
+| [01 - A policy says who may use which agent, model and computer](policy/01-a-policy-says-who-may-use-what/plan.md) | high | built 2026-10-02 ([implemented.md](policy/01-a-policy-says-who-may-use-what/implemented.md)) | host 36 | policy 02, proxy 02 |
 
 Next free number in `policy`: `02`.
 

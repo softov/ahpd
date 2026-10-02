@@ -33,7 +33,10 @@ import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
 import { meter } from './meter.js';
 import { namesOf, scopeFor } from './scopes.js';
-import type { ScopeAnswer } from './scopes.js';
+import type { Scope, ScopeAnswer } from './scopes.js';
+import { decide } from './decide.js';
+import type { Asked } from './decide.js';
+import type { PolicyKind } from './types/policies.js';
 import { accepts } from './configvalues.js';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from './artifacttools.js';
 import { debugLogs, hostLogPath } from './debuglogs.js';
@@ -4460,6 +4463,52 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * The refusal this work would be given, or nothing when there is none to give.
+   *
+   * Three ways there is nothing, and all three are the ordinary case: the
+   * switch is off, there is no store to read, or there is no person behind the
+   * work. That last one is what leaves a host with no users directory, a root
+   * connection and an automation inert here.
+   *
+   * The kinds are the caller's because they are not the same twice: a session is
+   * checked for its harness and for the machine it asked for, a turn for the
+   * harness, the machine and the model it named. Each one is checked in turn and
+   * the first refusal is the answer, so what comes back names what refused it.
+   *
+   * A store that cannot be read refuses the work rather than letting it through,
+   * because a check that failed open is not a check.
+   */
+  const checked = async (
+    principal: Principal | undefined,
+    scope: Scope | undefined,
+    what: { kind: PolicyKind; asked: Asked }[],
+  ): Promise<string | undefined> => {
+    const store = options.policies;
+    if (options.policiesCheck !== true || store === undefined || principal === undefined) return undefined;
+    for (const one of what) {
+      try {
+        const decision = await decide(store, principal, scope, one.kind, one.asked);
+        if (!decision.allowed) return decision.refusal.message;
+      }
+      catch (error) {
+        return `no policy could be read, so ${one.kind} is refused: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * The machine a check names, from the setting a session was given.
+   *
+   * As the client sent it, so a check runs before a machine exists: a
+   * `computer://<id>` it named and the `disposable:` source one is yet to be
+   * made from are both what the session asked to run in. Nothing asked means
+   * this host, which is what a session with no `computer` setting runs on.
+   */
+  const machineFor = (config: Record<string, unknown>): string =>
+    computerId(config.computer) ?? computerSource(config.computer) ?? 'host';
+
+  /**
    * The `scope` picker, and what it starts on.
    *
    * The choices are the asking person's own memberships, and the default is
@@ -5243,6 +5292,10 @@ export function createHost(options: HostOptions): Host {
    * the one thing the prefix promises not to do.
    *
    * `sender` is who asked, held against this turn for as long as it runs.
+   *
+   * A promise only for a turn that had to be asked about: everything else is
+   * answered here and now, which is what keeps the actions of a turn in the
+   * order they were already written in.
    */
   const beginOrRun = (
     session: Session,
@@ -5253,7 +5306,7 @@ export function createHost(options: HostOptions): Host {
     from: MessageFrom | undefined,
     sender?: Owner,
     queuedAs?: string,
-  ): string | undefined => {
+  ): string | undefined | Promise<string | undefined> => {
     /*
      * A turn with nowhere to charge.
      *
@@ -5264,31 +5317,76 @@ export function createHost(options: HostOptions): Host {
      */
     const uncharged = charged.get(session.uri)?.refusal;
     if (uncharged !== undefined) return uncharged;
-    /*
-     * Who sent it, against the id this turn will be known by: the turn id when
-     * it starts now, and the queued message's id when it waits its turn. A
-     * queued message is one turn that has not been given an id yet, and the
-     * backend says which turn it became when it runs - so the sender is moved
-     * across there rather than looked for here under an id it will never
-     * carry again.
-     */
-    if (sender !== undefined) senders.set(queuedAs ?? turnId, sender);
-    const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
-    if (command === '' || !options.terminals) {
-      if (queuedAs === undefined) session.begin(turnId, text, model, from);
-      else session.queue(queuedAs, text, model, from);
+    const run = (): string | undefined => {
+      /*
+       * Who sent it, against the id this turn will be known by: the turn id when
+       * it starts now, and the queued message's id when it waits its turn. A
+       * queued message is one turn that has not been given an id yet, and the
+       * backend says which turn it became when it runs - so the sender is moved
+       * across there rather than looked for here under an id it will never
+       * carry again.
+       */
+      if (sender !== undefined) senders.set(queuedAs ?? turnId, sender);
+      const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
+      if (command === '' || !options.terminals) {
+        if (queuedAs === undefined) session.begin(turnId, text, model, from);
+        else session.queue(queuedAs, text, model, from);
+        return undefined;
+      }
+      if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;
+      const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+      session.ran(turnId, command, (toolCallId) => commanded(command, where, {
+        kind: 'session',
+        session: session.uri,
+        chat: session.chatUri,
+        turnId,
+        toolCallId,
+      }), queuedAs);
       return undefined;
-    }
-    if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;
-    const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
-    session.ran(turnId, command, (toolCallId) => commanded(command, where, {
-      kind: 'session',
-      session: session.uri,
-      chat: session.chatUri,
-      turnId,
-      toolCallId,
-    }), queuedAs);
-    return undefined;
+    };
+    /*
+     * The turn's own check, beside the one above.
+     *
+     * The session was checked when it was created, for its harness and the
+     * machine it asked for. A turn is checked again because the model is new to
+     * it: the session was created before anybody said which model would run.
+     *
+     * Who sent it is whoever asked, and the session's owner is the fallback -
+     * a turn this host started itself is nobody's to refuse. A message that
+     * named no model leaves the model out of the request rather than resolving
+     * one, because the host never learns which model a harness picked for
+     * itself and a check that guessed would be checking nothing.
+     *
+     * The three ways there is nothing to ask are asked here rather than left to
+     * `checked`, so a turn they cover is begun in the same tick it arrived in.
+     */
+    const principal = principalFor(sender ?? kept.owner(idOf(session.uri)));
+    const store = options.policies;
+    if (options.policiesCheck !== true || store === undefined || principal === undefined) return run();
+    const held = sessions.get(session.uri);
+    return checked(principal, charged.get(session.uri)?.scope, [{
+      kind: 'agent',
+      asked: {
+        agent: provider,
+        computer: machineFor(held?.config ?? {}),
+        ...(model === undefined ? {} : { model: model.id }),
+      },
+    }]).then((why) => why === undefined ? run() : why);
+  };
+
+  /**
+   * A turn begun, or a turn refused, from what `beginOrRun` answered.
+   *
+   * For the two call sites that stand in a `switch` and cannot wait. An answer
+   * that came already is taken at once; one that is still to come is taken when
+   * it comes, and a turn nothing refused is begun then as well.
+   */
+  const beginTurn = (
+    begun: string | undefined | Promise<string | undefined>,
+    refused: (why: string) => void,
+  ): void => {
+    if (typeof begun === 'string') refused(begun);
+    else if (begun !== undefined) void begun.then((why) => { if (why !== undefined) refused(why); });
   };
 
   const commanded = async (command: string, cwd: string, claim: Claim): Promise<Ran> => {
@@ -8423,6 +8521,17 @@ export function createHost(options: HostOptions): Host {
             const running = await isolated(uri, config, where);
             along(1, 'Starting the agent');
             await settle(uri, where, config, connection.principal);
+            /*
+             * Checked before the machine is made, so a refused session makes
+             * none, against the computer the client asked for and the scope the
+             * session is charged to.
+             */
+            const machine = machineFor(config);
+            const refused = await checked(connection.principal, charged.get(uri)?.scope, [
+              { kind: 'agent', asked: { agent: provider, computer: machine } },
+              { kind: 'computer', asked: { computer: machine } },
+            ]);
+            if (refused !== undefined) throw new RpcError(-32009, refused);
             // A `disposable:<profile>` setting is a machine made for this
             // session, with this harness's needs and this folder, before the
             // backend is started with it.
@@ -8592,7 +8701,7 @@ export function createHost(options: HostOptions): Host {
             // No action to refuse here: a first message that cannot run as a
             // command fails the call, which the client shows as the chat not
             // opening with it.
-            const refused = beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), ownerFor(connection));
+            const refused = await beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), ownerFor(connection));
             if (refused !== undefined) throw new Error(refused);
           }
           return {};
@@ -9807,7 +9916,7 @@ export function createHost(options: HostOptions): Host {
               turn: String(action.turnId ?? ''),
               text: String(message.text ?? ''),
             });
-            const refused = beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection));
+            const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection));
             if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
           })();
           return;
@@ -9862,8 +9971,10 @@ export function createHost(options: HostOptions): Host {
             // whether or not the backend is free to run it this moment.
             void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
             const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-            const refused = beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection));
-            if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
+            beginTurn(
+              beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection)),
+              (why) => refuse(connection.peer, channel, action, origin, why),
+            );
             break;
           }
           /**
@@ -10390,17 +10501,19 @@ export function createHost(options: HostOptions): Host {
               ? message.model
               : {}) as Record<string, unknown>;
             const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-            const refused = beginOrRun(
-              session,
-              provider,
-              crypto.randomUUID(),
-              String(message.text ?? ''),
-              modelIn(model),
-              messageFrom(message),
-              ownerFor(connection),
-              String(action.id ?? ''),
+            beginTurn(
+              beginOrRun(
+                session,
+                provider,
+                crypto.randomUUID(),
+                String(message.text ?? ''),
+                modelIn(model),
+                messageFrom(message),
+                ownerFor(connection),
+                String(action.id ?? ''),
+              ),
+              (why) => refuse(connection.peer, channel, action, origin, why),
             );
-            if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
             break;
           }
           /**

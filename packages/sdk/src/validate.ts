@@ -147,6 +147,7 @@ const PORT_MEMBERS: Record<PortKey, Record<string, Kind>> = {
   computers: { how: 'function' },
   containers: { docker: 'function', available: 'function', connect: 'function', send: 'function', disconnect: 'function' },
   usage: { record: 'function', total: 'function' },
+  policies: { list: 'function', get: 'function', put: 'function', remove: 'function' },
 };
 
 /** The method each port is reached through, for a message that names what was called. */
@@ -163,6 +164,7 @@ export const PORT_METHOD: Record<PortKey, string> = {
   computers: 'registerComputers',
   containers: 'registerContainers',
   usage: 'registerUsage',
+  policies: 'registerPolicies',
 };
 
 /** Check one port registration against the contract its key names. */

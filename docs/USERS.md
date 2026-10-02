@@ -373,6 +373,7 @@ The subjects are the host's own and any plugin's URI scheme:
 | `project` | `read`, `write` | The same for the projects, spelled after a membership's colon |
 | `role` | `read`, `write` | The roles this install defines. `user list` asks for `role:read` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | `usage` | `read` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no `usage:write`: records are written by the meters that charge them |
+| `policy` | `read`, `write` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
 | a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -477,6 +478,30 @@ The grant for a scheme is the subject of its own name: `team:read` lists teams,
 The one exception is a person's own `user://<id>`, which they may read with no
 grant at all - a client showing somebody their own account has to be able to -
 while listing people and reading anybody else's still needs `user:read`.
+
+## Policies as resources
+
+A host with a policies store serves one more scheme of its own, the same way it
+serves `computer:`: a client lists, edits and removes policies through the same
+resource calls it uses for computers, under `policy:read` and `policy:write`.
+
+| Scheme | A record is | A body carries |
+| --- | --- | --- |
+| `policy://<id>` | One policy row, and the id is the address | `scope`, `kind`, `effect`, `match`, `limits`, `pool`, `cap`, `from`, `until` |
+
+The root lists every row, a read answers the row as JSON, and a write to
+`policy://<id>` makes it or edits it; `createOnly` refuses one that is already
+there, and `resourceDelete` takes it away. A row is written whole: a field a
+body does not name is the one the row already had, so a client that reads a row
+and writes it back has changed nothing. The body is the whole rule body, checked
+the same way whichever door it came through - a value type the kind does not
+take, a limit counted in a measure the kind does not have, and a `from` after its
+`until` are all refused by name.
+
+A store is not a directory, so none of this depends on a users file: a host with
+policies and no directory still serves `policy:`, and a role is the only thing
+that decides who may read or write it. What a row decides is another question,
+answered in [POLICY.md](POLICY.md).
 
 ## What a client is told
 

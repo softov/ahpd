@@ -431,6 +431,12 @@ there, not on the system's own - and the system's own zone is used when the key
 is absent, or when it names a zone this host cannot read, which is said once at
 start. Neither key has a flag: both are properties of a deployment rather than
 of one run.
+`policies` (`{ "check": true }`) says whether the rows saying who may use which
+agent, model and computer are enforced. Off by default, and it has no flag: a
+daemon that refuses somebody is a deployment's decision and not one run's. The
+rows are kept and the `policy:` scheme is served either way, so a store can be
+filled in before anything is switched on; a wrong value is
+`...: policies.check must be true or false`. See [docs/POLICY.md](POLICY.md).
 
 `ahpd usage` prints what this host was charged, and the same store is served as
 the `usage:` scheme, so a client reads it through the resource calls it already

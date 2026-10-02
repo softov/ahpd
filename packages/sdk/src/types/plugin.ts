@@ -40,7 +40,8 @@ export type PortKey =
   | 'diagnostics'
   | 'computers'
   | 'containers'
-  | 'usage';
+  | 'usage'
+  | 'policies';
 
 /**
  * What one port key holds.
@@ -237,6 +238,14 @@ export interface PluginHost extends PluginContext {
    * daemons share - so the port, and not the folder, is what a plugin takes.
    */
   registerUsage(usage: PortOf<'usage'>, when?: 'replace'): void;
+  /**
+   * Set `HostOptions.policies`, or take the daemon's over with `'replace'`.
+   *
+   * The store a client writes policies through and a check reads, so a host
+   * that keeps them in a database takes this port rather than the file - the
+   * same shape `registerUsage` is offered.
+   */
+  registerPolicies(policies: PortOf<'policies'>, when?: 'replace'): void;
   /**
    * Subscribe to one of the host's own moments.
    *

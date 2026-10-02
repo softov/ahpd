@@ -47,6 +47,25 @@ export interface UsageSetting {
 }
 
 /**
+ * Whether this host enforces what its policies say.
+ *
+ * A block with one key beside `usage`, because that is the shape of a setting
+ * about how work is metered rather than how the process was started, and it has
+ * no flag: an operator turning the checks on wants everybody refused at once if
+ * the store turns out to be empty, not one run's worth of it.
+ */
+export interface PoliciesSetting {
+  /**
+   * Whether a session and a turn are refused where no policy allows them.
+   *
+   * Off by default. The rows are written and listed either way - the `policy:`
+   * scheme is served whatever this says - so a store can be filled in before
+   * anything starts refusing.
+   */
+  check?: boolean;
+}
+
+/**
  * What a config file may say. Every key is what a flag would have said, or
  * `http`, `usage` and `proxy`; the keys are `configSchema`'s, which the file is
  * checked against.
@@ -85,6 +104,11 @@ export interface Config {
    * `the-agent-meter-writes-per-turn-or-per-report`.
    */
   usage?: UsageSetting;
+  /**
+   * Whether the policies saying who may use which agent, model and computer are
+   * enforced. Off is the default, and the rows are kept either way.
+   */
+  policies?: PoliciesSetting;
   /**
    * The file the people who may use this host are in.
    *
@@ -227,6 +251,16 @@ export const automationsPath = (): string => join(configDir(), 'automations.json
  * a person edits.
  */
 export const sessionsPath = (): string => join(configDir(), 'sessions.json');
+
+/**
+ * Where the policies saying who may use which agent, model and computer are
+ * kept.
+ *
+ * Beside the sessions and the automations for the same reason as those two: one
+ * small file beside a hand-edited `config.json`, written whenever an operator
+ * changes a policy through the `policy:` scheme.
+ */
+export const policiesPath = (): string => join(configDir(), 'policies.json');
 
 /**
  * Where what npm last said about this package is kept.

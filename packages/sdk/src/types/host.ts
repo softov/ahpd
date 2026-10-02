@@ -14,6 +14,7 @@ import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
 import type { Usage } from './usage.js';
+import type { Policies } from './policies.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -223,6 +224,23 @@ export interface HostOptions {
    * It says nothing without a `usage` port.
    */
   usagePer?: 'turn' | 'report';
+  /**
+   * Where this host keeps the policies that say who may use what.
+   *
+   * Left out, there is nothing to check and nothing a client may write.
+   * `filePolicies()` ships with this package and the daemon uses it.
+   */
+  policies?: Policies;
+  /**
+   * Whether what the policies say is enforced.
+   *
+   * Off whatever the port holds, so a host that is handed a store still behaves
+   * as it did before policies existed until somebody says otherwise - decision
+   * `policy-checks-are-switched-on-by-a-daemon-option`. It says nothing without
+   * a `policies` port, and it is never about a root connection, an automation or
+   * a host with no users directory: those have no person to check.
+   */
+  policiesCheck?: boolean;
   /**
    * Tools this host contributes to every session it runs.
    *

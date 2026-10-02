@@ -9,6 +9,7 @@ import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { ResourceStore } from '../src/types/resources.js';
 import type { AutomationStore } from '../src/types/automations.js';
 import type { Usage } from '../src/types/usage.js';
+import type { Policies } from '../src/types/policies.js';
 import type { Contribution, PortContribution, PortKey } from '../src/types/plugin.js';
 
 /*
@@ -211,6 +212,31 @@ describe('foldHostOptions', () => {
     const over = foldHostOptions(options, [contribution('alpha', { ports: { usage: port(mine, true) } })]);
     expect(over.problems).toEqual([]);
     expect(over.options.usage).toBe(mine);
+  });
+
+  it('sets a plugin\'s policies store like any other port, and reports the daemon\'s', () => {
+    const policies = (id: string): Policies => ({
+      list: async () => [{ id, scope: 'all', kind: 'model', effect: 'allow', match: { model: ['*'] } }],
+      get: async () => undefined,
+      put: async (policy) => policy,
+      remove: async () => false,
+    });
+    const options = { ...base(), policies: policies('the daemon') };
+
+    const mine = policies('alpha');
+    const taken = foldHostOptions(base(), [contribution('alpha', { ports: { policies: port(mine) } })]);
+    expect(taken.problems).toEqual([]);
+    expect(taken.options.policies).toBe(mine);
+
+    const held = foldHostOptions(options, [contribution('alpha', { ports: { policies: port(policies('alpha')) } })]);
+    expect(held.problems).toHaveLength(1);
+    expect(held.problems[0]).toContain('policies');
+    expect(held.problems[0]).toContain('the daemon');
+    expect(held.options.policies).toBe(options.policies);
+
+    const over = foldHostOptions(options, [contribution('alpha', { ports: { policies: port(mine, true) } })]);
+    expect(over.problems).toEqual([]);
+    expect(over.options.policies).toBe(mine);
   });
 });
 
