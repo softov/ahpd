@@ -79,7 +79,9 @@ Reference: [00-host.md](host/00-host.md)
 
 | [34 - A session and an automation say who owns them, and a turn says who sent it](host/34-work-says-who-owns-it/plan.md) | high | planned 2026-10-01; tasks 01-03 todo | - | usage meters; shares the turn sender with host 33 |
 
-Next free number in `host`: `35`.
+| [35 - A person belongs to teams and projects, and work names which one it is for](host/35-a-person-belongs-to-teams-and-projects/plan.md) | high | planned 2026-10-01; tasks 01-04 todo | - | host 34's scope, the proxy listener, policy |
+
+Next free number in `host`: `36`.
 
 ## claude
 

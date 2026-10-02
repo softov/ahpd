@@ -66,7 +66,7 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 
 - [host 32](../32-the-session-store-is-a-file-per-session/plan.md) reshapes the session store; whichever lands second carries `owner` into the other's shape.
 - [host 33](../33-a-session-tool-acts-as-the-person-it-works-for/plan.md) task 01 needs the turn's sender too; task 02 here and that task build the same thing, so whichever lands first builds it.
-- Team and project owners, and the team and project context, wait for those entities to exist.
+- The team and project the work is charged to come from [host 35](../35-a-person-belongs-to-teams-and-projects/plan.md), which is better built first so the owner and its scope land together; `team:` and `project:` owners wait for work no person starts.
 
 ## Resume state
 
