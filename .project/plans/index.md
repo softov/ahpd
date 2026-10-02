@@ -77,7 +77,9 @@ Reference: [00-host.md](host/00-host.md)
 | [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | planned 2026-09-30; tasks 01-04 todo | host 31 | - |
 | [33 - A session tool acts as the person it works for, within VS Code's limits, and can be switched off](host/33-a-session-tool-acts-as-the-person-it-works-for/plan.md) | high | planned 2026-09-30; task files to write, tasks 01-03 todo | host 30 | - |
 
-Next free number in `host`: `34`.
+| [34 - A session and an automation say who owns them, and a turn says who sent it](host/34-work-says-who-owns-it/plan.md) | high | planned 2026-10-01; tasks 01-03 todo | - | usage meters; shares the turn sender with host 33 |
+
+Next free number in `host`: `35`.
 
 ## claude
 
@@ -153,7 +155,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
 | [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 implemented | - | - |
 
-Next free number in `plugin`: `32`.
+| [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | planned 2026-10-01; p1-p4 todo | - | the agent meter |
+
+Next free number in `plugin`: `33`.
 
 ## container
 
@@ -225,7 +229,27 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 
 Next free number in `acp`: `13`.
 
+## usage
+
+Reference: [00-usage.md](usage/00-usage.md)
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - Usage is kept behind one port, model use and computer time, with live totals](usage/01-usage-is-kept-behind-one-port/plan.md) | high | planned 2026-10-01; tasks 01-03 todo | - | the meters and the policy plans |
+
+Next free number in `usage`: `02`.
+
+## proxy
+
+Reference: [00-proxy.md](proxy/00-proxy.md)
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | planned 2026-10-01; tasks 01-02 todo | - | the proxy listener |
+
+Next free number in `proxy`: `02`.
+
 ## Domains without a plan
 
-None. `host`, `claude`, `documentation`, `plugin`, `container`, `pi` and `acp` each have a plan above.
+None. `host`, `claude`, `documentation`, `plugin`, `container`, `pi`, `acp`, `usage` and `proxy` each have a plan above.
 Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an agent says what a machine needs](../ideas/an-agent-says-what-a-machine-needs.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [a plugin reloads without a restart](../ideas/a-plugin-reloads-without-a-restart.md), [a secret store](../ideas/a-secret-store.md), [users are managed like computers](../ideas/users-are-managed-like-computers.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [Dev Container sessions](../ideas/dev-container-sessions.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md).
