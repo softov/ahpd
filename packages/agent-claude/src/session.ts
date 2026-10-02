@@ -146,28 +146,48 @@ const KEPT_IN: Record<string, string> = {
  *
  * The label of the "always" choice, so it says what is kept and where: the
  * rules added, the mode set or the directories added, each followed by where
- * it is kept, joined when there are several.
+ * it is kept, joined when there are several. Rules with the same behavior kept
+ * in the same place are one phrase, and a rule or phrase said twice is said
+ * once: the SDK suggests a rule per command of a compound one, so `a && a`
+ * comes as two suggestions of the same rule.
  */
-function keptLabel(suggestions: unknown[]): string {
-  const said = suggestions.map((one) => {
+export function keptLabel(suggestions: unknown[]): string {
+  /** The rules of each behavior and place, in the order first suggested. */
+  const rules = new Map<string, { behavior: string; where: string; said: string[] }>();
+  const said: (string | { rules: string })[] = [];
+  for (const one of suggestions) {
     const update = bag(one);
     const where = KEPT_IN[str(update.destination) ?? ''] ?? '';
     if (update.type === 'addRules' || update.type === 'replaceRules') {
-      const rules = list(update.rules).map((entry) => {
+      const behavior = str(update.behavior) ?? 'allow';
+      const key = `${behavior}\u0000${where}`;
+      let group = rules.get(key);
+      if (group === undefined) {
+        group = { behavior, where, said: [] };
+        rules.set(key, group);
+        said.push({ rules: key });
+      }
+      for (const entry of list(update.rules)) {
         const rule = bag(entry);
         const content = str(rule.ruleContent);
-        return content === undefined ? str(rule.toolName) ?? '' : `${str(rule.toolName) ?? ''}(${content})`;
-      }).join(', ');
-      return `Always ${str(update.behavior) ?? 'allow'} ${rules}${where}`;
-    }
-    if (update.type === 'setMode') {
+        const text = content === undefined ? str(rule.toolName) ?? '' : `${str(rule.toolName) ?? ''}(${content})`;
+        if (!group.said.includes(text)) group.said.push(text);
+      }
+    } else if (update.type === 'setMode') {
       const mode = str(update.mode) ?? '';
-      return `${mode === 'acceptEdits' ? 'Allow edits' : `Switch to ${mode} mode`}${where}`;
+      said.push(`${mode === 'acceptEdits' ? 'Allow edits' : `Switch to ${mode} mode`}${where}`);
+    } else if (update.type === 'addDirectories') {
+      said.push(`Allow access to ${list(update.directories).map((entry) => String(entry)).join(', ')}${where}`);
+    } else {
+      said.push(`Always allow${where}`);
     }
-    if (update.type === 'addDirectories') return `Allow access to ${list(update.directories).map((entry) => String(entry)).join(', ')}${where}`;
-    return `Always allow${where}`;
+  }
+  const phrases = said.map((one) => {
+    if (typeof one === 'string') return one;
+    const group = rules.get(one.rules)!;
+    return `Always ${group.behavior} ${group.said.join(', ')}${group.where}`;
   });
-  return said.join('; ');
+  return [...new Set(phrases)].join('; ');
 }
 
 function resultText(content: unknown): string | undefined {
