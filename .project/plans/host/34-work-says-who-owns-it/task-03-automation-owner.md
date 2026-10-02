@@ -5,7 +5,7 @@ depends: []
 layer: "sdk"
 refs:
   - "[code://packages/sdk/src/types/automations.ts#L14-L29](../../../../packages/sdk/src/types/automations.ts#L14-L29) - the automation shape"
-  - "[code://packages/sdk/src/host.ts#L7340-L7344](../../../../packages/sdk/src/host.ts#L7340-L7344) - a manual run's origin"
+  - "[code://packages/sdk/src/host.ts#L7409-L7413](../../../../packages/sdk/src/host.ts#L7409-L7413) - a manual run's origin"
 ---
 
 ## Objective

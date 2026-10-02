@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L9238](../../../../packages/sdk/src/host.ts#L9238) - the message is forwarded to `session.begin/queue`"
-  - "[code://packages/sdk/src/host.ts#L3573-L3574](../../../../packages/sdk/src/host.ts#L3573-L3574) - a session's `emit`, where usage will be read"
+  - "[code://packages/sdk/src/host.ts#L4906-L4907](../../../../packages/sdk/src/host.ts#L4906-L4907) - the message is forwarded to `session.begin/queue`"
+  - "[code://packages/sdk/src/host.ts#L3575-L3576](../../../../packages/sdk/src/host.ts#L3575-L3576) - a session's `emit`, where usage will be read"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ The host keeps, per active turn, the person who sent it, and can answer it where
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:9238` - record `sender: 'user:<id>'` for the turn id when a message starts or is queued.
-- `UPDATE: packages/sdk/src/host.ts:3573-3574` - a lookup from turn id to sender, for the usage meter later.
+- `UPDATE: packages/sdk/src/host.ts:4906-4907` - record `sender: 'user:<id>'` for the turn id when a message starts or is queued.
+- `UPDATE: packages/sdk/src/host.ts:3575-3576` - a lookup from turn id to sender, for the usage meter later.
 
 ## Steps
 

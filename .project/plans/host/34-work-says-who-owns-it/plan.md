@@ -9,11 +9,11 @@ requires: []
 decisions:
   - decisions/work-is-owned-by-a-typed-reference.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L7857](../../../../packages/sdk/src/host.ts#L7857) - `createSession` opens the session with no principal"
-  - "[code://packages/sdk/src/sessions.ts#L76-L86](../../../../packages/sdk/src/sessions.ts#L76-L86) - `Saved`, the persisted session fields; unknown keys are ignored on load"
+  - "[code://packages/sdk/src/host.ts#L7853](../../../../packages/sdk/src/host.ts#L7853) - `createSession` opens the session with no principal"
+  - "[code://packages/sdk/src/sessions.ts#L80-L91](../../../../packages/sdk/src/sessions.ts#L80-L91) - `Saved`, the persisted session fields; unknown keys are ignored on load"
   - "[code://packages/sdk/src/types/automations.ts#L14-L29](../../../../packages/sdk/src/types/automations.ts#L14-L29) - `Automation`, no creator"
-  - "[code://packages/sdk/src/host.ts#L7340-L7344](../../../../packages/sdk/src/host.ts#L7340-L7344) - a manual run's origin \"carries no room for who asked\""
-  - "[code://packages/sdk/src/types/users.ts#L40-L74](../../../../packages/sdk/src/types/users.ts#L40-L74) - `Principal`, per connection"
+  - "[code://packages/sdk/src/host.ts#L7409-L7413](../../../../packages/sdk/src/host.ts#L7409-L7413) - a manual run's origin \"carries no room for who asked\""
+  - "[code://packages/sdk/src/types/users.ts#L40-L102](../../../../packages/sdk/src/types/users.ts#L40-L102) - `Principal`, per connection"
 ---
 
 ## Goal
@@ -47,6 +47,8 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 | A turn carries the person who sent it; a turn an automation started carries the automation's creator | Softov, 2026-09-30, in [host 33](../33-a-session-tool-acts-as-the-person-it-works-for/plan.md): "Who sent the turn" | 02, 03 |
 | A host with no users directory records no owner | (defaulted: there is no person to record) | 01 |
 | A root connection records `root:<host>` as owner | Softov, 2026-10-01, asked the root owner's spelling: "root:<host>" | 01 |
+| `<host>` is `HostOptions.hostName`, which the daemon sets from the machine's hostname | (defaulted: the sdk has no name for its host today) | 01 |
+| A session's scope is resolved against its owner | host 35 review, finding left for this plan | 01 |
 
 ## Proposed architecture
 
