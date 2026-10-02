@@ -1,6 +1,6 @@
 ---
 title: Claude forks through the turn
-status: todo
+status: done
 depends: [task-01-the-contract-says-a-fork-copies-through-the-turn.md]
 layer: "agent-claude"
 refs:
@@ -30,5 +30,3 @@ A Claude fork resumes with `forkSession` at the chosen turn's last chain entry, 
 
 - `test/host.test.ts`: the fork resumes at the assistant frame's id with `forkSession: true`.
 - `pnpm test`, `pnpm typecheck` green.
-
-## Resume

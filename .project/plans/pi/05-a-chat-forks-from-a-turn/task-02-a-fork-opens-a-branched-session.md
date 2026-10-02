@@ -1,6 +1,6 @@
 ---
 title: A fork opens a branched session
-status: todo
+status: done
 depends: [task-01-a-turn-names-where-a-fork-cuts.md]
 layer: "agent-pi"
 refs:
@@ -37,5 +37,3 @@ A pi session created with `resume` and `forkAt` continues a new pi session branc
 - A host-level case, shaped like `test/agent-cofold-fork.test.ts`: `createChat` with `source.kind: 'fork'` on a pi turn is accepted and the new session's backend is opened with that `forkAt`.
 - Refusals: no `resume`, an unknown source, `forkAt` with `rewindAt`.
 - `pnpm test`, `pnpm typecheck` green.
-
-## Resume

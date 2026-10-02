@@ -5839,9 +5839,10 @@ describe('a chat made out of another', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
-    // The CLI echoes the prompt back under an id of its own, and that id is
-    // the only thing it can be asked to continue from.
+    // The CLI echoes the prompt back under an id of its own and then answers,
+    // and the answer's id is the one a fork cuts at.
     await emit({ type: 'user', session_id: 'sdk-1', uuid: 'sdk-prompt-1', message: { role: 'user', content: 'hi' } });
+    await emit({ type: 'assistant', uuid: 'sdk-reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
 
     await client.handle({
@@ -5853,7 +5854,10 @@ describe('a chat made out of another', () => {
     });
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.forkSession).toBe(true);
-    expect(fresh?.options.resumeSessionAt).toBe('sdk-prompt-1');
+    // The turn's *last* entry, not the prompt it began with: a fork copies the
+    // conversation through the chosen turn, answer included, so cutting at the
+    // prompt would leave the new chat showing an answer its agent never gave.
+    expect(fresh?.options.resumeSessionAt).toBe('sdk-reply-1');
 
     // And the conversation through that turn is visible in the new chat: a
     // fork that starts empty is a new chat, not a fork.

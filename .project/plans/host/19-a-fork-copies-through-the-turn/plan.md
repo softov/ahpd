@@ -1,7 +1,7 @@
 ---
 title: A fork copies the conversation through the chosen turn
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -64,9 +64,9 @@ client createChat source.kind 'fork' -> host.ts:6957 forkPoint(turnId) -> [chang
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The contract says a fork copies through the turn](task-01-the-contract-says-a-fork-copies-through-the-turn.md) | todo | - |
-| [02 - Claude forks through the turn](task-02-claude-forks-through-the-turn.md) | todo | 01 |
-| [03 - cofold forks through the turn](task-03-cofold-forks-through-the-turn.md) | todo | 01 |
+| [01 - The contract says a fork copies through the turn](task-01-the-contract-says-a-fork-copies-through-the-turn.md) | done | - |
+| [02 - Claude forks through the turn](task-02-claude-forks-through-the-turn.md) | done | 01 |
+| [03 - cofold forks through the turn](task-03-cofold-forks-through-the-turn.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -76,14 +76,11 @@ client createChat source.kind 'fork' -> host.ts:6957 forkPoint(turnId) -> [chang
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-contract-says-a-fork-copies-through-the-turn.md](task-01-the-contract-says-a-fork-copies-through-the-turn.md).
-- **Open questions:** none.
-- **Watch out for:** `endPoint` does not change; only what `forkPoint` names does.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] The `Session` contract and the host's comment say a fork copies through the turn.
-- [ ] A Claude fork resumes at the turn's last entry, and a cofold fork copies through the turn's last message.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `plans/index.md` updated.
+- [x] The `Session` contract and the host's comment say a fork copies through the turn.
+- [x] A Claude fork resumes at the turn's last entry, and a cofold fork copies through the turn's last message.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `plans/index.md` updated.

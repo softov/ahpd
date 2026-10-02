@@ -1,6 +1,6 @@
 ---
 title: cofold forks through the turn
-status: todo
+status: done
 depends: [task-01-the-contract-says-a-fork-copies-through-the-turn.md]
 layer: "agent-cofold"
 refs:
@@ -30,5 +30,3 @@ A cofold fork copies the source through the chosen turn's last message, so the f
 
 - `test/agent-cofold-fork.test.ts` green with the new expectations.
 - `pnpm test`, `pnpm typecheck` green.
-
-## Resume

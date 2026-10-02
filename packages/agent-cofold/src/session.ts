@@ -344,15 +344,15 @@ export function cofoldSession(
    */
   let refused: Error | undefined;
   /**
-   * How each watched turn began and ended, in cofold's own message ids.
+   * Where each watched turn ended, in cofold's own message ids.
    *
    * `forkPoint` and `endPoint` are asked synchronously and a store read is
-   * not, so the two ids are read once when the turn ends - before the client
-   * is told it ended - and kept here for the two methods to answer from. A
-   * turn this process did not watch has no entry, which is what makes the host
-   * offer no cut at it: a point nobody can name is worse than none.
+   * not, so the id is read once when the turn ends - before the client is told
+   * it ended - and kept here for the two methods to answer from. A turn this
+   * process did not watch has no entry, which is what makes the host offer no
+   * cut at it: a point nobody can name is worse than none.
    */
-  const points = new Map<string, { input?: string; last?: string }>();
+  const points = new Map<string, string>();
   /** What it is doing, or nothing while it is idle. */
   let activity: string | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
@@ -522,7 +522,7 @@ export function cofoldSession(
   };
 
   /**
-   * Keep where this turn began and ended, for the two cut methods.
+   * Keep where this turn ended, for the two cut methods.
    *
    * Read from the run record rather than from the events, because the last
    * thing a run wrote is a message no event names - a tool result, a steer, the
@@ -532,11 +532,7 @@ export function cofoldSession(
    */
   const rememberPoints = async (turnId: string, runId: string): Promise<void> => {
     const record = await store.runs.get({ sessionId, runId });
-    if (record === undefined) return;
-    points.set(turnId, {
-      ...(record.inputMessageId !== undefined ? { input: record.inputMessageId } : {}),
-      ...(record.lastMessageId !== undefined ? { last: record.lastMessageId } : {}),
-    });
+    if (record?.lastMessageId !== undefined) points.set(turnId, record.lastMessageId);
   };
 
   /**
@@ -1229,8 +1225,8 @@ export function cofoldSession(
      * what makes the host offer no cut at that turn rather than offer one that
      * fails when it is used.
      */
-    forkPoint: (turnId) => points.get(turnId)?.input,
-    endPoint: (turnId) => points.get(turnId)?.last,
+    forkPoint: (turnId) => points.get(turnId),
+    endPoint: (turnId) => points.get(turnId),
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
     status,

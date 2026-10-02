@@ -1,6 +1,6 @@
 ---
 title: A turn names where a fork cuts
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:
@@ -24,7 +24,5 @@ refs:
 
 ## Validation
 
-- `test/agent-pi.test.ts`: after a turn settles, `forkPoint('t1')` equals `endPoint('t1')`; a running turn, a seeded turn and a `!command` turn answer `undefined`.
+- `test/agent-pi.test.ts`: after a turn settles, `forkPoint('t1')` equals `endPoint('t1')`; a running turn and a turn id this session never watched answer `undefined`, as does a `!command` turn, which is not pi's. A turn seeded from a resumed session's file answers the end the file records, which is what makes a session read from disk able to fork.
 - `pnpm test`, `pnpm typecheck` green.
-
-## Resume

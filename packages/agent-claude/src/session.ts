@@ -2323,17 +2323,24 @@ export function createSession(options: ClaudeSessionOptions): Session {
   /** Context for the first prompt only, which never reaches the wire. */
   let carried = options.context;
 
-  /** The backend's id for the prompt that began each turn, by this host's turn id. */
-  const cuts = new Map<string, string>();
+  /**
+   * The turns whose own transcript id has been said, by this host's turn id.
+   *
+   * Once per turn, because a turn is one line in the catalogue however many
+   * `user` frames it is made of: only the first echo of a turn is its prompt,
+   * and the rest are tool results that name entries of their own.
+   */
+  const reported = new Set<string>();
 
   /**
    * The backend's id for the *last* thing in each turn, by this host's turn id.
    *
-   * Where a rewind that keeps the turn has to cut. The SDK's rule for
-   * `resumeSessionAt` is the kept turn's last chain entry, whatever it is -
-   * cutting at the prompt instead keeps the question and drops the answer to
-   * it, which is a turn a client can still see and the agent no longer
-   * remembers giving.
+   * What both cuts take. A rewind keeps the turn and drops what came after it,
+   * a fork copies the conversation through it, and the SDK's rule for
+   * `resumeSessionAt` is the same either way: the kept turn's last chain entry,
+   * whatever it is. Cutting at the prompt instead keeps the question and drops
+   * the answer to it, which is a turn a client can still see and the agent no
+   * longer remembers giving.
    */
   const ends = new Map<string, string>();
 
@@ -2821,14 +2828,13 @@ export function createSession(options: ClaudeSessionOptions): Session {
         if (type === 'stream_event') { streamed(bag(message.event), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'assistant') { assistant(bag(message.message), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'user') {
-          // The prompt's own id, which is what a fork is cut at. Recorded on
-          // the first echo of a turn and not after: later `user` frames in one
-          // turn are tool results, and cutting at one of those would resume
-          // halfway through work the agent had already started.
+          // The prompt's own id. Taken from the first echo of a turn and not
+          // after: later `user` frames in one turn are tool results, which
+          // name entries of their own and are not the turn.
           const said = str(message.uuid);
           const parent = str(message.parent_tool_use_id) ?? '';
-          if (active && said !== undefined && !cuts.has(String(active.id))) {
-            cuts.set(String(active.id), said);
+          if (active && said !== undefined && !reported.has(String(active.id))) {
+            reported.add(String(active.id));
             /*
              * The same echo, said as the id this turn is written down under.
              *
@@ -3070,7 +3076,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
     models: () => offered,
     agentId: () => agentId,
-    forkPoint: (turnId) => cuts.get(turnId),
+    forkPoint: (turnId) => ends.get(turnId),
     endPoint: (turnId) => ends.get(turnId),
 
     customizations: () => customizations,

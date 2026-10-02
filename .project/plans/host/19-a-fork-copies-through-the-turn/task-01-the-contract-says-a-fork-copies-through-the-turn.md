@@ -1,6 +1,6 @@
 ---
 title: The contract says a fork copies through the turn
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -26,5 +26,3 @@ refs:
 
 - `pnpm typecheck`, `pnpm boundary` green.
 - Read against `ForkChatSource.turnId` in the protocol package.
-
-## Resume

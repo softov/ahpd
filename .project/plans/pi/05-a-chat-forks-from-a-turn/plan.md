@@ -1,7 +1,7 @@
 ---
 title: A pi chat forks from a turn
 domain: pi
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -63,8 +63,8 @@ client createChat source.kind 'fork' -> host.ts:6952 forkPoint -> create(start w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn names where a fork cuts](task-01-a-turn-names-where-a-fork-cuts.md) | todo | - |
-| [02 - A fork opens a branched session](task-02-a-fork-opens-a-branched-session.md) | todo | 01 |
+| [01 - A turn names where a fork cuts](task-01-a-turn-names-where-a-fork-cuts.md) | done | - |
+| [02 - A fork opens a branched session](task-02-a-fork-opens-a-branched-session.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -73,15 +73,12 @@ client createChat source.kind 'fork' -> host.ts:6952 forkPoint -> create(start w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-turn-names-where-a-fork-cuts.md](task-01-a-turn-names-where-a-fork-cuts.md), after host 19 task 01 and plan 01 task 01.
-- **Open questions:** none.
-- **Watch out for:** a `!command` turn is not pi's and has no fork point; `forkPoint` answers nothing for it.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `forkPoint` answers the leaf recorded when the turn settled.
-- [ ] A fork through the host opens a new pi session id, the source file is byte-for-byte unchanged, and the fork's context ends with the chosen turn's answer.
-- [ ] `README.md` and the `session.ts` header say fork works.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] `forkPoint` answers the leaf recorded when the turn settled.
+- [x] A fork through the host opens a new pi session id, the source file is byte-for-byte unchanged, and the fork's context ends with the chosen turn's answer.
+- [x] `README.md` and the `session.ts` header say fork works.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

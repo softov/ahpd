@@ -1507,6 +1507,33 @@ it('answers where a watched turn ended, and nothing for one it never saw end', a
   expect(session.endPoint?.('never-watched')).toBeUndefined();
 });
 
+it('names where a watched turn ended as the point a fork copies through', async () => {
+  const { session, pi } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  // Still running, so there is no point to name yet.
+  expect(session.forkPoint?.('t1')).toBeUndefined();
+  pi.setLeaf('entry-7');
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+  // The turn's last entry, not the prompt it began with: a fork copies the
+  // conversation through the turn it names, answer included.
+  expect(session.forkPoint?.('t1')).toBe('entry-7');
+  expect(session.forkPoint?.('t1')).toBe(session.endPoint?.('t1'));
+  // A turn this session never watched end has no leaf to name, and no second
+  // map: `forkPoint` is `endPoint`.
+  expect(session.forkPoint?.('never-watched')).toBeUndefined();
+});
+
+it('names no point for a !command turn, which is not pi running', async () => {
+  const { session } = opened();
+  session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
+  await settled();
+  expect(session.forkPoint?.('t1')).toBeUndefined();
+  expect(session.endPoint?.('t1')).toBeUndefined();
+});
+
 it('fails the turn when pi refuses to move the leaf back', async () => {
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   pi.refuseRewind();
@@ -1903,15 +1930,15 @@ it('resumes under the id it was resumed with, not the URI', async () => {
   await settled();
   expect(pi.opens[0]?.resume).toBe('pi-session-1');
   expect(pi.opens[0]?.id).toBeUndefined();
-  expect(pi.opens[0]?.fork).toBeUndefined();
+  expect(pi.opens[0]?.forkAt).toBeUndefined();
 });
 
-it('opens a fork as a copy of its source rather than the source itself', async () => {
-  const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1', forkAt: 't1' });
+it('opens a fork at the entry the host named, rather than the source itself', async () => {
+  const { session, pi } = opened({ uri: `ahp-session:/${CLIENT_ID}`, resume: 'pi-session-1', forkAt: 'entry-7' });
   session.begin('t2', 'hello');
   await settled();
   expect(pi.opens[0]?.resume).toBe('pi-session-1');
-  expect(pi.opens[0]?.fork).toBe(true);
+  expect(pi.opens[0]?.forkAt).toBe('entry-7');
   expect(pi.opens[0]?.id).toBeUndefined();
 });
 
@@ -1933,17 +1960,40 @@ it('creates a resumed id that has no file under that id', async () => {
   expect(store.getSessionId()).toBe(CLIENT_ID);
 });
 
-it('forks a session from disk under a fresh id and leaves the source as it was', async () => {
+it('forks a session from disk at the entry it was given, and leaves the source as it was', async () => {
   const sdk = await loadPi();
   const sessionDir = join(root, 'pi');
   const disk = await sessionOnDisk(sessionDir);
   const source = sdk.SessionManager.findById(root, disk.id, sessionDir) as string;
   const before = readFileSync(source, 'utf8');
-  const store = resumeOrCreate(sdk, { cwd: root, sessionDir, resume: disk.id, fork: true, id: CLIENT_ID });
+  // Through the first turn, answer included: what came after it is not in the
+  // copy, which is the whole difference from a resume.
+  const store = resumeOrCreate(sdk, { cwd: root, sessionDir, resume: disk.id, forkAt: disk.firstEnd });
   expect(store.getSessionId()).not.toBe(disk.id);
-  expect(store.getBranch().map((one) => one.id)).toContain(disk.secondEnd);
+  const branch = store.getBranch().map((one) => one.id);
+  expect(branch).toContain(disk.first);
+  expect(branch).toContain(disk.firstEnd);
+  expect(branch).not.toContain(disk.second);
+  expect(branch).not.toContain(disk.secondEnd);
+  expect(readFileSync(store.getSessionFile() as string, 'utf8')).not.toContain('again');
   store.appendMessage({ role: 'user', content: 'after the fork', timestamp: Date.now() });
   expect(readFileSync(source, 'utf8')).toBe(before);
+});
+
+it('refuses a fork it cannot make rather than starting a conversation that is not one', async () => {
+  const sdk = await loadPi();
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  // Nothing to copy from.
+  expect(() => resumeOrCreate(sdk, { cwd: root, sessionDir, forkAt: disk.firstEnd }))
+    .toThrow(/needs the conversation it copies/);
+  // A conversation pi has no file for. A resume would have started a new one
+  // under the id it was given; a fork has nothing to copy and says so.
+  expect(() => resumeOrCreate(sdk, { cwd: root, sessionDir, resume: 'no-such-session', forkAt: disk.firstEnd }))
+    .toThrow(/no pi session to fork from/);
+  // An entry the source does not have is pi's own refusal.
+  expect(() => resumeOrCreate(sdk, { cwd: root, sessionDir, resume: disk.id, forkAt: 'no-such-entry' }))
+    .toThrow(/not found/);
 });
 
 it('lists an empty directory as no sessions rather than failing', async () => {

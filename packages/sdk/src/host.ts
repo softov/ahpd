@@ -8528,8 +8528,8 @@ export function createHost(options: HostOptions): Host {
             if (kind === 'fork') {
               if (held.agent.chats?.fork !== true)
                 throw new RpcError(-32602, `${held.agent.provider} cannot fork a chat from a turn`);
-              // The backend's own name for that prompt, which is the only one
-              // it can be asked to continue from.
+              // The backend's own name for where that turn ended, which is
+              // the only one it can be asked to continue from.
               const point = from.chat.forkPoint?.(turnId);
               const started = from.chat.agentId();
               if (point === undefined || started === undefined)

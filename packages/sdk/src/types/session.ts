@@ -237,25 +237,29 @@ export interface Session {
   agentId(): string | undefined;
 
   /**
-   * The backend's own name for the prompt that began a turn, if it has one.
+   * The backend's own name for the last entry a turn left behind, if it has
+   * one.
    *
-   * What a fork is cut at. A turn has an id this host chose and the backend
-   * has an id of its own for the same prompt, and only the backend's means
+   * What a fork is cut at, and a fork copies through it: the new chat holds
+   * the chosen turn whole, its answer included, as the AHP spec's
+   * `ForkChatSource` says. A turn has an id this host chose and the backend
+   * has an id of its own for the same entry, and only the backend's means
    * anything when it is asked to resume at one.
    *
    * Optional, and its absence is what makes forking unavailable: a backend
-   * that cannot name a prompt cannot be asked to continue from one, and the
-   * host advertises no `fork` capability for it rather than offering a control
-   * that fails when it is used.
+   * that cannot name the entry a turn ended at cannot be asked to continue
+   * from one, and the host advertises no `fork` capability for it rather than
+   * offering a control that fails when it is used.
    */
   forkPoint?(turnId: string): string | undefined;
   /**
    * The backend's own name for the *last* thing a turn did, if it has one.
    *
-   * Where a rewind cuts. `forkPoint` names the prompt a turn began with and
-   * `endPoint` names the last entry it left behind, and the two are different
-   * questions: a fork re-asks the turn, a truncation keeps it whole and drops
-   * what came after.
+   * Where a rewind cuts: the turn stays whole and what came after it is
+   * dropped. `forkPoint` and `endPoint` both name the last entry a turn left
+   * behind, and they are both kept because they are not the same question: a
+   * backend may fork and may not truncate, and one that can do both is
+   * free to answer the two from different entries.
    *
    * Optional and, like `forkPoint`, only ever answered for a turn this process
    * watched run: the backend's names for a turn read back off a transcript are

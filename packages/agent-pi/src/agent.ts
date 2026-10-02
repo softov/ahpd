@@ -104,6 +104,17 @@ export function piAgent(
      */
     multipleDirectories: false,
 
+    /*
+     * A chat can be forked from one of its turns.
+     *
+     * A fork copies the conversation through a turn into a pi session of its
+     * own - `SessionManager.createBranchedSession` - and leaves the source
+     * whole, which is what AHP's `source.kind: 'fork'` asks for. There is no
+     * side chat: that is a fresh conversation told what a turn said, and pi
+     * has no way to hand a model context that is not in a session.
+     */
+    chats: { fork: true },
+
     /**
      * What pi offers before a session exists: the models of pi's own runtime.
      *

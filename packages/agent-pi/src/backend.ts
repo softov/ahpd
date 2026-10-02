@@ -79,8 +79,14 @@ export interface BackendOptions {
   cwd: string;
   /** A conversation of pi's to continue, rather than starting a new one. */
   resume?: string;
-  /** Whether `resume` is copied into a new conversation under a fresh id, leaving the source as it was. */
-  fork?: boolean;
+  /**
+   * The entry a fork of `resume` cuts at, copied into a new conversation under
+   * a fresh id.
+   *
+   * AHP means a fork by the conversation through the turn it names, its answer
+   * included, with the source left whole.
+   */
+  forkAt?: string;
   /** The id a new conversation is saved under; pi picks one when left out. */
   id?: string;
   /** Where pi keeps its sessions; its own default when left out. */
@@ -170,24 +176,46 @@ export const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f
 /**
  * The session manager a backend is built over.
  *
- * A resumed id with a file continues that file, or copies it under a fresh id
- * when `fork` is set. A resumed id nobody has is a new conversation under that
- * id, and anything else is a new conversation under `id`, or pi's own. Only a
- * UUID is passed to pi, so an id pi would refuse becomes pi's own instead.
+ * A fork cuts the conversation at the entry it was given and continues the
+ * copy under pi's own new id. A resumed id with a file continues that file,
+ * and a resumed id nobody has is a new conversation under that id, so a client
+ * that lost its file keeps its name. Anything else is a new conversation under
+ * `id`, or pi's own. Only a UUID is passed to pi, so an id pi would refuse
+ * becomes pi's own instead.
  */
 export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager {
   const { SessionManager } = sdk;
+  if (options.forkAt !== undefined) {
+    /*
+     * Refused rather than continued empty.
+     *
+     * A fork with no source, or with a source pi has no file for, would
+     * otherwise start a conversation that is not a fork of anything, and a
+     * client asking for one would be told it had it.
+     */
+    if (options.resume === undefined) throw new Error('a fork needs the conversation it copies');
+    const from = SessionManager.findById(options.cwd, options.resume, options.sessionDir);
+    if (from === undefined) throw new Error(`no pi session to fork from under the id ${options.resume}`);
+    const branched = SessionManager.open(from, options.sessionDir, options.cwd);
+    /*
+     * pi's own branch, which writes the root-to-leaf path under a new id and a
+     * new file and points the manager at them. So the backend's id is the
+     * fork's and the source file is never appended to. A `leafId` pi does not
+     * know throws out of here rather than branching from the whole file.
+     */
+    branched.createBranchedSession(options.forkAt);
+    return branched;
+  }
   if (options.resume !== undefined) {
     const found = SessionManager.findById(options.cwd, options.resume, options.sessionDir);
-    if (found !== undefined && options.fork === true) return SessionManager.forkFrom(found, options.cwd, options.sessionDir);
     if (found !== undefined) return SessionManager.open(found, options.sessionDir, options.cwd);
     // A session id nobody has is a new conversation rather than a failure: the
     // catalogue and the files can disagree after somebody tidied up, and
     // refusing would lose the prompt that was being sent. It keeps the id, so
     // the client's name for it still answers.
-    if (options.fork !== true && isUuid(options.resume)) return SessionManager.create(options.cwd, options.sessionDir, { id: options.resume });
+    if (isUuid(options.resume)) return SessionManager.create(options.cwd, options.sessionDir, { id: options.resume });
   }
-  const id = options.fork === true ? undefined : options.id;
+  const id = options.id;
   return SessionManager.create(options.cwd, options.sessionDir, id !== undefined && isUuid(id) ? { id } : undefined);
 }
 

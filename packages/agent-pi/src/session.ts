@@ -16,10 +16,9 @@
  *   is opened `pending-confirmation`, a `toolConfirmation` entry is published
  *   as `session/inputNeeded`, and `confirm` answers it. Which calls are asked
  *   about is the session's `permissionMode`.
- * - **A fork** is not, yet. pi can branch from an entry, but naming the entry a
- *   *turn* began at means recording it as the turn runs, and this bridge does
- *   not - so `forkPoint` is left out and the host advertises no fork rather
- *   than offering a control that fails.
+ * - **A fork** is pi's own `createBranchedSession`: the leaf each turn settled
+ *   at is what `forkPoint` names, and branching there writes the conversation
+ *   through that turn under a new id, which is what AHP asks a fork for.
  */
 
 import { existsSync, realpathSync } from 'node:fs';
@@ -151,9 +150,11 @@ export function piSession(
   /**
    * The entry each watched turn ended at, by this host's turn id.
    *
-   * Where a truncation of that turn has to cut. pi's sessions are append-only
-   * trees, so the leaf at the settle is the last thing the turn left behind,
-   * and nothing is dropped until `navigateTree` moves it there.
+   * What both cuts take. A truncation of that turn has to cut here, and so
+   * does a fork, which copies the conversation through the turn it names.
+   * pi's sessions are append-only trees, so the leaf at the settle is the last
+   * thing the turn left behind, and nothing is dropped until `navigateTree`
+   * moves it there.
    */
   const ends = new Map<string, string>();
   /*
@@ -633,6 +634,12 @@ export function piSession(
    * already chose.
    */
   const build = async (resume: string | undefined, first: boolean): Promise<PiBackend> => {
+    // One cut at a time, refused before pi is asked for
+    // either: a fork writes a session file of its own, and a refused one would
+    // leave it behind.
+    if (first && start.forkAt !== undefined && start.rewindAt !== undefined) {
+      throw new Error('pi: a session cannot fork and rewind at once');
+    }
     const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
     // What this backend is built with, so a turn it runs judges owner and
     // effects against the list pi was handed and not one a client changed
@@ -648,7 +655,7 @@ export function piSession(
       cwd: where,
       ...(resume !== undefined ? { resume } : {}),
       // Only the first open forks: a rebuild continues the copy it made.
-      ...(first && resume !== undefined && start.forkAt !== undefined ? { fork: true } : {}),
+      ...(first && resume !== undefined && start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
       ...(first && resume === undefined && isUuid(idFor(start.uri)) ? { id: idFor(start.uri) } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
       ...(tools.length > 0 ? { tools } : {}),
@@ -925,6 +932,9 @@ export function piSession(
 
     models: () => models,
     agentId: () => live?.id,
+    // A fork copies the conversation through the turn it names, answer
+    // included, so it cuts where the turn ended rather than where it began.
+    forkPoint: (turnId) => ends.get(turnId),
     endPoint: (turnId) => ends.get(turnId),
     customizations: () => [...seeds],
     allTurns: () => turns,

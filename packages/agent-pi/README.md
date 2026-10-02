@@ -75,13 +75,13 @@ Some of pi lands on the protocol without adaptation:
 - **Truncation** is `navigateTree`. pi's sessions are append-only trees: the leaf moves back and the abandoned path stops being context, which is exactly what `chat/truncated` asks for. A turn read back from pi's file ends at the entry the file says it did, so it can be truncated like one this session watched. A `!command` turn and one whose `prompt` threw leave no point to cut at, and the host refuses to truncate them.
 - **The thinking level** rides in each model's own `configSchema`, the protocol's escape hatch for a model that needs an answer beside its name. A client draws it as a form beside the model and sends the values back in `ModelSelection.config`.
 - **Models** are identified as `provider/modelId`, the way pi's own configuration spells one, so two providers serving a model of the same name stay apart. The probe lists the models pi's own runtime has for its agent directory, so a client's picker has them before any session opens and after a restart. A provider only a project's extension registers arrives when a session in that project opens.
+- **Forking a turn** is `SessionManager.createBranchedSession`. The entry a turn settled at is what a fork cuts at, and branching there writes the conversation through that turn, answer included, under a new id, leaving the source file as it was.
 - **The session file** is a real path, so the reference client's "open session state file" opens the conversation pi actually wrote.
 - **Host and client tools.** The tools the host contributes to a session are offered to pi's model, and one of the host's own runs in the host. A tool a connected client provides is offered too, and a call to it is reported against that client and waits for its answer. A client's tools take effect from the next turn, because pi fixes its custom tools when the session starts and the session is restarted on the same file with the new set.
 - **Tool confirmation.** A session asks a person before a call its `permissionMode` says to ask about: the call is shown `pending-confirmation`, the session is `InputNeeded`, and the answer runs the call or blocks it with a reason the model reads. A tool that declares no effects runs, a read outside the working directory asks, and the six modes carry the meanings Claude and cofold advertise, with `default` as pi's default.
 
 Some of it does not, and the backend does not advertise it:
 
-- **Forking a turn.** pi can branch from an entry, but this backend does not record the entry each turn began at, so it offers no fork.
 - **Turning a customization on or off, and MCP servers.** pi loads its extensions and skills when it opens and has no runtime switch for them, and MCP in pi is an extension's job. Both answer `false`.
 - **Several directories per session.** pi's `AgentSession` has a single `cwd`, which its tools, project resources and session store all use.
 

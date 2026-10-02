@@ -253,9 +253,9 @@ const landed = async (store: ReturnType<typeof createFileStore>, source: string,
 
 it('copies the kept turns with their records, not just their text', async () => {
   // The same fork, asserted on the store rather than on the transcript, so the
-  // two views cannot agree by accident. The cut is at the prompt the forked
-  // turn began with - AHP forks so that turn can be asked again - so the reply
-  // it had is left behind with the run that produced it.
+  // two views cannot agree by accident. The cut is at the message the forked
+  // turn ended with - a fork copies the conversation through the turn it names,
+  // answer included - so both of the first two turns come whole.
   const { root, agent, one, sweep } = await threeTurns();
   const store = createFileStore({ root });
   const id = String(one.session.agentId());
@@ -276,10 +276,10 @@ it('copies the kept turns with their records, not just their text', async () => 
     }
   };
   await landed(store, id, target);
-  expect(await copied()).toEqual(['question one', 'answer one', 'question two']);
-  // The turn whose prompt was kept has no run: it is the turn the fork is for.
+  expect(await copied()).toEqual(['question one', 'answer one', 'question two', 'answer two']);
+  // Every kept turn is a whole turn, so every kept run came with it.
   const runs = await store.runs.list({ sessionId: target });
-  expect(runs.map((run) => run.status)).toEqual(['completed']);
+  expect(runs.map((run) => run.status)).toEqual(['completed', 'completed']);
   expect(runs.every((run) => run.inputMessageId !== undefined && run.lastMessageId !== undefined)).toBe(true);
 });
 
@@ -376,22 +376,24 @@ it('forks through the host, from the source chat into a chat of its own', async 
     (await store.sessions.list({})).map((record) => record.sessionId).filter((id) => id !== 'one');
   await untilAsync(async () => (await targets()).length === 1);
   const target = String((await targets())[0]);
+  // Through the chosen turn, answer included: the host hands the backend the
+  // point the turn ended at, and the copy stops there.
   await untilAsync(async () => {
     try {
-      return (await store.sessions.listMessages({ sessionId: target })).length === 3;
+      return (await store.sessions.listMessages({ sessionId: target })).length === 4;
     }
     catch {
       return false;
     }
   });
   expect((await store.sessions.listMessages({ sessionId: target })).map(textOf))
-    .toEqual(['question one', 'answer one', 'question two']);
+    .toEqual(['question one', 'answer one', 'question two', 'answer two']);
 
   // The forked chat is a chat of the host's now: what is said in it lands in
   // the new conversation and not in the one it was copied from.
   await say(through, forkedChat, 't4', 'question four');
   expect((await store.sessions.listMessages({ sessionId: target })).map(textOf))
-    .toEqual(['question one', 'answer one', 'question two', 'question four', 'answer four']);
+    .toEqual(['question one', 'answer one', 'question two', 'answer two', 'question four', 'answer four']);
   expect((await store.sessions.listMessages({ sessionId: 'one' })).map(textOf))
     .toEqual(['question one', 'answer one', 'question two', 'answer two', 'question three', 'answer three']);
 });
