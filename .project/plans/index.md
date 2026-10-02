@@ -254,6 +254,16 @@ Reference: [00-usage.md](usage/00-usage.md)
 
 Next free number in `usage`: `05`.
 
+## policy
+
+Reference: [00-policy.md](policy/00-policy.md)
+
+| Plan | Priority | Status | Requires | Blocks |
+| --- | --- | --- | --- | --- |
+| [01 - A policy says who may use which agent, model and computer](policy/01-a-policy-says-who-may-use-what/plan.md) | high | draft 2026-10-02; task files to write | host 36 | policy 02, proxy 02 |
+
+Next free number in `policy`: `02`.
+
 ## proxy
 
 Reference: [00-proxy.md](proxy/00-proxy.md)
