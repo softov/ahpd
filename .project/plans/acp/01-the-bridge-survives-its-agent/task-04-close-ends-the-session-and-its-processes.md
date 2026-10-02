@@ -1,6 +1,6 @@
 ---
 title: Close ends the session and every process it started
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -26,5 +26,3 @@ Closing sends `session/close` when the server advertises it, ends stdin, sends S
 
 - A fixture that starts a grandchild leaves no process after close.
 - A fixture advertising close receives `session/close`.
-
-## Resume

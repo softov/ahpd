@@ -13,7 +13,7 @@
  */
 
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
-import { catalogueOf, stateFile, watchedSession } from './catalog.js';
+import { catalogueOf, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { AcpOptions } from './types.js';
@@ -94,14 +94,16 @@ export function acpAgent(options: AcpOptions): Agent {
     list: (): Promise<Listed[]> => catalogueOf(options, provider),
 
     /*
-     * What this process watched of a session. `undefined` for one it never
-     * opened, which is the contract's way of saying the host has no such row:
-     * the ACP server owns the conversation and this bridge does not read it
-     * back off disk.
+     * What this process watched of a session, or what the server replays of one
+     * it never watched.
+     *
+     * `undefined` for a session neither has: the ACP server owns the
+     * conversation, so a row no server can reopen is the contract's way of
+     * saying the host has no such session rather than an empty one.
      */
     transcript: async (id) => {
-      const watched = watchedSession(provider, id);
-      return watched === undefined ? undefined : turnsOf(watched);
+      const found = await loadedSession(options, provider, id);
+      return found === undefined ? undefined : turnsOf(found);
     },
 
     // The bridge writes no per-session file, so undefined is the real answer

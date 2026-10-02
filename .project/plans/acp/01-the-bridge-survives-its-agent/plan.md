@@ -1,7 +1,7 @@
 ---
 title: The bridge survives its agent: a bad command, a dying server and a close
 domain: acp
-status: active
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -64,10 +64,10 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A child that fails to start or exits is heard](task-01-a-child-that-fails-is-heard.md) | done | - |
-| [02 - The last of stderr rides on a failure](task-02-stderr-rides-on-a-failure.md) | todo | 01 |
-| [03 - A dead agent is reopened by its id](task-03-a-dead-agent-is-reopened-by-its-id.md) | todo | 01 |
-| [04 - Close ends the session and every process it started](task-04-close-ends-the-session-and-its-processes.md) | todo | - |
-| [05 - The docs say what a failing agent looks like](task-05-docs.md) | todo | 02, 03, 04 |
+| [02 - The last of stderr rides on a failure](task-02-stderr-rides-on-a-failure.md) | done | 01 |
+| [03 - A dead agent is reopened by its id](task-03-a-dead-agent-is-reopened-by-its-id.md) | done | 01 |
+| [04 - Close ends the session and every process it started](task-04-close-ends-the-session-and-its-processes.md) | done | - |
+| [05 - The docs say what a failing agent looks like](task-05-docs.md) | done | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -75,16 +75,13 @@ close -> [new] session/close when advertised -> stdin end -> SIGTERM group -> SI
 
 ## Resume state
 
-- **Done so far:** task 01 done 2026-09-28 (`990af73`), approved by Softov: a missing command or an exiting server fails the turn in a sentence and the daemon stays up.
-- **Next action:** [task-02-stderr-rides-on-a-failure.md](task-02-stderr-rides-on-a-failure.md) or [task-04-close-ends-the-session-and-its-processes.md](task-04-close-ends-the-session-and-its-processes.md).
-- **Open questions:** none.
-- **Watch out for:** task 03 reopens with a load, whose replay must not land in the new turn; plan 02 task 01 goes first.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A spec with a missing command fails a turn and the daemon stays up.
-- [ ] A dying server's stderr tail is in the failure.
-- [ ] The turn after a death continues the same ACP session.
-- [ ] Close leaves no process behind.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A spec with a missing command fails a turn and the daemon stays up.
+- [x] A dying server's stderr tail is in the failure.
+- [x] The turn after a death continues the same ACP session.
+- [x] Close leaves no process behind.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

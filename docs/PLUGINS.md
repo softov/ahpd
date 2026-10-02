@@ -743,6 +743,15 @@ terminals, opens a `terminal` tool call around it and closes the turn with what
 it printed. Nothing about the command reaches the ACP server, and the server is
 never asked to stop for it - one already mid-prompt stays mid-prompt.
 
+A command that is not there fails the turn that asked for it in a sentence naming
+what was wrong, and leaves the daemon and every other session alone. A server that
+dies fails its turn the same way, with the last of what it wrote on stderr under
+the exit code; the next turn spawns it again and reopens the conversation it was
+holding, and a server that cannot reopen one says so rather than answering with an
+empty conversation. Closing a session tells the server to close it where it
+advertised it can be, and signals the whole process group that server leads, so
+nothing it started is left running.
+
 ## A third worked example: a host-owned URI scheme
 
 A plugin can serve one URI scheme itself - `computer:`, or anything else that is

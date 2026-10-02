@@ -107,6 +107,48 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
   expect(escaped).toEqual([]);
 });
 
+it('fails the turn with what the server wrote on stderr before it died', async () => {
+  const { session, actions } = start(process.execPath, [FIXTURE]);
+  session.begin('t1', 'be noisy');
+  await until(() => failure(actions) !== undefined);
+
+  expect(failure(actions)).toContain('exited with code 4');
+  expect(failure(actions)).toContain('the model backend refused the request');
+  expect(failure(actions)).toContain('at Backend.send (backend.js:41)');
+  expect(escaped).toEqual([]);
+});
+
+it('never surfaces the stderr of a server that answered', async () => {
+  const { session, actions } = start(process.execPath, [FIXTURE]);
+  session.begin('t1', 'chatter a little');
+  await until(() => actions.some((action) => action.type === 'chat/turnComplete'));
+
+  // The line went to the connection and stayed there: a client hears about a
+  // server's own output when it failed, never while it is working.
+  expect(actions.some((action) => action.type === 'chat/error')).toBe(false);
+  expect(JSON.stringify(actions)).not.toContain('a line the server said to nobody');
+  expect(escaped).toEqual([]);
+});
+
+it('keeps the last 8 KB of stderr, cut at a line boundary', async () => {
+  const lines = Array.from({ length: 2000 }, (_one, at) => `line ${String(at)}`);
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', `process.stderr.write(${JSON.stringify(lines.join('\n'))}, () => { process.exit(5); });`],
+    handlers: { update: () => {} },
+  });
+  await expect(connection.initialize()).rejects.toThrow('exited with code 5');
+  const tail = await connection.stderrTail();
+
+  expect(tail.length).toBeLessThanOrEqual(8 * 1024);
+  // The oldest line went, and what is left begins at a whole one rather than at
+  // the middle of it.
+  expect(tail).not.toContain('line 0\n');
+  expect(tail.split('\n')[0]).toMatch(/^line \d+$/);
+  expect(tail.endsWith('line 1999')).toBe(true);
+  connection.close();
+});
+
 it('settles a close once the server process has gone, and never rejects', async () => {
   const connection = connectAcp({
     command: process.execPath,

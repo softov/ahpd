@@ -1,7 +1,7 @@
 ---
 title: A turn ends as the agent ended it
 domain: acp
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -44,8 +44,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Cancel settles every pending permission](task-01-cancel-settles-every-permission.md) | todo | - |
-| [02 - A stop that is not an answer is an error](task-02-a-stop-that-is-not-an-answer-is-an-error.md) | todo | - |
+| [01 - Cancel settles every pending permission](task-01-cancel-settles-every-permission.md) | done | - |
+| [02 - A stop that is not an answer is an error](task-02-a-stop-that-is-not-an-answer-is-an-error.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -53,14 +53,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-cancel-settles-every-permission.md](task-01-cancel-settles-every-permission.md).
-- **Open questions:** none.
-- **Watch out for:** nothing.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A cancel leaves no pending permission.
-- [ ] Each non-answer stop reason is an error with its name.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A cancel leaves no pending permission.
+- [x] Each non-answer stop reason is an error with its name.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

@@ -8,13 +8,19 @@
  * translation between them, and it runs the same `mapUpdate` the live session
  * runs, so a rebuilt turn cannot drift from the one that was streamed.
  *
+ * What a server replays on `session/load` is watched the same way: the updates
+ * are split at each user message into turns that sit ahead of the ones this
+ * process watched, so a resumed session opens with the conversation it was
+ * resumed for rather than with only what came after.
+ *
  * A session this process never watched has no record, and `Agent.transcript`
  * answers `undefined` for it rather than inventing a conversation.
  */
 
 import type { Agent } from '@ahpd/sdk';
+import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { mapUpdate } from './mapping.js';
-import type { AcpTurn, WatchedSession } from './types.js';
+import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
 
 /**
  * The turns `Agent.transcript` answers with.
@@ -61,4 +67,50 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       ...(watched.duration === undefined ? {} : { duration: watched.duration }),
     };
   });
+}
+
+/**
+ * The turns a `session/load` replayed, in the order the conversation had them.
+ *
+ * The spec replays a turn as the person's message followed by the updates the
+ * agent made for it, so the split is at each message - which is not the same as
+ * at each `user_message_chunk`, because a message of any length arrives as
+ * several chunks: text, an image, a resource. Consecutive user chunks are one
+ * message and one turn, and a chunk starts a new turn only once the open one
+ * holds something the agent said.
+ *
+ * What comes before the first message is kept as a turn of its own with no user
+ * text, because a server that replays without a question has still said
+ * something and dropping it would lose the start of the conversation.
+ *
+ * The updates are kept raw and read back through `turnsOf` like any watched
+ * turn, so a replayed turn and a live one are the same rendering. ACP carries
+ * no turn ids and no times for a replay, so the id is this process's and the
+ * time is when the replay was heard.
+ */
+export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn[] {
+  const turns: WatchedTurn[] = [];
+  let open: WatchedTurn | undefined;
+  /** Whether anything the agent said has gone into the turn being built. */
+  let answered = false;
+  for (const update of updates) {
+    const asked = update.sessionUpdate === 'user_message_chunk';
+    if (open === undefined || (asked && answered)) {
+      open = {
+        turnId: crypto.randomUUID(),
+        startedAt: at,
+        message: { text: '' },
+        state: 'complete',
+        updates: [],
+      };
+      turns.push(open);
+      answered = false;
+    }
+    if (asked && update.content.type === 'text') {
+      open.message.text = `${open.message.text}${update.content.text}`;
+    }
+    open.updates.push(update);
+    answered = answered || !asked;
+  }
+  return turns;
 }

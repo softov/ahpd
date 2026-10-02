@@ -1,6 +1,6 @@
 ---
 title: A dead agent is reopened by its id
-status: todo
+status: done
 depends: [task-01-a-child-that-fails-is-heard.md]
 layer: "agent-acp"
 refs:
@@ -26,5 +26,3 @@ The turn after a server died respawns it and loads or resumes the session's own 
 
 - A fixture that exits after one turn and advertises `loadSession` answers the second turn in the same ACP session.
 - One that does not advertise it fails the second turn with a sentence.
-
-## Resume

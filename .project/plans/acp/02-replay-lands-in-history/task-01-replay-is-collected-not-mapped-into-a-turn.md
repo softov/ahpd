@@ -1,6 +1,6 @@
 ---
 title: Replay is collected, not mapped into a turn
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -25,5 +25,3 @@ refs:
 
 - A fixture that replays two turns on load: the first new turn holds only its own answer.
 - A load started by `setConfig` keeps its replay.
-
-## Resume

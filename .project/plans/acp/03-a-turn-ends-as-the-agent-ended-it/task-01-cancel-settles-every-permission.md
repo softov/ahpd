@@ -1,6 +1,6 @@
 ---
 title: Cancel settles every pending permission
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -24,5 +24,3 @@ Before `session/cancel`, each pending permission is settled `cancelled` and its 
 ## Validation
 
 - A fixture that asks permission, then a cancel: the server receives `cancelled`, and no entry is left.
-
-## Resume

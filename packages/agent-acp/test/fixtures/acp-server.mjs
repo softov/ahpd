@@ -29,6 +29,13 @@
  *   prompt with a JSON-RPC error;
  * - text containing `die` streams the plain answer and then exits with code 3,
  *   leaving the prompt unanswered;
+ * - text containing `stop=<reason>` answers the prompt with that stop reason
+ *   rather than `end_turn`, so a turn that stopped early can be told apart from
+ *   one that finished;
+ * - text containing `chatter` says one line on stderr and answers normally, so
+ *   a test can read that a healthy server's noise never reaches a client;
+ * - text containing `noisy` says two lines on stderr and then exits with code
+ *   4, so a test can read what a failing server left behind;
  * - anything else streams two message chunks before ending.
  *
  * The port scripts are real requests *to* the client - `fs/read_text_file`,
@@ -41,6 +48,18 @@
  * `session/set_config_option`, with the modes and the model option a real
  * server names on `session/new`.
  *
+ * Two flags take one capability away: `--no-load` makes the handshake stop
+ * advertising `loadSession`, which is a server that cannot reopen a
+ * conversation, and `--no-close` stops it advertising `session/close`.
+ *
+ * `--grandchild=<file>` starts a process of this server's own at startup and
+ * writes its pid into that file, which is how a test reads what a close left
+ * running.
+ *
+ * `--replay` makes `session/load` replay two earlier turns before it answers,
+ * the way a server reads a conversation back: each turn's `user_message_chunk`
+ * and then what the agent said for it.
+ *
  * When `ACP_LOG` names a file, every request and notification that arrives is
  * appended to it as one JSON line, so a test can prove what the bridge actually
  * asked for - including the `clientCapabilities` it advertised - rather than
@@ -49,7 +68,8 @@
  * same file.
  */
 
-import { appendFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 /** The file every request is recorded in, when a test named one. */
@@ -191,6 +211,20 @@ const countedFor = (text) => (text.includes('tokens')
   : {});
 
 /**
+ * The stop reason a prompt asks this server to end it with.
+ *
+ * `stop=<reason>` anywhere in the prompt text, which covers every reason the
+ * protocol names and any a later version adds - a fixture with one keyword per
+ * reason would need editing for each one, and what a test is checking is that
+ * the bridge ends a turn the way the reason it was handed says to. A prompt
+ * that names none is `end_turn`, which is what this server does anyway.
+ */
+const stopReasonOf = (text) => {
+  const asked = /stop=([a-z_]+)/.exec(text);
+  return asked === null ? 'end_turn' : asked[1];
+};
+
+/**
  * The updates one prompt earns, in order.
  *
  * The thought chunk comes first for a prompt that asks for one, so a test can
@@ -296,12 +330,24 @@ const promptScript = async (id, params) => {
   }
   const reaches = ['read', 'write', 'term', 'ask'].some((one) => text.includes(one));
   if (!reaches) for (const update of scriptFor(text)) notify(update);
+  if (text.includes('chatter')) {
+    process.stderr.write('a line the server said to nobody\n');
+  }
   if (text.includes('fail')) {
     write({ jsonrpc: '2.0', id, error: { code: -32603, message: 'the model gave up' } });
     return;
   }
   if (text.includes('die')) {
     process.exit(3);
+  }
+  if (text.includes('noisy')) {
+    // Exiting from the write's own callback, because `process.exit` truncates a
+    // pipe it has not flushed and the trace under the code is the point.
+    process.stderr.write(
+      'the model backend refused the request\n    at Backend.send (backend.js:41)\n',
+      () => { process.exit(4); },
+    );
+    return;
   }
   if (text.includes('wait')) {
     // Held open, and answered only by the cancel below: a test that sees this
@@ -371,7 +417,7 @@ const promptScript = async (id, params) => {
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
   }
 
-  respond(id, { stopReason: 'end_turn', ...countedFor(text) });
+  respond(id, { stopReason: stopReasonOf(text), ...countedFor(text) });
 };
 
 /**
@@ -393,6 +439,27 @@ const respondPrompt = async (id, params) => {
     });
     respond(id, { stopReason: 'end_turn' });
   }
+};
+
+/**
+ * The two turns a `--replay` server reads back before answering a load.
+ *
+ * The order is the spec's: the user's message, then what the agent said for
+ * it, and then the next user message. A client that splits on the user chunk
+ * reads two turns out of this rather than one long answer.
+ *
+ * The first message arrives in two chunks, as any message longer than one block
+ * does: a bridge that starts a turn on each `user_message_chunk` reads three
+ * turns here and has split one message in two.
+ */
+const replayed = () => {
+  const said = (who, text) => notify({ sessionUpdate: who, content: { type: 'text', text } });
+  said('user_message_chunk', 'what did we ');
+  said('user_message_chunk', 'decide?');
+  said('agent_message_chunk', 'we chose the fast one');
+  said('user_message_chunk', 'and the slow one?');
+  said('agent_thought_chunk', 'weighing it up');
+  said('agent_message_chunk', 'we left it for later');
 };
 
 const onLine = (line) => {
@@ -427,8 +494,8 @@ const onLine = (line) => {
       respond(message.id, {
         protocolVersion: 1,
         agentCapabilities: {
-          loadSession: true,
-          sessionCapabilities: { list: {}, resume: {} },
+          ...(process.argv.includes('--no-load') ? {} : { loadSession: true }),
+          sessionCapabilities: { list: {}, resume: {}, ...(process.argv.includes('--no-close') ? {} : { close: {} }) },
         },
         authMethods: [],
       });
@@ -450,6 +517,7 @@ const onLine = (line) => {
       // belongs to the conversation the client asked to continue.
       session = String(message.params?.sessionId ?? nextSession());
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
+      if (process.argv.includes('--replay')) replayed();
       respond(message.id, { modes: modes(), configOptions: configOptions() });
       return;
     }
@@ -476,6 +544,10 @@ const onLine = (line) => {
       void respondPrompt(message.id, message.params);
       return;
 
+    case 'session/close':
+      respond(message.id, {});
+      return;
+
     case 'session/cancel':
       if (pending !== undefined) {
         const id = pending;
@@ -490,5 +562,19 @@ const onLine = (line) => {
       }
   }
 };
+
+/*
+ * A process of this server's own, for a test of what a close leaves behind.
+ *
+ * Not detached, so it lands in the group the bridge spawned this server into,
+ * which is what a signal to that group has to reach. Its pid goes into the
+ * file the flag named, because a test cannot see this server's children any
+ * other way.
+ */
+const grandchild = process.argv.find((one) => one.startsWith('--grandchild='));
+if (grandchild !== undefined) {
+  const spawned = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+  writeFileSync(grandchild.slice('--grandchild='.length), String(spawned.pid));
+}
 
 createInterface({ input: process.stdin }).on('line', onLine);

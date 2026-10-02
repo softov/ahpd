@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,12 +38,12 @@ const scratch = (): string => {
 };
 
 /** The backend under test, with its own request log. */
-function backend(): { agent: Agent; log: string } {
+function backend(flags: string[] = []): { agent: Agent; log: string } {
   const log = join(scratch(), 'requests.jsonl');
   return {
     agent: acpAgent({
       command: process.execPath,
-      args: [FIXTURE],
+      args: [FIXTURE, ...flags],
       env: { ACP_LOG: log },
       provider: 'acp',
     }),
@@ -236,7 +236,63 @@ it('reads back the turn this process watched and nothing for one it did not', as
   expect(turns?.[0]?.state).toBe('complete');
   const parts = turns?.[0]?.responseParts as { kind?: string; content?: string }[];
   expect(parts.some((part) => part.kind === 'markdown' && part.content === 'hello there')).toBe(true);
+});
+
+it('reads back a session this process never watched by loading it from the server', async () => {
+  const { agent, log } = backend(['--replay']);
+  // Nothing here has opened a session, so this is the read a host makes for a
+  // row in the catalogue after a restart: the server is asked to replay it.
+  const turns = await agent.transcript?.('acp-session-restored');
+  expect(turns?.map((one) => one.message.text)).toEqual(['what did we decide?', 'and the slow one?']);
+  expect(requests(log).find((one) => one.method === 'session/load')?.params)
+    .toMatchObject({ sessionId: 'acp-session-restored' });
+  expect(requests(log).some((one) => one.method === 'session/new')).toBe(false);
+});
+
+it('answers nothing for a session a server that cannot load does not have', async () => {
+  const { agent, log } = backend(['--no-load']);
+  // `undefined` rather than an empty session, which is what the host reads as
+  // "no such session" and what a failed read must not look like.
   expect(await agent.transcript?.('a-session-nobody-watched')).toBeUndefined();
+  expect(requests(log).some((one) => one.method === 'session/load')).toBe(false);
+});
+
+it('loads a session at the folder the server listed it under', async () => {
+  const { agent, log } = backend();
+  // `listed-1` is the fixture's `/tmp/one`. A server that keeps a conversation
+  // by its folder finds nothing when asked with the daemon's, so the read asks
+  // the way the server can answer.
+  await agent.list?.();
+  expect(requests(log).some((one) => one.method === 'session/list')).toBe(true);
+
+  await agent.transcript?.('listed-1');
+  expect(requests(log).find((one) => one.method === 'session/load')?.params)
+    .toMatchObject({ sessionId: 'listed-1', cwd: '/tmp/one' });
+});
+
+it('leaves no server behind after reading a session back', async () => {
+  const pidFile = join(scratch(), 'transcript.pid');
+  const { agent } = backend([`--grandchild=${pidFile}`]);
+  await agent.transcript?.('acp-session-nothing-left');
+  await until(() => existsSync(pidFile));
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+
+  // The read spawned a server of its own, and a read is not a session.
+  await until(() => !running(pid));
+  expect(running(pid)).toBe(false);
+});
+
+it('answers a second read of the same session from the record, and spawns nothing', async () => {
+  const { agent, log } = backend();
+  const asked = async (): Promise<number | undefined> =>
+    (await agent.transcript?.('acp-session-read-once'))?.length;
+  expect(await asked()).toBe(0);
+  const loads = requests(log).filter((one) => one.method === 'session/load');
+
+  // The second read is the host re-subscribing to a row it already opened, and
+  // the record answers it: a server spawned per read would load it every time.
+  expect(await asked()).toBe(0);
+  expect(requests(log).filter((one) => one.method === 'session/load')).toHaveLength(loads.length);
 });
 
 it('reads back an interleaved turn with its parts in the order they streamed', async () => {
@@ -299,3 +355,158 @@ it('loads a session on resume rather than opening a new one', async () => {
   expect(asked.some((one) => one.method === 'session/load')).toBe(true);
   expect(asked.some((one) => one.method === 'session/new')).toBe(false);
 });
+
+it('holds a load\'s replay out of the turn that asked for it', async () => {
+  const { agent } = backend(['--replay']);
+  const { session, watch } = start(agent, 'replayed', { resume: 'acp-session-replayed' });
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The replay is what the server said before it answered the load, and it is
+  // the conversation the session was opened for rather than this turn's answer.
+  const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
+  expect(held.map((part) => part.content)).toEqual(['hello there']);
+  expect(JSON.stringify(watch.actions)).not.toContain('we chose the fast one');
+});
+
+it('holds a load\'s replay out of the turn after it, whoever asked for the load', async () => {
+  const { agent } = backend(['--replay']);
+  const { session, watch } = start(agent, 'replayed-from-config');
+  // No turn has run, so the config is what opens the server and loads.
+  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
+  expect(session.allTurns()).toEqual([]);
+
+  await runTurn(session, watch, 't1', 'hi');
+  const held = session.allTurns()[0]?.responseParts as { kind?: string; content?: string }[];
+  expect(held.map((part) => part.content)).toEqual(['hello there']);
+});
+
+it('reads a loaded session back with its replayed turns ahead of the new one', async () => {
+  const { agent } = backend(['--replay']);
+  const { session, watch } = start(agent, 'replayed-history', { resume: 'acp-session-replayed-history' });
+  await runTurn(session, watch, 't1', 'hi');
+
+  const turns = await agent.transcript?.(String(session.agentId()));
+  // The replay is the conversation the session was resumed for, so it is the
+  // beginning of the history rather than something the first turn swallowed.
+  expect(turns?.map((one) => one.message.text)).toEqual([
+    'what did we decide?',
+    'and the slow one?',
+    'hi',
+  ]);
+  const said = (at: number) => (turns?.[at]?.responseParts as { kind?: string; content?: string }[])
+    .map((part) => part.content);
+  expect(said(0)).toEqual(['we chose the fast one']);
+  // The second replayed turn thought before it answered, and the split kept both.
+  expect(said(1)).toEqual(['weighing it up', 'we left it for later']);
+  expect(said(2)).toEqual(['hello there']);
+  expect(turns?.map((one) => one.state)).toEqual(['complete', 'complete', 'complete']);
+});
+
+it('reads a message that arrived in several chunks as one turn', async () => {
+  const { agent } = backend(['--replay']);
+  // The first replayed message is two `user_message_chunk`s, as a message with
+  // a block that is not text arrives. A turn is a message, not a chunk.
+  const turns = await agent.transcript?.('acp-session-chunked');
+  expect(turns?.map((one) => one.message.text)).toEqual([
+    'what did we decide?',
+    'and the slow one?',
+  ]);
+  expect(turns).toHaveLength(2);
+});
+
+it('does not replay a conversation twice when a read is followed by a turn', async () => {
+  const { agent, log } = backend(['--replay']);
+  // What a host does for a row it is opening: read the transcript, then send a
+  // turn to the same conversation. The read and the turn spawn a server each,
+  // so the conversation is replayed twice - and the second replay must not land
+  // in the history, or a client reads one conversation as having happened twice.
+  await agent.transcript?.('acp-session-once');
+  const { session, watch } = start(agent, 'once', { resume: 'acp-session-once' });
+  await runTurn(session, watch, 't1', 'hi again');
+
+  expect(requests(log).filter((one) => one.method === 'session/load').length).toBeGreaterThan(1);
+  const turns = await agent.transcript?.('acp-session-once');
+  // The replayed turns, then the new one, and not the replay a second time.
+  expect(turns?.map((one) => one.message.text)).toEqual([
+    'what did we decide?',
+    'and the slow one?',
+    'hi again',
+  ]);
+});
+
+it('continues the same session after the server dies, rather than starting a new one', async () => {
+  const { agent, log } = backend();
+  const { session, watch } = start(agent, 'died');
+  // The fixture exits mid-prompt, so the first turn fails and the death that
+  // caused it is already heard before the second turn asks for a server.
+  await runTurn(session, watch, 't1', 'die now');
+  const named = session.agentId();
+  expect(named).toBeDefined();
+
+  await runTurn(session, watch, 't2', 'hi again');
+  expect(watch.endings()).toEqual(['chat/error', 'chat/turnComplete']);
+  // The same conversation, on whichever server answered the second turn.
+  expect(session.agentId()).toBe(named);
+  const loads = requests(log).filter((one) => one.method === 'session/load');
+  expect(loads).toHaveLength(1);
+  expect(loads[0]?.params).toMatchObject({ sessionId: named });
+  expect(requests(log).filter((one) => one.method === 'session/new')).toHaveLength(1);
+});
+
+it('fails the turn after a death when the server cannot load a session', async () => {
+  const { agent, log } = backend(['--no-load']);
+  const { session, watch } = start(agent, 'died-no-load');
+  await runTurn(session, watch, 't1', 'die now');
+
+  await runTurn(session, watch, 't2', 'hi again');
+  // A sentence, rather than a `session/new` that would answer with a
+  // conversation that had lost everything the first one held.
+  expect(watch.types().at(-1)).toBe('chat/error');
+  expect(String((watch.actions.at(-1)?.action as { part?: { error?: { message?: string } } })
+    .part?.error?.message)).toContain('cannot load a session');
+  expect(requests(log).some((one) => one.method === 'session/load')).toBe(false);
+  expect(requests(log).filter((one) => one.method === 'session/new')).toHaveLength(1);
+});
+
+it('tells a server that advertised session/close to close, and one that did not is not told', async () => {
+  const { agent, log } = backend();
+  const { session, watch } = start(agent, 'close-capability');
+  await runTurn(session, watch, 't1', 'hi');
+  const named = String(session.agentId());
+
+  await session.close?.();
+  expect(requests(log).find((one) => one.method === 'session/close')?.params).toMatchObject({ sessionId: named });
+
+  const silent = backend(['--no-close']);
+  const other = start(silent.agent, 'close-not-advertised');
+  await runTurn(other.session, other.watch, 't1', 'hi');
+  await other.session.close?.();
+  expect(requests(silent.log).some((one) => one.method === 'session/close')).toBe(false);
+});
+
+it('leaves no process behind when a session closes', async () => {
+  const pidFile = join(scratch(), 'grandchild.pid');
+  const { agent } = backend([`--grandchild=${pidFile}`]);
+  const { session, watch } = start(agent, 'close');
+  await runTurn(session, watch, 't1', 'hi');
+  await until(() => existsSync(pidFile));
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  expect(running(pid)).toBe(true);
+
+  await session.close?.();
+  // The server leads a group of its own, so the grandchild it started is in it
+  // and the SIGTERM reaches both.
+  await until(() => !running(pid));
+  expect(running(pid)).toBe(false);
+});
+
+/** Whether a pid is still a process this user could signal. */
+const running = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  }
+  catch {
+    return false;
+  }
+};

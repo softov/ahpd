@@ -14,10 +14,11 @@
  * catalogue row still needs its transcript, so only the live connection goes.
  */
 
-import type { AgentCapabilities, ListSessionsRequest, SessionInfo } from '@agentclientprotocol/sdk';
+import type { AgentCapabilities, ContentBlock, ListSessionsRequest, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
 import type { Listed } from '@ahpd/sdk';
 import { connectAcp } from './connection.js';
-import type { AcpConnection, AcpOptions, WatchedSession } from './types.js';
+import { replayedTurns } from './transcript.js';
+import type { AcpConnection, AcpHandlers, AcpOptions, WatchedSession } from './types.js';
 
 /**
  * The sessions this process watched, by provider and the server's own id.
@@ -29,6 +30,17 @@ import type { AcpConnection, AcpOptions, WatchedSession } from './types.js';
  * existing record when there is one.
  */
 const watched = new Map<string, WatchedSession>();
+
+/**
+ * Where the server last said each of its sessions lives.
+ *
+ * A `session/list` carries a `cwd` for every conversation it names, and some
+ * servers find a conversation by it: asked to load a session with a folder the
+ * conversation never had, one of them finds nothing and replays nothing, so a
+ * read that used the daemon's own folder would answer blank. Remembering what the
+ * server said is what lets the read ask the way the server can answer.
+ */
+const placeOf = new Map<string, string>();
 
 const keyOf = (provider: string, id: string): string => `${provider}\n${id}`;
 
@@ -75,6 +87,8 @@ export function watchSession(fields: {
   cwd: string;
   additional: string[];
   title: string;
+  /** The updates a load replayed, which are the session's earlier turns. */
+  replay?: SessionUpdate[];
 }): WatchedSession {
   const at = new Date().toISOString();
   const known = watched.get(keyOf(fields.provider, fields.id));
@@ -83,6 +97,7 @@ export function watchSession(fields: {
     known.additional = fields.additional;
     if (fields.title !== '') known.title = fields.title;
     known.modifiedAt = at;
+    prepend(known, fields.replay ?? [], at);
     return known;
   }
   const created: WatchedSession = {
@@ -96,12 +111,86 @@ export function watchSession(fields: {
     turns: [],
   };
   watched.set(keyOf(fields.provider, fields.id), created);
+  prepend(created, fields.replay ?? [], at);
   return created;
+}
+
+/**
+ * Put a server's replay in front of the turns this process watched.
+ *
+ * What `session/load` sends is the conversation that was already had, so it
+ * belongs ahead of anything watched since. A record that already holds turns is
+ * left alone: every one of them came from an earlier replay or from this
+ * process watching, so a second load is saying the same conversation again and
+ * putting it in would read as one happening twice.
+ */
+function prepend(session: WatchedSession, replay: SessionUpdate[], at: string): void {
+  if (replay.length === 0 || session.turns.length > 0) return;
+  session.turns.push(...replayedTurns(replay, at));
 }
 
 /** One watched session, or nothing when this process never opened it. */
 export function watchedSession(provider: string, id: string): WatchedSession | undefined {
   return watched.get(keyOf(provider, id));
+}
+
+/**
+ * One ACP server spawned for a read, with the handlers it was given.
+ *
+ * The spawn is spelled once because a read and a session must reach the same
+ * program the same way, and a read that spelled it differently would be a
+ * bridge that answered from a server the operator never configured.
+ */
+const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => connectAcp({
+  command: options.command,
+  ...(options.args === undefined ? {} : { args: options.args }),
+  ...(options.env === undefined ? {} : { env: options.env }),
+  ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+  handlers,
+});
+
+/**
+ * One session this process never watched, asked of the server that still has it.
+ *
+ * ACP keeps the conversation and hands it back through `session/load`, so a
+ * session opened after a restart is read by replaying it: the same updates a
+ * live turn would have mapped, split into the turns they were. One connection
+ * for the read, as `catalogueOf` spawns one for a list, because a read is not a
+ * session and must not leave a server behind.
+ *
+ * The load asks for the folder the server last said this conversation lives in,
+ * because a server that keeps a conversation by its folder finds nothing when
+ * asked with the daemon's. What the list said is the only answer to that this
+ * bridge has, so the configuration's own folder is the fallback and the
+ * daemon's is the last one.
+ *
+ * Undefined where the server cannot be asked - it never started, its handshake
+ * did not advertise `loadSession`, or it holds no such conversation - which is
+ * the same answer as for a session no server has, rather than an empty one.
+ */
+export async function loadedSession(
+  options: AcpOptions,
+  provider: string,
+  id: string,
+): Promise<WatchedSession | undefined> {
+  const held = watchedSession(provider, id);
+  if (held !== undefined) return held;
+  const replay: SessionUpdate[] = [];
+  let connection: AcpConnection | undefined;
+  try {
+    connection = server(options, { update: (_sessionId, update) => { replay.push(update); } });
+    const handshake = await connection.initialize();
+    if (handshake.agentCapabilities?.loadSession !== true) return undefined;
+    const cwd = placeOf.get(keyOf(provider, id)) ?? options.cwd ?? process.cwd();
+    await connection.loadSession({ sessionId: id, cwd, mcpServers: [] });
+    return watchSession({ provider, id, cwd, additional: [], title: id, replay });
+  }
+  catch {
+    return undefined;
+  }
+  finally {
+    connection?.close();
+  }
 }
 
 /**
@@ -117,17 +206,14 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   const now = new Date().toISOString();
   let connection: AcpConnection | undefined;
   try {
-    connection = connectAcp({
-      command: options.command,
-      ...(options.args === undefined ? {} : { args: options.args }),
-      ...(options.env === undefined ? {} : { env: options.env }),
-      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      handlers: { update: () => {} },
-    });
+    connection = server(options, { update: () => {} });
     const handshake = await connection.initialize();
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const request: ListSessionsRequest = options.cwd === undefined ? {} : { cwd: options.cwd };
     const listed = await connection.listSessions(request);
+    for (const info of listed.sessions) {
+      placeOf.set(keyOf(provider, info.sessionId), info.cwd);
+    }
     return listed.sessions.map((info) => listedFrom(info, now));
   }
   catch {

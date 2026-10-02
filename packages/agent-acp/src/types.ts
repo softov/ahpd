@@ -147,12 +147,27 @@ export interface AcpConnection {
   /** The ACP cancel notification, which asks the server to stop a running prompt. */
   cancel(sessionId: string): Promise<void>;
   /**
+   * Ask the server to close a session and free whatever it holds for it.
+   *
+   * Only a server whose handshake advertised `session.close` can be asked; the
+   * session decides that, not the connection.
+   */
+  closeSession(sessionId: string): Promise<void>;
+  /**
    * Settles with why the server process is gone: it never started, or it exited.
    *
    * Every call made on a connection whose server is gone rejects with the same
    * reason.
    */
   readonly ended: Promise<Error>;
+  /**
+   * The last of what the server wrote on stderr, for a failure to carry.
+   *
+   * Nothing surfaces it while the server runs: a healthy server's chatter is
+   * the server's, and a client is told about it only when it died. Settles once
+   * a dead server's last words have been read off the pipe.
+   */
+  stderrTail(): Promise<string>;
   /** End the subprocess; settles once it has gone, and never rejects. */
   close(): Promise<void>;
 }

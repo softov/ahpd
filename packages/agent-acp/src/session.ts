@@ -25,6 +25,7 @@
 
 import { pathToFileURL } from 'node:url';
 import type {
+  AgentCapabilities,
   AvailableCommand,
   CreateTerminalRequest,
   CreateTerminalResponse,
@@ -39,6 +40,7 @@ import type {
   SessionConfigOption,
   SessionModeState,
   SessionUpdate,
+  StopReason,
   TerminalOutputRequest,
   TerminalOutputResponse,
   Usage,
@@ -58,6 +60,46 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
 
 /** The title a session carries until somebody says something. */
 const UNTITLED = 'ACP session';
+
+/**
+ * What each stop reason that is not an answer says, by name.
+ *
+ * `end_turn` is absent because it is the server saying it is done and the turn is
+ * what the client asked for. The other three are the server saying it stopped
+ * early, and a turn that stopped early is not an answer: the model ran out of
+ * room, the session used up the requests it was allowed, or the agent declined.
+ *
+ * A reason absent here - `end_turn`, and anything a later version of the
+ * protocol names and this bridge has not heard of - ends the turn complete,
+ * because a stop this code cannot describe is better read as an answer than
+ * reported as a failure with no reason.
+ */
+const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
+  max_tokens: 'The agent ran out of tokens before it answered',
+  max_turn_requests: 'The agent used every turn request this session allowed',
+  refusal: 'The agent declined to answer this prompt',
+};
+
+/**
+ * Whether the handshake said the server can close a session.
+ *
+ * `session/close` is advertised as an empty object rather than a boolean, so
+ * what is read is whether the key is there at all - the same way
+ * `catalog.ts` reads the server's own catalogue.
+ */
+const closesSessions = (capabilities: AgentCapabilities | undefined): boolean => {
+  const close = capabilities?.sessionCapabilities?.close;
+  return close !== undefined && close !== null;
+};
+
+/**
+ * How long a server is given to answer `session/close` before the connection
+ * goes anyway.
+ *
+ * The answer is what says the server let go of the session, so a close that did
+ * not wait would kill a process half way through releasing it.
+ */
+const CLOSE_GRACE_MS = 1000;
 
 /**
  * One conversation over one ACP server.
@@ -117,6 +159,18 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   let live: AcpConnection | undefined;
   /** The server's own id for this conversation, once `session/new` answered. */
   let acpSessionId: string | undefined;
+  /** Whether the server said it can be asked to close that conversation. */
+  let closes = false;
+  /**
+   * The updates a server replayed while this session was opening.
+   *
+   * A `session/load` answers with the whole conversation before its response,
+   * and those updates are earlier turns rather than part of whichever turn
+   * happened to ask for the server.
+   */
+  const replay: SessionUpdate[] = [];
+  /** Whether the session is opening, so an update it sends is replay. */
+  let loading = false;
   /** The one opening, shared by every caller, so one server is spawned. */
   let opening: Promise<{ connection: AcpConnection; sessionId: string }> | undefined;
   /** Whether a client asked to stop, read when the prompt settles. */
@@ -294,6 +348,20 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         cumulative = update.cost.amount;
         if (current !== undefined) current.costAtStart = cumulative;
       }
+      return;
+    }
+    /*
+     * While the session is opening, everything the server sends is the load's
+     * replay.
+     *
+     * Whatever asked for the server - a turn, a resume, a reopen after a death
+     * or a config the person set - those updates replay a conversation that was
+     * already had, and belong to no turn this bridge began. Mapping them into
+     * whichever turn happens to be running would put a whole conversation's
+     * answer inside one turn's row.
+     */
+    if (loading) {
+      replay.push(update);
       return;
     }
     if (current === undefined) return;
@@ -495,6 +563,25 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * Every permission nobody will answer now, settled `cancelled`.
+   *
+   * The protocol asks a client that stops a turn to answer what its server is
+   * still blocked on, so the server is not left waiting on a person who has
+   * already said stop. Each entry takes its input-needed row with it: the
+   * question was asked and has now been answered, and a client still drawing it
+   * is offering a decision nobody can make.
+   *
+   * The settle is what a close does here, which is why both go through this.
+   */
+  const settlePermissions = (): void => {
+    for (const held of permissions.values()) {
+      emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
+      held.settle('cancelled');
+    }
+    permissions.clear();
+  };
+
+  /**
    * The machine this session was told to run in, as something to spawn.
    *
    * A session whose settings name a computer runs the server there, through
@@ -537,13 +624,15 @@ export function acpSession(options: AcpOptions, start: Start): Session {
    * first is still shaking hands waits on the same server rather than spawning
    * another. A failure clears it, so the next turn tries again.
    *
-   * A resume is a `session/load` rather than a `session/new`, and only a server
-   * that advertised it can be asked: silently starting a new conversation
-   * instead would be a resumed session that had lost everything it was resumed
-   * for, with nothing on screen saying so.
+   * A resume is a `session/load` rather than a `session/new`, and so is the
+   * reopen after a death, because both are the same conversation: only a server
+   * that advertised `loadSession` can be asked either way. Silently starting a
+   * new conversation instead would be a session that had lost everything it was
+   * resumed or continued for, with nothing on screen saying so.
    */
   const open = (): Promise<{ connection: AcpConnection; sessionId: string }> => {
     if (opening !== undefined) return opening;
+    loading = true;
     const pending = (async () => {
       const moved = await placed();
       const connection = connectAcp({
@@ -581,22 +670,32 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         opening = undefined;
       });
       const handshake = await connection.initialize();
+      closes = closesSessions(handshake.agentCapabilities);
       const extra = start.additional !== undefined && start.additional.length > 0
         ? { additionalDirectories: start.additional }
         : {};
-      if (start.resume !== undefined) {
+      /*
+       * The conversation to continue: the one a resume named, or the one this
+       * session already had when its server died. Both go through the same
+       * call, because they are the same thing - a conversation this bridge has
+       * to hand back to a server rather than start again.
+       */
+      const reopen = start.resume ?? acpSessionId;
+      if (reopen !== undefined) {
         if (handshake.agentCapabilities?.loadSession !== true) {
-          throw new Error(`${provider}: this ACP server cannot load a session, so "${start.resume}" cannot be resumed`);
+          throw new Error(start.resume === undefined
+            ? `${provider}: the server died and this one cannot load a session, so "${reopen}" cannot be continued`
+            : `${provider}: this ACP server cannot load a session, so "${reopen}" cannot be resumed`);
         }
         const loaded = await connection.loadSession({
-          sessionId: start.resume,
+          sessionId: reopen,
           cwd: where,
           // No MCP servers yet: task 03 is what offers the host's tools to the
           // server, and an empty list is the honest answer until then.
           mcpServers: [],
           ...extra,
         });
-        acpSessionId = start.resume;
+        acpSessionId = reopen;
         learnModes(loaded.modes);
         learnOffers(loaded.configOptions);
       }
@@ -622,11 +721,22 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         cwd: where,
         additional: start.additional ?? [],
         title,
+        replay,
       });
+      /*
+       * The record has it now, and this list must not keep it: a server that
+       * dies and is reopened replays the whole conversation again, and a list
+       * that still held the first replay would push it a second time.
+       */
+      replay.length = 0;
       if (watchedTurn !== undefined && !record.turns.includes(watchedTurn)) record.turns.push(watchedTurn);
       return { connection, sessionId: acpSessionId };
     })();
     opening = pending;
+    // The replay ends where the open does, whether it worked or not: what the
+    // server said on the way belongs to no turn after this point.
+    const opened = (): void => { loading = false; };
+    void pending.then(opened, opened);
     return pending;
   };
 
@@ -646,14 +756,6 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
       },
       responseParts: [],
-    };
-    mapping = {
-      turnId,
-      parts: active.responseParts as Bag[],
-      calls: new Map(),
-      // From where the last update left the session's books, so this turn's
-      // cost is its own and not the session's whole.
-      ...(cumulative !== undefined ? { costAtStart: cumulative } : {}),
     };
     watchedTurn = {
       turnId,
@@ -678,12 +780,19 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   /**
    * End the running turn, whoever ended it.
    *
-   * The stop reason is the server's, not this bridge's: a prompt that came
-   * back `cancelled` ends as a cancelled turn, and anything else the server
-   * called a stop ends the turn complete. A connection that failed before a
-   * stop reason arrived is an error, with the reason on the turn.
+   * How it ended is the server's to say: `stopReasonFor` reads the stop reason
+   * into one of the three endings. A connection that failed before a stop reason
+   * arrived is an error, with the reason on the turn and the type this bridge
+   * uses for a failure of its own.
    */
-  const finish = (turnId: string, ending: 'complete' | 'cancelled' | 'error', why?: string): void => {
+  const finish = (
+    turnId: string,
+    ending: 'complete' | 'cancelled' | 'error',
+    failure: { errorType: string; message: string } = {
+      errorType: 'turnFailed',
+      message: 'The ACP server did not answer',
+    },
+  ): void => {
     const turn = active;
     if (turn === undefined || String(turn.id) !== turnId) return;
     doing(undefined);
@@ -707,19 +816,34 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration });
     else if (ending === 'cancelled') emit('chat', { type: 'chat/turnCancelled', turnId, duration });
     else {
-      const message = why === undefined || why === '' ? 'The ACP server did not answer' : why;
+      const message = failure.message === '' ? 'The ACP server did not answer' : failure.message;
       failed = message;
       emit('chat', {
         type: 'chat/error',
         turnId,
         duration,
-        part: { kind: 'error', error: { errorType: 'turnFailed', message } },
+        part: { kind: 'error', error: { errorType: failure.errorType, message } },
       });
     }
     touch();
     // Somebody stopping a turn is stopping this conversation; a queued message
     // behind it is the opposite of what they asked for.
     if (ending !== 'cancelled') startNext();
+  };
+
+  /**
+   * End the turn the way the server's stop reason says to.
+   *
+   * The reason is the error's type as well as its sentence, so a client can tell
+   * a refusal from a ceiling reached without reading prose, and the sentence
+   * says the agent declined rather than that something broke - a refusal is
+   * something the agent did.
+   */
+  const stopReasonFor = (turnId: string, reason: StopReason): void => {
+    if (reason === 'cancelled') return finish(turnId, 'cancelled');
+    const said = NOT_AN_ANSWER[reason];
+    if (said === undefined) return finish(turnId, 'complete');
+    finish(turnId, 'error', { errorType: reason, message: said });
   };
 
   /**
@@ -806,28 +930,57 @@ export function acpSession(options: AcpOptions, start: Start): Session {
    * turn without a prompt at all, because there is nothing running to stop.
    */
   const run = async (turnId: string, text: string, chosen: Chosen | undefined): Promise<void> => {
+    /** The connection this turn opened, which outlives `live` once it dies. */
+    let connection: AcpConnection | undefined;
     try {
       const held = await open();
-      if (closed || active === undefined || String(active.id) !== turnId) return;
+      connection = held.connection;
+      const turn = active;
+      if (closed || turn === undefined || String(turn.id) !== turnId) return;
       if (cancelRequested) {
         finish(turnId, 'cancelled');
         return;
       }
+      /*
+       * The turn's mapping, opened only now that the server has answered.
+       *
+       * Set after the open rather than before it, because everything the
+       * server sends while it is opening is the load's replay and belongs to no
+       * turn this bridge began. The cost baseline is read here too, so a turn
+       * counts from what the session had spent once the replay was counted in
+       * and not from what it had spent before.
+       */
+      mapping = {
+        turnId,
+        parts: turn.responseParts as Bag[],
+        calls: new Map(),
+        ...(cumulative !== undefined ? { costAtStart: cumulative } : {}),
+      };
       await chooseModel(held, chosen);
-      if (mapping !== undefined) mapping.prompted = true;
+      mapping.prompted = true;
       const response = await held.connection.prompt(held.sessionId, text);
       saidUsage(response.usage);
-      finish(turnId, response.stopReason === 'cancelled' ? 'cancelled' : 'complete');
+      stopReasonFor(turnId, response.stopReason);
     }
     catch (why: unknown) {
       // The opening is cleared so the next turn spawns a server again rather
       // than awaiting a promise that will never resolve, and the connection is
       // closed so the failed attempt does not leave a subprocess behind.
       opening = undefined;
-      const connection = live;
       live = undefined;
       connection?.close();
-      finish(turnId, 'error', messageOf(why));
+      /*
+       * Whatever the server said on stderr rides on the failure, because an
+       * exit code is rarely why and the trace under it is. Read from the
+       * connection this turn prompted: a server that died is already off
+       * `live`, which is exactly the case a person most wants the trace for.
+       */
+      const said = messageOf(why);
+      const tail = connection === undefined ? '' : await connection.stderrTail();
+      finish(turnId, 'error', {
+        errorType: 'turnFailed',
+        message: tail === '' ? said : `${said}\n${tail}`,
+      });
     }
   };
 
@@ -1089,11 +1242,16 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * The ACP cancel notification is what a server stops on, and the `cancelled`
      * stop reason it answers the prompt with is what emits `chat/turnCancelled`
      * exactly once. This must not send one of its own, or a client sees two.
+     *
+     * The permissions are answered before it goes, because a server told to stop
+     * while it is blocked on a question of this client's is a server that never
+     * gets past the question.
      */
     cancel: (turnId) => {
       const turn = active;
       if (turn === undefined || String(turn.id) !== turnId) return;
       cancelRequested = true;
+      settlePermissions();
       doing('Cancelling');
       const connection = live;
       if (connection !== undefined && acpSessionId !== undefined) {
@@ -1259,7 +1417,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
 
     settings: () => ({ ...settings }),
 
-    close: () => {
+    close: async (): Promise<void> => {
       closed = true;
       /*
        * Everything anybody is still waiting on is let go first.
@@ -1275,13 +1433,30 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       terminals.clear();
       const connection = live;
       live = undefined;
-      const gone = connection?.close();
+      /*
+       * The server is told first, where it advertised it can be told.
+       *
+       * A server that frees its own resources on `session/close` never gets to
+       * do so if the pipe is closed under it mid-release, so the request goes
+       * first and is given a bounded moment to be answered. Bounded rather than
+       * awaited outright: a server that advertises the capability and never
+       * answers it must not hold a close open.
+       */
+      const saying = connection !== undefined && closes && acpSessionId !== undefined
+        ? Promise.race([
+            connection.closeSession(acpSessionId).catch(() => {}),
+            new Promise((resolve) => { setTimeout(resolve, CLOSE_GRACE_MS).unref(); }),
+          ])
+        : undefined;
       // The catalogue's record is deliberately kept: the server still holds the
       // conversation and the transcript a row opens onto is this process's own
       // record of it. Only the live connection goes.
       // A turn still open has nobody left to answer it.
       if (active !== undefined) finish(String(active.id), 'cancelled');
-      return gone;
+      // The connection goes last, and settles on the server's processes being
+      // gone rather than on the request having been sent.
+      await saying;
+      await connection?.close();
     },
   };
 }

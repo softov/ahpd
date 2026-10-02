@@ -1,6 +1,6 @@
 ---
 title: The last of stderr rides on a failure
-status: todo
+status: done
 depends: [task-01-a-child-that-fails-is-heard.md]
 layer: "agent-acp"
 refs:
@@ -25,5 +25,3 @@ The last 8 KB of the child's stderr is kept, and a failed open or turn carries i
 ## Validation
 
 - A fixture that writes to stderr and exits fails the turn with those lines in the message.
-
-## Resume

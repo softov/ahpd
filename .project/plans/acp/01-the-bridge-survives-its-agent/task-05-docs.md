@@ -1,6 +1,6 @@
 ---
 title: The docs say what a failing agent looks like
-status: todo
+status: done
 depends: [task-02-stderr-rides-on-a-failure.md, task-03-a-dead-agent-is-reopened-by-its-id.md, task-04-close-ends-the-session-and-its-processes.md]
 layer: "docs"
 refs:
@@ -22,5 +22,3 @@ refs:
 ## Validation
 
 - Read by hand against the code.
-
-## Resume

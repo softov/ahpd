@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
 import { idOf } from '@ahpd/sdk';
+import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -302,4 +303,43 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
   begin(client, chatUri, 't1', '!echo acp-ran-it');
   await until(() => ended(p, chatUri));
   expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+});
+
+/**
+ * The turn the server stopped it with, as the error a client was given.
+ *
+ * `end_turn` is the answer and is in here as the case the others are read
+ * against: one fixture case per stop reason the protocol names.
+ */
+const stoppedWith = async (reason: string): Promise<{ type?: string | undefined; error?: Bag }> => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', `tell me something stop=${reason}`);
+  await until(() => ended(p, chatUri) || types(p, chatUri).includes('chat/error'));
+  const part = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part as
+    { error?: Bag } | undefined;
+  return { type: types(p, chatUri).at(-1), ...(part === undefined ? {} : { error: part.error }) };
+};
+
+it('ends a turn the server stopped for its own reasons as an error naming the reason', async () => {
+  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
+    const stopped = await stoppedWith(reason);
+    // Not a finished answer: a turn that stopped early is not what was asked for.
+    expect(stopped.type).toBe('chat/error');
+    // The reason is the error's type, so a client can tell the three apart
+    // without reading the sentence.
+    expect(stopped.error?.errorType).toBe(reason);
+    expect(String(stopped.error?.message)).not.toBe('');
+  }
+});
+
+it('completes an end_turn, and words a refusal as the agent declining', async () => {
+  expect((await stoppedWith('end_turn')).type).toBe('chat/turnComplete');
+  // A refusal is the agent declining, and its sentence says so.
+  expect(String((await stoppedWith('refusal')).error?.message)).toContain('declined');
+});
+
+it('completes a turn whose stop reason this bridge does not know', async () => {
+  // The protocol will name reasons a bridge built before it has not heard of,
+  // and a stop it cannot describe is better read as an answer.
+  expect((await stoppedWith('something_newer')).type).toBe('chat/turnComplete');
 });

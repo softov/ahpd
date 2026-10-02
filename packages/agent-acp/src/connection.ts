@@ -54,6 +54,23 @@ const CLIENT_INFO = { name: 'ahpd', version: '0.0.1' };
  */
 const EXIT_GRACE_MS = 1000;
 
+/**
+ * How much of the child's stderr is kept.
+ *
+ * Enough for the stack trace a server prints before it dies, and bounded so a
+ * server that talks all day costs a fixed amount per session.
+ */
+const STDERR_BYTES = 8 * 1024;
+
+/**
+ * How long a server has to act on the SIGTERM before it is killed outright.
+ *
+ * A server that flushes what it wrote and unwinds its own work needs a moment;
+ * one that took none of the SIGTERM must not hold the daemon's close open for
+ * ever, which is what the SIGKILL is for.
+ */
+const KILL_GRACE_MS = 5000;
+
 /** The sentence for a server that could not be started at all. */
 const unstarted = (command: string, cwd: string | undefined, error: NodeJS.ErrnoException): Error => {
   if (error.code === 'ENOENT' && cwd !== undefined && !existsSync(cwd)) {
@@ -81,10 +98,36 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   const child = spawn(options.command, options.args ?? [], {
     env: { ...process.env, ...options.env },
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    /*
+     * A group of its own, led by the server.
+     *
+     * Detached is what makes the close reach what the server started rather
+     * than the one process: everything it spawns inherits this group, and a
+     * signal to the group reaches all of it. It also keeps a signal meant for
+     * this server off the daemon's own group.
+     */
+    detached: true,
   });
   // Drained rather than inherited: a server that chatters on stderr must not
   // block on a full pipe, and it must not write into the daemon's own output.
-  child.stderr.resume();
+  // The last of it is kept, because a server that dies says why on stderr and
+  // the exit code alone is rarely the sentence a person needs.
+  let stderr = Buffer.alloc(0);
+  /** Whether the ring has dropped bytes, and so may hold half a line. */
+  let stderrCut = false;
+  child.stderr.on('data', (chunk: Buffer) => {
+    const held = Buffer.concat([stderr, chunk]);
+    if (held.length <= STDERR_BYTES) {
+      stderr = held;
+      return;
+    }
+    stderr = held.subarray(held.length - STDERR_BYTES);
+    stderrCut = true;
+  });
+  /** Settles when the server's stderr has been read to its end. */
+  let readStderr: () => void = () => {};
+  const drained = new Promise<void>((resolve) => { readStderr = resolve; });
+  child.stderr.on('end', () => { readStderr(); });
 
   /** Why the server is gone, once it is; undefined while it runs. */
   let death: Error | undefined;
@@ -195,6 +238,45 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     return Promise.race([answered, ended.then((why): never => { throw why; })]);
   };
 
+  /**
+   * What the server wrote on stderr, for a failure to say out loud.
+   *
+   * A dead server's exit can be heard before its last words have been read off
+   * the pipe, so the tail waits for the stream to end - bounded, because a
+   * grandchild that inherited the pipe keeps it open long after the server that
+   * spawned it is gone. A ring that has dropped bytes may have kept the middle
+   * of a line, so that line goes rather than being shown as half a frame; a
+   * ring that has dropped nothing keeps every byte it was given.
+   */
+  const stderrTail = async (): Promise<string> => {
+    if (death !== undefined) {
+      await Promise.race([
+        drained,
+        new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); }),
+      ]);
+    }
+    const held = stderr.toString('utf8');
+    return (stderrCut ? held.slice(held.indexOf('\n') + 1) : held).trim();
+  };
+
+  /**
+   * A signal to the server's whole group, which is the server and everything it
+   * started.
+   *
+   * The negative pid is the group the server leads, because it was spawned
+   * detached. A group that has already gone is not a failure to report: the
+   * point of the signal was that the process is over.
+   */
+  const signal = (how: NodeJS.Signals): void => {
+    if (child.pid === undefined) return;
+    try {
+      process.kill(-child.pid, how);
+    }
+    catch {
+      // Nothing left to signal.
+    }
+  };
+
   return {
     initialize: (): Promise<InitializeResponse> => {
       if (handshake !== undefined) return Promise.resolve(handshake);
@@ -220,13 +302,29 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       prompt: [{ type: 'text', text }],
     })),
     cancel: (sessionId: string): Promise<void> => heard(() => connection.cancel({ sessionId })),
+    closeSession: (sessionId: string): Promise<void> =>
+      heard(() => connection.closeSession({ sessionId })).then(() => {}),
     ended,
+    stderrTail,
     close: async (): Promise<void> => {
       // The stdin end is what a well-behaved server reads as a shutdown; the
-      // kill is for one that does not.
+      // kill is for one that does not, and it goes to the whole group so what
+      // the server started goes with it.
       child.stdin.end();
-      child.kill();
-      await ended;
+      signal('SIGTERM');
+      // Armed only while the server is still there, and disarmed by the wait
+      // below settling: a server that took the SIGTERM is not SIGKILLed after
+      // a process id that has since been reused.
+      const kill = setTimeout(() => {
+        if (death === undefined) signal('SIGKILL');
+      }, KILL_GRACE_MS);
+      kill.unref();
+      try {
+        await ended;
+      }
+      finally {
+        clearTimeout(kill);
+      }
     },
   };
 }

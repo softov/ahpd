@@ -325,3 +325,33 @@ it('answers a refusal with the reject option, not with an approval', async () =>
   await endedTurn(p, chatUri, 1);
   expect(prose(p, chatUri)).toContain('perm=no-once');
 });
+
+it('answers the permission a cancel withdrew with `cancelled`, and takes the entry away', async () => {
+  const { client, peer: p, uri, chatUri, log } = await talking();
+  begin(client, chatUri, 't1', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  const entry = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet')?.action.request as {
+    id?: string;
+  };
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => prose(p, chatUri).includes('perm='));
+
+  /*
+   * `cancelled` and not one of the options the server offered, because the
+   * person was never asked: the cancel is the answer, and a server told to stop
+   * while it waits on a question is a server that never stops.
+   */
+  expect(prose(p, chatUri)).toContain('perm=cancelled');
+  // The row the entry was drawn from is withdrawn, so a client is not left
+  // offering a decision nobody can make.
+  const withdrawn = actions(p, uri).find((e) => e.action.type === 'session/inputNeededRemoved')?.action as
+    { id?: string } | undefined;
+  expect(withdrawn?.id).toBe(entry?.id);
+  expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
+  // And the cancel itself reached the server, after the permission was settled.
+  expect(readFileSync(log, 'utf8')).toContain('"method":"session/cancel"');
+});

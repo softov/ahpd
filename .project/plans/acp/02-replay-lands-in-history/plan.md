@@ -1,7 +1,7 @@
 ---
 title: Replay lands in the session's history, never in its next turn
 domain: acp
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -41,9 +41,10 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 
 | What | Source | Task |
 | --- | --- | --- |
-| A replayed turn starts at each `user_message_chunk` | the spec's replay order: the user message, then the agent's updates | 02 |
+| A replayed turn starts at each user message rather than at each `user_message_chunk`, because a message arrives as several chunks | the spec's replay order: the user message, then the agent's updates | 02 |
 | Plugin 18 task 01 builds on this plan | both change `open`; this one is the ground | - |
 | A session this process never watched is loaded when a client reads its transcript, where the server advertises `loadSession`; its restored tool calls carry no times, since ACP has none | Softov, 2026-09-29, asked "After a daemon restart, an ACP session opens blank until a turn starts, although the server could replay its history with session/load (v1) or session/resume with replayFrom (v2 draft). Should that be planned?": "Plan it in acp" | 03 |
+| [A read and the turn after it each load the session, rather than sharing one load](../../../decisions/an-acp-read-and-the-turn-after-it-load-twice.md) | Softov, 2026-10-02, asked "Two loads" | 03 |
 
 ## Proposed architecture
 
@@ -53,9 +54,9 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Replay is collected, not mapped into a turn](task-01-replay-is-collected-not-mapped-into-a-turn.md) | todo | - |
-| [02 - Collected replay becomes the session's earlier turns](task-02-collected-replay-becomes-turns.md) | todo | 01 |
-| [03 - A session never watched is loaded when a client reads it](task-03-a-session-opened-after-a-restart-is-loaded.md) | todo | 02 |
+| [01 - Replay is collected, not mapped into a turn](task-01-replay-is-collected-not-mapped-into-a-turn.md) | done | - |
+| [02 - Collected replay becomes the session's earlier turns](task-02-collected-replay-becomes-turns.md) | done | 01 |
+| [03 - A session never watched is loaded when a client reads it](task-03-a-session-opened-after-a-restart-is-loaded.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -63,13 +64,10 @@ begin -> [changes] open() first, mapping set after -> session/load -> replay -> 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-replay-is-collected-not-mapped-into-a-turn.md](task-01-replay-is-collected-not-mapped-into-a-turn.md).
-- **Open questions:** none.
-- **Watch out for:** plugin 18 task 01 changes the same `open`; do this plan first.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A loaded session opens with its history and its first new turn holds only its own answer.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A loaded session opens with its history and its first new turn holds only its own answer.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

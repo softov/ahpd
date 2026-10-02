@@ -1,6 +1,6 @@
 ---
 title: Collected replay becomes the session's earlier turns
-status: todo
+status: done
 depends: [task-01-replay-is-collected-not-mapped-into-a-turn.md]
 layer: "agent-acp"
 refs:
@@ -10,7 +10,7 @@ refs:
 
 ## Objective
 
-The replay list is split at each `user_message_chunk` into watched turns ahead of the new ones, so `Agent.transcript` answers a loaded session's whole history.
+The replay list is split at each user message into watched turns ahead of the new ones, so `Agent.transcript` answers a loaded session's whole history.
 
 ## Files
 
@@ -24,5 +24,3 @@ The replay list is split at each `user_message_chunk` into watched turns ahead o
 ## Validation
 
 - A loaded session's transcript has the replayed turns, then the new one.
-
-## Resume

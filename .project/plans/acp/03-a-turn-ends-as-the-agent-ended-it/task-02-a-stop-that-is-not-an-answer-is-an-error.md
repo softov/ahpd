@@ -1,6 +1,6 @@
 ---
 title: A stop that is not an answer is an error
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -23,5 +23,3 @@ refs:
 ## Validation
 
 - One fixture case per stop reason.
-
-## Resume
