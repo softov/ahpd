@@ -1,7 +1,7 @@
 ---
 title: Usage is kept behind one port, model use and computer time, with live totals
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -63,9 +63,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The usage records and the port](task-01-records-and-port.md) | todo | - |
-| [02 - A JSONL store keeps live totals](task-02-jsonl-store.md) | todo | 01 |
-| [03 - The daemon keeps usage by default](task-03-daemon-wires-it.md) | todo | 02 |
+| [01 - The usage records and the port](task-01-records-and-port.md) | done | - |
+| [02 - A JSONL store keeps live totals](task-02-jsonl-store.md) | done | 01 |
+| [03 - The daemon keeps usage by default](task-03-daemon-wires-it.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -74,13 +74,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-01.
-- **Next action:** [task-01-records-and-port.md](task-01-records-and-port.md).
-- **Open questions:**
-  1. Which periods does `total` accept? - proposed: any `from`/`until`; the store keeps running totals per calendar day and sums them.
-- **Watch out for:** the port is for several writers; `record` must not lose an entry when two arrive at once.
+- **Done so far:** built 2026-10-01; see [implemented.md](implemented.md).
+- **Next action:** none; the agent meter and the proxy listener write to this port.
+- **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A record written, the daemon restarted, and the pool's total is the same.
-- [ ] `plans/index.md` updated.
+- [x] A record written, the daemon restarted, and the pool's total is the same.
+- [x] `plans/index.md` updated.

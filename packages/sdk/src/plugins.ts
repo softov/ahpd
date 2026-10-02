@@ -28,7 +28,7 @@ import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, m
  */
 const PORT_KEYS = [
   'resources', 'terminals', 'changes', 'directories', 'worktrees',
-  'github', 'automations', 'sessions', 'diagnostics', 'computers', 'containers',
+  'github', 'automations', 'sessions', 'diagnostics', 'computers', 'containers', 'usage',
 ] as const satisfies readonly PortKey[];
 
 /*
@@ -371,6 +371,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     registerDiagnostics: (diagnostics, when) => { setPort('diagnostics', 'registerDiagnostics', diagnostics, when); },
     registerComputers: (computers, when) => { setPort('computers', 'registerComputers', computers, when); },
     registerContainers: (containers, when) => { setPort('containers', 'registerContainers', containers, when); },
+    registerUsage: (usage, when) => { setPort('usage', 'registerUsage', usage, when); },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the
       // same read-only one `apply` was handed, and the host does not otherwise

@@ -10,6 +10,7 @@
 
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, Tap } from '@ahpd/sdk';
@@ -18,6 +19,7 @@ import {
   createHost,
   fileResources,
   fileSessions,
+  fileUsage,
   fileUsers,
   gitBranches,
   gitChanges,
@@ -342,6 +344,12 @@ export async function runForeground(options: Options): Promise<void> {
         file: automationsPath(),
         onProblem: (message) => process.stdout.write(`${message}\n`),
       }),
+    // What this host's work cost: a folder of monthly JSONL files beside the
+    // sessions and the automations.
+    usage: fileUsage({
+      folder: join(configDir(), 'usage'),
+      onProblem: (message) => process.stdout.write(`${message}\n`),
+    }),
     /*
      * When, as well as what.
      *

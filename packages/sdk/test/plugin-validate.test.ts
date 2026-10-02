@@ -55,6 +55,7 @@ const ports = {
     chatTitle: () => {}, setChatTitle: () => {}, forget: () => {},
   },
   diagnostics: {},
+  usage: { record: () => {}, total: () => {} },
 };
 
 const sessionsWithoutChatTitle = (): Record<string, unknown> => {
@@ -76,6 +77,7 @@ describe('pluginHost', () => {
     host.registerAutomations(ports.automations as never);
     host.registerSessions(ports.sessions as never);
     host.registerDiagnostics(ports.diagnostics as never);
+    host.registerUsage(ports.usage as never);
     host.registerResourceProvider('computer', provider as never);
 
     const { options, problems } = foldHostOptions(base(), [contribution]);
@@ -91,6 +93,7 @@ describe('pluginHost', () => {
     expect(options.automations).toBe(ports.automations);
     expect(options.sessions).toBe(ports.sessions);
     expect(options.diagnostics).toBe(ports.diagnostics);
+    expect(options.usage).toBe(ports.usage);
     expect(options.resourceProviders?.computer).toBe(provider);
   });
 
@@ -115,6 +118,11 @@ describe('pluginHost', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerResources({} as never)).toThrow(/list/);
     expect(() => host.registerTerminals({} as never)).toThrow(/create/);
+  });
+
+  it('refuses a usage store that can append but cannot answer a total', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerUsage({ record: () => {} } as never)).toThrow(/alpha.*registerUsage.*total/);
   });
 
   it('refuses a sessions store missing chatTitle, which a later interface change added', () => {

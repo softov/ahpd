@@ -38,7 +38,8 @@ export type PortKey =
   | 'sessions'
   | 'diagnostics'
   | 'computers'
-  | 'containers';
+  | 'containers'
+  | 'usage';
 
 /**
  * What one port key holds.
@@ -195,6 +196,14 @@ export interface PluginHost extends PluginContext {
    * folder, and a second launcher would be two answers to the same question.
    */
   registerContainers(containers: PortOf<'containers'>, when?: 'replace'): void;
+  /**
+   * Set `HostOptions.usage`, or take the daemon's over with `'replace'`.
+   *
+   * The store the meters write to and a policy reads. A store that is not this
+   * machine's file is the expected replacement - sqlite, then a postgres several
+   * daemons share - so the port, and not the folder, is what a plugin takes.
+   */
+  registerUsage(usage: PortOf<'usage'>, when?: 'replace'): void;
   /**
    * Subscribe to one of the host's own moments.
    *

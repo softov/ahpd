@@ -237,7 +237,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - Usage is kept behind one port, model use and computer time, with live totals](usage/01-usage-is-kept-behind-one-port/plan.md) | high | planned 2026-10-01; tasks 01-03 todo | - | the meters and the policy plans |
+| [01 - Usage is kept behind one port, model use and computer time, with live totals](usage/01-usage-is-kept-behind-one-port/plan.md) | high | built 2026-10-01 ([implemented.md](usage/01-usage-is-kept-behind-one-port/implemented.md)) | - | the meters and the policy plans |
 
 Next free number in `usage`: `02`.
 

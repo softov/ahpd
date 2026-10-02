@@ -13,6 +13,7 @@ import type { AutomationStore } from './automations.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
+import type { Usage } from './usage.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -196,6 +197,13 @@ export interface HostOptions {
    * `the-relay-surface-is-the-reference-one`.
    */
   containers?: ContainerPort;
+  /**
+   * Where this host keeps what its work cost, and what a pool has been charged.
+   *
+   * Left out, nothing is kept and no total can be read. `fileUsage()` ships
+   * with this package and the daemon uses it.
+   */
+  usage?: Usage;
   /**
    * Tools this host contributes to every session it runs.
    *

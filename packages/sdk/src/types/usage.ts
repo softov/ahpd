@@ -1,0 +1,126 @@
+/**
+ * What the host records about the work it did, and what a pool has been charged.
+ *
+ * Two kinds of record share one base and one port: model use, written by the
+ * proxy and by the agent meter, and computer time - decision
+ * `usage-and-computer-time-are-two-records-behind-one-port`. The base says
+ * who, where and what it cost, so a listing by agent or computer is a filter
+ * and never a join.
+ *
+ * Nothing here enforces anything. The pools a record names are opaque keys;
+ * what a pool means belongs to the policy plan.
+ */
+
+/**
+ * Who a piece of work belongs to - decision `work-is-owned-by-a-typed-reference`.
+ *
+ * `root:<host>` is a root connection on the named daemon.
+ */
+export type Owner = `user:${string}` | `team:${string}` | `project:${string}` | `root:${string}`;
+
+/** What a record cost, and whether the provider said it or a price list did. */
+export interface Cost {
+  /** The amount, in `currency`. */
+  amount: number;
+  /** How the amount is denominated. `usd` is the one `UsageTotal` reports. */
+  currency: string;
+  /** `harness` when the agent or provider reported it, `price` when worked out from a price list. */
+  from: 'harness' | 'price';
+}
+
+/** The fields every record has. */
+export interface UsageBase {
+  /** ISO 8601: when the call was made, or when the computer was taken. */
+  at: string;
+  /** What wrote the record. */
+  source: 'proxy' | 'agent' | 'computer';
+  /** Who the work belongs to; absent on a host with no users directory. */
+  owner?: Owner;
+  /** The team it is charged under. */
+  team?: string;
+  /** The project it is charged under. */
+  project?: string;
+  /** The session it belongs to. */
+  session?: string;
+  /** The chat within the session. */
+  chat?: string;
+  /** The turn. */
+  turn?: string;
+  /** The agent provider that ran it. */
+  agent?: string;
+  /** The computer it ran on, as the `computers` port names it. */
+  computer?: string;
+  /** What it cost, when that is known. */
+  cost?: Cost;
+  /** The pools it is charged to. A record naming none is charged nowhere. */
+  pools: string[];
+}
+
+/** The model a call ran on, and the tokens it used. */
+export interface ModelCall {
+  /** `<maker>/<name>` - decision `a-model-is-named-by-its-maker-and-runs-on-a-provider`. */
+  name: string;
+  /** Where it ran, such as `openrouter` or `anthropic`. */
+  provider?: string;
+  /** Prompt tokens. */
+  input?: number;
+  /** Tokens written back. */
+  output?: number;
+  /** Prompt tokens read from and written to the provider's cache. */
+  cache?: { read?: number; write?: number };
+}
+
+/** One model call. */
+export interface ModelUse extends UsageBase {
+  kind: 'model';
+  model: ModelCall;
+}
+
+/** One stretch a computer was up, charged to the machine's owner. */
+export interface ComputerTime extends UsageBase {
+  kind: 'computer';
+  computer: string;
+  /** How long, from `at`. */
+  seconds: number;
+}
+
+/** One record, of either kind. */
+export type UsageEntry = ModelUse | ComputerTime;
+
+/**
+ * What a pool has been charged over a period.
+ *
+ * A measure nothing was charged in is absent. `tokens` includes cache reads
+ * and writes. `usd` adds only costs in US dollars.
+ */
+export interface UsageTotal {
+  /** Cost in US dollars. */
+  usd?: number;
+  /** Tokens, cache included. */
+  tokens?: number;
+  /** Model calls. */
+  calls?: number;
+  /** Computer time, in hours. */
+  hours?: number;
+}
+
+/**
+ * Where the host keeps usage, and what a pool has been charged - decision
+ * `the-usage-store-answers-live-totals`.
+ */
+export interface Usage {
+  /**
+   * Keep one record and add it to every pool it names.
+   *
+   * Settles once written, so a total read after it includes it. Records from
+   * concurrent callers never interleave and none is lost.
+   */
+  record(entry: UsageEntry): Promise<void>;
+  /**
+   * What one pool was charged between `from` and `until` (ISO 8601).
+   *
+   * A pool nothing was charged to answers an empty total. A store keeping
+   * totals per day counts a partly covered day whole.
+   */
+  total(pool: string, from: string, until: string): Promise<UsageTotal>;
+}

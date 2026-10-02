@@ -8,6 +8,7 @@ import type { Agent } from '../src/types/agent.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { ResourceStore } from '../src/types/resources.js';
 import type { AutomationStore } from '../src/types/automations.js';
+import type { Usage } from '../src/types/usage.js';
 import type { Contribution, PortContribution, PortKey } from '../src/types/plugin.js';
 
 /*
@@ -185,6 +186,29 @@ describe('foldHostOptions', () => {
     expect(problems[0]).toContain('alpha');
     expect(problems[0]).toContain('the daemon');
     expect(folded.resourceProviders?.computer).toBe(held);
+  });
+
+  it('sets a plugin\'s usage store like any other port, and reports the daemon\'s', () => {
+    const usage = (pool: string): Usage => ({
+      record: async () => {},
+      total: async () => ({ calls: pool === 'a' ? 1 : 0 }),
+    });
+    const options = { ...base(), usage: usage('the daemon') };
+
+    const mine = usage('alpha');
+    const taken = foldHostOptions(base(), [contribution('alpha', { ports: { usage: port(mine) } })]);
+    expect(taken.problems).toEqual([]);
+    expect(taken.options.usage).toBe(mine);
+
+    const held = foldHostOptions(options, [contribution('alpha', { ports: { usage: port(usage('alpha')) } })]);
+    expect(held.problems).toHaveLength(1);
+    expect(held.problems[0]).toContain('usage');
+    expect(held.problems[0]).toContain('the daemon');
+    expect(held.options.usage).toBe(options.usage);
+
+    const over = foldHostOptions(options, [contribution('alpha', { ports: { usage: port(mine, true) } })]);
+    expect(over.problems).toEqual([]);
+    expect(over.options.usage).toBe(mine);
   });
 });
 
