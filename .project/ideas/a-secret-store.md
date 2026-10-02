@@ -11,7 +11,7 @@ Needed again by [repositories](repositories-are-resources.md), whose provider to
 
 - The vault is a port, `vault` in `PortKey`, and a plugin replaces it with `registerVault(vault, 'replace')`, as `usage` is replaced with `registerUsage`.
 - The host ships a local vault: a file store on this machine, used when no plugin registers one. It is the fallback and the reference implementation a plugin vault mirrors.
-- A sqlite or postgresql plugin, or one for another secret manager, takes it over later, the way the usage store is expected to move to sqlite and then a shared postgres.
+- A [sqlite](a-sqlite-store.md) or [postgresql](a-postgresql-store.md) plugin, or one for another secret manager, takes it over later, the way the usage store is expected to move to sqlite and then a shared postgres.
 
 Source: Softov, 2026-10-02: "we will need to make a way to store a valt locally initially. until the plugin sqlite and postgresql arrives or another to handle the valt store. the valt will be another registration on plugin wire. internally implemented as fallback and reference for the plugin registration."
 

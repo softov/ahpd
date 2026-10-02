@@ -9,14 +9,12 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 ## Now: usage control and people (2026-10-02)
 
 - On main, unpushed: [usage/02](../plans/usage/02-a-turn-writes-what-it-used/plan.md) `79ac6c5`, [usage/03](../plans/usage/03-a-machine-writes-its-up-time/plan.md) `bff867b`, Softov's `keptLabel` `ee386ec`, [host/37](../plans/host/37-a-session-is-listed-once-under-its-own-harness/plan.md) `7552054` (all built); the ideas cleanup and the vault idea `b2d7bae`, `b848db6`; the [usage/04](../plans/usage/04-usage-is-read-through-a-scheme/plan.md) plan with its task files `2ee2a8b`.
-- Worktrees still open under `/github/.worktrees/`:
-  - `ahpd-host36` - [host/36](../plans/host/36-people-are-resources-a-client-manages/plan.md) being implemented (agent resumed after a stopped run). Both open questions answered and locked in the branch's copy of the plan.
-  - `ahpd-host38` - host/38 plan (owner and sender on the wire); task files being written. 
+- Since then on main: [host/36](../plans/host/36-people-are-resources-a-client-manages/plan.md) built `9dc028a`; the [host/38](../plans/host/38-a-client-sees-who-sent-each-turn/plan.md) plan with task files `aaf408e`. Building now, one worktree each: `ahpd-usage04` ([usage/04](../plans/usage/04-usage-is-read-through-a-scheme/plan.md), answers locked 2026-10-02, decision `a-scheme-provider-may-authorize-a-read-itself`) and `ahpd-host38` (sender on `message._meta`). Both touch `host.ts`; the second to merge rebases.
+- Open questions waiting on Softov: ahpapp chat/02 (2), the rules draft (3).
 - ahpapp main `6ae695c` has the plans chat/02 (task files, 2 open questions), people/01, usage/01, policy/01 (draft).
-- usage/04 has 3 open questions in its Resume state for Softov.
-- Build order: host/36, usage/04, host/38, then ahpapp chat/02, people/01, usage/01.
+- Build order: usage/04, host/38, then ahpapp chat/02, people/01, usage/01.
 - Still to plan to finish usage control: usage/05 (prices), proxy/02 (listener), and policy in three plans (store and allow/deny; limits and charge rules; mid-turn debit and cancel). The rules draft (file:///github/ahp-review/prospect/ahp-user-rules.md) has 3 open questions for Softov first.
-- Ideas added: [presets are harnesses](../ideas/presets-are-harnesses.md), [repositories are resources](../ideas/repositories-are-resources.md), and the [vault](../ideas/a-secret-store.md) shape Softov set; repositories wait on the vault.
+- Ideas added, uncommitted on main until Softov says so: [presets are harnesses](../ideas/presets-are-harnesses.md), [repositories are resources](../ideas/repositories-are-resources.md) (now also GitLab as a forge port and browsing commits and pull requests), the [vault](../ideas/a-secret-store.md) shape Softov set (repositories wait on it), [issues follow the repository](../ideas/issues-follow-the-repository.md) (tasker's code copied as an issue tracker, browsed through AHP), the [sqlite](../ideas/a-sqlite-store.md) and [postgresql](../ideas/a-postgresql-store.md) store plugins, [initiators start sessions](../ideas/initiators-start-sessions.md) (webhooks, issue triggers, chat threads), [agents report their plan](../ideas/agents-report-their-plan.md) and [cofold speaks ACP through papo](../ideas/cofold-speaks-acp-through-papo.md). No GitLab plan exists in ahpd yet.
 - Runner scripts for agents live in the session scratchpad: `run-plan.sh`, `run-fix.sh`, `run-tasks.sh` (writes task files only). Agents set tasks `implemented`; closing, commit and merge are done after review, merge only on Softov's OK.
 
 ## Now
