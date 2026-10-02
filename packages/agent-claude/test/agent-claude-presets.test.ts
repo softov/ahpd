@@ -184,3 +184,16 @@ it('reads a preset env value from the daemon environment, and fails the load whe
   expect((await load({ presets: { router: { extraArgs: { debug: { fromEnv: 'PATH' } } } } })).problems[0])
     .toMatch(/options\.presets\.router\.extraArgs\.debug is not a string$/u);
 });
+
+it('offers the models the harness names once a session has started', async () => {
+  const session = createSession({
+    uri: 'ahp-session:/models',
+    chatUri: 'ahp-chat:/models',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-models-')),
+    emit: () => {},
+    settings: {},
+    offerModels: async (cli) => [...cli, { id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }],
+  });
+  await settle();
+  expect(session.models?.()).toEqual([{ id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }]);
+});

@@ -604,6 +604,8 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * holds nothing and leaves the session on what it always ran on.
    */
   presets?: Record<string, Bag>;
+  /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
+  offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
   /**
    * The host's seam for a chat of one tool call's own.
    *
@@ -2591,6 +2593,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '');
+    if (options.offerModels) offered = await options.offerModels(offered);
     /*
      * The style the preset names, applied once the CLI is there to take it.
      *

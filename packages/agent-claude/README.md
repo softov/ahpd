@@ -32,6 +32,8 @@ It takes no options in the ordinary install: it catalogues whatever directories 
 | `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
 | `provider` | the id clients name. `claude` unless something else already is |
 | `displayName` | what a client reads instead of the id. `Claude Code` by default |
+| `models` | the models the picker offers, in place of the CLI's: a model id, `{ "id", "name" }`, or `{ "fetch": "<url>", "match": "<pattern>", "key": { "fromEnv": "NAME" } }`, which reads an OpenAI-shaped model list and keeps the ids the pattern covers (`*` is any run of characters). A fetch that fails is logged and offers nothing |
+| `keepCliModels` | with `models`, add them to the CLI's list rather than replace it |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
 | `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
 | `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
@@ -77,6 +79,10 @@ Load the package twice, the second time under its own `provider` and `displayNam
     { "name": "@ahpd/agent-claude", "options": {
       "provider": "claude-openrouter",
       "displayName": "Claude Code (OpenRouter)",
+      "models": [
+        "stealth/space-bunny-alpha",
+        { "fetch": "https://openrouter.ai/api/v1/models", "match": "anthropic/*" }
+      ],
       "presets": {
         "openrouter": { "env": {
           "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",

@@ -11,6 +11,7 @@
  * nothing under `options` in the ordinary install.
  */
 
+import { modelsProblem } from './models.js';
 import type { PluginHost } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
@@ -38,6 +39,11 @@ export const optionsSchema = {
     paths: { type: 'array', items: { type: 'string' }, description: "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
     provider: { type: 'string', description: 'The id clients name. claude unless something else already is.' },
     displayName: { type: 'string', description: 'What a client reads instead of the id, default Claude Code.' },
+    models: {
+      type: 'array',
+      description: 'The models offered: an id, { id, name }, or { fetch, match, key } reading an endpoint model list. Replaces the CLI list unless keepCliModels.',
+    },
+    keepCliModels: { type: 'boolean', description: 'With models, add them to the CLI model list rather than replace it.' },
     computerExecutable: { type: 'string', description: "Where the CLI is inside a machine. claude on the image's PATH by default." },
     computerConfigDir: {
       anyOf: [{ type: 'string' }, { const: false }],
@@ -73,7 +79,9 @@ const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOpt
       if (wrong !== undefined) throw new Error(wrong);
     }
   }
-  return { ...said, paths: said.paths ?? host.paths };
+  const wrong = modelsProblem(said.models);
+  if (wrong !== undefined) throw new Error(wrong);
+  return { ...said, paths: said.paths ?? host.paths, log: (line) => host.log(line) };
 };
 
 /** Register the Claude backend over the directories the host serves. */

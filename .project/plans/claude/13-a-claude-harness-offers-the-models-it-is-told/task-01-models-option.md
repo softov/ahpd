@@ -1,6 +1,6 @@
 ---
 title: The models option
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

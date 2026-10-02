@@ -1,7 +1,7 @@
 ---
 title: A Claude harness offers the models it is told, written or fetched from an endpoint
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -31,16 +31,16 @@ A Claude harness on another endpoint offers the models its operator names, writt
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The models option](task-01-models-option.md) | todo | - |
+| [01 - The models option](task-01-models-option.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-02.
-- **Next action:** [task-01-models-option.md](task-01-models-option.md).
+- **Done so far:** built 2026-10-02; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A harness with `models` offers them at the probe and after a session's handshake, and the CLI's list only with the flag.
-- [ ] A fetched list is filtered by its pattern.
-- [ ] `plans/index.md` updated.
+- [x] A harness with `models` offers them at the probe and after a session's handshake, and the CLI's list only with the flag.
+- [x] A fetched list is filtered by its pattern.
+- [x] `plans/index.md` updated.

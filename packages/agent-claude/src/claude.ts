@@ -3,6 +3,7 @@ import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue } from './catalog.js';
+import { offeredModels, ownModels, type ModelEntry, type OfferedModel } from './models.js';
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -101,6 +102,15 @@ export interface ClaudeOptions {
    * install that configures nothing behaves as it did before presets existed.
    */
   presets?: Record<string, Bag>;
+  /**
+   * The models this harness offers, by id, with a name, or fetched from an
+   * endpoint's model list and filtered. Without it, the CLI's own list.
+   */
+  models?: ModelEntry[];
+  /** With `models`, add them to the CLI's list rather than replace it. */
+  keepCliModels?: boolean;
+  /** Where a model list that could not be fetched is said. */
+  log?: (line: string) => void;
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
@@ -111,6 +121,15 @@ export function claude(options: ClaudeOptions): Agent {
   const dir = dirs[0];
   if (dir === undefined)
     throw new Error('claude() needs at least one directory to work in.');
+
+  /** The models `models` names, fetched once and kept. */
+  let named: Promise<OfferedModel[]> | undefined;
+  /** A list the CLI reported, as this harness offers it. */
+  const offer = async <T extends OfferedModel>(cli: T[]): Promise<(T | OfferedModel)[]> => {
+    if (options.models === undefined) return cli;
+    named ??= ownModels(options.models, options.log);
+    return offeredModels(cli, await named, options.keepCliModels);
+  };
 
   /**
    * The presets this backend runs sessions on, by name.
@@ -407,7 +426,8 @@ export function claude(options: ClaudeOptions): Agent {
     // The models are kept as well as handed on: `schema()` is asked before any
     // session exists, and it can only offer what has already been learned.
     probe: async () => {
-      const offered = await probe(dir);
+      const probed = await probe(dir);
+      const offered = { ...probed, models: await offer(probed.models) };
       perModelEffort = offered.models.some((model) => model.configSchema !== undefined);
       return offered;
     },
@@ -562,6 +582,7 @@ export function claude(options: ClaudeOptions): Agent {
       // The presets, so a session can resolve the name its config carries to
       // the values it runs on.
       ...(presets.length > 0 ? { presets: options.presets } : {}),
+      ...(options.models === undefined ? {} : { offerModels: offer }),
       });
     },
   };
