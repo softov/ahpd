@@ -63,6 +63,17 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
+/**
+ * Which half of one API call's usage each streaming event reports.
+ *
+ * `message_start` carries the input side; `message_delta` carries the final
+ * output and repeats the input counts the start already gave, to the same
+ * numbers. A sum that read both whole would bill every prompt twice, so each
+ * half is taken from the one event that completes it.
+ */
+const INPUT_SIDE = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
+const OUTPUT_SIDE = ['output_tokens'];
+
 /** One client-generated script, sourced before every shell command. */
 interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 
@@ -1210,18 +1221,107 @@ export function createSession(options: ClaudeSessionOptions): Session {
    *
    * Every field is optional on both sides, so anything missing is left out
    * rather than reported as zero - a nought is a measurement and an absence
-   * is not.
+   * is not. Cache writes are no different: a measurement the protocol names no
+   * field for, so it rides `_meta` the way cofold's does.
    */
   const usageOf = (raw: unknown, model?: string): Bag | undefined => {
     const found = bag(raw);
     const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+    const writes = num(found.cache_creation_input_tokens);
     const info: Bag = {
       ...(num(found.input_tokens) !== undefined ? { inputTokens: num(found.input_tokens) } : {}),
       ...(num(found.output_tokens) !== undefined ? { outputTokens: num(found.output_tokens) } : {}),
       ...(num(found.cache_read_input_tokens) !== undefined ? { cacheReadTokens: num(found.cache_read_input_tokens) } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(writes !== undefined ? { _meta: { cacheWriteTokens: writes } } : {}),
     };
     return Object.keys(info).length > 0 ? info : undefined;
+  };
+
+  /**
+   * The running turn's token counts so far, in the SDK's spelling.
+   *
+   * One sum for the whole turn: every API call it made, the session's own
+   * agent and every subagent it delegated to. A turn pays for the work it
+   * delegated as much as for its own, and `result.usage` is the main agent
+   * loop alone, so no single frame of the stream reports what the turn cost.
+   * Keyed by the SDK's own field names, which `usageOf` reads.
+   */
+  const spent: Record<string, number> = {};
+  /** A new turn counts nothing yet. */
+  const newTurn = (): void => {
+    for (const key of Object.keys(spent)) delete spent[key];
+  };
+
+  /** One API call's half, added to the turn's sum; anything absent is left out. */
+  const count = (raw: unknown, half: readonly string[]): void => {
+    const found = bag(raw);
+    for (const key of half) {
+      const value = found[key];
+      if (typeof value === 'number') spent[key] = (spent[key] ?? 0) + value;
+    }
+  };
+
+  /** The sum so far, in the protocol's spelling, or nothing if no call reported. */
+  const sum = (): Bag | undefined => (Object.keys(spent).length === 0 ? undefined : usageOf({ ...spent }, ran));
+
+  /**
+   * The turn's total, sent on the session's own chat after every call.
+   *
+   * For the turn that is running rather than the one the call was made in: a
+   * worker's chat has its own turn and its own history, and the work a turn
+   * delegated is that turn's own cost. The protocol *replaces* the active
+   * turn's usage on each `chat/usage`, so this is a total that grows rather
+   * than a delta a client would have to add up itself - and the turn is held
+   * to it, so a client reading the snapshot mid-turn reads the same number.
+   */
+  const sayUsage = (): void => {
+    const turn = active;
+    const used = sum();
+    if (turn === undefined || used === undefined) return;
+    turn.usage = used;
+    emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
+  };
+
+  /**
+   * What `modelUsage` had cost each model at the last `result`.
+   *
+   * `modelUsage` and `total_cost_usd` are cumulative per `query()` call, not
+   * per turn, and each result carries the running total so far. A turn's cost
+   * is therefore the change since the last one. Keyed by model because a turn
+   * can cross models: a worker on another one adds to its own entry and not to
+   * the lead agent's.
+   */
+  const paid = new Map<string, number>();
+
+  /**
+   * What this `result` cost, as the change in `modelUsage` since the last one.
+   *
+   * `costBasis` is `unknown` where the CLI had no price row for a model, and
+   * `costUSD` is then a guess at the default model's rate rather than a price
+   * anything can be held to. A guess is left out, and one model's guess
+   * suppresses the whole total rather than its own share of it: a partial sum
+   * of a price reads as the price. Nothing at all is sent when no model is
+   * priced, and the running baseline is advanced either way, so the next
+   * `result` differences from where this one left the books.
+   */
+  const costOf = (message: Bag): Bag | undefined => {
+    const models = bag(message.modelUsage);
+    if (Object.keys(models).length === 0) return undefined;
+    let amount = 0;
+    let guessed = false;
+    for (const [model, value] of Object.entries(models)) {
+      const entry = bag(value);
+      const was = paid.get(model) ?? 0;
+      const now = typeof entry.costUSD === 'number' ? entry.costUSD : was;
+      paid.set(model, now);
+      // Cumulative per query, so a model priced by guess once stays in the
+      // map; only one this result spent on can make the total a guess.
+      if (now === was) continue;
+      if (entry.costBasis === 'unknown') guessed = true;
+      else amount += now - was;
+    }
+    return guessed ? undefined : { amount, currency: 'USD' };
   };
 
   const status = (): number => (pending.size > 0 ? Status.InputNeeded
@@ -1270,6 +1370,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     if (scope === mainScope) {
       startedAt = Date.now();
       failed = undefined;
+      newTurn();
     }
     emitOn(scope, {
       type: 'chat/turnStarted',
@@ -1343,6 +1444,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // A new round: whatever the last one said, this one has said nothing.
       rounds.set(parent, { answered: false });
       openTurn(scope);
+      // This call's input side, the half only this event reports.
+      count(bag(event.message).usage, INPUT_SIDE);
       return;
     }
 
@@ -1359,6 +1462,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const round = rounds.get(parent);
       const reason = str(bag(event.delta).stop_reason);
       if (round !== undefined && reason !== undefined) round.stopped = reason;
+      // The call's output is final here, and this is its one chance to be
+      // counted into the turn: a subagent's rounds end their own way, and the
+      // lead's last delta arrives long before its `result`.
+      count(event.usage, OUTPUT_SIDE);
+      sayUsage();
       return;
     }
     if (type === 'message_stop') {
@@ -2259,6 +2367,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     } satisfies WireTurn<ActiveTurn> as Bag;
     startedAt = Date.now();
     failed = undefined;
+    newTurn();
     // Said back, including to the client that started it. A host that only
     // reduced this privately would go on to emit `chat/responsePart` for a
     // turn no client has - so the parts land nowhere and the conversation
@@ -2668,10 +2777,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
             // Before the turn completes, not after: the reducer hangs usage on
             // `activeTurn`, and `chat/turnComplete` is what moves that into
             // `turns` - so the other order reports it about nothing.
-            const used = usageOf(message.usage, ran);
-            if (used) {
-              turn.usage = used;
-              emit('chat', { type: 'chat/usage', turnId: turn.id, usage: used });
+            // A stream that carried no partial messages leaves the sum empty,
+            // and the result's own main-loop count is then the best there is.
+            const used = sum() ?? usageOf(message.usage, ran);
+            const cost = costOf(message);
+            if (used !== undefined || cost !== undefined) {
+              // The cost rides the tokens' own `_meta`, the same place cache
+              // writes go, rather than beside them as a field of its own.
+              const total: Bag = used ?? {};
+              if (cost !== undefined) total._meta = { ...bag(total._meta), cost };
+              turn.usage = total;
+              emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
             settleOpen(turn);
             const part = wrong === undefined ? undefined : addFailure(turn, wrong);

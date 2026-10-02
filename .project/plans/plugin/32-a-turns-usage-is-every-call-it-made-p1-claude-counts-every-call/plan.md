@@ -1,7 +1,7 @@
 ---
 title: claude counts every call, subagents and cache writes included, with its cost
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -28,11 +28,11 @@ A claude turn's usage is the sum of every API call it made, subagent calls inclu
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - claude counts every call](task-01-count.md) | todo | - |
+| [01 - claude counts every call](task-01-count.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-count.md](task-01-count.md).
+- **Done so far:** built 2026-10-01, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `modelUsage` and `total_cost_usd` are cumulative per `query()`; the turn's cost is the difference from the previous `result`.
