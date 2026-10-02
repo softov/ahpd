@@ -31,6 +31,7 @@ It takes no options in the ordinary install: it catalogues whatever directories 
 | --- | --- |
 | `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
 | `provider` | the id clients name. `claude` unless something else already is |
+| `displayName` | what a client reads instead of the id. `Claude Code` by default |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
 | `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
 | `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
@@ -60,10 +61,35 @@ A preset holds five fields, and each is checked when the plugin loads, so a pres
 | `sandbox` | the CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
 | `thinking` | extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
 | `outputStyle` | the name of a style from the CLI's own settings |
-| `env` | variables for the CLI's process, laid over the daemon's own environment |
+| `env` | variables for the CLI's process, laid over the daemon's own environment. A value is a string, `null` to unset the variable, or `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, which must be set when the plugin loads |
 | `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none |
 
 With one preset there is nothing to choose and every session runs on it; with none, a session runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer. The first preset is the default in both senses, and a session whose own stored `preset` names one that has since been renamed or removed runs on the first, which is what is left of a choice that no longer resolves.
+
+### A second Claude on another endpoint
+
+Load the package twice, the second time under its own `provider` and `displayName` and with one preset that points the CLI elsewhere. It is listed as a harness of its own, and the key stays in the daemon's environment:
+
+```json
+{
+  "plugins": [
+    "@ahpd/agent-claude",
+    { "name": "@ahpd/agent-claude", "options": {
+      "provider": "claude-openrouter",
+      "displayName": "Claude Code (OpenRouter)",
+      "presets": {
+        "openrouter": { "env": {
+          "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+          "ANTHROPIC_AUTH_TOKEN": { "fromEnv": "OPENROUTER_API_KEY" },
+          "ANTHROPIC_API_KEY": "",
+          "ANTHROPIC_MODEL": "stealth/space-bunny-alpha",
+          "ANTHROPIC_SMALL_FAST_MODEL": "stealth/space-bunny-alpha"
+        } }
+      }
+    } }
+  ]
+}
+```
 
 ## In your own host
 

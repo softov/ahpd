@@ -1,6 +1,6 @@
 ---
 title: A preset env value may name a daemon variable
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

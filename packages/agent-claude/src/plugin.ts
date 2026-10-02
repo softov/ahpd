@@ -37,6 +37,7 @@ export const optionsSchema = {
   properties: {
     paths: { type: 'array', items: { type: 'string' }, description: "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
     provider: { type: 'string', description: 'The id clients name. claude unless something else already is.' },
+    displayName: { type: 'string', description: 'What a client reads instead of the id, default Claude Code.' },
     computerExecutable: { type: 'string', description: "Where the CLI is inside a machine. claude on the image's PATH by default." },
     computerConfigDir: {
       anyOf: [{ type: 'string' }, { const: false }],

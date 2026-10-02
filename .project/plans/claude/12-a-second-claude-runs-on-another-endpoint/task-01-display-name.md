@@ -1,6 +1,6 @@
 ---
 title: agent-claude takes a displayName
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

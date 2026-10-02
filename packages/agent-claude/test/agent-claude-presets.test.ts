@@ -151,3 +151,36 @@ it('lays a signed-in credential over a preset env, and lets a preset unset a var
   expect('AHPD_PRESET_PROBE' in env).toBe(false);
   expect(env.PATH).toBe(process.env.PATH);
 });
+
+it('loads twice as two harnesses, each under its own provider and name', async () => {
+  const { problems, options } = await loadPlugins([
+    { name: SOURCE },
+    { name: SOURCE, options: { provider: 'claude-openrouter', displayName: 'Claude Code (OpenRouter)' } },
+  ], {
+    base: { path: '/tmp/ahpd-preset', agents: [] },
+    configDir: REPO,
+    cwd: REPO,
+    log: () => {},
+  });
+  expect(problems).toEqual([]);
+  expect((options.agents ?? []).map((one) => [one.provider, one.displayName])).toEqual([
+    ['claude', 'Claude Code'],
+    ['claude-openrouter', 'Claude Code (OpenRouter)'],
+  ]);
+});
+
+it('reads a preset env value from the daemon environment, and fails the load when it is not there', async () => {
+  process.env.AHPD_PRESET_KEY = 'sk-from-daemon';
+  const presets = { router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_KEY' } } } };
+  expect((await load({ presets })).problems).toEqual([]);
+  const env = (await queried(presets, 'router')).env as Record<string, string | undefined>;
+  expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-daemon');
+  delete process.env.AHPD_PRESET_KEY;
+
+  const { loaded, problems } = await load({ presets });
+  expect(loaded).toEqual([]);
+  expect(problems[0]).toMatch(/options\.presets\.router\.env\.ANTHROPIC_AUTH_TOKEN reads AHPD_PRESET_KEY, which the daemon's environment does not have$/u);
+  // Only `env` reads the daemon's variables.
+  expect((await load({ presets: { router: { extraArgs: { debug: { fromEnv: 'PATH' } } } } })).problems[0])
+    .toMatch(/options\.presets\.router\.extraArgs\.debug is not a string$/u);
+});

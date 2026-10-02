@@ -1,7 +1,7 @@
 ---
 title: A second Claude harness runs on another endpoint, named on its own and keyed from the daemon's environment
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -30,17 +30,17 @@ agent-claude loaded a second time with its own `provider` and `displayName`, and
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - agent-claude takes a displayName](task-01-display-name.md) | todo | - |
-| [02 - A preset env value may name a daemon variable](task-02-from-env.md) | todo | - |
+| [01 - agent-claude takes a displayName](task-01-display-name.md) | done | - |
+| [02 - A preset env value may name a daemon variable](task-02-from-env.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-02.
-- **Next action:** [task-01-display-name.md](task-01-display-name.md).
+- **Done so far:** built 2026-10-02; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] Two agent-claude entries load side by side under two providers and two names.
-- [ ] A `fromEnv` value reaches the CLI's environment, and a missing variable fails the load.
-- [ ] `plans/index.md` updated.
+- [x] Two agent-claude entries load side by side under two providers and two names.
+- [x] A `fromEnv` value reaches the CLI's environment, and a missing variable fails the load.
+- [x] `plans/index.md` updated.

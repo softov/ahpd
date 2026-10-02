@@ -91,11 +91,19 @@ export const outputStyle: Declaration = {
  * it, so a lone entry is a CLI with no `PATH` and no `HOME`. The daemon's own
  * environment is the base and these are laid over it, which is also what a
  * credential pushed by a client is layered over.
+ *
+ * A value is a string, `null` to unset the variable, or `{ "fromEnv": "<VAR>" }`
+ * for the daemon's own value of another variable, so a key need not be written
+ * in the configuration.
  */
 export const env: Declaration = {
-  schema: { type: 'object', description: "Variables for the CLI's process, over the daemon's own environment. null unsets one." },
+  schema: {
+    type: 'object',
+    fromEnv: true,
+    description: "Variables for the CLI's process, over the daemon's own environment. null unsets one; { fromEnv: NAME } reads the daemon's NAME.",
+  },
   toQuery: (value) => {
-    const held = variablesOf(value);
+    const held = variablesOf(value, true);
     if (Object.keys(held).length === 0) return {};
     const out: Record<string, string | undefined> = { ...process.env };
     for (const [name, one] of Object.entries(held)) {
@@ -177,7 +185,7 @@ export const presetSchema = (value: unknown, by: string): string | undefined => 
     const one = DECLARED[name];
     if (one === undefined) return `${by}.${name} is not an option a preset holds`;
     const wrong = heldTo(one.schema, given);
-    if (wrong !== undefined) return `${by}.${name} ${wrong}`;
+    if (wrong !== undefined) return `${by}.${name}${wrong.startsWith('.') ? '' : ' '}${wrong}`;
   }
   return undefined;
 };
@@ -190,6 +198,11 @@ const heldTo = (schema: Bag, value: unknown): string | undefined => {
   if (schema.type === 'object') {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'is not an object';
     for (const [key, held] of Object.entries(value)) {
+      const named = schema.fromEnv === true ? fromEnvOf(held) : undefined;
+      if (named !== undefined) {
+        if (process.env[named] === undefined) return `.${key} reads ${named}, which the daemon's environment does not have`;
+        continue;
+      }
       if (typeof held !== 'string' && held !== null) return `.${key} is not a string`;
     }
     return undefined;
@@ -200,8 +213,22 @@ const heldTo = (schema: Bag, value: unknown): string | undefined => {
 /** An object, or nothing: the shape both `env` and `extraArgs` are written in. */
 const bagOf = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Bag : {});
 
-/** The name-and-value pairs of an `env` or an `extraArgs`, and nothing else. */
-const variablesOf = (value: unknown): Record<string, string | null> => Object.fromEntries(
+/** The variable a `{ fromEnv }` value names, or nothing for any other value. */
+const fromEnvOf = (value: unknown): string | undefined => {
+  const named = bagOf(value).fromEnv;
+  return typeof named === 'string' && named !== '' ? named : undefined;
+};
+
+/**
+ * The name-and-value pairs of an `env` or an `extraArgs`, and nothing else.
+ *
+ * With `resolve`, a `{ fromEnv }` value is the daemon's value of that variable.
+ */
+const variablesOf = (value: unknown, resolve = false): Record<string, string | null> => Object.fromEntries(
   Object.entries(bagOf(value))
+    .map(([name, one]): [string, unknown] => {
+      const named = resolve ? fromEnvOf(one) : undefined;
+      return [name, named === undefined ? one : process.env[named]];
+    })
     .filter((entry): entry is [string, string | null] => typeof entry[1] === 'string' || entry[1] === null),
 );

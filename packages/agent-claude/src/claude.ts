@@ -59,6 +59,8 @@ export interface ClaudeOptions {
   paths: string[];
   /** The id clients name. `claude` unless something else already is. */
   provider?: string;
+  /** What a client reads instead of the id. `Claude Code` by default. */
+  displayName?: string;
   /**
    * Where the CLI is *inside a machine*, for a session that names one.
    *
@@ -350,7 +352,7 @@ export function claude(options: ClaudeOptions): Agent {
 
   return {
     provider: options.provider ?? 'claude',
-    displayName: 'Claude Code',
+    displayName: options.displayName ?? 'Claude Code',
     // Both, because the SDK resumes at a named prompt: `resumeSessionAt` with
     // `forkSession` continues from a turn under a new id, and a side chat is
     // an unresumed session handed what that turn said.
