@@ -185,6 +185,19 @@ export interface AcpTurn {
   waiting?: string;
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
+  /**
+   * The session's cumulative cost when this turn opened, which what the turn
+   * spent is the change from.
+   *
+   * ACP reports a cost for the whole session rather than for a turn, and no
+   * cost at all before the first `usage_update`, so a turn with no baseline
+   * counts from zero rather than from a number nobody gave it.
+   */
+  costAtStart?: number;
+  /** The session's cumulative cost as of the last `usage_update` this turn read. */
+  cost?: { amount: number; currency: string };
+  /** Whether `session/prompt` has been sent; a cost reported before it is no turn's. */
+  prompted?: boolean;
 }
 
 /**

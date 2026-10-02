@@ -41,6 +41,7 @@ import type {
   SessionUpdate,
   TerminalOutputRequest,
   TerminalOutputResponse,
+  Usage,
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
@@ -104,6 +105,14 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   let active: Bag | undefined;
   /** The running turn's mapping, so an update knows what it belongs to. */
   let mapping: AcpTurn | undefined;
+  /**
+   * The session's cumulative cost as of the last `usage_update` read, which is
+   * what the next turn counts from.
+   *
+   * ACP reports a cost for the whole session rather than for a turn, so a turn
+   * can only be told what it spent by the change since it opened.
+   */
+  let cumulative: number | undefined;
   /** The connection this session spawned, once it has one. */
   let live: AcpConnection | undefined;
   /** The server's own id for this conversation, once `session/new` answered. */
@@ -277,11 +286,29 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     }
 
     const current = mapping;
+    // A cost reported before the prompt went out - on `session/new` or a
+    // `session/load` replay, or between turns - is what the turn counts from,
+    // and charged to none.
+    if (update.sessionUpdate === 'usage_update' && current?.prompted !== true) {
+      if (typeof update.cost?.amount === 'number') {
+        cumulative = update.cost.amount;
+        if (current !== undefined) current.costAtStart = cumulative;
+      }
+      return;
+    }
     if (current === undefined) return;
     // Kept before it is mapped, so a transcript rebuilt later sees the same
     // notifications the live client did, in the same order.
     watchedTurn?.updates.push(update);
-    for (const action of mapUpdate(current, update)) emit('chat', action);
+    /*
+     * A usage is the turn's own total, held on the turn as well as sent, so a
+     * client reading the snapshot mid-turn reads the same number the stream
+     * last carried.
+     */
+    for (const action of mapUpdate(current, update)) {
+      if (action.type === 'chat/usage' && active !== undefined) active.usage = bag(action.usage);
+      emit('chat', action);
+    }
   };
 
   /**
@@ -624,6 +651,9 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       turnId,
       parts: active.responseParts as Bag[],
       calls: new Map(),
+      // From where the last update left the session's books, so this turn's
+      // cost is its own and not the session's whole.
+      ...(cumulative !== undefined ? { costAtStart: cumulative } : {}),
     };
     watchedTurn = {
       turnId,
@@ -671,6 +701,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
     active = undefined;
+    if (mapping?.cost !== undefined) cumulative = mapping.cost.amount;
     mapping = undefined;
     cancelRequested = false;
     if (ending === 'complete') emit('chat', { type: 'chat/turnComplete', turnId, duration });
@@ -720,6 +751,55 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * What the prompt response said the turn used, as its last report.
+   *
+   * ACP counts no tokens per call, so the response is the only place a turn's
+   * counts appear, and they arrive with the turn already over - which is why
+   * this goes out before the ending action, the way the reports during the
+   * turn did: the host reads `status()` as that action passes, and a usage is
+   * hung on the turn that is still running.
+   *
+   * The cost the updates carried is kept rather than replaced, because tokens
+   * are one measurement and the price of them another and this response names
+   * no price at all. A response with no usage therefore says the cost on its
+   * own, and one that reported neither says nothing, because what the updates
+   * already sent stands.
+   */
+  const saidUsage = (usage: Usage | null | undefined): void => {
+    const turn = active;
+    const held = mapping;
+    if (turn === undefined || held === undefined) return;
+    const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+    const wrote = num(usage?.cachedWriteTokens);
+    const thought = num(usage?.thoughtTokens);
+    const price = held.cost === undefined
+      ? undefined
+      : { amount: held.cost.amount - (held.costAtStart ?? 0), currency: held.cost.currency };
+    const said: Bag = {
+      ...(num(usage?.inputTokens) !== undefined ? { inputTokens: num(usage?.inputTokens) } : {}),
+      ...(num(usage?.outputTokens) !== undefined ? { outputTokens: num(usage?.outputTokens) } : {}),
+      ...(num(usage?.cachedReadTokens) !== undefined ? { cacheReadTokens: num(usage?.cachedReadTokens) } : {}),
+      /*
+       * Cache writes and thinking ride `_meta`, which is where the protocol
+       * carries a measurement it names no field for, and where the other
+       * backends already put both.
+       */
+      ...(wrote !== undefined || thought !== undefined || price !== undefined
+        ? {
+            _meta: {
+              ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
+              ...(thought !== undefined ? { reasoningTokens: thought } : {}),
+              ...(price !== undefined ? { cost: price } : {}),
+            },
+          }
+        : {}),
+    };
+    if (Object.keys(said).length === 0) return;
+    turn.usage = said;
+    emit('chat', { type: 'chat/usage', turnId: String(turn.id), usage: said });
+  };
+
+  /**
    * One turn: the prompt is sent, and what comes back ends it.
    *
    * A cancel that arrived while the server was still being opened ends the
@@ -734,7 +814,9 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         return;
       }
       await chooseModel(held, chosen);
+      if (mapping !== undefined) mapping.prompted = true;
       const response = await held.connection.prompt(held.sessionId, text);
+      saidUsage(response.usage);
       finish(turnId, response.stopReason === 'cancelled' ? 'cancelled' : 'complete');
     }
     catch (why: unknown) {

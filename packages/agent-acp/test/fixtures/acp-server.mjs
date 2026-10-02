@@ -20,6 +20,9 @@
  * - text containing `term` opens a terminal, waits for it, reads it, releases it;
  * - text containing `ask` asks for permission on a destructive call and reports
  *   which option came back;
+ * - text containing `spend` sends two `usage_update`s carrying a session cost
+ *   that rises, and answers with per-turn counts when the text also says
+ *   `tokens`;
  * - text containing `wait` emits one chunk and then holds the prompt open
  *   until `session/cancel` arrives, answering `cancelled` only then;
  * - text containing `fail` streams the plain answer and then answers the
@@ -143,6 +146,51 @@ const textOf = (params) => {
 };
 
 /**
+ * What the session has cost so far, which every `usage_update` reports whole.
+ *
+ * ACP counts a cost for the session rather than for a turn, and the figure
+ * starts above zero on purpose: a client that had nothing to count from can
+ * only tell what a turn spent by subtracting what the session had spent before
+ * it began, and a fixture whose books start at nought cannot prove it did. The
+ * charges are quarters as well, so a difference is a difference and not an
+ * artefact of what a tenth of a dollar is in binary.
+ */
+let spent = 1;
+
+/** One `usage_update`, with `cost` risen by what this call was charged. */
+const charge = (amount) => {
+  spent += amount;
+  return {
+    sessionUpdate: 'usage_update',
+    // The context window, which is not usage: a bridge that read these as
+    // tokens spent would report what the model is holding rather than what it
+    // was charged for.
+    used: 4200,
+    size: 200000,
+    cost: { amount: spent, currency: 'USD' },
+  };
+};
+
+/**
+ * The counts a prompt response carries, for a prompt that asked for them.
+ *
+ * Marked unstable in the protocol and optional in practice, so a test has to be
+ * able to have a response without them as well as one with.
+ */
+const countedFor = (text) => (text.includes('tokens')
+  ? {
+      usage: {
+        totalTokens: 1530,
+        inputTokens: 1000,
+        outputTokens: 400,
+        thoughtTokens: 80,
+        cachedReadTokens: 40,
+        cachedWriteTokens: 10,
+      },
+    }
+  : {});
+
+/**
  * The updates one prompt earns, in order.
  *
  * The thought chunk comes first for a prompt that asks for one, so a test can
@@ -212,6 +260,10 @@ const scriptFor = (text) => {
   if (text.includes('wait')) {
     updates.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting' } });
     return updates;
+  }
+
+  if (text.includes('spend')) {
+    updates.push(charge(0.25), charge(0.5));
   }
 
   updates.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } });
@@ -319,7 +371,7 @@ const promptScript = async (id, params) => {
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
   }
 
-  respond(id, { stopReason: 'end_turn' });
+  respond(id, { stopReason: 'end_turn', ...countedFor(text) });
 };
 
 /**
@@ -385,6 +437,10 @@ const onLine = (line) => {
     case 'session/new': {
       const id = nextSession();
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
+      // Started with `--books`, the server says what the session had already
+      // cost before any turn, before it answers, the way `session/load`
+      // replays a resumed conversation before its response.
+      if (process.argv.includes('--books')) notify(charge(0));
       respond(message.id, { sessionId: id, modes: modes(), configOptions: configOptions() });
       return;
     }

@@ -217,11 +217,37 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
     }
 
     /*
-     * Everything else - a user echo, a plan, a mode or command catalogue, a
-     * usage report - is a variant this task does not carry. Nothing is thrown
-     * for one, because the union grows with the protocol and a bridge that
-     * failed a turn over an update it did not know would be worse than one that
-     * ignored it.
+     * What the agent has spent, as the turn's cost so far.
+     *
+     * ACP counts no tokens here: `used` and `size` are the context window and
+     * not what the turn spent, so what this update does report is its cost -
+     * cumulative for the whole session rather than for the turn, which makes
+     * what the turn spent the change since it opened.
+     *
+     * Sent as it stands rather than as the difference between two reports,
+     * because the protocol replaces the active turn's usage on each
+     * `chat/usage` instead of adding to it: a client watches the number grow
+     * through the turn, as it does with the other backends. A server that
+     * sends no cost has reported nothing here, so nothing is sent.
+     */
+    case 'usage_update': {
+      const cost = update.cost;
+      if (cost === undefined || cost === null || typeof cost.amount !== 'number') return [];
+      turn.cost = { amount: cost.amount, currency: cost.currency };
+      return [{
+        type: 'chat/usage',
+        turnId: turn.turnId,
+        usage: {
+          _meta: { cost: { amount: cost.amount - (turn.costAtStart ?? 0), currency: cost.currency } },
+        },
+      }];
+    }
+
+    /*
+     * Everything else - a user echo, a plan, a mode or command catalogue - is a
+     * variant this task does not carry. Nothing is thrown for one, because the
+     * union grows with the protocol and a bridge that failed a turn over an
+     * update it did not know would be worse than one that ignored it.
      */
     default:
       return [];

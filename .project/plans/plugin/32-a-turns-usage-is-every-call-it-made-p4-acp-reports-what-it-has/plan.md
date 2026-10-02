@@ -1,7 +1,7 @@
 ---
 title: ACP sends the cost and tokens its agent reports
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -29,11 +29,11 @@ ACP has no per-call counts, so there is no running token total.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ACP reports what it has](task-01-report.md) | todo | - |
+| [01 - ACP reports what it has](task-01-report.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-report.md](task-01-report.md).
+- **Done so far:** built 2026-10-01, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `used` and `size` are the context window, not usage; they are not tokens spent.
