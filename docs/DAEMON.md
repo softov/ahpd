@@ -419,12 +419,28 @@ own tools declare nothing so this key does not touch them.
 `http` (or `http: { "port": N }`) serves the commands over HTTP under `/api`; it
 has no flag, because it is a property of a deployment rather than of one run.
 See [An HTTP API](#an-http-api-for-the-commands-the-terminal-runs).
-`usage` (`{ "per": "report" }`) says how a turn is written down. The default,
-`turn`, holds what a turn has used and writes one record when the turn ends;
-`report` writes one record for every usage report, each holding what that report
-added since the one before it, so a turn that is still running is already
-billed for what it has spent. Both bill the same work, and a wrong value is
-`...: usage.per must be one of turn, report`.
+`usage` (`{ "per": "report", "timezone": "America/Sao_Paulo" }`) says how a turn is
+written down, and where the periods are cut. The default, `turn`, holds what a
+turn has used and writes one record when the turn ends; `report` writes one
+record for every usage report, each holding what that report added since the one
+before it, so a turn that is still running is already billed for what it has
+spent. Both bill the same work, and a wrong value is
+`...: usage.per must be one of turn, report`. `timezone` names, as `Intl` names
+one, the zone a day starts at and a week starts on - a week is Monday 00:00
+there, not on the system's own - and the system's own zone is used when the key
+is absent, or when it names a zone this host cannot read, which is said once at
+start. Neither key has a flag: both are properties of a deployment rather than
+of one run.
+
+`ahpd usage` prints what this host was charged, and the same store is served as
+the `usage:` scheme, so a client reads it through the resource calls it already
+has: `usage://` lists the pools that reader may see, `usage://<pool>` reads
+that pool as `{ pool, day, week, month }`, and `usage://<pool>/records?from=&until=`
+lists the records charged to it, newest first, at most 200. A pool name holds
+colons, so it is one encoded path segment - `usage://project%3Abackend%3Asearch`
+is `project:backend:search`, not an authority. `ahpd usage` with no pool lists
+what that caller may see, and with one prints that pool's three totals, cut in
+`usage.timezone`.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
@@ -519,6 +535,7 @@ the grants their roles resolve to:
 | `team add`, `team rm` | `team:write` |
 | `project list` | `project:read` |
 | `project add`, `project rm` | `project:write` |
+| `usage` | their own pools; every pool with `usage:read` |
 | `plugin install`, `plugin remove` | the deployment's token only |
 | `plugin update` | the deployment's token only |
 | `plugin config`, `plugin enable`, `plugin disable` | the deployment's token only |
@@ -529,7 +546,11 @@ and `user add`, `user token` and `user rm` refuse a person, that holds a grant
 the caller does not hold, so the grant is not `admin` under another name. Each of
 the four people subjects is its own, so a caller may be let name teams without
 being let read the people on them. `user list` asks for `role:read` as well,
-because the answer prints what each person's roles resolve to. See
+because the answer prints what each person's roles resolve to. `usage` is the
+one row that is not a flat pair, because which pools a caller may see is a
+question about who they are: `GET /api/usage/<pool>` serves their own `user:`
+pool and the `team:` and `project:` pools they belong to with no grant at all,
+and every other pool needs `usage:read`. See
 [USERS.md](USERS.md) for the subjects and the schemes.
 
 `plugin install` runs `npm install` and names a package the daemon loads at its

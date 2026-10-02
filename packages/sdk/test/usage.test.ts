@@ -14,7 +14,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fileUsage } from '../src/usage.js';
 import type { ComputerTime, ModelCall, ModelUse, UsageEntry } from '../src/types/usage.js';
 
@@ -204,4 +204,119 @@ it('starts empty over a folder that is not there yet', async () => {
   const usage = fileUsage({ folder: join(root, 'never', 'made'), onProblem: (message) => said.push(message) });
   expect(said).toEqual([]);
   expect(await usage.total('p', month.from, month.until)).toEqual({});
+});
+
+/*
+ * Reading the pools and the records behind them.
+ *
+ * Both read the files rather than the totals in memory, because neither the
+ * pool a record was charged to nor the record itself is anything the totals
+ * keep: the plan's checklist is about the records behind a number summing to
+ * the number, and that is a statement about lines.
+ */
+
+it('names every pool the folder holds, sorted and once, across both kinds and two months', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['team:backend', 'user:maria'], { input: 10 }));
+  await usage.record(modelUse('2026-10-05T10:00:00.000Z', ['team:backend'], { input: 20 }));
+  await usage.record(computerTime('2026-11-02T10:00:00.000Z', 3_600, ['root:box']));
+  // Written by hand rather than recorded, so the answer is the folder's rather
+  // than the memory's.
+  await fileUsage({ folder });
+
+  expect(await usage.pools()).toEqual(['root:box', 'team:backend', 'user:maria']);
+});
+
+it('answers no pools for a folder holding no usage files', async () => {
+  const usage = fileUsage({ folder });
+  writeFileSync(join(folder, 'notes.txt'), 'not a usage file\n');
+
+  expect(await usage.pools()).toEqual([]);
+});
+
+it('reads a pool\'s records newest first, across a month boundary', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }));
+  await usage.record(modelUse('2026-11-02T10:00:00.000Z', ['p'], { input: 20 }));
+  await usage.record(computerTime('2026-11-03T10:00:00.000Z', 3_600, ['p']));
+
+  const found = await usage.records('p', '2026-10-01T00:00:00.000Z', '2026-11-30T23:59:59.999Z');
+  expect(found.map((one) => one.at)).toEqual([
+    '2026-11-03T10:00:00.000Z',
+    '2026-11-02T10:00:00.000Z',
+    '2026-10-04T10:00:00.000Z',
+  ]);
+  // And only what is charged to that pool.
+  expect(await usage.records('p', '2026-10-01T00:00:00.000Z', '2026-10-31T23:59:59.999Z'))
+    .toHaveLength(1);
+});
+
+it('answers no records for a pool nothing was charged to', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }));
+
+  expect(await usage.records('other', month.from, month.until)).toEqual([]);
+});
+
+it('compares the range at the day, so a partly covered day is answered whole and sums to the total', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T01:00:00.000Z', ['p'], { input: 10 }));
+  await usage.record(modelUse('2026-10-04T23:00:00.000Z', ['p'], { input: 20 }));
+  await usage.record(modelUse('2026-10-06T10:00:00.000Z', ['p'], { input: 40 }));
+
+  // The window is a moment in the middle of the fourth, and takes the whole day.
+  const wanted = '2026-10-04T12:00:00.000Z';
+  const found = await usage.records('p', wanted, wanted);
+  expect(found).toHaveLength(2);
+  const summed = found.reduce((sum, one) => sum + (one.kind === 'model' ? (one.model.input ?? 0) : 0), 0);
+  expect(summed).toBe(await usage.total('p', wanted, wanted).then((one) => one.tokens));
+});
+
+it('puts a record charged to two pools under both of them', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['a', 'b'], { input: 10 }));
+  await usage.record(modelUse('2026-10-04T11:00:00.000Z', ['a'], { input: 5 }));
+  await usage.record(modelUse('2026-10-04T12:00:00.000Z', [], { input: 5 }));
+
+  expect((await usage.records('a', month.from, month.until)).map((one) => one.at)).toHaveLength(2);
+  expect((await usage.records('b', month.from, month.until)).map((one) => one.at))
+    .toEqual(['2026-10-04T10:00:00.000Z']);
+});
+
+it('skips a torn line, says so, and answers the month\'s other records', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 7 }));
+  await usage.record(modelUse('2026-10-04T11:00:00.000Z', ['p'], { input: 8 }));
+  writeFileSync(join(folder, '2026-10-model.jsonl'), '{"at": "2026-10-04T12:00:00.000Z", "pools"\n', { flag: 'a' });
+
+  const said: string[] = [];
+  const rebuilt = fileUsage({ folder, onProblem: (message) => said.push(message) });
+
+  expect(said[0]).toContain('2026-10-model.jsonl');
+  const found = await rebuilt.records('p', month.from, month.until);
+  expect(found.map((one) => one.at)).toEqual(['2026-10-04T11:00:00.000Z', '2026-10-04T10:00:00.000Z']);
+  expect(await rebuilt.pools()).toEqual(['p']);
+});
+
+it('answers this month and the newest of them when the range names no bounds', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
+    const usage = fileUsage({ folder });
+    await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }));
+    await usage.record(modelUse('2026-09-30T10:00:00.000Z', ['p'], { input: 20 }));
+
+    // No `from` is the first of this month and no `until` is now, so last
+    // month's record is behind the range and this month's is inside it.
+    expect((await usage.records('p')).map((one) => one.at)).toEqual(['2026-10-04T10:00:00.000Z']);
+
+    // And a run of them, so the newest 200 is a cut and not the whole answer.
+    for (let index = 0; index < 210; index += 1) {
+      const at = `2026-10-${String((index % 20) + 1).padStart(2, '0')}T${String(index % 24).padStart(2, '0')}:00:00.000Z`;
+      writeFileSync(join(folder, '2026-10-model.jsonl'),
+        `${JSON.stringify(modelUse(at, ['p'], { input: 1 }))}\n`, { flag: 'a' });
+    }
+    expect(await usage.records('p')).toHaveLength(200);
+  }
+  finally { vi.useRealTimers(); }
 });

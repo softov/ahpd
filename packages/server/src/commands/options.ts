@@ -61,6 +61,14 @@ export interface Options {
    * deployment's rather than one run's.
    */
   usagePer: 'turn' | 'report';
+  /**
+   * The zone a day and a week start in, as `Intl` names it.
+   *
+   * Absent is the system's own zone. A week that begins on the system's Monday
+   * day is what this is for, so it has no flag, as a zone is a fact about where
+   * a deployment is rather than about one run.
+   */
+  usageTimezone?: string;
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
   /**
@@ -228,8 +236,9 @@ export const serverFields = {
     type: 'object',
     properties: {
       per: { type: 'string', enum: ['turn', 'report'] },
+      timezone: { type: 'string' },
     },
-    description: 'How a turn is written down: per "turn" writes one record when the turn ends, which is the default, and per "report" writes one record for every usage report a turn sends. Set in the configuration file only.',
+    description: 'How a turn is written down: per "turn" writes one record when the turn ends, which is the default, and per "report" writes one record for every usage report a turn sends. timezone names, as Intl names one, the zone a day and a week start in, and is the system\'s own zone when it is absent. Set in the configuration file only.',
   },
   wire: {
     type: 'string',
@@ -567,6 +576,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   const resource = given('resource');
   const issuer = given('issuer');
   const wire = given('wire');
+  const usageZone = given('usage')?.timezone;
   const http = httpOf(file.http, source('http'));
   const proxy = proxyConfiguration(given('proxy'));
 
@@ -587,6 +597,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     automations: given('automations') ?? 'file',
     sessions: given('sessions') ?? 'file',
     usagePer: given('usage')?.per ?? 'turn',
+    ...(usageZone === undefined ? {} : { usageTimezone: usageZone }),
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
     proxy,

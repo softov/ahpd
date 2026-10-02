@@ -11,7 +11,7 @@
 
 import { createRegistry } from '@cofold/commands';
 import type { Registry } from '@cofold/commands';
-import type { Users } from '@ahpd/sdk';
+import type { Usage, Users } from '@ahpd/sdk';
 import type { Options } from './options.js';
 import { declareConfig } from './config.js';
 import { declarePlugin } from './plugin.js';
@@ -19,6 +19,7 @@ import { declareProxy } from './proxy.js';
 import { declareRestart } from './restart.js';
 import { declareStatus } from './status.js';
 import { declareTeams } from './teams.js';
+import { declareUsage } from './usage.js';
 import { declareUser } from './user.js';
 import { checkScopes } from './scopes.js';
 
@@ -50,6 +51,12 @@ export interface ServedFacts {
   /** The sessions with a turn running, read per request because the host is built after this is. */
   turning(): string[];
   /**
+   * Where this host's usage records were written, read per request because a
+   * plugin may have replaced the store the host was built over. Absent, this
+   * daemon was started with none.
+   */
+  usage?(): Usage;
+  /**
    * Read that line over the configuration as it is now, then stop this daemon
    * once the answer has gone and start it again with it. Throws, or rejects,
    * with why the line cannot run or, unless forced, which turns are running,
@@ -67,6 +74,7 @@ export const servedRegistry = (facts: ServedFacts): Registry<object> => {
   declareTeams(registry, facts);
   declarePlugin(registry, facts);
   declareProxy(registry, facts);
+  declareUsage(registry, facts);
   declareRestart(registry, facts);
   return registry;
 };

@@ -197,6 +197,8 @@ function keeping(): Usage & { entries: ModelUse[] } {
       return Promise.resolve();
     },
     total: () => Promise.resolve({}),
+    pools: () => Promise.resolve([]),
+    records: () => Promise.resolve([]),
   };
 }
 
@@ -429,6 +431,8 @@ it('does not let a store that cannot keep the record break the turn', async () =
   const failing: Usage = {
     record: () => Promise.reject(new Error('the disk is full')),
     total: () => Promise.resolve({}),
+    pools: () => Promise.resolve([]),
+    records: () => Promise.resolve([]),
   };
   const { client, said } = serving([{ reports: [report()], end: 'complete' }], failing, directory());
   await settle();

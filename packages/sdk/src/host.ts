@@ -6868,8 +6868,12 @@ export function createHost(options: HostOptions): Host {
          *
          * A resource method is the only one that carries a URI, and its subject
          * is the scheme that answers it, so `resourceRead` on `computer://` is
-         * `computer:read`. Every other method answers to its own area, which is
-         * a fixed subject and not something the request can name.
+         * `computer:read` and every `usage:` URI is `usage:read`. Every other
+         * method answers to its own area, which is a fixed subject and not
+         * something the request can name.
+         *
+         * The scheme's grant is what a read falls back to, not what it always
+         * needs: `excused` below asks the provider first.
          */
         if (subject !== 'file') return [plain];
         const uris = [params.uri, params.source, params.destination]
@@ -6905,13 +6909,71 @@ export function createHost(options: HostOptions): Host {
       };
 
       /**
+       * Which of what a command needs a scheme's own provider has said is
+       * theirs.
+       *
+       * A scheme may open part of itself to a person without a grant of their
+       * own, which is how `usage://user:ana` is read by the person it is about
+       * - decision `a-scheme-provider-may-authorize-a-read-itself`. Asked only
+       * about a read or a listing, and only of the scheme the URI is under, so
+       * it can widen what somebody sees and never what they change.
+       *
+       * A promise only where a provider has to be asked. Everything else is
+       * answered here and now, because `admit` is at the front of every command
+       * and a command no scheme is behind should not wait a turn of the loop
+       * for a question nobody is going to answer.
+       */
+      const excusedBy = (method: string, params: Record<string, unknown>, who: Principal): Set<Grant> | Promise<Set<Grant>> => {
+        if (method !== 'resourceRead' && method !== 'resourceList') return new Set();
+        const asked = [params.uri, params.source, params.destination]
+          .filter((one): one is string => typeof one === 'string')
+          .map((uri) => {
+            const scheme = schemeOf(uri);
+            const authorize = scheme === '' ? undefined : options.resourceProviders?.[scheme]?.authorize;
+            return authorize === undefined ? undefined : { uri, scheme, authorize };
+          })
+          .filter((one) => one !== undefined);
+        if (asked.length === 0) return new Set();
+        const excuse = async (): Promise<Set<Grant>> => {
+          const excused = new Set<Grant>();
+          for (const one of asked) {
+            if (await one.authorize(one.uri, who)) {
+              excused.add(`${one.scheme}:read` as Grant);
+            }
+          }
+          return excused;
+        };
+        return excuse();
+      };
+
+      /**
+       * What the gate tells one connection about what it has not got.
+       *
+       * A promise of nothing means the person holds it, and it is thrown out of
+       * whatever asked rather than returned, so a caller that does not await is
+       * refused exactly as one that does.
+       */
+      const denied = (who: Principal, needed: readonly Grant[], excused: ReadonlySet<Grant>): void => {
+        const missing = needed.find((one) => excused.has(one) !== true && !who.can(one));
+        if (missing === undefined) return;
+        // No `request` key: a role is not something a client can negotiate,
+        // and the protocol says that field is omitted when no grant would
+        // resolve the denial. Its absence is what tells a client to stop
+        // rather than retry.
+        throw new RpcError(-32009, refusalReason(who.id, missing), {});
+      };
+
+      /**
        * The users gate for one command, which throws what the client is told.
        *
        * Asked of every command at the boundary, and of each channel an
        * `initialize` or a `reconnect` subscribes to, as `subscribe`, since
-       * those subscribe without passing the boundary as one.
+       * those subscribe without passing the boundary as one. A promise only
+       * where a scheme has to be asked whether the person may read before their
+       * grant is required; everything else is refused or admitted before this
+       * returns, so a caller that awaits a `void` has still had its answer.
        */
-      const admit = (method: string, params: Record<string, unknown>): void => {
+      const admit = (method: string, params: Record<string, unknown>): void | Promise<void> => {
         if (options.users === undefined || connection.root === true) return;
         const needed = capabilityFor(method, params);
         if (needed === undefined || needed.length === 0) return;
@@ -6932,15 +6994,11 @@ export function createHost(options: HostOptions): Host {
             resources: [options.users.resource],
           });
         }
-        const excused = ownRecord(method, params, who) ? new Set<Grant>(['user:read']) : undefined;
-        const missing = needed.find((one) => excused?.has(one) !== true && !who.can(one));
-        if (missing !== undefined) {
-          // No `request` key: a role is not something a client can
-          // negotiate, and the protocol says that field is omitted when
-          // no grant would resolve the denial. Its absence is what tells
-          // a client to stop rather than retry.
-          throw new RpcError(-32009, refusalReason(who.id, missing), {});
-        }
+        const excused = ownRecord(method, params, who)
+          ? new Set<Grant>(['user:read'])
+          : excusedBy(method, params, who);
+        if (excused instanceof Promise) return excused.then((held) => { denied(who, needed, held); });
+        denied(who, needed, excused);
       };
 
       /**
@@ -7059,8 +7117,11 @@ export function createHost(options: HostOptions): Host {
             try {
               // Gated, resolved and answered the way `subscribe` is: the
               // root, a session or a chat under another spelling is told
-              // under that spelling.
-              admit('subscribe', { channel });
+              // under that spelling. Awaited only when the gate is waiting on
+              // a scheme, so a handshake does not spend a turn of the loop on a
+              // question it will not be asked.
+              const held = admit('subscribe', { channel });
+              if (held !== undefined) await held;
               const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
               answeredAs(connection, channel, snapshot);
               snapshots.push(snapshot);
@@ -7221,7 +7282,8 @@ export function createHost(options: HostOptions): Host {
               // automations catalogue is resumed rather than told the channel
               // has gone - and is replayed, which is keyed by the name this
               // host dispatches under rather than the one the client used.
-              admit('subscribe', { channel });
+              const held = admit('subscribe', { channel });
+              if (held !== undefined) await held;
               const meant = meantBy(channel);
               await snapshotOf(meant, connection.config ?? {}, connection);
               if (meant !== channel) connection.aliases.set(meant, channel);
@@ -7718,7 +7780,7 @@ export function createHost(options: HostOptions): Host {
         resourceList: async (params) => {
           const uri = String(params.uri ?? '');
           const store = storeFor(uri);
-          return { entries: await need(need(store, 'resourceList').list, 'resourceList')(uri) };
+          return { entries: await need(need(store, 'resourceList').list, 'resourceList')(uri, connection.principal) };
         },
         resourceRead: async (params) => {
           const uri = String(params.uri ?? '');
@@ -7731,6 +7793,7 @@ export function createHost(options: HostOptions): Host {
           return await need(need(storeFor(uri), 'resourceRead').read, 'resourceRead')(
             uri,
             typeof params.encoding === 'string' ? params.encoding : undefined,
+            connection.principal,
           );
         },
         /**
@@ -10611,7 +10674,8 @@ export function createHost(options: HostOptions): Host {
            * which is what keeps every install that never configured one exactly
            * as it was.
            */
-          admit(request.method, (request.params ?? {}) as Record<string, unknown>);
+          const gate = admit(request.method, (request.params ?? {}) as Record<string, unknown>);
+          if (gate !== undefined) await gate;
           // And a second `initialize` is no longer one of them: the version
           // is agreed, and re-agreeing it would re-key every subscription
           // this connection is holding.

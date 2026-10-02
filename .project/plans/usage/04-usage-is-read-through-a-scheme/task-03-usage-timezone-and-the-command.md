@@ -1,6 +1,6 @@
 ---
 title: The daemon reads `usage.timezone` and `ahpd usage` prints what a pool has spent
-status: todo
+status: done
 depends: [task-02-the-usage-scheme.md]
 layer: "server"
 refs:
@@ -37,7 +37,7 @@ refs:
 6. `output(rows, text)` carries the numbers to `--json` the way `proxy.list` and `team.list` do, and the text is one line per period with the measures `total` reported, absent ones left out.
 7. Served, `scopes` is `[]` and the body holds the caller with `bounded` (`packages/server/src/commands/user.ts:34-41`), the way `user.primary` does: `checkScopes` (`packages/server/src/commands/scopes.ts:37-47`) refuses anyone who does not hold the declared scopes, and a flat `usage:read` would refuse the very person the scheme serves their own pools to.
 8. The zone is `served.options.usageTimezone` served, and the configuration this process reads from the terminal, as `people` reads the users file, so no flag and no request can name another store.
-9. **Depends on open question 3 below:** what the daemon does with a `usage.timezone` no runtime on this host can resolve.
+9. A `usage.timezone` no runtime on this host can resolve is said once at start, and the system's own zone is used (the plan's table: "Warn, use system zone").
 
 ## Validation
 
@@ -46,5 +46,3 @@ refs:
 - A case with `usage.timezone` naming a zone whose week does not start on the system's Monday day, proving the week boundary is the configured one and not the system's.
 - `pnpm exec vitest run packages/server/test/usage-command.test.ts packages/server/test/config-check.test.ts packages/server/test/server-commands.test.ts`.
 - `pnpm typecheck`, `pnpm test`, `pnpm boundary`.
-
-## Resume

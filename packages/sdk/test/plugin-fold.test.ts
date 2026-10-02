@@ -192,6 +192,8 @@ describe('foldHostOptions', () => {
     const usage = (pool: string): Usage => ({
       record: async () => {},
       total: async () => ({ calls: pool === 'a' ? 1 : 0 }),
+      pools: async () => [],
+      records: async () => [],
     });
     const options = { ...base(), usage: usage('the daemon') };
 

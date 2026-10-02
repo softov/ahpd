@@ -2,10 +2,12 @@ import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { AGENT_CLASH, foldHostOptions } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { usageProvider } from '../src/usage.js';
 import type { Agent } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Contribution } from '../src/types/plugin.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Usage } from '../src/types/usage.js';
 
 /*
  * What the fold is for: a host that serves a plugin's backend.
@@ -334,6 +336,32 @@ it('advertises every scheme it serves on the handshake and on the root state', a
 
   // The `vscode.*` flags the reference client reads are still there beside it.
   expect(ready._meta?.['vscode.removeSessionArtifact']).toBe(true);
+});
+
+it('advertises usage as a scheme a host serves itself, beside file:', async () => {
+  /*
+   * No manifest, because nothing under `usage:` is made, and the operations are
+   * the read half only - a usage pool is read and nothing is written to it.
+   */
+  const usage: Usage = {
+    record: async () => {},
+    total: async () => ({}),
+    pools: async () => ['user:ana'],
+    records: async () => [],
+  };
+  const host = createHost({ ...base(), usage, resourceProviders: { usage: usageProvider({ usage }) } });
+  const client = host.accept(peer());
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { _meta?: Record<string, Record<string, unknown>> };
+
+  expect(ready._meta?.['ahpd.resourceProviders']?.['usage']).toEqual({
+    title: 'Usage',
+    description: 'What this host has been charged, per pool.',
+    root: 'usage://',
+    operations: ['read', 'list', 'resolve'],
+  });
 });
 
 it('advertises nothing when it serves no scheme beside file:', async () => {

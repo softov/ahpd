@@ -1,6 +1,6 @@
 ---
 title: The usage port names its pools and reads a pool's records back
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -29,7 +29,7 @@ refs:
 3. It reads the same files `load` reads at `packages/sdk/src/usage.ts:147-177`, matching the same `FILE` at `:28` and skipping a torn or nameless line the same way `load` does, rather than a second reading of the folder with a different idea of what a line is.
 4. `records(pool, from, until)` answers the records charged to that pool, newest first: the months the range covers, most recent month first, and each month's lines reversed.
 5. A record is in the answer when it names the pool, which is what `charge` at `:110-123` charges, so a record charged to two pools appears under both and one charged to none appears under neither.
-6. The range is compared at the day, the way `total` compares it at `:198-224`, so the records behind a period's total are exactly the records that total summed and the plan's checklist line holds. An open question below says what an answer is when a bound is left out.
+6. The range is compared at the day, the way `total` compares it at `:198-224`, so the records behind a period's total are exactly the records that total summed and the plan's checklist line holds. A bound left out is the first day of the current month for `from` and now for `until`, and at most the newest 200 records are answered.
 7. Neither call goes through the `serialise` queue at `:126-131`: they read what is on disk, and a line is appended whole because `record` appends with one `appendFileSync`.
 8. Rewrite the store's doc at `:44-66` and the comment at `:189-195`, which both count the calls a shared store answers.
 
@@ -39,5 +39,3 @@ refs:
 - `packages/server/test/fixtures/plugin-usage/index.ts`: the fixture answers `pools` and `records`, because a store that answers two of four is not a `Usage` and `pnpm typecheck` says so.
 - `pnpm exec vitest run packages/sdk/test/usage.test.ts packages/server/test/usage-port.test.ts`.
 - `pnpm typecheck`, `pnpm test`, `pnpm boundary`.
-
-## Resume

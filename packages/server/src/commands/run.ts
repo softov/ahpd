@@ -13,7 +13,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import type { HostOptions, Tap } from '@ahpd/sdk';
+import type { HostOptions, Tap, Usage } from '@ahpd/sdk';
 import {
   AGENT_CLASH,
   createHost,
@@ -36,6 +36,7 @@ import {
   scheduledAutomations,
   shellTerminals,
   signInRecord,
+  usageProvider,
 } from '@ahpd/sdk';
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
 import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, sessionsPath, signInIdentifier, urlHost } from '../config.js';
@@ -203,6 +204,23 @@ export async function runForeground(options: Options): Promise<void> {
   // address otherwise.
   const apiHost = options.http?.host ?? options.host;
   /*
+   * What this host's work cost: a folder of monthly JSONL files beside the
+   * sessions and the automations.
+   *
+   * Built here rather than in the `HostOptions` literal below, because three
+   * things ask for it: the host, the `usage:` scheme it serves, and the
+   * `ahpd usage` this daemon serves. One store, or the command and the scheme
+   * answer from two.
+   */
+  const store = fileUsage({
+    folder: join(configDir(), 'usage'),
+    onProblem: (message) => process.stdout.write(`${message}\n`),
+  });
+  // This daemon's own once a plugin has folded in a store of its own; before
+  // the host is built, a request finds the daemon's.
+  let metered: Usage = store;
+
+  /*
    * The daemon's own facts, for the commands it serves.
    *
    * A request names no file, no directory and no plugin: the declarations it
@@ -230,6 +248,7 @@ export async function runForeground(options: Options): Promise<void> {
       automations: memory ? 'in memory, schedules do not fire' : `in ${automationsPath()}, schedules fire`,
     }),
     turning: () => turning(),
+    usage: () => metered,
     restart: (argv, force) => restart(argv, force),
   };
   /*
@@ -364,12 +383,9 @@ export async function runForeground(options: Options): Promise<void> {
         file: automationsPath(),
         onProblem: (message) => process.stdout.write(`${message}\n`),
       }),
-    // What this host's work cost: a folder of monthly JSONL files beside the
-    // sessions and the automations.
-    usage: fileUsage({
-      folder: join(configDir(), 'usage'),
-      onProblem: (message) => process.stdout.write(`${message}\n`),
-    }),
+    // What this host's work cost, built above so the scheme and the command
+    // read the same records this host charges to.
+    usage: store,
     // Whether that is one record per turn or one per report, which `usage.per`
     // in the configuration file chose.
     usagePer: options.usagePer,
@@ -393,6 +409,32 @@ export async function runForeground(options: Options): Promise<void> {
       logs: () => [daemonLog(), ...(options.wire === undefined ? [] : [options.wire])],
       shutdown: () => { process.kill(process.pid, 'SIGTERM'); },
     },
+  };
+
+  /*
+   * Usage, as a resource scheme.
+   *
+   * The store is the one the literal above hands the host, so the two are
+   * registered here rather than in the literal - and only where there is a
+   * store: a host with no `usage` port serves no `usage:` scheme and leaves the
+   * key out of the advertisement rather than answering one that is not there.
+   *
+   * The zone is `usage.timezone`, and a week cut on the system's Monday day is
+   * what it is for. An unresolvable one is said here, where the provider is
+   * built, and the system's own is used - which is the same sentence the
+   * provider says for itself, so `ahpd usage` and the scheme agree about which
+   * zone they are reading in.
+   *
+   * A person reads their own pools without `usage:read`, which is the provider's
+   * own `authorize` rather than a rule in the host.
+   */
+  base.resourceProviders = {
+    ...base.resourceProviders,
+    usage: usageProvider({
+      usage: store,
+      ...(options.usageTimezone === undefined ? {} : { timezone: options.usageTimezone }),
+      onProblem: (message) => process.stdout.write(`${message}\n`),
+    }),
   };
 
   /*
@@ -456,6 +498,11 @@ export async function runForeground(options: Options): Promise<void> {
 
   const host = createHost(folded);
   turning = () => host.turning();
+  // What the host was finally built over, which is what a served `ahpd usage`
+  // reads: a plugin that registered a store of its own is the one the records
+  // were written to, and a command answering from the daemon's folder beside it
+  // would report a total nothing was charged to.
+  if (folded.usage !== undefined) metered = folded.usage;
 
   /*
    * The wire, written down as it happens.

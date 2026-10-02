@@ -372,10 +372,15 @@ The subjects are the host's own and any plugin's URI scheme:
 | `team` | `read`, `write` | The teams this install names, which a membership is written out of. Read answers `team list`; write adds, titles and removes one |
 | `project` | `read`, `write` | The same for the projects, spelled after a membership's colon |
 | `role` | `read`, `write` | The roles this install defines. `user list` asks for `role:read` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
+| `usage` | `read` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no `usage:write`: records are written by the meters that charge them |
 | a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
 every verb on sessions, `*:*` is everything.
+
+A person reads their own usage without `usage:read` at all: their `user:<id>`
+pool, and the `team:` and `project:` pools of the teams and projects they are a
+member of. Every other pool is refused until a role names the grant.
 
 | Role | Has |
 | --- | --- |

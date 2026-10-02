@@ -8,6 +8,7 @@ import { fileUsers } from '../src/users.js';
 import { memorySessions } from '../src/sessions.js';
 import { memoryAutomations } from '../src/automations.js';
 import { shellTerminals } from '../src/terminals.js';
+import { fileUsage, usageProvider } from '../src/usage.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { ChangesetSource } from '../src/types/changes.js';
@@ -87,6 +88,25 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
   remove: async () => false,
   mint: async () => '',
 });
+
+/**
+ * A directory whose people also carry what their work may be charged to.
+ *
+ * `directory` answers only what somebody may do, and `poolsFor` is asked the
+ * other question - which pools a person may see - so the principals here carry
+ * memberships as well as grants.
+ */
+const people = (tokens: Record<string, Grant[]>, memberships: Record<string, string[]>): Users => {
+  const base = directory(tokens);
+  const verify = base.verify;
+  return {
+    ...base,
+    verify: async (token) => {
+      const held = await verify(token);
+      return held === undefined ? undefined : { ...held, memberships: memberships[token] ?? [] };
+    },
+  };
+};
 
 const host = (extra: Partial<HostOptions> = {}) => createHost({
   path: root,
@@ -259,6 +279,56 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
   expect(await call(allowed, 'resourceWrite', {
     channel: ROOT, uri: 'computer://box', data: '{}', encoding: 'utf-8',
   })).toMatchObject({ result: {} });
+});
+
+it('lets a person read their own usage pools, and refuses them another person\'s', async () => {
+  /*
+   * Every `usage:` URI is `usage:read` at the gate, which would refuse the very
+   * person the scheme serves their own pools to. The provider's own `authorize`
+   * is what opens those - decision `a-scheme-provider-may-authorize-a-read-itself`.
+   */
+  const usage = fileUsage({ folder: join(root, 'usage') });
+  for (const [who, pool] of [['ana', 'user:ana'], ['bob', 'user:bob']] as const) {
+    await usage.record({
+      at: '2026-10-02T10:00:00.000Z',
+      kind: 'model',
+      source: 'proxy',
+      owner: `user:${who}`,
+      model: { name: 'anthropic/opus-5' },
+      pools: [pool, 'team:backend'],
+      cost: { amount: 0.25, currency: 'usd', from: 'harness' },
+    });
+  }
+  const made = host({
+    users: people(
+      { ana: [], bob: [], keeper: ['usage:read'] },
+      { ana: ['backend'], bob: ['frontend'] },
+    ),
+    usage,
+    resourceProviders: { usage: usageProvider({ usage, timezone: 'UTC' }) },
+  });
+
+  // A guest with no `usage:read` at all: their own pool, their team's pool, and
+  // the listing that says which pools those are.
+  const ana = made.accept(peer());
+  await hello(ana, 'ana'); await signIn(ana, 'ana');
+  expect(await call(ana, 'resourceList', { channel: ROOT, uri: 'usage://' }))
+    .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }] } });
+  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Aana' }))
+    .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:ana"') } });
+  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://team%3Abackend/month' }))
+    .toMatchObject({ result: { data: expect.stringContaining('"calls": 2') } });
+  // Somebody else's is refused by the gate, with the host's own sentence.
+  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
+    .toMatchObject({ code: -32009, message: 'ana may not usage:read here' });
+
+  // A role naming `usage:read` reads every pool the store holds.
+  const keeper = made.accept(peer());
+  await hello(keeper, 'keeper'); await signIn(keeper, 'keeper');
+  expect(await call(keeper, 'resourceList', { channel: ROOT, uri: 'usage://' }))
+    .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }, { name: 'user:bob' }] } });
+  expect(await call(keeper, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
+    .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:bob"') } });
 });
 
 it('lets a socket on the deployment token do everything, and nothing demotes it', async () => {

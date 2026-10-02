@@ -5,6 +5,7 @@ import type {
 } from '@microsoft/agent-host-protocol';
 
 import type { Owner } from './usage.js';
+import type { Principal } from './users.js';
 
 /*
  * The vocabularies below are the protocol's own, taken as `${Enum}` rather
@@ -232,10 +233,15 @@ export interface SchemeDescription {
 }
 
 export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'> & {
-  /** One file's bytes, or the range of them that was asked for. */
-  read(uri: string, wanted?: string): Promise<Read>;
+  /**
+   * One file's bytes, or the range of them that was asked for.
+   *
+   * `reader` is whoever the connection is, absent on a host with no user
+   * directory and on a root connection - the same `owner` a write is handed.
+   */
+  read(uri: string, wanted?: string, reader?: Principal): Promise<Read>;
   /** One directory's entries, for a scheme that has directories. */
-  list?(uri: string): Promise<Entry[]>;
+  list?(uri: string, reader?: Principal): Promise<Entry[]>;
   /** What a URI is, without reading it, for a client that browses. */
   resolve?(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   /**
@@ -246,4 +252,14 @@ export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' 
    * `a-resource-scheme-is-advertised-in-meta`.
    */
   describe?(): SchemeDescription;
+  /**
+   * Whether this reader may be let past the scheme's grant for this URI.
+   *
+   * The gate asks before it requires `<scheme>:read`, so `true` lets one read
+   * through that the grant would have refused - decision
+   * `a-scheme-provider-may-authorize-a-read-itself`. Any scheme can open part of
+   * itself to a person without a host change; nothing opens a write, which is
+   * why the hook is only asked about reads.
+   */
+  authorize?(uri: string, reader: Principal | undefined): Promise<boolean>;
 };

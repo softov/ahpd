@@ -123,4 +123,24 @@ export interface Usage {
    * totals per day counts a partly covered day whole.
    */
   total(pool: string, from: string, until: string): Promise<UsageTotal>;
+  /**
+   * Every pool any record names, sorted and without a repeat.
+   *
+   * The store is the only place that can answer it: a pool may name a person
+   * who has been taken out of the users file, or `root:<host>`, and neither is
+   * anywhere else. A folder holding no usage files answers `[]`, which is a
+   * store with nothing in it rather than a refusal.
+   */
+  pools(): Promise<string[]>;
+  /**
+   * The records charged to one pool between `from` and `until` (ISO 8601),
+   * newest first.
+   *
+   * A record naming two pools is under both, and one naming none under
+   * neither. The range is compared at the day, as `total` compares it, so the
+   * records behind a period's total are the records that total summed. A bound
+   * left out is the first day of the current month and now, and at most the
+   * newest 200 records are answered.
+   */
+  records(pool: string, from?: string, until?: string): Promise<UsageEntry[]>;
 }

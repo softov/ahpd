@@ -84,7 +84,7 @@ against its contract before it is recorded.
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
-| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record` and `total` |
+| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
 
 ### A backend's worker chats
 

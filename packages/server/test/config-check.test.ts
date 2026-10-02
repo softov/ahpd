@@ -85,6 +85,19 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ usage: { per: 'session' } })).toBe(`${config}: usage.per must be one of turn, report`);
   });
 
+  it('takes a usage.timezone as a string, and refuses one that is not', () => {
+    expect(refusal({ usage: { timezone: 3 } })).toBe(`${config}: usage.timezone must be text`);
+    expect(refusal({ usage: { timezone: null } })).toBe(`${config}: usage.timezone must be text`);
+  });
+
+  it('reads the zone onto the options, and leaves it absent when the file names none', () => {
+    // Which zone it names is not checked here: a runtime that cannot read one
+    // says so where the periods are cut, and uses the system's own.
+    expect(folded({ usage: { timezone: 'Asia/Tokyo' } }).usageTimezone).toBe('Asia/Tokyo');
+    expect(folded({ usage: {} }).usageTimezone).toBeUndefined();
+    expect(folded({}).usageTimezone).toBeUndefined();
+  });
+
   it('refuses http.host without http.port', () => {
     expect(refusal({ http: { host: '127.0.0.1' } })).toContain('http.host');
     expect(refusal({ http: { host: '127.0.0.1' } })).toContain('http.port');

@@ -112,6 +112,24 @@ export const namesOf = (principal: Principal): string[] => {
   return names;
 };
 
+/**
+ * The usage pools one person may see without `usage:read` - decision
+ * `usage-is-read-through-a-usage-scheme`.
+ *
+ * Their own `user:` pool, and one pool per name `namesOf` gives: a bare team
+ * becomes `team:<name>` and a `team:project` becomes `project:<team>:<project>`.
+ * That is the spelling `meter.ts` charges a record under, so a pool a record was
+ * charged to is a pool this lists - and a pool this lists that nothing has been
+ * charged to yet is still a pool they may read.
+ */
+export const poolsFor = (principal: Principal): string[] => [
+  `user:${principal.id}`,
+  ...namesOf(principal).map((name) => {
+    const one = membership(name);
+    return one?.project === undefined ? `team:${name}` : `project:${name}`;
+  }),
+];
+
 /** What they may name, said as a refusal. */
 const refused = (principal: Principal): string => {
   const names = namesOf(principal);

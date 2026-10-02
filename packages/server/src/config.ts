@@ -27,7 +27,7 @@ export interface HttpSetting {
 }
 
 /**
- * How this host writes down what its work cost.
+ * How this host writes down what its work cost, and where it cuts it.
  *
  * `per: 'turn'` - the default - is one record for a turn, holding what the turn
  * had used when it ended. `per: 'report'` is one record for every `chat/usage`,
@@ -37,6 +37,13 @@ export interface HttpSetting {
 export interface UsageSetting {
   /** `turn` writes one record when a turn ends, `report` one per report. */
   per?: 'turn' | 'report';
+  /**
+   * The zone a day and a week start in, as `Intl` names one.
+   *
+   * Absent is the system's own. It is what makes a week begin on Monday where
+   * the deployment is rather than where the reader happens to be.
+   */
+  timezone?: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 ---
 title: The host serves usage as a scheme, and a person reads their own pools without the grant
-status: todo
+status: done
 depends: [task-01-the-port-reads-back.md]
 layer: "sdk, server"
 refs:
@@ -24,8 +24,8 @@ A signed-in person reads their own, their teams' and their projects' pools witho
 - `UPDATE: packages/sdk/src/scopes.ts:100-113` - `poolsFor(principal)`, the pools a person may see, beside `namesOf`.
 - `UPDATE: packages/sdk/src/users.ts:40` - `SUBJECTS`, where `usage` joins the four host/36 puts there.
 - `UPDATE: packages/sdk/src/index.ts:53-58` - the two new exports.
-- `UPDATE: packages/sdk/src/types/resources.ts:234-249` - `ResourceProvider`, if open question 1 below settles on a member it does not have.
-- `UPDATE: packages/sdk/src/host.ts:6766-6817` - `capabilityFor`, and `admit` at `:6826-6855` with the one gate at `:10522`, if open question 1 below settles on the host asking the provider.
+- `UPDATE: packages/sdk/src/types/resources.ts:234-249` - `ResourceProvider` gains `authorize?(uri, reader)`, and `list`/`read` receive the reader (decision `a-scheme-provider-may-authorize-a-read-itself`).
+- `UPDATE: packages/sdk/src/host.ts:6766-6817` - `capabilityFor`, and `admit` at `:6826-6855` with the one gate at `:10522`: a read whose provider's `authorize` answers `true` needs no `<scheme>:read`; `resourceList` and `resourceRead` pass the connection's principal.
 - `UPDATE: packages/sdk/src/host.ts:7626-7643` - `resourceList` and `resourceRead`, which hand the provider nothing about who asked.
 - `UPDATE: packages/server/src/commands/run.ts:263-384` - the daemon registers the provider beside the store it already builds.
 - `CREATE: packages/sdk/test/usage-scheme.test.ts` - the cases below.
@@ -38,11 +38,11 @@ A signed-in person reads their own, their teams' and their projects' pools witho
 4. A pool name is one path segment, read with `decodeURIComponent` and written with `encodeURIComponent`, because a pool name holds colons: `project:backend:search` is a name rather than an authority, which is the reading the plan's table row settled on.
 5. `read` on the pool answers `{ day, week, month }`, each one a `UsageTotal` from `usage.total(pool, from, until)`, as JSON; a measure nothing was charged in is absent rather than zero, because `total` already leaves it out.
 6. The three periods are cut in `timezone`, not in the system's zone: a day starts at local midnight, a week at the Monday before it, a month at the first. The zone's offset comes from `Intl.DateTimeFormat` with `timeZone`, and the boundary is the instant that offset puts at that local midnight, since nothing in this repository holds a zoned clock.
-7. `read` on `records` answers the records from `usage.records`, and `from` and `until` are read off the query string; a bound nobody gave is the plan's open question below.
+7. `read` on `records` answers the records from `usage.records`, and `from` and `until` are read off the query string; no `from` is the first day of the current month, no `until` is now, and at most the newest 200 are answered.
 8. `poolsFor(principal)` in `packages/sdk/src/scopes.ts`, beside `namesOf`, is the one answer to "which pools may this person see": `user:<id>`, and for each name `namesOf` gives, `team:<name>` when the name is a bare team and `project:<name>` when it names one. That is the spelling `poolsOf` writes at `packages/sdk/src/meter.ts:167-171`, so a pool a record was charged to is a pool this can list.
 9. A reader holding `usage:read` sees every pool `usage.pools()` names; one holding it does not sees `poolsFor`, and is refused `-32009` with `refusalReason(id, 'usage:read')` for any other pool, which is the sentence the host would have said itself.
 10. A reader the gate did not check is a root connection or a host with no users directory, because `admit` returns early for both at `packages/sdk/src/host.ts:6827`, so the provider is handed no principal and answers every pool. A reader it did check is handed their `Principal`, and a principal with no `usage:read` may see only `poolsFor`.
-11. **Depends on open question 1 below.** `capabilityFor` at `packages/sdk/src/host.ts:6814` turns every `usage:` URI into `usage:read` and `admit` throws before the provider is reached, so the own-pool rule of step 9 cannot run until the gate is opened for it and `resourceList` and `resourceRead` at `:7626-7643` hand the provider the reader.
+11. `capabilityFor` at `packages/sdk/src/host.ts:6814` turns every `usage:` URI into `usage:read` and `admit` throws before the provider is reached, so the own-pool rule of step 9 cannot run until the gate is opened for it and `resourceList` and `resourceRead` at `:7626-7643` hand the provider the reader.
 12. `usage` joins `SUBJECTS` at `packages/sdk/src/users.ts:40`, beside the four host/36 puts there, so a role may be written with the subject rather than only with the wildcard that reaches it.
 13. The daemon registers the provider in `base` at `packages/server/src/commands/run.ts:263-384`, beside the store it builds at `:357-360`, and only where `base.usage` is set: a host with no `usage` port serves no `usage:` scheme, so the advertisement at `packages/sdk/src/host.ts:5667-5682` leaves the key out rather than answering a store that is not there.
 14. Export `usageProvider` and `poolsFor` from `packages/sdk/src/index.ts:53-58`, where `fileUsage` and `namesOf` already are.
@@ -54,5 +54,3 @@ A signed-in person reads their own, their teams' and their projects' pools witho
 - `packages/sdk/test/plugin-host.test.ts`, beside the advertisement case at `:290-337`: `_meta['ahpd.resourceProviders'].usage` carries `root: 'usage://'` and the operations the provider implements.
 - `pnpm exec vitest run packages/sdk/test/usage-scheme.test.ts packages/sdk/test/users-gate.test.ts packages/sdk/test/usage.test.ts`.
 - `pnpm typecheck`, `pnpm test`, `pnpm boundary`.
-
-## Resume

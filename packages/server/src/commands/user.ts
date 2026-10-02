@@ -31,7 +31,7 @@ import type { ServedFacts } from './served.js';
  * grant. A served call with nobody behind it is refused here as the registry's
  * hook refuses it, so the bound holds whatever hook the registry was built with.
  */
-const bounded = (context: Pick<CommandContext, 'request' | 'surface'>, grants: readonly Grant[]): void => {
+export const bounded = (context: Pick<CommandContext, 'request' | 'surface'>, grants: readonly Grant[]): void => {
   if (context.surface === 'cli') return;
   const actor = context.request?.actor as Principal | undefined;
   if (actor === undefined) throw new HttpError(401, SIGN_IN);

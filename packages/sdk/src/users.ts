@@ -43,6 +43,10 @@ export const SUBJECTS = [
   // see a team's names without being let see who is on it - decision
   // `people-are-resource-schemes-with-a-grant-each`.
   'user', 'team', 'project', 'role',
+  // What a pool has been charged and the records charged to it, which is a
+  // question about cost and is nobody else's by default - decision
+  // `usage-is-read-through-a-usage-scheme`.
+  'usage',
 ] as const;
 
 /** `<subject>:<verb>`, with `*` in either position. */

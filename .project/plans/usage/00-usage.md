@@ -36,10 +36,22 @@ A machine's owner is its `ahpd.owner` label (`docker run`), else its entry in `c
 
 A worker's chat reports through `sendSubagent`, not the session's own emit, so a turn that delegated to a worker is billed once and not twice.
 
+The read half runs the other way, from a client to the same store:
+
+```
+client resourceList|resourceRead -> host admit -> usageProvider (usage://, usage://<pool>, usage://<pool>/records) -> usage.total|pools|records -> fileUsage
+ahpd usage [pool] -> usageProvider, over the same store, at the terminal or served at /api/usage/<pool>
+```
+
+`usage.timezone` in the daemon configuration is the zone a day and a week are cut in; without it the system's own is used. A pool name holds colons, so it is one encoded path segment.
+
 ## Tests
 
 - [`code://packages/sdk/test/sessions.test.ts`](../../../packages/sdk/test/sessions.test.ts) - the versioned file store pattern a usage store copies.
 - [`code://packages/sdk/test/usage-meter.test.ts`](../../../packages/sdk/test/usage-meter.test.ts) - what a turn is charged, and for whom, driven through a real host.
+- [`code://packages/sdk/test/usage.test.ts`](../../../packages/sdk/test/usage.test.ts) - the store's own file format: the pools it names and the records it answers back.
+- [`code://packages/sdk/test/usage-scheme.test.ts`](../../../packages/sdk/test/usage-scheme.test.ts) - the `usage:` scheme: what each URI answers, whose pools a reader sees, and the three periods against `Usage.total`.
+- [`code://packages/server/test/usage-command.test.ts`](../../../packages/server/test/usage-command.test.ts) - `ahpd usage` at the terminal and under `/api`, against the same store and the same rule.
 - [`code://packages/computer/test/computer-uptime.test.ts`](../../../packages/computer/test/computer-uptime.test.ts) - a machine's stretches and who they are charged to.
 
 ## Known gaps

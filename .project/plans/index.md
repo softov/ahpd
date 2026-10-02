@@ -249,7 +249,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [01 - Usage is kept behind one port, model use and computer time, with live totals](usage/01-usage-is-kept-behind-one-port/plan.md) | high | built 2026-10-01 ([implemented.md](usage/01-usage-is-kept-behind-one-port/implemented.md)) | - | the meters and the policy plans |
 | [02 - A turn writes what it used to the usage store, charged to its owner, team and project](usage/02-a-turn-writes-what-it-used/plan.md) | high | built 2026-10-02 ([implemented.md](usage/02-a-turn-writes-what-it-used/implemented.md)) | usage 01, host 34, host 35 | policy |
 | [03 - A machine records who created it and writes the time it was up, charged to its owner](usage/03-a-machine-writes-its-up-time/plan.md) | high | built 2026-10-02 ([implemented.md](usage/03-a-machine-writes-its-up-time/implemented.md)) | usage 01, host 34 | - |
-| [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | planned 2026-10-02; task files to write | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
+| [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
 
 Next free number in `usage`: `05`.
 
