@@ -230,14 +230,14 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | [01 - The bridge survives its agent: a bad command, a dying server and a close](acp/01-the-bridge-survives-its-agent/plan.md) | high | built 2026-10-02 ([implemented.md](acp/01-the-bridge-survives-its-agent/implemented.md)) | - | acp 12 |
 | [02 - Replay lands in the session's history, never in its next turn](acp/02-replay-lands-in-history/plan.md) | high | built 2026-10-02 ([implemented.md](acp/02-replay-lands-in-history/implemented.md)) | - | plugin 18, acp 01 task 03 |
 | [03 - A turn ends as the agent ended it](acp/03-a-turn-ends-as-the-agent-ended-it/plan.md) | high | built 2026-10-02 ([implemented.md](acp/03-a-turn-ends-as-the-agent-ended-it/implemented.md)) | - | - |
-| [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | planned 2026-09-26, tasks 01-03 todo | - | acp 05 |
+| [04 - The bridge signs in, and says when an agent needs it](acp/04-the-bridge-signs-in/plan.md) | high | built 2026-10-02 ([implemented.md](acp/04-the-bridge-signs-in/implemented.md)) | - | acp 05 |
 | [05 - A spec can name a preset for a known ACP agent](acp/05-presets/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 04 | container 05 p5 |
-| [06 - Tool calls say what happened, and an agent's edits reach review](acp/06-tool-calls-say-what-happened/plan.md) | medium | planned 2026-09-26, tasks 01-04 todo | - | - |
+| [06 - Tool calls say what happened, and an agent's edits reach review](acp/06-tool-calls-say-what-happened/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/06-tool-calls-say-what-happened/implemented.md)) | - | - |
 | [07 - A person answers with the agent's own permission options](acp/07-the-agents-own-permission-options/plan.md) | medium | dropped 2026-09-28, built in host 24 | - | - |
-| [08 - Usage, title, plan and mode changes reach the client](acp/08-session-updates-reach-the-client/plan.md) | medium | planned 2026-09-26, tasks 01-04 todo | - | acp 09 |
-| [09 - Every option an agent offers is a control](acp/09-every-config-option-is-a-control/plan.md) | medium | planned 2026-09-26, tasks 01-02 todo | acp 08 | - |
+| [08 - Usage, title, plan and mode changes reach the client](acp/08-session-updates-reach-the-client/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/08-session-updates-reach-the-client/implemented.md)) | - | acp 09 |
+| [09 - Every option an agent offers is a control](acp/09-every-config-option-is-a-control/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/09-every-config-option-is-a-control/implemented.md)) | acp 08 | - |
 | [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/10-a-prompt-carries-what-the-agent-accepts/implemented.md)) | - | - |
-| [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | planned 2026-09-30; tasks 01-05 todo | daemon 11 | - |
+| [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/11-the-agent-gets-mcp-servers/implemented.md)) | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | built 2026-10-02 ([implemented.md](acp/12-the-bridge-is-on-the-current-sdk/implemented.md)) | acp 01 | - |
 
 Next free number in `acp`: `13`.

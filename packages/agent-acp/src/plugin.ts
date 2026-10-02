@@ -43,12 +43,38 @@ export const optionsSchema = {
     displayName: { type: 'string', description: 'What a client reads instead of the id, default ACP.' },
     description: { type: 'string', description: 'One line about what this backend is.' },
     model: { type: 'string', description: 'The model a session that names none runs on.' },
+    hostTools: { type: 'boolean', description: 'Offer the host\'s own tools to each session as an MCP server, on by default.' },
+    authenticate: {
+      type: 'object',
+      properties: { methodId: { type: 'string' } },
+      required: ['methodId'],
+      description: 'The sign-in to send after the handshake, as the methodId of a method the server lists in authMethods. A value naming one it does not offer fails the turn that opened.',
+    },
   },
   required: ['command'],
 };
 
-/** The package's own options, out of values `optionsSchema` has checked. */
-const optionsOf = (values: Record<string, unknown>): AcpOptions => values as unknown as AcpOptions;
+/**
+ * The package's own options, out of values `optionsSchema` has checked.
+ *
+ * `authenticate` is the one option whose inside the schema does not reach: it
+ * says this key is an object, and the id inside it is required there rather
+ * than here, so an object carrying no id is refused here rather than turned
+ * into a sign-in to no method.
+ */
+const optionsOf = (host: PluginHost, values: Record<string, unknown>): AcpOptions => {
+  const signIn = values.authenticate;
+  if (signIn !== undefined) {
+    const held = (typeof signIn === 'object' && signIn !== null ? signIn : {}) as { methodId?: unknown };
+    if (typeof held.methodId !== 'string' || held.methodId === '') {
+      throw new Error(`plugins.${name}.options.authenticate.methodId is required`);
+    }
+  }
+  // The log is the daemon's own - the same line `agent-claude` writes its
+  // warnings to. `hostTools` keeps whatever it says: on unless a deployment
+  // says `false`, which is decided where the option is read rather than here.
+  return { ...(values as unknown as AcpOptions), log: (line) => host.log(line) };
+};
 
 /**
  * Register one ACP backend from the plugin's own options.
@@ -57,5 +83,5 @@ const optionsOf = (values: Record<string, unknown>): AcpOptions => values as unk
  * two commands and two providers are two backends that do not collide.
  */
 export function apply(host: PluginHost, options: Record<string, unknown>): void {
-  host.registerAgent(acpAgent(optionsOf(options)));
+  host.registerAgent(acpAgent(optionsOf(host, options)));
 }

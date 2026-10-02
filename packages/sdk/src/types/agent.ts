@@ -8,8 +8,44 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { StartTerminals } from './terminals.js';
+import type { ToolsEndpoint } from '../toolserver.js';
 import type { ComputerPort } from './computers.js';
 import type { MachineNeed } from './machine.js';
+
+/**
+ * An MCP server the host offers its agents, reached over stdio.
+ *
+ * `command` is what the agent starts and `args` what it is given; `cwd` and
+ * `env` are its own directory and its own environment.
+ */
+export interface StdioMcpServer {
+  type: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+/**
+ * An MCP server the host offers its agents, reached over HTTP.
+ *
+ * `url` is where it answers and `headers` go with every call, which is how an
+ * endpoint that wants a bearer token is reached.
+ */
+export interface HttpMcpServer {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * One MCP server, in one of the two shapes there are.
+ *
+ * A `stdio` and an `http` server are reached in ways with nothing in common
+ * past the name a person gave one, and the two are kept apart rather than a
+ * single object with the fields of both on it.
+ */
+export type McpServer = StdioMcpServer | HttpMcpServer;
 
 /**
  * What running a tool does to the world.
@@ -118,6 +154,21 @@ export interface Start {
    */
   tools?: BoundTool[];
   /**
+   * The MCP servers this session's agent is offered, by the name a person gave
+   * them.
+   *
+   * The host's own servers, over the ones this session's client plugins
+   * contribute - a plugin's server of the same name wins, because the client
+   * that asked for it is closer to the work than the host is. Left out when the
+   * host is configured with none and no client plugin adds one, which is a
+   * backend that is asked for nothing rather than one asked for an empty list.
+   *
+   * A backend that cannot take MCP servers ignores them: this host's own
+   * backends reach the same servers through their own configuration, and an
+   * agent that speaks ACP is handed the list on its `session/new` instead.
+   */
+  mcpServers?: Record<string, McpServer>;
+  /**
    * What the host wants the model told, beside the backend's own prompt.
    *
    * One entry per host tool that carries an instruction. A backend that can
@@ -149,6 +200,20 @@ export interface Start {
    * without.
    */
   terminals?: StartTerminals;
+  /**
+   * The host's tools, as an MCP server this session's backend may point its
+   * own client at.
+   *
+   * A factory and not a server object, because the endpoint is per session: a
+   * path and a bearer token of this session's own, opened on the host's own
+   * listener and closed when the session ends. A backend that already calls
+   * `tools` in process does not ask for this, and a host with nothing to serve
+   * on - a daemon over stdio - leaves it off entirely.
+   *
+   * Answers `undefined` when no endpoint can be opened, which is what a host
+   * that holds no listener to serve one on says.
+   */
+  toolsServer?(): ToolsEndpoint | undefined;
   /**
    * How to run a process in a machine, when the host holds a computer plugin.
    *
@@ -199,8 +264,12 @@ export interface Start {
    *
    * Optional both ways: a backend that cannot see its own tools does not call
    * it, and a host with no changeset source does not pass one.
+   *
+   * A promise is returned where the host has a filesystem to read, so a
+   * `before` is waited for: the write that follows it truncates the file the
+   * read is of.
    */
-  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
+  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
   /**
    * A turn this backend has written under an id of its own.
    *

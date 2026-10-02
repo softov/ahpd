@@ -1,6 +1,6 @@
 ---
 title: auth_required is its own error
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

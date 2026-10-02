@@ -16,7 +16,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
-import type { PluginSpec } from '@ahpd/sdk';
+import type { McpServer, PluginSpec } from '@ahpd/sdk';
 import type { Config, HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
@@ -94,6 +94,13 @@ export interface Options {
   http?: HttpSetting;
   /** The providers this proxy calls and the model names that point at them. */
   proxy: ProxyConfiguration;
+  /**
+   * The MCP servers every session is offered, and the ones that were skipped.
+   *
+   * The host's own, by the name a person gave them; a session merges its
+   * enabled client plugins' servers over these.
+   */
+  mcpServers: Record<string, McpServer>;
   /** Plugins to load, in the order they apply. */
   plugins: PluginSpec[];
   /** Load none, whatever the configuration file names. */
@@ -169,6 +176,72 @@ export const programGlobals: readonly OptionSpec[] = [
   { name: '--token-file', value: 'PATH', description: 'Read the credential --remote presents from this file.' },
   { name: '--refresh', description: 'Fetch the command surface --remote cached again.' },
 ];
+
+/**
+ * One `mcpServers` entry, as the file writes it and as an answer shows it.
+ *
+ * VS Code's two shapes, with `env` and `headers` marked `writeOnly`: a value in
+ * either is a credential more often than not, and a header always is, so a
+ * client is told it is set and never what it says.
+ *
+ * Typed as it is rather than as a `JsonSchema` because that type has no
+ * `writeOnly` and its `additionalProperties` is a switch; the check below is
+ * given it as one, which is what it is.
+ */
+export const mcpServerSchema: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    type: { type: 'string', enum: ['stdio', 'http'] },
+    command: { type: 'string', minLength: 1 },
+    args: { type: 'array', items: { type: 'string' } },
+    env: { type: 'object', additionalProperties: { type: 'string', writeOnly: true } },
+    cwd: { type: 'string' },
+    url: { type: 'string', minLength: 1 },
+    headers: { type: 'object', additionalProperties: { type: 'string', writeOnly: true } },
+  },
+  required: ['type'],
+};
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * `mcpServers` as this run offers them, and what is wrong with the rest.
+ *
+ * The entries are not described by the schema on the key, because the JSON
+ * Schema this family checks has no way of saying that an object is a map; each
+ * one is checked on its own, so a bad entry is named and left out rather than
+ * refusing a start that would have worked for every other server.
+ *
+ * Which shape an entry is decides what it must carry, which is the one rule a
+ * single schema cannot state: a `stdio` server needs a `command` and an `http`
+ * one a `url`.
+ */
+export const mcpServers = (
+  held: unknown,
+  source: (key: string) => string,
+): { servers: Record<string, McpServer>; warnings: string[] } => {
+  const servers: Record<string, McpServer> = {};
+  const warnings: string[] = [];
+  for (const [name, entry] of Object.entries(isObject(held) ? held : {})) {
+    const label = `${source('mcpServers')}: mcpServers.${name}`;
+    let refused: string | undefined;
+    try { check(entry, mcpServerSchema as JsonSchema, label); }
+    catch (why: unknown) { refused = why instanceof Error ? why.message : String(why); }
+    if (refused !== undefined) {
+      warnings.push(refused);
+      continue;
+    }
+    const shape = (entry as Record<string, unknown>)['type'];
+    const needed = shape === 'stdio' ? 'command' : 'url';
+    if ((entry as Record<string, unknown>)[needed] === undefined) {
+      warnings.push(`${label} is a ${shape} server with no ${needed}; ignored`);
+      continue;
+    }
+    servers[name] = entry as McpServer;
+  }
+  return { servers, warnings };
+};
 
 /** Every flag a run takes, as the fields help and the parser read. */
 export const serverFields = {
@@ -281,6 +354,13 @@ export const serverFields = {
     ...proxySchema,
     description: 'The providers this proxy calls and the model names that point at them: providers are keyed by the id a model entry names, and a model name is written <maker>/<name> with the entries serving it. An entry under a built-in id replaces it whole. A key is named by the environment variable holding it, never written here. Set in the configuration file only.',
   },
+  mcpServers: {
+    // The entries are not described here, for the same reason `proxy`'s are
+    // not: this JSON Schema cannot say that an object is a map. `mcpServers`
+    // checks each of them.
+    type: 'object',
+    description: 'The MCP servers every session is offered, by the name a person gave them: a stdio server is a command an agent starts, and an http one is an endpoint it calls. An env or a header is a credential wherever it is, so each answers <set>. A session adds the servers of its own client plugins over these. Set in the configuration file only.',
+  },
   plugins: {
     type: 'array',
     items: { type: 'string' },
@@ -306,7 +386,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['http', 'usage', 'proxy', 'policies'] as const;
+const FILE_ONLY = ['http', 'usage', 'proxy', 'policies', 'mcpServers'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -534,7 +614,10 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   const file = loaded.values;
   /** The file that set a key, which every sentence about that key names. */
   const source = (key: string): string => loaded.sourceOf(key) ?? configFile ?? configPath();
-  const warnings = checkConfig(file, source);
+  // A server this run cannot offer is warned about rather than refused, so the
+  // file's other keys are read whatever one entry says.
+  const mcp = mcpServers(file.mcpServers, source);
+  const warnings = [...checkConfig(file, source), ...mcp.warnings];
   const noPlugins = input['noPlugins'] === true;
 const noCwd = input['noCwd'] === true;
 
@@ -638,6 +721,7 @@ const noCwd = input['noCwd'] === true;
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
     proxy,
+    mcpServers: mcp.servers,
     plugins,
     noPlugins,
     updateCheck: given('updateCheck') ?? true,

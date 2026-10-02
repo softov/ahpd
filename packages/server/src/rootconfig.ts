@@ -17,7 +17,7 @@ import { check } from '@cofold/commands';
 import type { PluginSpec, RootConfigPort } from '@ahpd/sdk';
 import { asSpec, configPath } from './config.js';
 import { SET, keyed, maskValue } from './commands/config.js';
-import { checkConfig, configSchema, serverFields, type ConfigKey, type Options } from './commands/options.js';
+import { checkConfig, configSchema, mcpServerSchema, mcpServers, serverFields, type ConfigKey, type Options } from './commands/options.js';
 import { oneAtATime, readEntry, writeEntry } from './install.js';
 import { nameOf, optionsSchemaLoaded } from './plugins.js';
 
@@ -29,7 +29,7 @@ import { nameOf, optionsSchemaLoaded } from './plugins.js';
  * left out on purpose: a form that could change them would be a form that could
  * take the door off its hinges and leave nothing behind that would open it.
  */
-const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'wire'] as const;
+const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'wire', 'mcpServers'] as const;
 
 /**
  * The keys this daemon can apply while it runs.
@@ -38,7 +38,7 @@ const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTo
  * the notice in root state that a setting is not in force yet - decision
  * `a-configuration-change-applies-live-or-on-ahpd-restart`.
  */
-const LIVE = new Set<string>(['advancedTools', 'wire']);
+const LIVE = new Set<string>(['advancedTools', 'wire', 'mcpServers']);
 
 /** A flag as a person types it: `--port`, and `--path` where the field says so. */
 const flagOf = (key: ConfigKey): string => {
@@ -91,6 +91,33 @@ const mergedWith = (held: unknown, asked: unknown): unknown => {
 };
 
 /**
+ * The servers a client asked for, over the ones the file holds.
+ *
+ * Entry by entry, and merged only where the two agree on a `type`: a server
+ * that changes shape is another server, and merging one into the other leaves
+ * it holding the `command` of the stdio it was beside the `url` of the http one
+ * it has become, or an env and a header both. An entry sent back whole with its
+ * credentials as `<set>` is merged as everywhere else, so saying leave a secret
+ * as it is does not take it away.
+ */
+const mergedServers = (held: unknown, asked: unknown): unknown => {
+  const stored = typeof held === 'object' && held !== null && !Array.isArray(held) ? held as Record<string, unknown> : {};
+  if (typeof asked !== 'object' || asked === null || Array.isArray(asked)) return asked;
+  const out: Record<string, unknown> = { ...stored };
+  const both = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+  for (const [name, one] of Object.entries(asked as Record<string, unknown>)) {
+    const before = stored[name];
+    const merged = one === null
+      ? undefined
+      : both(before) && both(one) && before['type'] === one['type'] ? mergedWith(before, one) : one;
+    if (merged === undefined) delete out[name];
+    else out[name] = merged;
+  }
+  return out;
+};
+
+/**
  * The port a run hands the host, for the file `options` was folded from, the
  * flags `typed` was started with, and the capture `openWire` moves.
  *
@@ -103,8 +130,20 @@ export function daemonRootConfig(
   options: Options,
   typed: Readonly<Record<string, unknown>> = {},
   openWire: (at: string | undefined) => void = () => {},
+  holdMcpServers: (servers: unknown) => void = () => {},
 ): RootConfigPort {
   const file = options.configFile ?? configPath();
+
+  /**
+   * What one daemon key answers, which is the file's own value for every key
+   * but the MCP servers.
+   *
+   * An env entry or a header on a server is a credential wherever it is, so
+   * those answer as set and the rest of the server is answered as it was
+   * written - the same mask a plugin's own options go through.
+   */
+  const answered = (key: string, value: unknown): unknown =>
+    key === 'mcpServers' ? maskValue({ type: 'object', additionalProperties: mcpServerSchema }, value) : value;
 
   /** Every `plugins` entry the file holds, with the key it is carried under. */
   const entries = (held: Record<string, unknown>): { key: string; name: string; spec: PluginSpec }[] => {
@@ -163,7 +202,7 @@ export function daemonRootConfig(
     values: () => {
       const held = readEntry(file);
       return {
-        ...Object.fromEntries(DAEMON_KEYS.filter((key) => Object.hasOwn(held, key)).map((key) => [key, held[key]])),
+        ...Object.fromEntries(DAEMON_KEYS.filter((key) => Object.hasOwn(held, key)).map((key) => [key, answered(key, held[key])])),
         ...Object.fromEntries(entries(held).map(({ key, name, spec }) => [key, pluginKey(name, spec).value])),
       };
     },
@@ -181,8 +220,23 @@ export function daemonRootConfig(
           restartNeeded = restartNeeded || !LIVE.has(key);
           // `null` is how a client says a key is taken back, as it is everywhere
           // else on the root channel.
-          if (value === null || value === undefined) delete held[key];
-          else held[key] = value;
+          if (value === null || value === undefined) {
+            delete held[key];
+            continue;
+          }
+          /*
+           * The servers are merged rather than replaced, because an env entry
+           * or a header on one is answered as `<set>`: a client that sends the
+           * map back is saying the credentials are left as they are, and
+           * writing what it was shown would put the word over every one of them.
+           */
+          if (key === 'mcpServers') {
+            const merged = mergedServers(held[key], askedOf(value));
+            if (merged === undefined || Object.keys(merged as Record<string, unknown>).length === 0) delete held[key];
+            else held[key] = merged;
+            continue;
+          }
+          held[key] = value;
           continue;
         }
         // A plugin's contributions are folded in when the host is built, so
@@ -235,6 +289,14 @@ export function daemonRootConfig(
       writeEntry(file, held);
       // The capture follows the file, and only once the file is what it says.
       if ('wire' in values) openWire(typeof values['wire'] === 'string' ? values['wire'] : undefined);
+      /*
+       * The servers as the file now holds them, credentials included, for the
+       * next session, and through the same check a start applies: an entry the
+       * file holds but a server cannot be built from is left in the file, where
+       * the next start says what is wrong with it, rather than handed to a
+       * session that would fail on it.
+       */
+      if ('mcpServers' in values) holdMcpServers(mcpServers(held['mcpServers'], () => file).servers);
       return { restartNeeded };
     }),
   };

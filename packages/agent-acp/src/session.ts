@@ -23,8 +23,11 @@
  * not have yet.
  */
 
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { RequestError } from '@agentclientprotocol/sdk';
 import type {
+  AgentCapabilities,
   AvailableCommand,
   BlobResourceContents,
   ContentBlock,
@@ -32,6 +35,7 @@ import type {
   CreateTerminalResponse,
   KillTerminalRequest,
   KillTerminalResponse,
+  McpServer as AcpMcpServer,
   PermissionOptionKind,
   PromptCapabilities,
   ReadTextFileRequest,
@@ -53,10 +57,10 @@ import type {
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { machineAsked, Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageAttachment, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
-import { confirmationOptions, mapUpdate } from './mapping.js';
+import { closePlan, confirmationOptions, mapUpdate } from './mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
@@ -119,6 +123,87 @@ const referencing = (one: MessageAttachment): one is Extract<MessageAttachment, 
 const CLOSE_GRACE_MS = 1000;
 
 /**
+ * One host server as `session/new` names it.
+ *
+ * ACP spells an HTTP server as a URL and a list of headers rather than as the
+ * map of headers VS Code's key holds, so the token goes over as the one header
+ * it is: `ahp` is the name the in-process server carries, and a server that
+ * already has one by that name is being told about the same tools twice.
+ */
+const HOST_TOOLS = 'ahp';
+
+/**
+ * The MCP servers a session is opened with, in ACP's shape.
+ *
+ * The host's own map, less whatever the handshake says this server cannot take,
+ * plus the host's tools as one HTTP server when `hostTools` is on. A server left
+ * out is said rather than dropped, because a deployment that configured a
+ * server and watches a session not reach it has no other way to find out.
+ */
+const serversFor = (
+  start: Start,
+  own: () => ToolsEndpoint | undefined,
+  capabilities: AgentCapabilities | undefined,
+  hostTools: boolean,
+  say: (line: string) => void,
+): AcpMcpServer[] => {
+  const taken: AcpMcpServer[] = [];
+  const mcp = capabilities?.mcpCapabilities;
+  for (const [name, one] of Object.entries(start.mcpServers ?? {})) {
+    // ACP has one shape per transport and this host has two, so a stdio server
+    // is a name, a command and a list of variables, and an HTTP one is a name,
+    // a URL and a list of headers.
+    if (one.type === 'http') {
+      if (mcp?.http !== true) {
+        say(`${name}: this ACP server takes no MCP server over HTTP, so it was left out`);
+        continue;
+      }
+      taken.push({
+        type: 'http',
+        name,
+        url: one.url,
+        headers: Object.entries(one.headers ?? {}).map(([header, value]) => ({ name: header, value })),
+      });
+      continue;
+    }
+    // ACP cannot say where a stdio server starts, so a directory goes with it
+    // and is not sent. Said rather than dropped, like every server left out.
+    if (one.cwd !== undefined) {
+      say(`${name}: ACP carries no directory for a stdio MCP server, so ${one.cwd} was left out`);
+    }
+    taken.push({
+      name,
+      command: one.command,
+      args: one.args ?? [],
+      env: Object.entries(one.env ?? {}).map(([variable, value]) => ({ name: variable, value })),
+    });
+  }
+  if (!hostTools || start.toolsServer === undefined) return taken;
+  // The host's own tools are one HTTP server among the rest, so a server that
+  // takes none over HTTP is not told about this one either.
+  if (mcp?.http !== true) {
+    say(`${HOST_TOOLS}: this ACP server takes no MCP server over HTTP, so it was left out`);
+    return taken;
+  }
+  const endpoint = own();
+  if (endpoint === undefined) return taken;
+  taken.push({
+    type: 'http',
+    name: HOST_TOOLS,
+    url: endpoint.url,
+    headers: [{ name: 'authorization', value: `Bearer ${endpoint.token}` }],
+  });
+  return taken;
+};
+
+/**
+ * The JSON-RPC code the protocol's `auth_required` carries, read off the SDK
+ * rather than written out, because a code this file recognises by hand is a
+ * code it stops recognising if the protocol moves it.
+ */
+const AUTH_REQUIRED = RequestError.authRequired().code;
+
+/**
  * One conversation over one ACP server.
  *
  * `options` is the backend's identity and wiring; `start` is what this
@@ -136,6 +221,36 @@ export function acpSession(options: AcpOptions, start: Start): Session {
    * it is, and a server that was pointed somewhere says so on `session/new`.
    */
   const where = start.workingDirectory ?? options.cwd ?? process.cwd();
+
+  /**
+   * Whether a path is one this session was given to work in.
+   *
+   * Both sides are resolved first, so a path that climbs out of a directory
+   * with `..` is judged by where it lands rather than by how it was written.
+   */
+  const directories = [where, ...(start.additional ?? [])].map((one) => resolve(one));
+  const inside = (path: string): boolean => {
+    const full = resolve(path);
+    return directories.some((dir) => full === dir || full.startsWith(`${dir}/`));
+  };
+
+  /**
+   * The host's own tools, as the one HTTP server this session hands its agent.
+   *
+   * Asked for once and kept: the endpoint answers with a token of its own, and
+   * a server that dies is opened again with the same endpoint, so asking per
+   * open would leave the process behind the first one answering for a session
+   * nothing is listening to.
+   */
+  let endpoint: ToolsEndpoint | undefined;
+  let asked = false;
+  const toolsServer = (): ToolsEndpoint | undefined => {
+    if (!asked) {
+      endpoint = start.toolsServer?.();
+      asked = true;
+    }
+    return endpoint;
+  };
 
   /** The config in force, by key. `session/configChanged` merges into this. */
   const settings: Record<string, unknown> = { ...start.settings };
@@ -161,6 +276,15 @@ export function acpSession(options: AcpOptions, start: Start): Session {
    * so a session that has not opened answers no models.
    */
   let offers: SessionConfigOption[] = [];
+  /**
+   * The models a server from before config options named, where it named none.
+   *
+   * Those servers answered `session/new` with a `models` field rather than with
+   * a model option. The SDK's types no longer carry it, so it is read off the
+   * answer as it stands; it is only read when there is no option, because an
+   * option is the newer account of the same thing.
+   */
+  let listedModels: { id: string; name: string }[] | undefined;
   let active: Bag | undefined;
   /** The running turn's mapping, so an update knows what it belongs to. */
   let mapping: AcpTurn | undefined;
@@ -183,6 +307,14 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   /** Whether the server said it can be given directories beside the one it runs in. */
   let extras = false;
   /**
+   * The ids the server offered for sign-in, kept from the handshake.
+   *
+   * A server names them once, at the start of a connection, and an error that
+   * arrives later has to name them itself: the sentence that says which way
+   * to sign in is the whole of what a person is given.
+   */
+  let signIns: string[] = [];
+  /**
    * The updates a server replayed while this session was opening.
    *
    * A `session/load` answers with the whole conversation before its response,
@@ -202,6 +334,14 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   /** What it is doing, or nothing while it is idle. */
   let activity: string | undefined;
   let title = UNTITLED;
+  /**
+   * Whether a person named this session themselves.
+   *
+   * An agent may call a conversation what it likes until somebody says
+   * otherwise; after that the name is theirs, and the agent's next idea for it
+   * is read as nothing to do.
+   */
+  let renamed = false;
   let modified = new Date().toISOString();
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
@@ -264,15 +404,98 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     settings.permissionMode = state.currentModeId;
   };
 
-  /** Remember the session config options the server named. */
-  const learnOffers = (list: SessionConfigOption[] | null | undefined): void => {
-    if (list === null || list === undefined) return;
-    offers = [...list];
-  };
-
   /** The option a model choice is set through, when the server named one. */
   const modelOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
     offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'model');
+
+  /** The option a mode choice is set through, where the server names one. */
+  const modeOption = (): (SessionConfigOption & { type: 'select' }) | undefined =>
+    offers.find((one): one is SessionConfigOption & { type: 'select' } => one.type === 'select' && one.category === 'mode');
+
+  /**
+   * The key an option's value is kept under.
+   *
+   * A `mode` option is the newer account of the same thing the legacy modes
+   * carry, so it is where `permissionMode` is read from, and a `model` option
+   * is the model. Every other option is a control of its own, under the
+   * server's own id: the ids belong to the server and the other keys belong to
+   * the host, so the two are kept apart by a prefix.
+   */
+  const keyOf = (option: SessionConfigOption): string => {
+    if (option.type === 'select' && option.category === 'model') return 'model';
+    if (option.type === 'select' && option.category === 'mode') return 'permissionMode';
+    return `acp.${option.id}`;
+  };
+
+  /**
+   * The options that are controls of their own, rather than the model or the mode.
+   *
+   * Only the two kinds a control can draw: what the protocol carries is a
+   * choice of values or a switch, and a server naming anything else has named
+   * something this bridge cannot put in front of a person.
+   */
+  const controlOptions = (): SessionConfigOption[] =>
+    offers.filter((one) => (one.type === 'select' || one.type === 'boolean')
+      && keyOf(one) !== 'model' && keyOf(one) !== 'permissionMode');
+
+  /**
+   * Remember the session config options the server named, and where each stands.
+   *
+   * A value learned this way is written down and not said out: the client that
+   * asked for the session reads it out of `config.values` rather than being
+   * told what it asked about.
+   */
+  const learnOffers = (list: SessionConfigOption[] | null | undefined): void => {
+    if (list === null || list === undefined) return;
+    offers = [...list];
+    for (const option of offers) settings[keyOf(option)] = option.currentValue;
+  };
+
+  /**
+   * The models a server from before config options named, kept.
+   *
+   * Those servers answered `session/new` with a `models` field of their own
+   * rather than with a model option, and the SDK's types no longer carry it, so
+   * it is read off the answer as it stands. An option wins: where a server
+   * names both, the option is the newer account of the same thing, and reading
+   * the older one as well would give a client two answers to one question.
+   */
+  const learnModels = (answer: unknown): void => {
+    if (modelOption() !== undefined) return;
+    const named = bag(answer).models;
+    const held = bag(named).availableModels;
+    if (!Array.isArray(held)) return;
+    listedModels = held
+      .filter((one): one is { modelId: string; name: string } => typeof bag(one).modelId === 'string')
+      .map((one) => ({ id: one.modelId, name: typeof one.name === 'string' ? one.name : one.modelId }));
+    const current = bag(named).currentModelId;
+    if (typeof current === 'string') settings.model = current;
+  };
+
+  /**
+   * One value the agent moved, said to every client and kept as the one in force.
+   *
+   * Said only when it is not the value already in force: a server may repeat an
+   * update it has already made, and a client told the same thing twice has to
+   * work out whether anything moved. This is the only place `session/configChanged`
+   * goes out, so that what a client hears and what `settings()` answers cannot drift.
+   */
+  const configChanged = (key: string, value: unknown): void => {
+    if (settings[key] === value) return;
+    settings[key] = value;
+    emit('session', { type: 'session/configChanged', config: { [key]: value } });
+  };
+
+  /**
+   * What an update's options say, said to every client.
+   *
+   * Said against the values in force before the update was learned, so an
+   * option the server repeated is not said again - the whole list arrives on
+   * every update, and only what moved is news.
+   */
+  const offersChanged = (list: SessionConfigOption[]): void => {
+    for (const option of list) configChanged(keyOf(option), option.currentValue);
+  };
 
   /** A select's values, flattening any groups into the flat list a picker draws. */
   const choicesOf = (option: SessionConfigOption & { type: 'select' }): { value: string; name: string }[] => {
@@ -305,27 +528,63 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   });
 
   /**
-   * The schema this session reports, with the modes the server named.
+   * One option, as the control a client draws.
+   *
+   * A select carries the values the server serves as its enum and their names
+   * as the labels, which is the only place either can come from, and the value
+   * in force as the default, so a client that never asked still draws it where
+   * the agent left it.
+   */
+  const optionControl = (option: SessionConfigOption): Bag => {
+    const choices = option.type === 'select' ? choicesOf(option) : [];
+    return {
+      scope: 'session',
+      type: option.type === 'boolean' ? 'boolean' : 'string',
+      title: option.name,
+      ...(option.description === null || option.description === undefined ? {} : { description: option.description }),
+      sessionMutable: true,
+      ...(option.type === 'boolean'
+        ? { default: option.currentValue }
+        : {
+            enum: choices.map((one) => one.value),
+            enumLabels: choices.map((one) => one.name),
+            default: option.currentValue,
+          }),
+    };
+  };
+
+  /**
+   * The schema this session reports, with what the server named.
    *
    * The agent's own schema carries `permissionMode` without an `enum`, because
-   * no server has been asked yet. A session that has asked overrides it with
-   * the server's own ids and names, which is the only place an enum can come
-   * from.
+   * no server has been asked yet. A session that has asked fills it in - from
+   * the `mode` option where the server named one, and from the legacy modes
+   * where it did not, which is the only place either can come from - and adds
+   * every other option as a control of its own under `acp.<id>`.
    */
   const schemaOf = (): Bag => {
     const base = bag(start.schema());
-    if (modes === undefined) return base;
     const properties = bag(base.properties);
+    const mode = modeOption();
+    const approvals = mode === undefined
+      ? modes === undefined ? undefined : {
+        enum: modes.availableModes.map((one) => one.id),
+        enumLabels: modes.availableModes.map((one) => one.name),
+        default: modes.currentModeId,
+      }
+      : {
+        enum: choicesOf(mode).map((one) => one.value),
+        enumLabels: choicesOf(mode).map((one) => one.name),
+        default: mode.currentValue,
+      };
+    const controls = controlOptions().map((one) => [keyOf(one), optionControl(one)] as const);
+    if (approvals === undefined && controls.length === 0) return base;
     return {
       ...base,
       properties: {
         ...properties,
-        permissionMode: {
-          ...bag(properties.permissionMode),
-          enum: modes.availableModes.map((mode) => mode.id),
-          enumLabels: modes.availableModes.map((mode) => mode.name),
-          default: modes.currentModeId,
-        },
+        ...(approvals === undefined ? {} : { permissionMode: { ...bag(properties.permissionMode), ...approvals } }),
+        ...Object.fromEntries(controls),
       },
     };
   };
@@ -343,13 +602,32 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     if (closed) return;
     if (acpSessionId !== undefined && sessionId !== acpSessionId) return;
 
+    if (update.sessionUpdate === 'session_info_update') {
+      const said = update.title;
+      /*
+       * The agent's name for the conversation, which replaces the one derived
+       * from the first prompt. Not said twice, and not said at all once a
+       * person has named the session themselves: a title a client is told
+       * twice is a title it has to reconcile, and a name somebody chose is not
+       * the agent's to replace.
+       */
+      if (typeof said === 'string' && said !== '' && !renamed && said !== title) {
+        title = said;
+        if (record !== undefined) record.title = said;
+        emit('session', { type: 'session/titleChanged', title: said });
+        touch();
+      }
+      return;
+    }
+
     if (update.sessionUpdate === 'current_mode_update') {
       if (modes !== undefined) modes = { ...modes, currentModeId: update.currentModeId };
-      settings.permissionMode = update.currentModeId;
+      configChanged('permissionMode', update.currentModeId);
       touch();
       return;
     }
     if (update.sessionUpdate === 'config_option_update') {
+      offersChanged(update.configOptions);
       learnOffers(update.configOptions);
       touch();
       return;
@@ -429,7 +707,19 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   const writeTextFile = async (request: WriteTextFileRequest): Promise<WriteTextFileResponse> => {
     const store = start.resources;
     if (store?.write === undefined) throw new Error(`${provider}: this session has no files to write`);
+    /*
+     * Both sides of the write, so the turn's changeset holds what the file was
+     * before this agent changed it beside what it is after. A write outside a
+     * turn has no turn to attach them to, which is every write a server makes
+     * while its session is opening.
+     *
+     * Both are waited for: the write truncates the file, so a `before` read
+     * still in flight would find it already changed, and the turn ends after both.
+     */
+    const turnId = mapping?.turnId;
+    if (turnId !== undefined) await start.onFileEdit?.(turnId, request.path, 'before');
     await store.write(uriOf(request.path), { data: request.content, encoding: 'utf-8', mode: 'truncate' });
+    if (turnId !== undefined) await start.onFileEdit?.(turnId, request.path, 'after');
     return {};
   };
 
@@ -547,6 +837,12 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       displayName: request.toolCall.title ?? request.toolCall.name ?? toolCallId,
       ...(request.toolCall.rawInput === undefined ? {} : { toolInput: JSON.stringify(request.toolCall.rawInput) }),
     } as Bag : bag(bag(existing).toolCall);
+    // The arguments are on the question as well as on the row: a server sends
+    // them with the request when the call is still `pending`, which is exactly
+    // the call the mapping has written no arguments for.
+    if (call.toolInput === undefined && request.toolCall.rawInput !== undefined) {
+      call.toolInput = JSON.stringify(request.toolCall.rawInput);
+    }
     call.status = 'pending-confirmation';
     call.invocationMessage = request.toolCall.title ?? call.toolName;
     call.confirmationTitle = request.toolCall.title ?? call.displayName;
@@ -566,7 +862,29 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * `confirmed` is what moves a running call back to a question, and a
      * client that saw only the input-needed entry would draw the row as
      * running while the server waits.
+     *
+     * From here the mapping's own readiness for this call is this one, because
+     * a status that moves while a person is being asked must not send a ready
+     * behind this saying nobody is going to be. `asked` is what stops it, for
+     * as long as the question stands.
      */
+    const mapped = mapping?.calls.get(toolCallId);
+    if (mapped !== undefined) {
+      mapped.readied = true;
+      mapped.asked = true;
+    } else if (mapping !== undefined) {
+      /*
+       * The call the mapping will find on a later update, so one that arrives
+       * now moves this call rather than opening a second row for it.
+       */
+      mapping.calls.set(toolCallId, {
+        toolCallId,
+        toolName: String(call.toolName),
+        displayName: String(call.displayName),
+        readied: true,
+        asked: true,
+      });
+    }
     emit('chat', {
       type: 'chat/toolCallReady', turnId, toolCallId,
       invocationMessage: call.invocationMessage,
@@ -639,6 +957,53 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * The sign-in the spec named, sent once between the handshake and the
+   * session.
+   *
+   * Nothing is sent when the spec names no method, and a method the server did
+   * not offer fails the start naming the ones it did: a bridge that guessed
+   * would sign a person in as whoever the guess was, and the guess is not
+   * something a configuration can be corrected about afterwards.
+   *
+   * A sign-in the server refuses is the server's own refusal, said as it made
+   * it, rather than a request for a sign-in nobody has made.
+   */
+  const signIn = async (connection: AcpConnection): Promise<void> => {
+    const asked = options.authenticate;
+    if (asked === undefined) return;
+    if (!signIns.includes(asked.methodId)) {
+      const offered = signIns.join(', ');
+      throw new Error(`${provider} offers ${offered === '' ? 'no sign-in method' : offered}, not ${asked.methodId}`);
+    }
+    await connection.authenticate({
+      methodId: asked.methodId,
+      ...(asked._meta === undefined ? {} : { _meta: asked._meta }),
+    }).catch((why: unknown) => {
+      // A server that answers the sign-in and refuses it has said why, and that
+      // is the turn's failure. The protocol's `auth_required` would send the
+      // person back to the option they have already set.
+      throw new Error(`${provider}: sign-in with ${asked.methodId} failed: ${messageOf(why)}`);
+    });
+  };
+
+  /**
+   * The protocol's `auth_required`, as the error a turn ends with.
+   *
+   * A server answers `session/new` and `session/prompt` with it when it wants
+   * to be signed in, and the generic failure would carry the sentence
+   * "Authentication required" with nothing to do about it. The methods come
+   * from the handshake, which is the only place they are ever named.
+   */
+  const signInFailure = (why: unknown): { errorType: string; message: string } | undefined => {
+    if (!(why instanceof RequestError) || why.code !== AUTH_REQUIRED) return undefined;
+    const offered = signIns.length === 0 ? 'offers no sign-in method' : `offers ${signIns.join(', ')}`;
+    return {
+      errorType: 'authRequired',
+      message: `${provider}: this ACP server wants to be signed in before it answers, and ${offered}; set the authenticate option to the one to use`,
+    };
+  };
+
+  /**
    * Spawn the server, hand it a client, and open the one session on it.
    *
    * One promise for the whole of it, so a second turn that arrives while the
@@ -694,6 +1059,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       closes = advertised(handshake.agentCapabilities?.sessionCapabilities?.close);
       takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
       extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
+      signIns = (handshake.authMethods ?? []).map((one) => one.id);
+      await signIn(connection);
       /*
        * The directories beside the one the server runs in, only to a server that
        * advertised them.
@@ -706,6 +1073,12 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       const extra = extras && start.additional !== undefined && start.additional.length > 0
         ? { additionalDirectories: start.additional }
         : {};
+      /*
+       * The servers this session is opened with: the host's own, less what the
+       * handshake says this server cannot take, plus the host's tools as one
+       * HTTP server unless the deployment turned that off.
+       */
+      const servers = serversFor(start, toolsServer, handshake.agentCapabilities, options.hostTools !== false, (line) => options.log?.(line));
       /*
        * The conversation to continue: the one a resume named, or the one this
        * session already had when its server died. Both go through the same
@@ -722,24 +1095,24 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         const loaded = await connection.loadSession({
           sessionId: reopen,
           cwd: where,
-          // No MCP servers yet: task 03 is what offers the host's tools to the
-          // server, and an empty list is the honest answer until then.
-          mcpServers: [],
+          mcpServers: servers,
           ...extra,
         });
         acpSessionId = reopen;
         learnModes(loaded.modes);
         learnOffers(loaded.configOptions);
+        learnModels(loaded);
       }
       else {
         const created = await connection.newSession({
           cwd: where,
-          mcpServers: [],
+          mcpServers: servers,
           ...extra,
         });
         acpSessionId = created.sessionId;
         learnModes(created.modes);
         learnOffers(created.configOptions);
+        learnModels(created);
       }
       /*
        * The catalogue's record starts here, where the server has named the
@@ -837,8 +1210,21 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     if (watchedTurn !== undefined && watchedTurn.turnId === turnId) {
       watchedTurn.state = ending;
       watchedTurn.duration = Number.isFinite(duration) ? duration : 0;
+      /*
+       * What the turn last said it had spent, which the updates alone cannot
+       * say: the token counts arrive with the prompt's answer, and a cost is
+       * reported for the whole session, so what this turn spent is its share
+       * of a total it opened at a number the replay never knew.
+       */
+      if (turn.usage !== undefined) watchedTurn.usage = bag(turn.usage);
+      // Every turn after the first is sealed here rather than at the open that
+      // precedes it, because the open already happened for it.
+      if (record !== undefined && !record.turns.includes(watchedTurn)) record.turns.push(watchedTurn);
       watchedTurn = undefined;
     }
+    // Nothing in the protocol says when the agent has finished writing a plan,
+    // so the turn ending is what closes the call it is held in.
+    if (mapping !== undefined) for (const action of closePlan(mapping)) emit('chat', action);
     // Before the ending action, not after: the host reads `status()` as it
     // passes that action on, and a turn still active there reads as running.
     active = undefined;
@@ -892,10 +1278,22 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   ): Promise<void> => {
     if (chosen === undefined) return;
     const option = modelOption();
-    // A choice the server cannot take is a turn that would run on the wrong
-    // model, so it fails rather than prompts.
+    /*
+     * A server from before config options has no option to set, and takes the
+     * model by the call it knew instead. The list it named is the only place
+     * a choice can be checked against, so an id it did not offer is the same
+     * failure as a server that offered none.
+     */
     if (option === undefined) {
-      throw new Error(`${provider}: this ACP server names no model option, so "${chosen.id}" cannot be chosen`);
+      const listed = listedModels ?? [];
+      const served = listed.find((one) => one.id === chosen.id);
+      if (served === undefined) {
+        throw new Error(`${provider}: this ACP server names no model option, so "${chosen.id}" cannot be chosen`);
+      }
+      if (settings.model === served.id) return;
+      await held.connection.setModel({ sessionId: held.sessionId, modelId: served.id });
+      settings.model = served.id;
+      return;
     }
     if (option.currentValue === chosen.id) return;
     const answer = await held.connection.setSessionConfigOption({
@@ -931,21 +1329,25 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     const price = held.cost === undefined
       ? undefined
       : { amount: held.cost.amount - (held.costAtStart ?? 0), currency: held.cost.currency };
+    const filled = bag(bag(held.usage)._meta).context;
     const said: Bag = {
       ...(num(usage?.inputTokens) !== undefined ? { inputTokens: num(usage?.inputTokens) } : {}),
       ...(num(usage?.outputTokens) !== undefined ? { outputTokens: num(usage?.outputTokens) } : {}),
       ...(num(usage?.cachedReadTokens) !== undefined ? { cacheReadTokens: num(usage?.cachedReadTokens) } : {}),
       /*
-       * Cache writes and thinking ride `_meta`, which is where the protocol
-       * carries a measurement it names no field for, and where the other
-       * backends already put both.
+       * Cache writes, thinking and the context window ride `_meta`, which is
+       * where the protocol carries a measurement it names no field for, and
+       * where the other backends already put them. The context is the one the
+       * updates already reported and this response knows nothing about, so it
+       * is kept rather than dropped at the turn's last word.
        */
-      ...(wrote !== undefined || thought !== undefined || price !== undefined
+      ...(wrote !== undefined || thought !== undefined || price !== undefined || filled !== undefined
         ? {
             _meta: {
               ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
               ...(thought !== undefined ? { reasoningTokens: thought } : {}),
               ...(price !== undefined ? { cost: price } : {}),
+              ...(filled === undefined ? {} : { context: filled }),
             },
           }
         : {}),
@@ -1081,6 +1483,13 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         turnId,
         parts: turn.responseParts as Bag[],
         calls: new Map(),
+        reach: {
+          within: inside,
+          changed: (path, before) => {
+            if (before !== undefined) start.onFileEdit?.(turnId, path, 'before', before);
+            start.onFileEdit?.(turnId, path, 'after');
+          },
+        },
         ...(cumulative !== undefined ? { costAtStart: cumulative } : {}),
       };
       await chooseModel(held, chosen);
@@ -1096,6 +1505,18 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       opening = undefined;
       live = undefined;
       connection?.close();
+      /*
+       * A server that wants to be signed in says so with its own error, and
+       * the turn ends as that rather than as a failure nobody can act on: the
+       * sentence names the methods the handshake offered, because a client is
+       * not sent back to the server for them and `authenticate` takes an id
+       * out of that list.
+       */
+      const signIn = signInFailure(why);
+      if (signIn !== undefined) {
+        finish(turnId, 'error', signIn);
+        return;
+      }
       /*
        * Whatever the server said on stderr rides on the failure, because an
        * exit code is rarely why and the trace under it is. Read from the
@@ -1291,14 +1712,16 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     /**
      * The models this session can run a turn on.
      *
-     * Read from the server's own model option, because only it knows what it
+     * Read from the server's own model option, or from the list a server from
+     * before options named instead, because only the server knows what it
      * serves. Before the session has opened there is no honest answer but an
      * empty list: the agent's `probe` cannot know either, ACP advertising
      * models on `session/new` rather than on `initialize`.
      */
     models: () => {
       const option = modelOption();
-      return option === undefined ? [] : choicesOf(option).map((choice) => ({ id: choice.value, name: choice.name }));
+      if (option !== undefined) return choicesOf(option).map((choice) => ({ id: choice.value, name: choice.name }));
+      return listedModels ?? [];
     },
     agentId: () => acpSessionId,
     customizations: () => [...seeds, ...commands],
@@ -1306,6 +1729,18 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     status,
     activity: () => activity,
     title: () => title,
+    /*
+     * A person's rename, which the host announces and this only keeps. The
+     * flag is the whole of what a title needs here: the protocol has no rename
+     * of its own, so there is nothing to say to the server.
+     */
+    setTitle: (said) => {
+      if (said === '') return;
+      title = said;
+      renamed = true;
+      if (record !== undefined) record.title = said;
+      touch();
+    },
     modifiedAt: () => modified,
     workingDirectories: () => [`file://${where}`],
 
@@ -1492,21 +1927,47 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * Two keys are this backend's: `permissionMode` is the server's mode, and
      * `model` is its model option. `model` is set here even though it is not a
      * schema property, because a model belongs to the turn rather than to the
-     * conversation and a client may still send one. Anything else is refused
-     * naming the key, because only this backend knows what it serves.
+     * conversation and a client may still send one. Every other option the
+     * server offered is a control of its own under `acp.<id>`, and a key
+     * naming no option at all is refused by name, because only this backend
+     * knows what the server serves.
      */
     setConfig: async (key, value): Promise<true | string> => {
+      /*
+       * The value asked for, held before the request goes out, so the server's
+       * own update echoing it back is not announced as a change; put back if the
+       * request fails.
+       */
+      let sent: { key: string; before: unknown } | undefined;
+      const unsent = (): void => {
+        if (sent !== undefined) settings[sent.key] = sent.before;
+      };
       if (key === 'permissionMode') {
         if (typeof value !== 'string') return `${provider}: permissionMode takes a string`;
         try {
           const held = await open();
-          await held.connection.setSessionMode({ sessionId: held.sessionId, modeId: value });
-          settings.permissionMode = value;
-          if (modes !== undefined) modes = { ...modes, currentModeId: value };
+          // The `mode` option is the server's own account of this, so it is
+          // asked through the same call as any other option; the legacy modes
+          // are what is left when it names none.
+          const option = modeOption();
+          sent = { key, before: settings[key] };
+          settings[key] = value;
+          if (option === undefined) {
+            await held.connection.setSessionMode({ sessionId: held.sessionId, modeId: value });
+            if (modes !== undefined) modes = { ...modes, currentModeId: value };
+          }
+          else {
+            learnOffers((await held.connection.setSessionConfigOption({
+              sessionId: held.sessionId,
+              configId: option.id,
+              value,
+            })).configOptions);
+          }
           touch();
           return true;
         }
         catch (why: unknown) {
+          unsent();
           return `${provider}: permissionMode was not set: ${messageOf(why)}`;
         }
       }
@@ -1519,20 +1980,60 @@ export function acpSession(options: AcpOptions, start: Start): Session {
           const held = await open();
           const option = modelOption();
           if (option === undefined) {
-            return `${provider}: this ACP server names no model option, so model cannot be set`;
+            // A server from before config options takes it by the older call,
+            // as a turn naming one does.
+            if (!(listedModels ?? []).some((one) => one.id === value)) {
+              return `${provider}: this ACP server names no model option, so model cannot be set`;
+            }
+            sent = { key, before: settings[key] };
+            settings[key] = value;
+            await held.connection.setModel({ sessionId: held.sessionId, modelId: value });
+            touch();
+            return true;
           }
+          sent = { key, before: settings[key] };
+          settings[key] = value;
           const answer = await held.connection.setSessionConfigOption({
             sessionId: held.sessionId,
             configId: option.id,
             value,
           });
           learnOffers(answer.configOptions);
-          settings.model = value;
           touch();
           return true;
         }
         catch (why: unknown) {
+          unsent();
           return `${provider}: model was not set: ${messageOf(why)}`;
+        }
+      }
+      if (key.startsWith('acp.')) {
+        const id = key.slice('acp.'.length);
+        try {
+          // Opened before the option is looked for, as with the model: the
+          // server names its options on `session/new`, so a session that has
+          // not opened has not been told what may be set. Inside the guard,
+          // because an open that failed is this key failing too.
+          const held = await open();
+          const option = controlOptions().find((one) => one.id === id);
+          if (option === undefined) return `${provider}: this ACP server names no "${id}" option`;
+          if (option.type === 'boolean' && typeof value !== 'boolean') return `${provider}: ${key} takes true or false`;
+          if (option.type === 'select' && typeof value !== 'string') return `${provider}: ${key} takes a string`;
+          if (typeof value !== 'string' && typeof value !== 'boolean') return `${provider}: ${key} takes a string or true or false`;
+          // Built for the option's own kind, which the guards above have said:
+          // a boolean goes as a boolean and a select as one of its values.
+          sent = { key, before: settings[key] };
+          settings[key] = value;
+          const answer = option.type === 'boolean'
+            ? await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, type: 'boolean', value: value === true })
+            : await held.connection.setSessionConfigOption({ sessionId: held.sessionId, configId: option.id, value: String(value) });
+          learnOffers(answer.configOptions);
+          touch();
+          return true;
+        }
+        catch (why: unknown) {
+          unsent();
+          return `${provider}: ${key} was not set: ${messageOf(why)}`;
         }
       }
       return `${provider}: ${key} is not a config key this backend serves`;

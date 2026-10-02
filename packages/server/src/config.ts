@@ -5,7 +5,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { issuerKind, type PluginSpec } from '@ahpd/sdk';
+import { issuerKind, type McpServer, type PluginSpec } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -179,6 +179,17 @@ export interface Config {
    * `a-model-is-named-by-its-maker-and-runs-on-a-provider`.
    */
   proxy?: ProxySetting;
+  /**
+   * The MCP servers every session is offered, by the name a person gave them.
+   *
+   * The host's own, rather than one backend's: a server configured here is
+   * reached by whichever agent a session runs, beside whatever its client
+   * plugins add. An entry that is neither shape is skipped with a warning
+   * rather than refusing the start, because one server nobody can reach is a
+   * gap in one agent's reach where a wrong `port` is a daemon that would not
+   * run at all.
+   */
+  mcpServers?: Record<string, McpServer>;
   /**
    * The plugins to load, in the order they apply.
    *

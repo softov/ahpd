@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: done
 depends: [task-01-a-call-moves-when-the-agent-moves-it.md, task-02-terminal-and-diff-content.md, task-03-an-agent-write-reaches-review.md]
 layer: "docs"
 refs:

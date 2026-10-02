@@ -1,6 +1,6 @@
 ---
 title: The legacy models field is read
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

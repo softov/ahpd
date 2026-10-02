@@ -1,6 +1,6 @@
 ---
 title: The agent's plan is shown
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-A `plan` update replaces a markdown part in the turn listing each entry with its status.
+A `plan` update is the turn's one tool call for the plan: each entry a line of its content, replaced by the next plan, and completed when the turn ends.
 
 ## Files
 
@@ -17,10 +17,10 @@ A `plan` update replaces a markdown part in the turn listing each entry with its
 
 ## Steps
 
-1. One part per turn, replaced on each plan update.
+1. One call per turn, opened and readied by the first plan, its content replaced by each one after it, completed with the last plan when the turn ends.
 
 ## Validation
 
-- Two plan updates leave one part with the second's entries.
+- Two plan updates leave one call holding the second's entries.
 
 ## Resume

@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../../sdk/src/catalog.js';
 import { idOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { gitChanges } from '../../sdk/src/changes.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
+import type { ChangesetFile, ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
 /*
@@ -37,9 +41,9 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean, times = 2000): Promise<void> => {
+const until = async (check: () => boolean | Promise<boolean>, times = 2000): Promise<void> => {
   for (let i = 0; i < times; i++) {
-    if (check()) return;
+    if (await check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
 };
@@ -54,14 +58,25 @@ const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
 const types = (p: ReturnType<typeof peer>, channel: string): string[] =>
   actions(p, channel).map((e) => String(e.action.type));
 
+/** Everything the server said, as prose. */
+const prose = (p: ReturnType<typeof peer>, chatUri: string): string => actions(p, chatUri)
+  .filter((e) => e.action.type === 'chat/delta')
+  .map((e) => String(e.action.content))
+  .join('');
+
+/** What a changeset holds behind one of its minted URIs. */
+const text = async (source: ChangesetSource, uri: string): Promise<string | undefined> =>
+  (await source.read?.(uri))?.data;
+
 /** A connected client with one ACP session, watching both its channels. */
-async function talking() {
+async function talking(options: { changes?: ChangesetSource } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-'));
   const host = createHost({
     path,
     agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
     // The composer's `!` prefix is the host's shell, so the host has to hold one.
     terminals: shellTerminals(),
+    ...(options.changes === undefined ? {} : { changes: options.changes }),
   });
   const p = peer();
   const client = host.accept(p);
@@ -71,11 +86,14 @@ async function talking() {
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'acp' } });
+  await client.handle({
+    method: 'createSession',
+    params: { channel: uri, provider: 'acp', workingDirectories: [`file://${path}`] },
+  });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   opened.push({ client, uri });
-  return { host, client, peer: p, uri, chatUri };
+  return { host, client, peer: p, uri, chatUri, path };
 }
 
 /** The sessions this file started, so each one's subprocess is stopped. */
@@ -191,6 +209,67 @@ it('opens no part for a message that is only whitespace, and keeps the whitespac
     .toEqual(['t1:0', 't1:2', 't1:3']);
 });
 
+it('holds the plan in one call, which each update rewrites and the turn closes', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'plan it');
+  await until(() => ended(p, chatUri));
+
+  // One row for two plans: opened and readied by the first, rewritten by each
+  // one after it, and completed by the turn ending rather than by an update.
+  const plan = actions(p, chatUri).filter((e) => e.action.toolCallId === 't1:plan'
+    && String(e.action.type).startsWith('chat/toolCall'));
+  expect(plan.map((e) => e.action.type)).toEqual([
+    'chat/toolCallStart',
+    'chat/toolCallReady',
+    'chat/toolCallContentChanged',
+    'chat/toolCallContentChanged',
+    'chat/toolCallComplete',
+  ]);
+  // Nothing in the protocol says when the agent has finished writing a plan,
+  // so the call is still running when the second one arrives and completes
+  // after both.
+  expect(plan[2]?.action.content).toEqual([
+    { type: 'text', text: '- [ ] Read the file (in_progress)' },
+    { type: 'text', text: '- [ ] Write the answer' },
+  ]);
+  expect(plan[4]?.action.result).toMatchObject({
+    success: true,
+    content: [
+      { type: 'text', text: '- [x] Read the file' },
+      { type: 'text', text: '- [ ] Write the answer (in_progress)' },
+    ],
+  });
+
+  /*
+   * The client's own fold, which is what the screen is drawn from: one part,
+   * holding the last plan, which the snapshot has to agree with.
+   */
+  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
+  for (const one of actions(p, chatUri)) {
+    state = chatReducer(state, one.action as unknown as ChatAction);
+  }
+  const parts = state.turns.flatMap((turn) => turn.responseParts) as { kind: string; toolCall?: {
+    toolCallId: string; toolName?: string; status?: string; success?: boolean; content?: unknown;
+  } }[];
+  const held = parts.filter((part) => part.kind === 'toolCall' && part.toolCall?.toolCallId === 't1:plan');
+  expect(held).toHaveLength(1);
+  expect(held[0]?.toolCall).toMatchObject({ toolName: 'plan', status: 'completed', success: true });
+  expect(held[0]?.toolCall?.content).toEqual([
+    { type: 'text', text: '- [x] Read the file' },
+    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
+  ]);
+
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { kind: string; toolCall?: { content?: unknown } }[] }[] } };
+  }).snapshot.state.turns[0]?.responseParts ?? [];
+  // The plan call and the words that followed it, which are a part of their own.
+  expect(kept.map((part) => part.kind)).toEqual(['toolCall', 'markdown']);
+  expect(kept[0]?.toolCall?.content).toEqual([
+    { type: 'text', text: '- [x] Read the file' },
+    { type: 'text', text: '- [ ] Write the answer (in_progress)' },
+  ]);
+});
+
 it('reports a tool call as start, ready and complete, with its result', async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', 'use a tool');
@@ -203,6 +282,157 @@ it('reports a tool call as start, ready and complete, with its result', async ()
   expect(done?.action.toolCallId).toBe('call-1');
   expect(done?.action.result).toMatchObject({ success: true });
   expect((done?.action.result as { content: { text: string }[] }).content[0]?.text).toBe('file body');
+});
+
+it('readies a call the agent started later with the arguments it announced it with', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'start it later');
+  await until(() => ended(p, chatUri));
+
+  // The call was announced `pending` with its arguments and the update that
+  // started it carried a status alone, so the arguments the ready carries can
+  // only be the ones the call was holding.
+  const readies = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady'
+    && e.action.toolCallId === 'call-later');
+  expect(readies).toHaveLength(1);
+  expect(readies[0]?.action.toolInput).toBe('{"url":"https://example.test/page"}');
+});
+
+it('completes a call the agent announced and finished at once, with its content', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'take it whole');
+  await until(() => ended(p, chatUri));
+
+  // One update carrying both the opening and the end: the row is opened and
+  // closed at once, and the result is what the update said rather than empty.
+  const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
+  expect(calls.map((e) => e.action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+  expect(calls[2]?.action.result).toMatchObject({ success: true });
+  expect((calls[2]?.action.result as { content: { text: string }[] }).content[0]?.text).toBe('the whole body');
+});
+
+it('asks nothing on the way to a call the agent is still holding, and the question readies it', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hold it');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  // The call arrived `pending`, which is the agent saying it has not started it.
+  // A `not-needed` here would be a claim that nobody is going to be asked, and
+  // the server asks one instruction later.
+  const readies = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady'
+    && e.action.toolCallId === 'call-hold');
+  expect(readies).toHaveLength(1);
+  expect(readies[0]?.action.confirmed).toBeUndefined();
+  expect(readies[0]?.action.toolInput).toBe('{"branch":"main"}');
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-hold', approved: true },
+    },
+  });
+  await until(() => ended(p, chatUri));
+  expect(prose(p, chatUri)).toContain('perm=yes-once');
+
+  // The agent said what the call was going to do while the question stood.
+  // Arguments arriving after it are a reason to say them again, and a status
+  // that starts the call is not a reason to say nobody will be asked: the
+  // question is the call's readiness from then on.
+  const later = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady'
+    && e.action.toolCallId === 'call-hold');
+  expect(later).toHaveLength(1);
+  expect(later.some((e) => e.action.confirmed === 'not-needed')).toBe(false);
+});
+
+it('opens, readies and completes a call whose first word was its end', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'jump to it');
+  await until(() => ended(p, chatUri));
+
+  // A row closed without ever being opened is a completion for a call nobody
+  // drew, so the same three actions a call announced up front goes out here.
+  const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
+  expect(calls.map((e) => e.action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+  expect(calls[0]?.action).toMatchObject({ toolCallId: 'call-jump', toolName: 'count_lines' });
+  expect(calls[2]?.action.result).toMatchObject({ success: true });
+
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { kind?: string; toolCall?: { toolCallId: string; status: string } }[] }[] } };
+  }).snapshot.state.turns[0]?.responseParts ?? [];
+  expect(kept.map((part) => part.kind)).toEqual(['toolCall']);
+  expect(kept[0]?.toolCall?.status).toBe('completed');
+});
+
+/** A changeset source that only remembers what it was asked to observe. */
+function recorder(): { source: ChangesetSource; seen: { turnId: string; path: string; phase: string }[] } {
+  const seen: { turnId: string; path: string; phase: string }[] = [];
+  return {
+    seen,
+    source: {
+      scopes: () => [],
+      state: async () => undefined,
+      summary: () => undefined,
+      observe: (_dir, _session, turnId, path, phase) => { seen.push({ turnId, path, phase }); },
+    },
+  };
+}
+
+it('shows a call\'s terminal and diff content, and records the diff in the changeset', async () => {
+  const changes = recorder();
+  const { client, peer: p, chatUri, path } = await talking({ changes: changes.source });
+  begin(client, chatUri, 't1', 'paint it');
+  await until(() => ended(p, chatUri));
+
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  const content = (done?.action.result as { content: Bag[] }).content;
+  // The shell is the host's own, so the block is the one a `!command` builds.
+  expect(content[0]).toMatchObject({ type: 'terminal', title: 'Terminal', isPty: false });
+  expect(String((content[0] as Bag).resource)).toContain('terminal');
+  // The file, as the edit a client draws: the after side is the file itself,
+  // and there is no before here because no URI names what a file used to be.
+  expect(content[1]).toEqual({
+    type: 'fileEdit',
+    after: { uri: `file://${join(path, 'painted.txt')}`, content: { uri: `file://${join(path, 'painted.txt')}` } },
+  });
+
+  // And the turn's changeset holds both of its sides, the before side being
+  // what the diff carried rather than anything still on disk.
+  expect(changes.seen).toEqual([
+    { turnId: 't1', path: join(path, 'painted.txt'), phase: 'before' },
+    { turnId: 't1', path: join(path, 'painted.txt'), phase: 'after' },
+  ]);
+});
+
+it('holds the before side a diff carried, which the file itself no longer has', async () => {
+  const changes = gitChanges();
+  const { client, peer: p, chatUri, path } = await talking({ changes });
+  begin(client, chatUri, 't1', 'paint it');
+  await until(() => ended(p, chatUri));
+
+  // The host gave the session the provider's own id, which is what its
+  // changeset is keyed by. The `after` side is read off the file, so the row is
+  // only whole once that read has landed.
+  let row: ChangesetFile | undefined;
+  await until(async () => {
+    row = (await changes.state?.(path, 'acp:/one', 'turn/t1'))?.files[0];
+    return row?.edit.after !== undefined;
+  });
+  // The file on disk is what the agent left, so the before side can only be
+  // the one the diff said - which is what a review reads to show both sides.
+  expect(await text(changes, row?.edit.before?.content?.uri as string)).toBe('a blank canvas\n');
+  expect(await text(changes, row?.edit.after?.content?.uri as string)).toBe('a line of paint\n');
+});
+
+it('shows a diff of a file outside the session without recording it', async () => {
+  const changes = recorder();
+  const { client, peer: p, chatUri } = await talking({ changes: changes.source });
+  begin(client, chatUri, 't1', 'edit it away');
+  await until(() => ended(p, chatUri));
+
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  expect((done?.action.result as { content: Bag[] }).content[0]).toMatchObject({ type: 'fileEdit' });
+  expect(changes.seen).toEqual([]);
 });
 
 it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the server', async () => {

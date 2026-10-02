@@ -7,6 +7,8 @@
  */
 
 import type {
+  AuthenticateRequest,
+  AuthenticateResponse,
   ContentBlock,
   CreateTerminalRequest,
   CreateTerminalResponse,
@@ -32,6 +34,7 @@ import type {
   SetSessionModeResponse,
   TerminalOutputRequest,
   TerminalOutputResponse,
+  ToolCallStatus,
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
@@ -57,6 +60,27 @@ export interface AcpOptions {
   description?: string;
   /** The model id a session that names none runs on. */
   model?: string;
+  /**
+   * The sign-in to send after the handshake, for a server that refuses a
+   * session until one has happened.
+   *
+   * `methodId` is the server's own id out of the `authMethods` its handshake
+   * listed. The bridge never picks one itself: a wrong guess signs a person in
+   * as whoever that guess was, and the sign-in that ran is not one anybody can
+   * undo through this host.
+   */
+  authenticate?: { methodId: string; _meta?: Record<string, unknown> };
+  /**
+   * Whether the host's own tools are offered to each session as an MCP server.
+   *
+   * On by default, which is the case the bridge exists for: an ACP agent
+   * reaches the host's files, terminals and sessions through its client, and
+   * the tools are the rest of what a session can see from outside itself. A
+   * deployment whose ACP servers would rather not have them says `false`.
+   */
+  hostTools?: boolean;
+  /** Where a server left out of a session's list is said. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -133,6 +157,14 @@ export interface AcpConnection {
    * told what a client can do at the start of a connection and never again.
    */
   initialize(): Promise<InitializeResponse>;
+  /**
+   * Sign in with one of the methods the handshake listed.
+   *
+   * Sent once per connection, between `initialize` and `session/new`, because
+   * that is where a server that refuses a session until it is signed in takes
+   * it.
+   */
+  authenticate(request: AuthenticateRequest): Promise<AuthenticateResponse>;
   /** Open one session on the server, which names it. */
   newSession(request: NewSessionRequest): Promise<NewSessionResponse>;
   /** Reopen a session the server already has, which replays its history. */
@@ -143,6 +175,14 @@ export interface AcpConnection {
   setSessionMode(request: SetSessionModeRequest): Promise<SetSessionModeResponse>;
   /** Set one of the server's own session config options. */
   setSessionConfigOption(request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse>;
+  /**
+   * Point the session at a model by the call the protocol used before options.
+   *
+   * `session/set_model` is gone from the SDK, so it goes out as a method named
+   * rather than as a typed one, and only a session talking to a server that
+   * named no model option ever sends it.
+   */
+  setModel(request: { sessionId: string; modelId: string }): Promise<unknown>;
   /**
    * Send one prompt and wait for the turn to stop.
    *
@@ -188,6 +228,44 @@ export interface AcpCall {
   displayName: string;
   /** Whether `chat/toolCallReady` has gone out for it. */
   readied: boolean;
+  /**
+   * Whether a person is being asked about this call.
+   *
+   * A question has its own ready, and a ready behind it carrying `not-needed`
+   * would say the question is not there.
+   */
+  asked: boolean;
+  /** The arguments the server has given it, as the JSON a client reads. */
+  input?: string;
+  /**
+   * The last status the server gave it, of any.
+   *
+   * A call carries no status at all on some updates, and one carries `pending`
+   * for as long as the agent has not started it, so this is what tells a call
+   * the agent has begun from one it is only holding.
+   */
+  status?: ToolCallStatus;
+}
+
+/**
+ * What the mapping needs from the session, which a replayed turn has none of.
+ *
+ * The transcript rebuilds a turn by running this same mapping over updates the
+ * server sent once, with nothing behind it: no directories to judge a path
+ * against and no changeset to record one in. Absent rather than a pair of
+ * functions that record nothing, so a replay says so by having none.
+ */
+export interface AcpReach {
+  /** Whether a path is one of the session's own directories. */
+  within(path: string): boolean;
+  /**
+   * A file this turn changed, so the host can hold both sides of it.
+   *
+   * `before` is what the file held when the agent said it changed it, which no
+   * `file://` URI can name afterwards. Absent, and the host reads what it can
+   * reach - a file the agent created has no before to hold.
+   */
+  changed(path: string, before?: string): void;
 }
 
 /**
@@ -206,6 +284,8 @@ export interface AcpTurn {
   waiting?: string;
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
+  /** The session behind this turn, absent on one the transcript replays. */
+  reach?: AcpReach;
   /**
    * The session's cumulative cost when this turn opened, which what the turn
    * spent is the change from.
@@ -219,6 +299,8 @@ export interface AcpTurn {
   cost?: { amount: number; currency: string };
   /** Whether `session/prompt` has been sent; a cost reported before it is no turn's. */
   prompted?: boolean;
+  /** What the last `usage_update` said, which is what this turn holds. */
+  usage?: Bag;
 }
 
 /**
@@ -240,6 +322,15 @@ export interface WatchedTurn {
   state: 'complete' | 'cancelled' | 'error';
   /** How long it took, in milliseconds, once it has ended. */
   duration?: number;
+  /**
+   * What the turn last said it had spent, once it has ended.
+   *
+   * Kept rather than left to the updates: a cost is reported for the whole
+   * session, so what a turn spent is the share it took from the total it
+   * opened with - a number the updates carry only against a turn that was
+   * there to be counted.
+   */
+  usage?: Bag;
   /** Every update the server sent while this turn ran. */
   updates: SessionUpdate[];
 }

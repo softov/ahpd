@@ -1,6 +1,6 @@
 ---
 title: A mode or option the agent changed is announced
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

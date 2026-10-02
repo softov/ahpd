@@ -2,9 +2,10 @@ import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
-import type { Agent, Bag, Emit, Session, Start } from '@ahpd/sdk';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
+import type { AcpOptions } from '../src/types.js';
 
 /*
  * The catalogue, the config schema and a resumed session.
@@ -124,6 +125,11 @@ const configOf = (session: Session): { schema: Bag; values: Record<string, unkno
 const propertiesOf = (session: Session): Record<string, Record<string, unknown>> =>
   configOf(session).schema.properties as Record<string, Record<string, unknown>>;
 
+/** The config the session announced to its clients, in order. */
+const changed = (watch: Watcher): Record<string, unknown>[] =>
+  watch.actions.filter((one) => one.action.type === 'session/configChanged')
+    .map((one) => (one.action.config ?? {}) as Record<string, unknown>);
+
 it('offers no models before a session, because ACP has no pre-session catalogue', async () => {
   const { agent } = backend();
   const offered = await agent.probe?.();
@@ -177,6 +183,168 @@ it('sets the model a turn chose on the server before prompting', async () => {
   ]);
 });
 
+it('reads the legacy models list, and sets a chosen model the old way', async () => {
+  const { agent, log } = backend(['--legacy']);
+  const { session, watch } = start(agent, 'legacy');
+  // The list comes with the answer that opens the session, so before that
+  // there is none to offer.
+  expect(session.models()).toEqual([]);
+  const before = watch.endings().length;
+  session.begin('t1', 'hi', { id: 'thorough' });
+  await until(() => watch.endings().length > before);
+
+  expect(session.models()).toEqual([
+    { id: 'fast', name: 'Fast' },
+    { id: 'thorough', name: 'Thorough' },
+  ]);
+  // No option to set it through, so the call this server knew instead is the
+  // one that goes out - and the turn runs rather than failing for want of a
+  // model it could have been given.
+  expect(requests(log).find((one) => one.method === 'session/set_model')?.params)
+    .toMatchObject({ modelId: 'thorough' });
+  expect(watch.endings()).toEqual(['chat/turnComplete']);
+});
+
+describe('the MCP servers a session is opened with', () => {
+  /** The host's own tools server, as `Start.toolsServer` opens one. */
+  const hostTools = { url: 'http://127.0.0.1:4242/ahp-mcp/one', token: 't-kn', close: () => {} };
+
+  const servers: Record<string, McpServer> = {
+    files: { type: 'stdio', command: 'mcp-files', args: ['--root', '/tmp'], env: { KEY: 'k-1' } },
+    api: { type: 'http', url: 'https://example.test/mcp', headers: { authorization: 'Bearer k-2' } },
+  };
+
+  /** What `session/new` was sent, with the servers it carried. */
+  const opened = (log: string): unknown => requests(log).find((one) => one.method === 'session/new')?.params?.['mcpServers'];
+
+  /** A backend over the fixture, with a log of its own for the lines it leaves. */
+  const withLog = (over: Partial<AcpOptions> = {}, flags: string[] = []) => {
+    const log = join(scratch(), 'requests.jsonl');
+    const said: string[] = [];
+    return {
+      said,
+      log,
+      agent: acpAgent({
+        command: process.execPath,
+        args: [FIXTURE, ...flags],
+        env: { ACP_LOG: log },
+        provider: 'acp',
+        log: (line) => { said.push(line); },
+        ...over,
+      }),
+    };
+  };
+
+  it('carries a stdio server whatever the server says it can take', async () => {
+    const { agent, log } = withLog();
+    const { session, watch } = start(agent, 'stdio', { mcpServers: servers });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(opened(log)).toEqual([
+      {
+        name: 'files',
+        command: 'mcp-files',
+        args: ['--root', '/tmp'],
+        env: [{ name: 'KEY', value: 'k-1' }],
+      },
+      {
+        type: 'http',
+        name: 'api',
+        url: 'https://example.test/mcp',
+        headers: [{ name: 'authorization', value: 'Bearer k-2' }],
+      },
+    ]);
+  });
+
+  it('leaves an http server out of a server that takes none, and says which', async () => {
+    const { agent, log, said } = withLog({}, ['--no-http-mcp']);
+    const { session, watch } = start(agent, 'nohttp', { mcpServers: servers });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    // The stdio one is untouched: only what the handshake refuses is left out.
+    expect(opened(log)).toEqual([
+      { name: 'files', command: 'mcp-files', args: ['--root', '/tmp'], env: [{ name: 'KEY', value: 'k-1' }] },
+    ]);
+    expect(said).toEqual(['api: this ACP server takes no MCP server over HTTP, so it was left out']);
+  });
+
+  it('offers the host\'s own tools as one server with its token, on by default', async () => {
+    const { agent, log } = withLog();
+    const { session, watch } = start(agent, 'tools', { toolsServer: () => hostTools });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(opened(log)).toEqual([{
+      type: 'http',
+      name: 'ahp',
+      url: 'http://127.0.0.1:4242/ahp-mcp/one',
+      headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
+    }]);
+  });
+
+  it('leaves the host\'s tools out where the deployment said hostTools: false', async () => {
+    const { agent, log } = withLog({ hostTools: false });
+    const { session, watch } = start(agent, 'notools', { toolsServer: () => hostTools });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(opened(log)).toEqual([]);
+  });
+
+  it('leaves the host\'s own tools out of a server that takes none over HTTP, and says which', async () => {
+    const { agent, log, said } = withLog({}, ['--no-http-mcp']);
+    const { session, watch } = start(agent, 'notoolshttp', { toolsServer: () => hostTools });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    // The host's tools are an HTTP server like any other, so the handshake that
+    // refuses the others refuses this one, and says so the same way.
+    expect(opened(log)).toEqual([]);
+    expect(said).toEqual(['ahp: this ACP server takes no MCP server over HTTP, so it was left out']);
+  });
+
+  it('keeps one endpoint of the host\'s own across a server that died', async () => {
+    const { agent, log } = withLog();
+    let asked = 0;
+    const { session, watch } = start(agent, 'respawn', {
+      toolsServer: () => {
+        asked += 1;
+        return hostTools;
+      },
+    });
+    await runTurn(session, watch, 't1', 'die now');
+    await runTurn(session, watch, 't2', 'hi again');
+
+    // A second endpoint is a second process answering with a token of its own,
+    // for a session nothing is listening to. The load is told the same list the
+    // new session was given, because there is only one.
+    expect(asked).toBe(1);
+    const openedOnNew = requests(log).find((one) => one.method === 'session/new')?.params?.['mcpServers'];
+    const openedOnLoad = requests(log).find((one) => one.method === 'session/load')?.params?.['mcpServers'];
+    expect(openedOnLoad).toEqual(openedOnNew);
+  });
+
+  it('carries the same list on a load, which is the session that continues', async () => {
+    const { agent, log } = withLog();
+    const { session, watch } = start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(requests(log).find((one) => one.method === 'session/load')?.params?.['mcpServers']).toEqual([
+      { name: 'files', command: 'mcp-files', args: ['--root', '/tmp'], env: [{ name: 'KEY', value: 'k-1' }] },
+      { type: 'http', name: 'api', url: 'https://example.test/mcp', headers: [{ name: 'authorization', value: 'Bearer k-2' }] },
+    ]);
+  });
+});
+
 it('learns the server modes and reports where the session sits after a change', async () => {
   const { agent, log } = backend();
   const { session, watch } = start(agent, 'modes');
@@ -195,6 +363,39 @@ it('learns the server modes and reports where the session sits after a change', 
   expect(requests(log).find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
 });
 
+it('announces a mode the agent moved itself, once', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'announced');
+  await runTurn(session, watch, 't1', 'hi');
+  // The mode and the model the session opened with are the ones in force, so
+  // nothing is said until the server moves them.
+  expect(changed(watch)).toEqual([]);
+
+  await runTurn(session, watch, 't2', 'shift');
+  // Said again at the same turn, which is the point: the second `shift` moves
+  // nothing, and a client told the same value twice would have to work out
+  // whether anything changed.
+  await runTurn(session, watch, 't3', 'shift');
+
+  expect(changed(watch)).toEqual([{ permissionMode: 'code' }, { model: 'thorough' }]);
+  expect(configOf(session).values).toMatchObject({ permissionMode: 'code' });
+  expect(session.settings().model).toBe('thorough');
+});
+
+it('says nothing for a mode the client set itself', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'announced-by-us');
+  await runTurn(session, watch, 't1', 'hi');
+
+  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
+  // The update that follows the request carries back what the client already
+  // knows, so the announcement is the one thing a client is not sent twice.
+  await runTurn(session, watch, 't2', 'hi');
+
+  expect(changed(watch)).toEqual([]);
+  expect(session.settings().permissionMode).toBe('code');
+});
+
 it('reports a command the server advertises as a customization', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'commands');
@@ -204,6 +405,31 @@ it('reports a command the server advertises as a customization', async () => {
   expect(plan).toMatchObject({ type: 'prompt', id: 'command:plan', enabled: true, description: 'Draft a plan' });
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);
+});
+
+it("takes the agent's name for the session over the one the first prompt gave it", async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'title');
+  await runTurn(session, watch, 't1', 'name it please');
+  expect(session.title()).toBe('Naming the work');
+  // The prompt's own words first, which is all a client had until the agent
+  // said better, and the agent's name after it.
+  expect(watch.actions.filter((one) => one.action.type === 'session/titleChanged'))
+    .toMatchObject([
+      { channel: 'session', action: { title: 'name it please' } },
+      { channel: 'session', action: { title: 'Naming the work' } },
+    ]);
+});
+
+it('keeps the name a person gave the session, whatever the agent calls it', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'renamed');
+  session.setTitle?.('The name I want');
+  await runTurn(session, watch, 't1', 'name it anyway');
+
+  expect(session.title()).toBe('The name I want');
+  // Said once and once only: the person renaming is the host's own action.
+  expect(watch.actions.some((one) => one.action.type === 'session/titleChanged')).toBe(false);
 });
 
 it('lists the sessions the server lists, mapping the fields the contract wants', async () => {
@@ -258,6 +484,42 @@ it('reads back the turn this process watched and nothing for one it did not', as
   expect(turns?.[0]?.state).toBe('complete');
   const parts = turns?.[0]?.responseParts as { kind?: string; content?: string }[];
   expect(parts.some((part) => part.kind === 'markdown' && part.content === 'hello there')).toBe(true);
+});
+
+it('reads back each turn with the usage it last reported', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'usage');
+  await runTurn(session, watch, 't1', 'spend some of it and count the tokens');
+  await runTurn(session, watch, 't2', 'spend some more');
+
+  // A rebuilt turn that answers a different question than the streamed one is
+  // the one thing the shared mapping is here to prevent, and usage is the part
+  // of it that is not a part.
+  const turns = await agent.transcript?.(String(session.agentId()));
+  expect(turns).toHaveLength(2);
+  // The counts arrive with the prompt's answer rather than in an update, so a
+  // rebuild that replayed the updates alone would not have them at all.
+  expect(turns?.[0]?.usage).toEqual({
+    inputTokens: 1000,
+    outputTokens: 400,
+    cacheReadTokens: 40,
+    _meta: {
+      cacheWriteTokens: 10,
+      reasoningTokens: 80,
+      cost: { amount: 1.75, currency: 'USD' },
+      context: { used: 4200, size: 200000 },
+    },
+  });
+  // And the second turn holds what it spent rather than the session's books
+  // again, which is a number the replay cannot arrive at from the session's
+  // first update: nothing of the first turn's cost is charged to it.
+  expect(turns?.[1]?.usage).toEqual({
+    _meta: { cost: { amount: 0.75, currency: 'USD' }, context: { used: 4200, size: 200000 } },
+  });
+
+  // The same usage the chat was sent, turn for turn.
+  const live = (session.chatState() as { turns?: { usage?: unknown }[] }).turns ?? [];
+  expect(live.map((one) => one.usage)).toEqual([turns?.[0]?.usage, turns?.[1]?.usage]);
 });
 
 it('reads back a session this process never watched by loading it from the server', async () => {
@@ -361,6 +623,86 @@ it('reaches the server for permissionMode and model, and refuses another key nam
   expect(asked.find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
   expect(asked.find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'model', value: 'thorough' });
+});
+
+it('draws every option of its own as a control, and sets each through the server', async () => {
+  const { agent, log } = backend();
+  const { session, watch } = start(agent, 'controls');
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The model's and the mode's own names, and every other option under the
+  // server's id with the values the server serves.
+  const properties = propertiesOf(session);
+  expect(Object.keys(properties).sort()).toEqual(['acp.telemetry', 'acp.thinking', 'permissionMode']);
+  expect(properties['acp.thinking']).toMatchObject({
+    type: 'string',
+    title: 'Thinking',
+    sessionMutable: true,
+    enum: ['off', 'deep'],
+    enumLabels: ['Off', 'Deep'],
+    default: 'off',
+  });
+  expect(properties['acp.telemetry']).toMatchObject({
+    type: 'boolean',
+    title: 'Telemetry',
+    sessionMutable: true,
+    default: false,
+  });
+
+  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
+  expect(await session.setConfig?.('acp.telemetry', true)).toBe(true);
+
+  const asked = requests(log).filter((one) => one.method === 'session/set_config_option');
+  expect(asked.find((one) => one.params?.configId === 'thinking')?.params).toMatchObject({ value: 'deep' });
+  expect(asked.find((one) => one.params?.configId === 'telemetry')?.params).toMatchObject({ type: 'boolean', value: true });
+  expect(configOf(session).values).toMatchObject({ 'acp.thinking': 'deep', 'acp.telemetry': true });
+
+  // A key the server named no option for is refused, and so is the wrong kind
+  // of value for one it did.
+  expect(String(await session.setConfig?.('acp.telemetry', 'yes'))).toContain('true or false');
+  expect(String(await session.setConfig?.('acp.nothing', true))).toContain('nothing');
+});
+
+it('sets the mode through the option the server named, not the legacy call', async () => {
+  const { agent, log } = backend(['--modes']);
+  const { session, watch } = start(agent, 'mode-option');
+  await runTurn(session, watch, 't1', 'hi');
+
+  // The option is the server's own account of the mode, so its values are the
+  // enum a person picks from and setting one is the same call as any other.
+  expect(propertiesOf(session).permissionMode?.enum).toEqual(['ask', 'code']);
+  expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
+
+  const asked = requests(log);
+  expect(asked.some((one) => one.method === 'session/set_mode')).toBe(false);
+  expect(asked.find((one) => one.method === 'session/set_config_option')?.params)
+    .toMatchObject({ configId: 'mode', value: 'code' });
+});
+
+it('sets an option on a session that has not run a turn', async () => {
+  const { agent, log } = backend();
+  const { session } = start(agent, 'unopened');
+
+  // Nothing has asked the server yet, so the option this key names is not known
+  // either: the session is opened before the key is looked up, which is what
+  // makes setting one on a fresh session work rather than refuse it by name.
+  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
+  expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
+    .toMatchObject({ configId: 'thinking', value: 'deep' });
+});
+
+it('sets the model through the older call on a server with no options', async () => {
+  const { agent, log } = backend(['--legacy']);
+  const { session, watch } = start(agent, 'legacy');
+  await runTurn(session, watch, 't1', 'hi');
+
+  // A server from before config options named its models in a list, and takes
+  // a model by the older call. No option to set, so no `session/set_config_option`.
+  expect(await session.setConfig?.('model', 'thorough')).toBe(true);
+  const asked = requests(log);
+  expect(asked.some((one) => one.method === 'session/set_config_option')).toBe(false);
+  expect(asked.find((one) => one.method === 'session/set_model')?.params)
+    .toMatchObject({ modelId: 'thorough' });
 });
 
 it('loads a session on resume rather than opening a new one', async () => {

@@ -1,6 +1,6 @@
 ---
 title: A session's MCP servers reach its backend in Start
-status: todo
+status: done
 depends: [task-01-mcp-servers-in-the-configuration.md]
 layer: "sdk"
 refs:

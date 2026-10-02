@@ -53,7 +53,8 @@ import type { HostEvent } from './types/events.js';
 import { raise } from './plugins.js';
 import type { Grant, Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
-import type { Agent, BoundTool, Listed } from './types/agent.js';
+import type { Agent, BoundTool, Listed, McpServer } from './types/agent.js';
+import type { ToolsEndpoint } from './toolserver.js';
 import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { RunEnding, StartSession } from './types/automations.js';
@@ -3640,6 +3641,28 @@ export function createHost(options: HostOptions): Host {
       owner: () => kept.owner(idOf(uri)),
       scope: () => charged.get(uri)?.scope,
     });
+    /*
+     * The MCP servers this session's agent is offered, read when the session
+     * starts rather than held, so a daemon that edits the key while it runs
+     * changes what the next session is given.
+     */
+    const servers = mcpFor();
+    /*
+     * The same tools as an MCP server, for a backend that cannot call them in
+     * this process - an ACP agent, which asks its client for them.
+     *
+     * One endpoint per session, opened when the backend asks and closed when
+     * the session goes, so a token reaches the tools of the session it was
+     * handed to and nothing else.
+     */
+    const toolsServer = (): ToolsEndpoint | undefined => {
+      const opened = options.toolsServers?.open(boundTools(uri, chatUri));
+      if (opened === undefined) return undefined;
+      const held = served.get(uri) ?? [];
+      held.push(opened);
+      served.set(uri, held);
+      return opened;
+    };
     const session = used.create({
       uri,
       chatUri,
@@ -3665,6 +3688,15 @@ export function createHost(options: HostOptions): Host {
       ...(options.resources !== undefined ? { resources: options.resources } : {}),
       ...(options.terminals !== undefined ? { terminals: heldTerminals(options.terminals, uri, chatUri) } : {}),
       ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider) } : {}),
+      /*
+       * The MCP servers, when there are any.
+       *
+       * Absent rather than an empty map, because a backend that reads it has no
+       * way to tell a host that configured none from a host that never heard of
+       * them, and the answer to either is the same.
+       */
+      ...(Object.keys(servers).length === 0 ? {} : { mcpServers: servers }),
+      ...(options.toolsServers === undefined ? {} : { toolsServer }),
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
@@ -3878,12 +3910,15 @@ export function createHost(options: HostOptions): Host {
        *
        * The session says which file and when, because it is the thing that
        * can see its own tools; the source reads it, because it is the thing
-       * with a filesystem. Neither has to know about the other.
+       * with a filesystem. Neither has to know about the other. What the
+       * session already holds of a side is passed on, and what the source
+       * answers for is returned, so a `before` is read before the write that
+       * would truncate the file out from under it.
        */
-      onFileEdit: (turnId, path, phase) => {
+      onFileEdit: (turnId, path, phase, text) => {
         const dir = dirOf(uri);
         if (dir === undefined) return;
-        options.changes?.observe?.(dir, uri, turnId, path, phase);
+        return options.changes?.observe?.(dir, uri, turnId, path, phase, text);
       },
       /*
        * A turn the backend has written under an id of its own.
@@ -4965,6 +5000,8 @@ export function createHost(options: HostOptions): Host {
      */
     const gone = dirOf(uri);
     sessions.delete(uri);
+    // And the tools server this session opened, which stops answering with it.
+    toolsServersGone(uri);
     if (gone !== undefined) stopUnwatched(gone);
     /*
      * And the machine it was running in, told that this session has left.
@@ -5896,6 +5933,32 @@ export function createHost(options: HostOptions): Host {
       return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
     },
   });
+
+  /**
+   * The MCP servers this session is offered, read now rather than held.
+   *
+   * The host's own map with the session's enabled client plugins' over it, a
+   * client plugin winning a name clash - the merge VS Code makes - because the
+   * client that asked for a server is closer to the work than the host is.
+   *
+   * Only the host's half is here: this host has no client plugin
+   * customizations to merge, so nothing overrides a name yet and the merge is
+   * one spread waiting for the plugins that will fill it.
+   */
+  const mcpFor = (): Record<string, McpServer> => ({ ...options.mcpServers });
+
+  /**
+   * The endpoints opened for a session, by the session that opened them.
+   *
+   * Closed when the session goes, so a path nobody holds a token for is a path
+   * that stopped answering rather than one that outlived the tools behind it.
+   */
+  const served = new Map<string, ToolsEndpoint[]>();
+  /** Take back every endpoint a session opened. */
+  const toolsServersGone = (uri: string): void => {
+    for (const opened of served.get(uri) ?? []) opened.close();
+    served.delete(uri);
+  };
 
   const boundTools = (uri: string, chatUri: string): BoundTool[] => [
     ...clientTools(uri),

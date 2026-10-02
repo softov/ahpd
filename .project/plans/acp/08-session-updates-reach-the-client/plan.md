@@ -1,7 +1,7 @@
 ---
 title: Usage, title, plan and mode changes reach the client
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -34,7 +34,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | What | Source | Task |
 | --- | --- | --- |
 | The agent's title replaces the prompt-derived one, and a title a person set is never replaced | (defaulted: the person's words win) | 02 |
-| A plan is a markdown part, since AHP 0.9 has no plan part | the protocol package at 0.9.0 | 04 |
+| A plan is one `plan` tool call per turn: started on the first plan update, its content replaced by `chat/toolCallContentChanged` on each later one, completed when the turn ends | Softov, 2026-10-02, asked "How should a changing plan be shown?" (a 0.9 response part only appends): "As a tool call" | 04 |
 
 ## Proposed architecture
 
@@ -44,10 +44,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Usage reaches the turn](task-01-usage.md) | todo | - |
-| [02 - The agent's title is the session's](task-02-the-agents-title.md) | todo | - |
-| [03 - A mode or option the agent changed is announced](task-03-mode-and-option-changes.md) | todo | - |
-| [04 - The agent's plan is shown](task-04-the-plan.md) | todo | - |
+| [01 - Usage reaches the turn](task-01-usage.md) | done | - |
+| [02 - The agent's title is the session's](task-02-the-agents-title.md) | done | - |
+| [03 - A mode or option the agent changed is announced](task-03-mode-and-option-changes.md) | done | - |
+| [04 - The agent's plan is shown](task-04-the-plan.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -55,13 +55,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** any task; they do not depend on each other.
-- **Open questions:** none.
-- **Watch out for:** task 02 of plan 09 also emits `session/configChanged`; share one emitter.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A turn shows usage; a session takes the agent's title; a mode the agent changed shows; a plan shows.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A turn shows usage; a session takes the agent's title; a mode the agent changed shows; a plan shows.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

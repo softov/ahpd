@@ -1,7 +1,8 @@
 /** The protocol server: channels, subscriptions and requests. */
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
-import type { Agent, ToolEffects } from './agent.js';
+import type { Agent, McpServer, ToolEffects } from './agent.js';
+import type { ToolsServers } from '../toolserver.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Principal, Users } from './users.js';
@@ -251,6 +252,31 @@ export interface HostOptions {
    * passes none contributes none, which is what an absent `serverTools` says.
    */
   tools?: HostTool[];
+  /**
+   * The MCP servers every session is offered, by the name a person gave them.
+   *
+   * The host's own, from whatever configures it: a daemon reads the
+   * `mcpServers` key of its `config.json`, which is VS Code's shape and its
+   * setting. Each session is handed these merged with the servers its own
+   * enabled client plugins contribute, a client plugin winning a name clash.
+   *
+   * Left out, no session is offered one, and a backend that speaks ACP opens
+   * with an empty list rather than a list nobody configured.
+   */
+  mcpServers?: Record<string, McpServer>;
+  /**
+   * Where the host serves its own tools as an MCP server, when something is
+   * there to serve them on.
+   *
+   * A `ToolsServers`, which is the registry a session's endpoint is opened in
+   * and the request handler a listener mounts to answer it - the same object
+   * on both sides, so what a backend is handed is what the listener serves.
+   *
+   * Left out, no session is offered a tools server: a host embedded somewhere
+   * with a listener of its own builds one and mounts it, and a host with no
+   * listener cannot.
+   */
+  toolsServers?: ToolsServers;
   /**
    * Session settings a plugin contributed, merged into every session's schema.
    *

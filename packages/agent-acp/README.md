@@ -71,6 +71,8 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 | `displayName` | | what a client reads instead of the id, default `ACP` |
 | `description` | | one line about what this backend is |
 | `model` | | the model a session that names none runs on |
+| `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
+| `hostTools` | | offer the host's own tools to each session as an MCP server, on by default |
 
 ## What it does
 

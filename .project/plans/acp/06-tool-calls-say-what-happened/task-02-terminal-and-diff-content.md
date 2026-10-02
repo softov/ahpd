@@ -1,6 +1,6 @@
 ---
 title: Terminal and diff content are kept
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

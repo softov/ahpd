@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Peer } from '../src/types/rpc.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { OpenedTerminal } from '../src/types/terminals.js';
 import { Status } from '../src/catalog.js';
 import { fileSessions, memorySessions } from '../src/sessions.js';
@@ -148,6 +148,7 @@ const { gitBranches } = await import('../src/git.js');
  */
 const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 const { claude } = await import('../../agent-claude/src/claude.js');
+const { echo } = await import('../../../examples/echo/agent.js');
 const { hostTools } = await import('../src/tools.js');
 const { gitChanges } = await import('../src/changes.js');
 
@@ -5367,6 +5368,84 @@ describe('tools the host contributes', () => {
     }[] }>;
     const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
     expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
+  });
+});
+
+describe('the MCP servers a session is offered', () => {
+  /**
+   * The example backend, keeping every `Start` it was handed.
+   *
+   * `Start` is the one place a session's servers reach a backend, so what is
+   * read here is what the host decided rather than what a harness went on to
+   * declare with them.
+   */
+  const recording = () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const seen: Start[] = [];
+    const agent: Agent = {
+      ...base,
+      create: (start: Start) => {
+        seen.push(start);
+        return base.create(start);
+      },
+    };
+    return { seen, agent };
+  };
+
+  /** What one session's backend was given, on a host holding these servers. */
+  const offered = async (mcpServers: Record<string, McpServer> | undefined) => {
+    const { seen, agent } = recording();
+    const host = createHost({
+      path: '/home/softov',
+      agents: [agent],
+      ...machine(),
+      ...(mcpServers === undefined ? {} : { mcpServers }),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/served', provider: 'echo' } });
+    return seen.at(0)?.mcpServers;
+  };
+
+  it('are the host\'s own, in both shapes and under the names they were given', async () => {
+    const files: McpServer = { type: 'stdio', command: 'mcp-files', args: ['--root', '/home/softov'] };
+    const api: McpServer = { type: 'http', url: 'https://example.test/mcp', headers: { authorization: 'Bearer k' } };
+    expect(await offered({ files, api })).toEqual({ files, api });
+  });
+
+  /*
+   * Nothing where the host configured none.
+   *
+   * Absent rather than an empty map, because a backend that reads the field has
+   * no other way to tell a host with no servers from a host that never heard of
+   * them, and the answer to either is the same. A client plugin's servers are
+   * merged into this one, and there is nothing to merge yet - the half of the
+   * merge that is a plugin's comes with the first one.
+   */
+  it('are absent on a host that was given none', async () => {
+    expect(await offered(undefined)).toBeUndefined();
+    expect(await offered({})).toBeUndefined();
+  });
+
+  it('are read when the session starts, so an edit reaches the next one', async () => {
+    const files: Record<string, McpServer> = { files: { type: 'stdio', command: 'mcp-files' } };
+    const api: Record<string, McpServer> = { api: { type: 'http', url: 'https://example.test/mcp' } };
+    const { seen, agent } = recording();
+    // A host on a map a client can edit over root config, which is what the
+    // daemon hands: the key is read at the start rather than held at the boot.
+    let held: Record<string, McpServer> = files;
+    const host = createHost({
+      path: '/home/softov',
+      agents: [agent],
+      ...machine(),
+      get mcpServers() { return held; },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    held = api;
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } });
+    expect(seen.map((one) => one.mcpServers)).toEqual([files, api]);
   });
 });
 

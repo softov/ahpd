@@ -38,6 +38,7 @@ import {
   scheduledAutomations,
   shellTerminals,
   signInRecord,
+  toolServers,
   usageProvider,
 } from '@ahpd/sdk';
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
@@ -305,9 +306,26 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     program: { name: 'ahpd', version: version(), description: 'An Agent Host Protocol server, with a Claude backend' },
     origins: () => apiOrigins(apiHost, options.resource, apiBoundPort),
   });
-  // On the daemon's own port: the API where it is, and the 404 that says it is
-  // not where `http.port` moved it.
-  const daemonRequest = ownPort === undefined ? (api ?? withoutApi()) : withoutApi();
+  /*
+   * The host's own tools as an MCP server, one endpoint per session.
+   *
+   * Served on this daemon's own listener, beside the upgrade and the API,
+   * because a backend that cannot call the tools in process reaches them over a
+   * URL and a token the session is handed.
+   *
+   * Over stdio there is nothing to serve on and no address to hand out, so
+   * `origin` says so and a session is offered no tools server at all.
+   */
+  const toolsServers = toolServers({
+    origin: () => (options.stdio || boundPort === 0 ? undefined : `http://${urlHost(boundHost)}:${boundPort}`),
+    name: 'ahpd',
+    version: version(),
+  });
+  // On the daemon's own port: a session's tools endpoint where it is, then the
+  // API where it is, and the 404 that says it is not where `http.port` moved it.
+  const below = ownPort === undefined ? (api ?? withoutApi()) : withoutApi();
+  const daemonRequest = async (request: globalThis.Request): Promise<Response> =>
+    (await toolsServers.request(request)) ?? below(request);
   const apiListener: ApiListener | undefined = api === undefined || ownPort === undefined
     ? undefined
     : await listenApi(api, { port: ownPort, host: apiHost });
@@ -334,6 +352,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     capture.write = at === undefined ? undefined : writerFor(at);
   };
   openWire(options.wire);
+  /** The MCP servers the next session is offered, replaced by a root config write. */
+  let mcpServers = options.mcpServers;
   const tap: Tap = (from, text, peer) => { capture.write?.(lineFor(from, text, peer, transport)); };
 
   /*
@@ -414,6 +434,20 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     tools: hostTools(),
     /*
+     * Where a session's own tools are served as an MCP server, and the same
+     * registry the listener above mounts. One object on both sides, so what a
+     * backend is handed is what this daemon answers on.
+     */
+    toolsServers,
+    /*
+     * The MCP servers `config.json` names, offered to every session's agent.
+     *
+     * The host's own, beside whatever a session's client plugins add. A getter
+     * over what root config last wrote, so an edit is in force for the next
+     * session without a restart.
+     */
+    get mcpServers() { return mcpServers; },
+    /*
      * Whether a tool that declares it needs advanced permission is offered.
      *
      * The host's own answer, and false unless the operator says otherwise, so a
@@ -429,7 +463,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * `config:write` can send it back. The port knows the file and the flags;
      * the host only shows what it is given and hands writes on.
      */
-    rootConfig: daemonRootConfig(options, typed, openWire),
+    rootConfig: daemonRootConfig(options, typed, openWire, (servers) => { mcpServers = servers as typeof mcpServers; }),
     /*
      * What this host adds on top of a backend, kept between restarts.
      *

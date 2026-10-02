@@ -1,7 +1,7 @@
 ---
 title: The agent gets the host's MCP servers
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-30
@@ -53,11 +53,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `mcpServers` in the configuration and in root config](task-01-mcp-servers-in-the-configuration.md) | todo | daemon/11 task 02 |
-| [02 - A session's MCP servers reach its backend in Start](task-02-a-sessions-mcp-servers-reach-start.md) | todo | 01 |
-| [03 - The host serves its tools as an MCP server per session](task-03-the-host-serves-its-tools-over-mcp.md) | todo | - |
-| [04 - The ACP bridge opens a session with its MCP servers](task-04-the-acp-bridge-opens-with-mcp-servers.md) | todo | 02, 03 |
-| [05 - Docs](task-05-docs.md) | todo | 04 |
+| [01 - `mcpServers` in the configuration and in root config](task-01-mcp-servers-in-the-configuration.md) | done | daemon/11 task 02 |
+| [02 - A session's MCP servers reach its backend in Start](task-02-a-sessions-mcp-servers-reach-start.md) | done | 01 |
+| [03 - The host serves its tools as an MCP server per session](task-03-the-host-serves-its-tools-over-mcp.md) | done | - |
+| [04 - The ACP bridge opens a session with its MCP servers](task-04-the-acp-bridge-opens-with-mcp-servers.md) | done | 02, 03 |
+| [05 - Docs](task-05-docs.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -65,12 +65,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-03-the-host-serves-its-tools-over-mcp.md](task-03-the-host-serves-its-tools-over-mcp.md), which needs nothing else; 01 after daemon/11 task 02.
-- **Open questions:** none; answered 2026-09-30.
-- **Watch out for:** ACP v2 routes files and terminals through an MCP server too (plugin 18's deferred.md); the service built here is where that would land.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A session's agent can call a host tool over MCP.
-- [ ] `plans/index.md` updated.
+- [x] A session's agent can call a host tool over MCP.
+- [x] `plans/index.md` updated.

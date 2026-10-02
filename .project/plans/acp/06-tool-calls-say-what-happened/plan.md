@@ -1,7 +1,7 @@
 ---
 title: Tool calls say what happened, and an agent's edits reach review
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -52,10 +52,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A call moves when the agent moves it](task-01-a-call-moves-when-the-agent-moves-it.md) | todo | - |
-| [02 - Terminal and diff content are kept](task-02-terminal-and-diff-content.md) | todo | - |
-| [03 - An agent's write reaches review](task-03-an-agent-write-reaches-review.md) | todo | - |
-| [04 - Docs](task-04-docs.md) | todo | 01, 02, 03 |
+| [01 - A call moves when the agent moves it](task-01-a-call-moves-when-the-agent-moves-it.md) | done | - |
+| [02 - Terminal and diff content are kept](task-02-terminal-and-diff-content.md) | done | - |
+| [03 - An agent's write reaches review](task-03-an-agent-write-reaches-review.md) | done | - |
+| [04 - Docs](task-04-docs.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -63,14 +63,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-call-moves-when-the-agent-moves-it.md](task-01-a-call-moves-when-the-agent-moves-it.md).
-- **Open questions:** none.
-- **Watch out for:** the transcript replays through the same mapping, so a change here changes old transcripts too, which is intended.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A permission request is never preceded by `not-needed`.
-- [ ] An agent's edit is in the changeset.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A permission request is never preceded by `not-needed`.
+- [x] An agent's edit is in the changeset.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

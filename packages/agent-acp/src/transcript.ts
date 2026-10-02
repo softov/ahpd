@@ -19,7 +19,7 @@
 
 import type { Agent } from '@ahpd/sdk';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { mapUpdate } from './mapping.js';
+import { closePlan, mapUpdate } from './mapping.js';
 import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
 
 /**
@@ -48,6 +48,9 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       calls: new Map(),
     };
     for (const update of watched.updates) mapUpdate(replay, update);
+    // The plan is closed by the turn ending rather than by an update of its own,
+    // so the replay ends it the way the live turn did.
+    closePlan(replay);
     return {
       id: watched.turnId,
       startedAt: watched.startedAt,
@@ -62,7 +65,11 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
         origin: watched.message.origin ?? { kind: 'user' },
       },
       responseParts: replay.parts,
-      usage: undefined,
+      // What the turn last said it had spent, which is what the live turn holds
+      // and what a rebuilt one has to agree with. What the turn itself kept
+      // wins: it counts the cost from where this turn opened, which a replay
+      // starting at the session's first update cannot know.
+      usage: watched.usage ?? replay.usage,
       state: watched.state,
       ...(watched.duration === undefined ? {} : { duration: watched.duration }),
     };

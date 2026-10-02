@@ -229,6 +229,57 @@ describe('the schema', () => {
   });
 });
 
+describe('the mcpServers key', () => {
+  it('takes both shapes, by the name a person gave them', () => {
+    const options = folded({
+      mcpServers: {
+        search: { type: 'stdio', command: 'mcp-search', args: ['--stdio'], env: { KEY: 'k-1' }, cwd: '/srv' },
+        notes: { type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: 'Bearer t-1' } },
+      },
+    });
+    expect(options.warnings).toEqual([]);
+    expect(options.mcpServers).toEqual({
+      search: { type: 'stdio', command: 'mcp-search', args: ['--stdio'], env: { KEY: 'k-1' }, cwd: '/srv' },
+      notes: { type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: 'Bearer t-1' } },
+    });
+  });
+
+  it('has no servers when the file names none', () => {
+    expect(folded({}).mcpServers).toEqual({});
+  });
+
+  it('gives the key no flag', () => {
+    expect(Object.keys(flagFields)).not.toContain('mcpServers');
+    expect(Object.keys(serverFields)).toContain('mcpServers');
+  });
+
+  it('warns about an entry that is neither shape, and leaves it out', () => {
+    const options = folded({ mcpServers: { sse: { type: 'sse', url: 'https://sse.test' }, ok: { type: 'http', url: 'https://ok.test' } } });
+    expect(options.mcpServers).toEqual({ ok: { type: 'http', url: 'https://ok.test' } });
+    expect(options.warnings).toEqual([`${config}: mcpServers.sse.type must be one of stdio, http`]);
+  });
+
+  it('warns about an entry with no type, or with nothing to reach it on', () => {
+    expect(folded({ mcpServers: { a: { command: 'run' } } }).warnings)
+      .toEqual([`${config}: mcpServers.a.type is required`]);
+    expect(folded({ mcpServers: { a: { type: 'stdio' }, b: { type: 'http' } } }).warnings).toEqual([
+      `${config}: mcpServers.a is a stdio server with no command; ignored`,
+      `${config}: mcpServers.b is a http server with no url; ignored`,
+    ]);
+    expect(folded({ mcpServers: { a: { type: 'stdio' } } }).mcpServers).toEqual({});
+  });
+
+  it('refuses a value that is not a map of servers at all', () => {
+    expect(refusal({ mcpServers: 'on' })).toBe(`${config}: mcpServers must be an object`);
+  });
+
+  it('reads the rest of the file whatever one entry says', () => {
+    const options = folded({ port: 1234, mcpServers: { a: { type: 'stdio' } } });
+    expect(options.port).toBe(1234);
+    expect(options.warnings).toHaveLength(1);
+  });
+});
+
 describe('the proxy key', () => {
   it('is there without any configuration, as the three built-in providers', () => {
     expect(folded({}).proxy.providers).toEqual({

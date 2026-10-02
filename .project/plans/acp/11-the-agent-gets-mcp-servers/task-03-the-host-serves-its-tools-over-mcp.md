@@ -1,6 +1,6 @@
 ---
 title: The host serves its tools as an MCP server per session
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

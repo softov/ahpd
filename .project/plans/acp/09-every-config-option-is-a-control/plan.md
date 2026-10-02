@@ -1,7 +1,7 @@
 ---
 title: Every option an agent offers is a control
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -43,8 +43,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Options are controls](task-01-options-are-controls.md) | todo | - |
-| [02 - The legacy models field is read](task-02-legacy-models.md) | todo | - |
+| [01 - Options are controls](task-01-options-are-controls.md) | done | - |
+| [02 - The legacy models field is read](task-02-legacy-models.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -52,13 +52,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-options-are-controls.md](task-01-options-are-controls.md).
-- **Open questions:** none.
-- **Watch out for:** plan 08 task 03 announces the changes these controls make; build on its emitter.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] Every offered option is a control that works.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] Every offered option is a control that works.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

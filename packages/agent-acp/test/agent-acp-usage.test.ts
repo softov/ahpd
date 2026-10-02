@@ -85,15 +85,31 @@ it('sends the change in the session cost as each update lands', async () => {
   // turn, so the first count is the whole of what the bridge can see.
   expect(amounts(actions)).toEqual([1.25, 1.75, 1.75]);
   for (const usage of reports(actions)) {
-    // What a turn spends is not what the context window holds.
-    expect(usage).toEqual({ _meta: { cost: { amount: expect.any(Number), currency: 'USD' } } });
+    // The context window is not what the turn spent, so it is reported beside
+    // the cost in `_meta` and as nothing a token count could be read out of.
+    expect(usage).toEqual({
+      _meta: { context: { used: 4200, size: 200000 }, cost: { amount: expect.any(Number), currency: 'USD' } },
+    });
   }
   // Before the turn ends, as every other backend's running total goes out.
   const said = actions.map((action) => action.type);
   expect(said.indexOf('chat/usage')).toBeLessThan(said.indexOf('chat/turnComplete'));
 
   // And the turn holds what it last said, for a client that reads the snapshot.
-  expect(held(session)).toEqual({ _meta: { cost: { amount: 1.75, currency: 'USD' } } });
+  expect(held(session)).toEqual(reports(actions).at(-1));
+});
+
+it('sends the context on its own when the server reported no cost', async () => {
+  const { session, actions } = talking();
+  await turn(session, actions, 't1', 'fill the window');
+
+  // The update, then the prompt's response carrying nothing but the context the
+// update already reported: the protocol replaces the turn's usage rather than
+// adding to it, so the last word has to carry what the turn knows.
+expect(reports(actions)).toEqual([
+  { _meta: { context: { used: 4200, size: 200000 } } },
+  { _meta: { context: { used: 4200, size: 200000 } } },
+]);
 });
 
 it('counts a second turn from where the first left the books', async () => {
@@ -132,6 +148,7 @@ it('sends the tokens the prompt response counted, with the cost it did not', asy
       cacheWriteTokens: 10,
       reasoningTokens: 80,
       cost: { amount: 1.75, currency: 'USD' },
+      context: { used: 4200, size: 200000 },
     },
   });
   // And it lands before the ending action, which is what moves the turn into
@@ -149,7 +166,9 @@ it('sends the cost alone when the response counted nothing', async () => {
   // A response that says nothing about tokens is ordinary: the field is
   // unstable and optional, and what the updates already reported is the whole
   // of what this turn knows.
-  expect(reports(actions).at(-1)).toEqual({ _meta: { cost: { amount: 1.75, currency: 'USD' } } });
+  expect(reports(actions).at(-1)).toEqual({
+    _meta: { cost: { amount: 1.75, currency: 'USD' }, context: { used: 4200, size: 200000 } },
+  });
 });
 
 it('sends no usage for a turn whose server reported none', async () => {

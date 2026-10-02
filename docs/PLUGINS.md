@@ -120,6 +120,20 @@ A stop given there calls the backend's optional `Session.stopWorker(toolCallId)`
 A backend without `stopWorker` gets `cancel` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
 The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it cancel the lead turn instead.
 
+### The MCP servers a session is offered
+
+Two members of `Start` carry MCP, and both are optional, so a backend that reaches the host's tools the way it always has ignores them.
+
+`start.mcpServers` is what the host is configured with under `mcpServers` in the daemon's `config.json`, by the name a person gave each entry, read at each session's start rather than once when the host was built. An entry is `{ type: 'stdio', command, args?, env?, cwd? }` or `{ type: 'http', url, headers? }`, and a value in `env` or `headers` is a credential. The member is absent when the host holds none, rather than an empty map. A backend that can take MCP servers uses them in whatever shape its own agent takes them; one that cannot ignores the member, which is what the in-process backends do - they reach the same servers through their own configuration.
+
+`start.toolsServer()` opens an endpoint serving the tools bound to this session - every `registerTool` the host holds, and whatever the session's clients contributed - as one MCP server for this session alone, and answers `{ url, token, close() }` or `undefined` where no endpoint can be opened. A session opens it once and answers the same endpoint for the rest of its life, so an agent that dies and is started again over the same session is not handed a path the first one already had, which would leave two live for one session. A client's own tool is listed there and refused when it is called, because the host does not know how to run it. A daemon over stdio serves nothing, so it answers `undefined`, and the member is not there at all on a host built without `toolsServers`.
+
+That is what a backend whose agent asks its client for tools needs, an ACP agent above all: it hands the agent the `url` and the `token` and the agent makes the calls. The endpoint is on the host's own listener under `/ahp-mcp/<id>`, speaks streamable HTTP JSON-RPC at revision `2025-06-18`, and answers `initialize`, `tools/list` and `tools/call` and nothing else - one message per request, a JSON answer, no stream, because there is nothing this server initiates. A tool that throws comes back as a failed call with `isError` and the sentence in its content, which is the model that has to be told. A notification is a `202`, a `GET` a `405`, a body that is not one message a `400`.
+
+The token is the session's own. It names one path and no other, so a session holding it reaches its own tools and not a neighbour's, and a wrong one is a `401` before the method and before the body are read. The host closes the endpoint when the session is disposed and the path answers `404` from then on; a backend that closes it early takes it back the same way. `close()` is there for a backend that stops talking to it before the session ends - it is not the backend's job to end the session.
+
+The host side of this is `HostOptions.toolsServers`, one `ToolsServers` from `toolServers({ origin, name, version })` that both opens the endpoints and answers the requests: its `request` takes the paths under `/ahp-mcp` and answers `undefined` for anything else, so a host serving an API of its own tries one handler and then the other. `origin()` is read when an endpoint opens rather than held, because the host is built before the port is bound; that is what `run.ts` does and why the daemon mounts `toolsServers.request` beside its own answers.
+
 ### A backend's approval options
 
 A backend that asks before a tool call may offer the choices its own agent has, as `options` on the call's `chat/toolCallReady` and on the `toolCall` of its `toolConfirmation` entry, each a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
@@ -698,6 +712,8 @@ command line and configured in the file:
 | `displayName` | What a client draws, `ACP` when absent |
 | `description` | One line about the backend |
 | `model` | The model id a session that names none runs on |
+| `authenticate` | The sign-in to send after the handshake, as `{"methodId": "api-key"}` for Codex with a key |
+| `hostTools` | Offer the host's own tools to each session as an MCP server, on by default |
 
 One spec is one server, so `copilot --acp`, `codex-acp`,
 `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` are four configuration
@@ -707,6 +723,16 @@ apart, which is why it is the one option with no default.
 The `codex` CLI has no ACP mode of its own; `codex-acp` is Codex behind an
 adapter, installed with `npm i -g @agentclientprotocol/codex-acp`. The
 `@zed-industries/codex-acp` package it replaced no longer gets updates.
+
+A server that refuses a session until it has been signed in, which is Codex
+with a key and Cursor, is given one by the `authenticate` option: the
+handshake lists the ids it takes, and the option names the one to send. The
+bridge never picks that id itself, so a name the server did not offer fails
+the turn saying which it did. A server that asks to be signed in later, on
+`session/new` or on a prompt, ends the turn as `chat/error` with type
+`authRequired` and a sentence naming the same ids.
+
+`session/new` and `session/load` carry `Start.mcpServers` in ACP's own shapes, less what the server's handshake says it cannot take - an `http` server goes out only where it answered `mcpCapabilities.http`, and one left out is said through the log, `api: this ACP server takes no MCP server over HTTP, so it was left out`, because a deployment that configured a server and watched a session not reach it has no other way to find out. The host's own tools are added last as one `http` server named `ahp`, carrying the endpoint's bearer token, unless `hostTools` is `false`; that one goes through the same check as the rest, so a server that takes none over HTTP is told nothing about it, and one left out is said as `ahp: this ACP server takes no MCP server over HTTP, so it was left out`. `ahp` is the name the in-process server already carries in this host, so an agent with both is being told about the same tools twice rather than about two servers. A daemon over stdio opens no endpoint and adds nothing. A stdio server's `cwd` cannot be carried by ACP at all, so it is left out of the shape that goes out and said, `search: ACP carries no directory for a stdio MCP server, so /srv/search was left out`.
 
 GitHub Copilot CLI 1.0.87 is the one driven end to end through this bridge, by
 [`scripts/acp-smoke.mts`](../scripts/acp-smoke.mts): it handshook, registered
@@ -736,6 +762,19 @@ client, and the bridge answers with what it printed and what it exited with.
 A permission offers every option the server listed, approvals before refusals, on the call and on its confirmation entry, and the one the person picks is the `optionId` the server receives.
 An answer that picked no option, or one the server did not offer, selects `allow_once` or `reject_once`, and an `always` option is never selected that way because that would change the session's policy from a single answer.
 A server that offers no once option of the answer's kind is answered `cancelled`.
+
+A tool call moves when the agent moves it.
+A call the server is still holding is `pending`, and nothing is said about who approves it until the agent starts it, so a permission that arrives one instruction later is never contradicted.
+Once a question is standing it is the call's readiness: a later status or a later `rawInput` sends the arguments again if they arrived after, and never sends a ready saying nobody is going to be asked.
+The arguments are kept on the call as well, so a call announced `pending` with them is readied with them by the update that starts it, even where that update carries a status alone.
+A call that arrives already finished is started, readied and completed at once, whether it arrived as a `tool_call` or as a `tool_call_update`.
+
+What the call carries is what a client draws beside it.
+Terminal content is the host's own terminal, the one the server opened through the host, and it draws with the same block a `!command` turn closes with.
+A diff is shown as the file edit it is, the after side being the file itself, and recorded in the turn's changeset beside the before side the diff carried - by the time the diff arrives the file holds only the new text, so that before side is the diff's own `oldText`.
+A diff with no `oldText` is a file the agent created, which the changeset says by leaving the before side out.
+A diff of a path outside the session's own directories is shown and not recorded, because it is something the agent says it did somewhere this session was never given.
+Every file the agent writes through `fs/write_text_file` is captured the same way, once before the write and once after it, and the before is read before the write truncates the file.
 
 A `!command` in the composer is the host's shell turn, not the server's: the
 bridge implements `ran`, so the daemon spawns the command in one of its own

@@ -914,11 +914,13 @@ export function gitChanges(): ChangesetSource {
      *
      * `before` is read as the tool is announced and `after` when its result
      * arrives. A file that did not exist reads as empty, which is what a
-     * creation is.
+     * creation is. A side the caller hands over is taken rather than read,
+     * because by the time an agent says it changed a file the only copy of
+     * what it held is the diff it sent.
      */
-    observe: (dir, session, turnId, path, phase) => {
-      void (async () => {
-        const text = await readFile(path, 'utf8').catch(() => undefined);
+    observe: (dir, session, turnId, path, phase, given) =>
+      (async () => {
+        const text = given ?? await readFile(path, 'utf8').catch(() => undefined);
         const turns = seen.get(session) ?? new Map<string, Map<string, Captured>>();
         seen.set(session, turns);
         const files = turns.get(turnId) ?? new Map<string, Captured>();
@@ -945,8 +947,7 @@ export function gitChanges(): ChangesetSource {
             reviewed.get(reviewKey(session, scope))?.delete(`file://${path}`);
           }
         }
-      })().catch(() => {});
-    },
+      })().catch(() => {}),
 
     summary: (dir) => held.get(dir)?.summary,
 

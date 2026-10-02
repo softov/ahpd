@@ -1,6 +1,6 @@
 ---
 title: An agent's write reaches review
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

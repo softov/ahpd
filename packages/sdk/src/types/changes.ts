@@ -310,9 +310,13 @@ export interface ChangesetSource {
    * only way the answer stays the turn's own.
    *
    * Reading the file is this source's business - it is the thing here that
-   * has a filesystem - and the session only says which one and when.
+   * has a filesystem - and the session only says which one and when. `text`
+   * is a side the caller already holds, which no read can find afterwards:
+   * a file the agent says it changed has already been written, and what it
+   * held before is only in the diff the agent sent. The promise is what a
+   * caller waits for, so a `before` is read before the write that follows it.
    */
-  observe?(dir: string, session: string, turnId: string, path: string, phase: 'before' | 'after'): void;
+  observe?(dir: string, session: string, turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
   /**
    * The verbs this source offers on one scope, in the order to draw them.
    *

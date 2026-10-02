@@ -1,7 +1,7 @@
 ---
 title: The bridge signs in, and says when an agent needs it
 domain: acp
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -49,9 +49,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A spec may sign in after initialize](task-01-a-spec-may-sign-in.md) | todo | - |
-| [02 - auth_required is its own error](task-02-auth-required-is-its-own-error.md) | todo | - |
-| [03 - The docs show signing in](task-03-docs.md) | todo | 01, 02 |
+| [01 - A spec may sign in after initialize](task-01-a-spec-may-sign-in.md) | done | - |
+| [02 - auth_required is its own error](task-02-auth-required-is-its-own-error.md) | done | - |
+| [03 - The docs show signing in](task-03-docs.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -59,14 +59,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-spec-may-sign-in.md](task-01-a-spec-may-sign-in.md).
-- **Open questions:** none.
-- **Watch out for:** the handshake reply is cached today; keep `authMethods` from it rather than asking again.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A server that requires sign-in starts when the spec names the method.
-- [ ] `auth_required` reads as that, with the methods.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] A server that requires sign-in starts when the spec names the method.
+- [x] `auth_required` reads as that, with the methods.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

@@ -1,6 +1,6 @@
 ---
 title: "`mcpServers` in the configuration and in root config"
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:

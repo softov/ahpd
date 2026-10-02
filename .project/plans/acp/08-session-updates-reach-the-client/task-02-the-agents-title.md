@@ -1,6 +1,6 @@
 ---
 title: The agent's title is the session's
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

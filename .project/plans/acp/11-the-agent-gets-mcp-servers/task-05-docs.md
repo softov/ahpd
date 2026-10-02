@@ -1,6 +1,6 @@
 ---
 title: Docs say how the host's MCP servers and tools reach an agent
-status: todo
+status: done
 depends: [task-04-the-acp-bridge-opens-with-mcp-servers.md]
 layer: "docs"
 refs:

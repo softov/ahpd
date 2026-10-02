@@ -14,7 +14,7 @@
  * throwing, so a 1.5 server does not fail a 1.4 bridge.
  */
 
-import type { ContentBlock, PermissionOption, SessionUpdate, ToolCall, ToolCallUpdate } from '@agentclientprotocol/sdk';
+import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
@@ -31,6 +31,14 @@ const written = (value: unknown): string | undefined =>
 /** The part this turn already holds under an id. */
 const partOf = (turn: AcpTurn, id: string): Bag | undefined =>
   turn.parts.find((held) => held.id === id);
+
+/**
+ * The id of the turn's plan call.
+ *
+ * Named rather than numbered, because a turn keeps one plan for as long as the
+ * agent sends plans and a second one would have to be told apart from it.
+ */
+const planId = (turnId: string): string => `${turnId}:plan`;
 
 /**
  * The part a chunk of one kind appends to, with the action that announces it
@@ -90,7 +98,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
   if (known !== undefined) return known;
   const title = 'title' in update && update.title !== undefined && update.title !== null ? update.title : update.toolCallId;
   const name = 'name' in update && update.name !== undefined && update.name !== null ? update.name : title;
-  const call: AcpCall = { toolCallId: update.toolCallId, toolName: name, displayName: title, readied: false };
+  const call: AcpCall = { toolCallId: update.toolCallId, toolName: name, displayName: title, readied: false, asked: false };
   turn.calls.set(update.toolCallId, call);
   // A call ends the run of message chunks before it, held whitespace and all.
   delete turn.waiting;
@@ -102,24 +110,225 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
   return call;
 };
 
+/**
+ * Whether the agent has moved the call off `pending`.
+ *
+ * `pending` is the agent's own word for a call it has not started, and a ready
+ * carrying `not-needed` is a statement that nobody is going to be asked about
+ * it - so it waits until the agent has said the call is running. A call that
+ * arrives already finished has left it too.
+ */
+const started = (status: ToolCallStatus | null | undefined): boolean =>
+  status !== undefined && status !== null && status !== 'pending';
+
+/**
+ * The arguments an update carried, kept on the call.
+ *
+ * A call announced `pending` is often given its arguments on that same
+ * announcement, and the update that starts it afterwards carries a status
+ * alone - so the ready that follows takes what the call holds rather than what
+ * this one update happened to carry.
+ */
+const inputOf = (call: AcpCall, update: ToolCall | ToolCallUpdate): string | undefined => {
+  const input = written(update.rawInput);
+  if (input !== undefined) call.input = input;
+  return input;
+};
+
+/**
+ * Whether a ready saying nobody is going to be asked may go out now.
+ *
+ * Not for a call a person is being asked about: its question is the ready, and
+ * one behind that says the question is not there.
+ */
+const mayReady = (call: AcpCall): boolean => started(call.status) && !call.asked;
+
+/**
+ * The action that moves a call on, once the agent has started it.
+ *
+ * Sent twice at most for one call: once when the status first left `pending`,
+ * and again for a `rawInput` that arrived after, because the ready action is
+ * where the arguments a client shows come from.
+ */
+const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => {
+  call.readied = true;
+  return {
+    type: 'chat/toolCallReady',
+    turnId: turn.turnId,
+    toolCallId: call.toolCallId,
+    invocationMessage: call.displayName,
+    confirmed: 'not-needed',
+    ...(input === undefined ? {} : { toolInput: input }),
+  };
+};
+
+/**
+ * The actions that open a call's row, for an update that is the first word
+ * about it.
+ *
+ * A server may send the first thing a client hears about a call as the update
+ * that finishes it, and a row that is closed without ever being opened is a
+ * completion for a call nobody drew.
+ */
+const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
+  type: 'chat/toolCallStart',
+  turnId: turn.turnId,
+  toolCallId: call.toolCallId,
+  toolName: call.toolName,
+  displayName: call.displayName,
+}];
+
+/**
+ * The actions that close a call, whichever update finished it.
+ *
+ * A server may announce a call and finish it in one update, so a `tool_call`
+ * lands here as well as a `tool_call_update`: a row closed without ever being
+ * opened is a completion for a call nobody drew.
+ */
+const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] => {
+  const success = call.status === 'completed';
+  const part = callPartOf(turn, call.toolCallId);
+  const held = part === undefined ? undefined : bag(part.toolCall);
+  if (held !== undefined) {
+    held.status = 'completed';
+    held.success = success;
+    held.pastTenseMessage = call.displayName;
+  }
+  const text = contentText(content);
+  return [...actions, {
+    type: 'chat/toolCallComplete',
+    turnId: turn.turnId,
+    toolCallId: call.toolCallId,
+    result: {
+      success,
+      pastTenseMessage: call.displayName,
+      ...(content.length === 0 ? {} : { content }),
+      ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
+    },
+  }];
+};
+
+/**
+ * The actions that replace what a client shows beside a call still running.
+ *
+ * An update carrying a status alone carries nothing to replace, and a client
+ * given an empty content change would draw an empty call.
+ */
+const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] =>
+  content.length === 0 ? actions : [...actions, {
+    type: 'chat/toolCallContentChanged',
+    turnId: turn.turnId,
+    toolCallId: call.toolCallId,
+    content,
+  }];
+
+/** A call's content, as the actions that carry it on whichever update brought it. */
+const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] =>
+  call.status === 'completed' || call.status === 'failed' ? closed(turn, call, content, actions) : shown(turn, call, content, actions);
+
 /** The tool-call part held in the snapshot, opened lazily for an update that arrived first. */
 const callPartOf = (turn: AcpTurn, callId: string): Bag | undefined =>
   partOf(turn, callId);
 
-/** The text blocks of a tool call's content, in the order the server sent them. */
-const contentBlocks = (content: ToolCallUpdate['content']): Bag[] => {
+/** The content a call's held part carries, which is what its completion repeats. */
+const heldContent = (part: Bag | undefined): Bag[] => {
+  const content = part === undefined ? undefined : bag(part.toolCall).content;
+  return Array.isArray(content) ? content as Bag[] : [];
+};
+
+/**
+ * One diff, as the file edit a client draws and as an entry in the changeset.
+ *
+ * Only the `after` side goes in the block: no `file://` URI addresses what a
+ * file used to be, and the diff's own `oldText` is what the turn's review holds
+ * as the before side. A file with no `oldText` is one the agent created. A
+ * diff of a path outside the session's own directories is shown and not
+ * recorded - it is something the agent says it did somewhere this session was
+ * never given.
+ */
+const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
+  const uri = `file://${diff.path}`;
+  if (turn.reach !== undefined && turn.reach.within(diff.path)) {
+    turn.reach.changed(diff.path, diff.oldText ?? undefined);
+  }
+  return { type: 'fileEdit', after: { uri, content: { uri } } };
+};
+
+/**
+ * A call's content, as the blocks a client shows beside it.
+ *
+ * A terminal id is already a host terminal URI, because the bridge opened the
+ * shell through the host, so the block is the one `runCommand` builds.
+ */
+const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
   for (const entry of content ?? []) {
     if (entry.type === 'content' && entry.content.type === 'text') {
       blocks.push({ type: 'text', text: entry.content.text });
+    } else if (entry.type === 'terminal') {
+      blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', isPty: false });
+    } else if (entry.type === 'diff') {
+      blocks.push(fileEdit(turn, entry));
     }
   }
   return blocks;
 };
 
-/** Everything a tool call's content says, as one string. */
-const contentText = (content: ToolCallUpdate['content']): string =>
-  contentBlocks(content).map((block) => String(block.text ?? '')).join('\n');
+/** What a call's content says in words, which is all a failure carries. */
+const contentText = (blocks: Bag[]): string =>
+  blocks.filter((block) => block.type === 'text').map((block) => String(block.text ?? '')).join('\n');
+
+/**
+ * One plan entry, as a line of the plan.
+ *
+ * A checkbox says whether the entry is done, and the status is written out
+ * where a checkbox cannot say it, because an entry that is running is not an
+ * entry that is waiting either.
+ */
+const entryLine = (entry: PlanEntry): string => {
+  const done = entry.status === 'completed';
+  const where = done || entry.status === 'pending' ? '' : ` (${entry.status})`;
+  return `- [${done ? 'x' : ' '}] ${entry.content}${where}`;
+};
+
+/**
+ * The turn's one plan, as the call that holds it.
+ *
+ * A plan is something the agent writes rather than streams, so it is a call:
+ * one for the whole turn, opened by the first plan and rewritten by every one
+ * after it. The protocol sends the whole list each time rather than a change to
+ * it, so there is nothing to append and each update replaces what the call
+ * shows - an update carrying no entries replacing it with nothing. Nothing in
+ * the protocol says when the agent has finished writing a plan, so the call is
+ * completed by the turn ending, with the last plan as its result.
+ */
+const plan = (turn: AcpTurn, entries: PlanEntry[]): Bag[] => {
+  const call = callOf(turn, { toolCallId: planId(turn.turnId), title: 'Plan', name: 'plan' });
+  const first = call.readied === false;
+  call.status = 'in_progress';
+  const content: Bag[] = entries.map((entry) => ({ type: 'text', text: entryLine(entry) }));
+  bag(callPartOf(turn, call.toolCallId)?.toolCall).content = content;
+  return [
+    // The row, and the ready that says nobody is ever going to be asked about
+    // a plan - a question is a question about a tool, and a plan is not one.
+    ...(first ? opened(turn, call) : []),
+    ...(first ? [ready(turn, call, undefined)] : []),
+    { type: 'chat/toolCallContentChanged', turnId: turn.turnId, toolCallId: call.toolCallId, content },
+  ];
+};
+
+/**
+ * The turn's plan, completed as the turn ends.
+ *
+ * A plan is the one row the protocol never closes itself, so the turn ending is
+ * what closes it - with the last plan the agent wrote as what it returned.
+ */
+export function closePlan(turn: AcpTurn): Bag[] {
+  const call = turn.calls.get(planId(turn.turnId));
+  if (call === undefined) return [];
+  call.status = 'completed';
+  return closed(turn, call, heldContent(callPartOf(turn, call.toolCallId)), []);
+}
 
 /** One update's actions, in the order they must be sent. */
 export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
@@ -146,32 +355,18 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
 
     /*
      * A new tool call. The start action creates the row, and the ready action
-     * follows it when the server sent the arguments with the call: without a
-     * ready action the reducer parks the call in `pending-confirmation`, which
-     * is the wrong question for a call nobody has to approve.
+     * follows it once the agent has started the call: a ready carrying
+     * `not-needed` says nobody is going to be asked about it, which is a claim
+     * the bridge cannot make while the agent is still holding the call. A call
+     * that arrives already finished is opened and completed at once.
      */
     case 'tool_call': {
       const call = callOf(turn, update);
-      const actions: Bag[] = [{
-        type: 'chat/toolCallStart',
-        turnId: turn.turnId,
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        displayName: call.displayName,
-      }];
-      const input = written(update.rawInput);
-      if (input !== undefined) {
-        call.readied = true;
-        actions.push({
-          type: 'chat/toolCallReady',
-          turnId: turn.turnId,
-          toolCallId: call.toolCallId,
-          invocationMessage: call.displayName,
-          confirmed: 'not-needed',
-          toolInput: input,
-        });
-      }
-      return actions;
+      call.status = update.status ?? 'pending';
+      const actions = opened(turn, call);
+      inputOf(call, update);
+      if (mayReady(call)) actions.push(ready(turn, call, call.input));
+      return drawn(turn, call, contentBlocks(turn, update.content), actions);
     }
 
     /*
@@ -179,75 +374,58 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
      *
      * A terminal status closes the row with `chat/toolCallComplete`, which is
      * the only action that carries a result. Anything else that brought content
-     * replaces what a client shows beside a running call; a status-only update
-     * has nothing new to say, because the start action already opened the row.
+     * replaces what a client shows beside a running call.
      */
     case 'tool_call_update': {
+      const known = turn.calls.has(update.toolCallId);
       const call = callOf(turn, update);
-      if (update.status === 'completed' || update.status === 'failed') {
-        const success = update.status === 'completed';
-        const text = contentText(update.content);
-        const part = callPartOf(turn, call.toolCallId);
-        const held = part === undefined ? undefined : bag(part.toolCall);
-        if (held !== undefined) {
-          held.status = 'completed';
-          held.success = success;
-          held.pastTenseMessage = call.displayName;
-        }
-        return [{
-          type: 'chat/toolCallComplete',
-          turnId: turn.turnId,
-          toolCallId: call.toolCallId,
-          result: {
-            success,
-            pastTenseMessage: call.displayName,
-            ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
-            ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
-          },
-        }];
-      }
-      const content = contentBlocks(update.content);
-      if (content.length === 0) return [];
-      return [{
-        type: 'chat/toolCallContentChanged',
-        turnId: turn.turnId,
-        toolCallId: call.toolCallId,
-        content,
-      }];
+      if (update.status !== undefined && update.status !== null) call.status = update.status;
+      const input = inputOf(call, update);
+      const actions = known ? [] : opened(turn, call);
+      // A second ready goes out for arguments that arrived after the first, so
+      // what a client shows is the arguments the agent last wrote down.
+      if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(ready(turn, call, call.input));
+      return drawn(turn, call, contentBlocks(turn, update.content), actions);
     }
 
     /*
-     * What the agent has spent, as the turn's cost so far.
+     * What the agent has spent, and how full its context is.
      *
-     * ACP counts no tokens here: `used` and `size` are the context window and
-     * not what the turn spent, so what this update does report is its cost -
-     * cumulative for the whole session rather than for the turn, which makes
+     * ACP counts no tokens per call: `used` and `size` are the context window
+     * and not what the turn spent, so both go in `_meta` where a client reads
+     * them as what they are. What this reports as the turn's usage is its cost
+     * - cumulative for the whole session rather than for the turn, which makes
      * what the turn spent the change since it opened.
      *
      * Sent as it stands rather than as the difference between two reports,
      * because the protocol replaces the active turn's usage on each
      * `chat/usage` instead of adding to it: a client watches the number grow
-     * through the turn, as it does with the other backends. A server that
-     * sends no cost has reported nothing here, so nothing is sent.
+     * through the turn, as it does with the other backends.
      */
     case 'usage_update': {
+      const _meta: Bag = { context: { used: update.used, size: update.size } };
       const cost = update.cost;
-      if (cost === undefined || cost === null || typeof cost.amount !== 'number') return [];
-      turn.cost = { amount: cost.amount, currency: cost.currency };
-      return [{
-        type: 'chat/usage',
-        turnId: turn.turnId,
-        usage: {
-          _meta: { cost: { amount: cost.amount - (turn.costAtStart ?? 0), currency: cost.currency } },
-        },
-      }];
+      if (cost !== undefined && cost !== null && typeof cost.amount === 'number') {
+        turn.cost = { amount: cost.amount, currency: cost.currency };
+        _meta.cost = { amount: cost.amount - (turn.costAtStart ?? 0), currency: cost.currency };
+      }
+      // The last of it is what the turn holds, which is what a rebuilt
+      // conversation reads back.
+      turn.usage = { _meta };
+      return [{ type: 'chat/usage', turnId: turn.turnId, usage: turn.usage }];
     }
 
     /*
-     * Everything else - a user echo, a plan, a mode or command catalogue - is a
-     * variant this task does not carry. Nothing is thrown for one, because the
-     * union grows with the protocol and a bridge that failed a turn over an
-     * update it did not know would be worse than one that ignored it.
+     * The agent's plan, as the turn's one call for it.
+     */
+    case 'plan':
+      return plan(turn, update.entries);
+
+    /*
+     * Everything else - a user echo, a mode or command catalogue - is a variant
+     * this bridge does not carry. Nothing is thrown for one, because the union
+     * grows with the protocol and a bridge that failed a turn over an update it
+     * did not know would be worse than one that ignored it.
      */
     default:
       return [];

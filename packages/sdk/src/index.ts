@@ -37,6 +37,8 @@ export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools.js';
+export { toolServers, TOOLS_PREFIX } from './toolserver.js';
+export type { ToolsEndpoint, ToolsServerOptions, ToolsServers } from './toolserver.js';
 export { machineAsked, refuseComputer, computersFor, computerId, computerSource, openComputer } from './computers.js';
 export { nestedAgent } from './nested.js';
 export type { NestedAsked, NestedHost, NestedOptions } from './nested.js';

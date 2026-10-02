@@ -1,6 +1,6 @@
 ---
 title: The ACP bridge opens a session with its MCP servers
-status: todo
+status: done
 depends: [task-02-a-sessions-mcp-servers-reach-start.md, task-03-the-host-serves-its-tools-over-mcp.md]
 layer: "agent-acp"
 refs:

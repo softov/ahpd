@@ -520,6 +520,27 @@ rows are kept and the `policy:` scheme is served either way, so a store can be
 filled in before anything is switched on; a wrong value is
 `...: policies.check must be true or false`. See [docs/POLICY.md](POLICY.md).
 
+`mcpServers` is the host's own MCP servers, by the name a person gave each, and
+every session is offered them whatever agent it runs, as the `mcpServers` member
+of what its backend is started with. An entry is one of the two shapes VS Code
+uses:
+
+```json
+"mcpServers": {
+  "files": { "type": "stdio", "command": "mcp-server-filesystem", "args": ["/srv"], "cwd": "/srv", "env": { "TOKEN": "..." } },
+  "issues": { "type": "http", "url": "http://127.0.0.1:9310/mcp", "headers": { "Authorization": "Bearer ..." } }
+}
+```
+
+A `stdio` server needs a `command` and an `http` one a `url`; an entry that is
+neither shape, or that is missing the one its own `type` needs, is one warning in
+the log and is left out, because one server nobody can reach is a gap in one
+agent's reach where a wrong `port` is a daemon that would not run at all. A value
+in `env` or in `headers` is a credential, so each answers `<set>` here and over
+the API alike. It has no flag, for the same reason `usage` and `policies` have
+none: it is a list of programs, and that is a deployment's decision rather than
+one run's. See [docs/PLUGINS.md](PLUGINS.md) for what a session is handed.
+
 `ahpd usage` prints what this host was charged, and the same store is served as
 the `usage:` scheme, so a client reads it through the resource calls it already
 has: `usage://` lists the pools that reader may see, `usage://<pool>` reads
@@ -545,9 +566,9 @@ The merged files are checked against the same schema the flags are, before anyth
 
 ### What a client can configure
 
-The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools` and `wire`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
+The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
 
-`advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
+`advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. `mcpServers` applies to the next session opened; a running session keeps the servers it started with. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
 
 A key shows what the file holds rather than what this run is using, and when a start flag overrode it the key's description says so. A credential is never sent back: every value the plugin's own `optionsSchema` marks `writeOnly`, however deep in its options the mark sits, is answered as `<set>`, here and over the API alike, and a client that sends that back has said the credential is left as it is. The terminal's own `ahpd config` is the one answer that prints the file as it is, because whoever runs it can read the file.
 

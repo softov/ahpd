@@ -183,9 +183,12 @@ export interface SessionOptions {
    * working tree's at the time somebody asked.
    *
    * The path only. Reading it is the host's business, because reading a file
-   * is a filesystem and a session has none.
+   * is a filesystem and a session has none. `text` is what the caller already
+   * holds of that side, for a backend that saw the file change rather than
+   * watching it; the promise is waited for where the host has a filesystem to
+   * read, so a `before` finishes before the write that follows it.
    */
-  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after'): void;
+  onFileEdit?(turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
   /**
    * A turn this session has written under an id of its own.
    *

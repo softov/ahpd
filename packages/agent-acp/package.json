@@ -83,6 +83,9 @@
       },
       "provider": {
         "required": false
+      },
+      "hostTools": {
+        "required": false
       }
     }
   }

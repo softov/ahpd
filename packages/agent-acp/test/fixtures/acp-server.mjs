@@ -20,9 +20,26 @@
  * - text containing `term` opens a terminal, waits for it, reads it, releases it;
  * - text containing `ask` asks for permission on a destructive call and reports
  *   which option came back;
+ * - text containing `hold` asks for permission on a call it is still holding,
+ *   which is `pending`, and reports which option came back;
+ * - text containing `jump` sends the update that ends a call as the first word
+ *   about it, so the bridge never hears a `tool_call` for it at all;
+ * - text containing `paint` opens a shell, really writes a file beside the
+ *   session and ends a call with that shell and that file as its content;
+ * - text containing `away` ends a call with a diff of a path outside the
+ *   session's directories, which is written nowhere;
+ * - text containing `plan` sends two `plan` updates, the second with the first's
+ *   entries moved on;
+ * - text containing `name` sends a `session_info_update` naming the session;
+ * - text containing `shift` moves the mode and the model by itself, saying so
+ *   with a `current_mode_update` and a `config_option_update`;
+ * - text containing `reauth` answers the prompt with the protocol's
+ *   `auth_required`, which is what a server whose sign-in went stale says;
  * - text containing `spend` sends two `usage_update`s carrying a session cost
  *   that rises, and answers with per-turn counts when the text also says
  *   `tokens`;
+ * - text containing `window` sends a `usage_update` that carries the context and
+ *   no cost at all;
  * - text containing `wait` emits one chunk and then holds the prompt open
  *   until `session/cancel` arrives, answering `cancelled` only then;
  * - text containing `fail` streams the plain answer and then answers the
@@ -47,9 +64,18 @@
  * than of this server.
  *
  * Beside the prompt scripts it answers the session lifecycle a catalogue and a
- * config want: `session/list`, `session/load`, `session/set_mode` and
- * `session/set_config_option`, with the modes and the model option a real
- * server names on `session/new`.
+ * config want: `session/list`, `session/load`, `session/set_mode`,
+ * `session/set_config_option` and `session/set_model`, with the modes and the
+ * config options a real server names on `session/new`: a model, a select and a
+ * boolean of its own.
+ *
+ * `--legacy` makes it a server from before config options: `session/new` names
+ * its models in a `models` list beside the session rather than as an option, so
+ * the model is set by `session/set_model`.
+ *
+ * `--modes` adds a `mode` option to the config options, which is the newer
+ * account of the same thing the legacy modes carry: a client sets the mode
+ * through `session/set_config_option` rather than `session/set_mode`.
  *
  * Two flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
@@ -64,6 +90,18 @@
  * `--pages` makes `session/list` answer in two pages, the first with a
  * `nextCursor`, which is what a server whose catalogue does not fit in one
  * answer looks like.
+ *
+ * `--no-http-mcp` stops the handshake advertising that it takes an MCP server
+ * over HTTP, which is what makes a client leave those out of the list it hands
+ * the server on `session/new`.
+ *
+ * `--signin` makes it a server that has to be signed in first: the handshake
+ * offers the `api-key` method and `session/new` answers `auth_required` until
+ * `authenticate` has named it.
+ *
+ * `--signin-fails` is a server that offers the same method and refuses the
+ * sign-in itself, which is a different thing: `authenticate` answers with an
+ * error of its own and the session is never reached.
  *
  * `--grandchild=<file>` starts a process of this server's own at startup and
  * writes its pid into that file, which is how a test reads what a close left
@@ -121,18 +159,68 @@ const modes = () => ({
 /** The model this server currently serves. */
 let model = 'fast';
 
-/** The session config options, which is where ACP keeps a model choice. */
-const configOptions = () => [{
-  type: 'select',
-  id: 'model',
-  name: 'Model',
-  category: 'model',
-  currentValue: model,
-  options: [
-    { value: 'fast', name: 'Fast' },
-    { value: 'thorough', name: 'Thorough' },
+/** How hard this server thinks, and whether it reports what it did. */
+let thinking = 'off';
+let telemetry = false;
+
+/**
+ * The session config options, which is where ACP keeps a model choice.
+ *
+ * A model option and two of its own: a select and a boolean, neither of which
+ * is the model or a mode, so a client draws each as a control of its own. A
+ * `--modes` server names the mode as an option of its own as well, which is the
+ * newer account of what the legacy modes carry.
+ */
+const configOptions = () => [
+  {
+    type: 'select',
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    currentValue: model,
+    options: [
+      { value: 'fast', name: 'Fast' },
+      { value: 'thorough', name: 'Thorough' },
+    ],
+  },
+  ...(process.argv.includes('--modes')
+    ? [{
+        type: 'select',
+        id: 'mode',
+        name: 'Mode',
+        category: 'mode',
+        currentValue: mode,
+        options: [
+          { value: 'ask', name: 'Ask' },
+          { value: 'code', name: 'Code' },
+        ],
+      }]
+    : []),
+  {
+    type: 'select',
+    id: 'thinking',
+    name: 'Thinking',
+    category: 'thought_level',
+    currentValue: thinking,
+    options: [
+      { value: 'off', name: 'Off' },
+      { value: 'deep', name: 'Deep' },
+    ],
+  },
+  { type: 'boolean', id: 'telemetry', name: 'Telemetry', currentValue: telemetry },
+];
+
+/**
+ * The models a `--legacy` server names, which is how it named them before the
+ * config options: a list beside the session rather than an option of its own.
+ */
+const listed = () => ({
+  currentModelId: model,
+  availableModels: [
+    { modelId: 'fast', name: 'Fast' },
+    { modelId: 'thorough', name: 'Thorough' },
   ],
-}];
+});
 
 /** The sessions `session/list` reports, one titled and one not. */
 const LISTED = [
@@ -326,13 +414,30 @@ const scriptFor = (text) => {
     updates.push(charge(0.25), charge(0.5));
   }
 
+  if (text.includes('window')) {
+    // A usage update with no cost, which the protocol allows: all a server can
+    // say here is how full its context is.
+    updates.push({ sessionUpdate: 'usage_update', used: 4200, size: 200000 });
+    return updates;
+  }
+
   updates.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } });
   updates.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' there' } });
   return updates;
 };
 
+/** The choices a permission offers, in the order the protocol puts them. */
+const PERMISSION = [
+  { optionId: 'yes-once', name: 'Allow once', kind: 'allow_once' },
+  { optionId: 'yes-always', name: 'Always allow', kind: 'allow_always' },
+  { optionId: 'no-once', name: 'Reject once', kind: 'reject_once' },
+];
+
 /** The prompt this server is holding open, waiting for a cancel. */
 let pending = undefined;
+
+/** Whether a `--signin` server has been signed in, and so will open a session. */
+let signedIn = false;
 
 /** Whether the command catalogue has already gone out; it is sent once. */
 let commandsSent = false;
@@ -354,7 +459,7 @@ const promptScript = async (id, params) => {
       availableCommands: [{ name: 'plan', description: 'Draft a plan' }],
     });
   }
-  const reaches = ['read', 'write', 'term', 'ask'].some((one) => text.includes(one));
+  const reaches = ['read', 'write', 'term', 'ask', 'hold', 'jump', 'paint', 'away', 'plan', 'name', 'shift', 'reauth'].some((one) => text.includes(one));
   if (!reaches) for (const update of scriptFor(text)) notify(update);
   if (text.includes('chatter')) {
     process.stderr.write('a line the server said to nobody\n');
@@ -393,6 +498,46 @@ const promptScript = async (id, params) => {
       return `${block?.type}:${what}`;
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `blocks=${said.join('|')}` } });
+  }
+
+  if (text.includes('plan')) {
+    // Two plans over one turn, which is what an agent running a plan sends: the
+    // whole list each time, with the entries' statuses moved on.
+    const planned = (entries) => notify({ sessionUpdate: 'plan', entries });
+    planned([
+      { content: 'Read the file', priority: 'high', status: 'in_progress' },
+      { content: 'Write the answer', priority: 'medium', status: 'pending' },
+    ]);
+    planned([
+      { content: 'Read the file', priority: 'high', status: 'completed' },
+      { content: 'Write the answer', priority: 'medium', status: 'in_progress' },
+    ]);
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'planned' } });
+  }
+
+  if (text.includes('shift')) {
+    // Two config values the agent moves by itself, said the way a server says
+    // it moved them: the mode as its own update and the model as the options
+    // list that now names it.
+    mode = 'code';
+    model = 'thorough';
+    notify({ sessionUpdate: 'current_mode_update', currentModeId: mode });
+    notify({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'shifted' } });
+  }
+
+  if (text.includes('name')) {
+    // What the agent calls the conversation, which is a `session_info_update`
+    // and not a turn's word: it names the session rather than answering.
+    notify({ sessionUpdate: 'session_info_update', title: 'Naming the work' });
+  }
+
+  if (text.includes('reauth')) {
+    // A prompt that finds the session no longer signed in, which is what the
+    // protocol's `auth_required` is: the same code `session/new` answered with
+    // above, asked of a turn this time.
+    write({ jsonrpc: '2.0', id, error: { code: -32000, message: 'Authentication required' } });
+    return;
   }
 
   if (text.includes('read')) {
@@ -440,11 +585,7 @@ const promptScript = async (id, params) => {
     const answer = await ask('session/request_permission', {
       sessionId: session,
       toolCall,
-      options: [
-        { optionId: 'yes-once', name: 'Allow once', kind: 'allow_once' },
-        { optionId: 'yes-always', name: 'Always allow', kind: 'allow_always' },
-        { optionId: 'no-once', name: 'Reject once', kind: 'reject_once' },
-      ],
+      options: PERMISSION,
     });
     const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
     notify({
@@ -454,6 +595,166 @@ const promptScript = async (id, params) => {
       content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
+  }
+
+  if (text.includes('hold')) {
+    /*
+     * A call the agent is still holding when it asks about it.
+     *
+     * `pending` is what the protocol calls a call the agent has not started, so
+     * nothing about this turn says nobody will be asked before the question
+     * arrives - and it does arrive, which is the whole of what a test reads.
+     *
+     * The update carrying the arguments and the status goes out while the
+     * question is standing, which is the one moment a `not-needed` behind the
+     * question would be a lie.
+     */
+    const toolCall = {
+      toolCallId: 'call-hold',
+      title: 'Drop a branch',
+      name: 'drop_branch',
+      kind: 'delete',
+      status: 'pending',
+      rawInput: { branch: 'main' },
+    };
+    notify({ sessionUpdate: 'tool_call', ...toolCall });
+    const asking = ask('session/request_permission', {
+      sessionId: session,
+      toolCall,
+      options: PERMISSION,
+    });
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-hold',
+      status: 'in_progress',
+      rawInput: { branch: 'main', force: true },
+    });
+    const answer = await asking;
+    const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-hold',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
+    });
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
+  }
+
+  if (text.includes('later')) {
+    /*
+     * A call announced `pending` with its arguments, and the update that starts
+     * it carrying a status alone.
+     *
+     * The arguments arrived on the first announcement, so the ready that
+     * follows the status is the only place a client can read them.
+     */
+    notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-later',
+      title: 'Fetch the page',
+      name: 'fetch',
+      status: 'pending',
+      rawInput: { url: 'https://example.test/page' },
+    });
+    notify({ sessionUpdate: 'tool_call_update', toolCallId: 'call-later', status: 'in_progress' });
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-later',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: 'fetched' } }],
+    });
+  }
+
+  if (text.includes('whole')) {
+    /*
+     * A call announced and finished in the one update: the protocol allows it,
+     * and a bridge that only opens a row on a later update would never draw it.
+     */
+    notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-whole',
+      title: 'Read the whole file',
+      name: 'read_whole',
+      status: 'completed',
+      rawInput: { path: '/tmp/b.txt' },
+      content: [{ type: 'content', content: { type: 'text', text: 'the whole body' } }],
+    });
+  }
+
+  if (text.includes('jump')) {
+    // The update that ends a call as the first word about it: a server that
+    // announced nothing, so a bridge that only opens a row on a `tool_call`
+    // would close one nobody ever saw.
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-jump',
+      title: 'Count the lines',
+      name: 'count_lines',
+      status: 'completed',
+      content: [{ type: 'content', content: { type: 'text', text: '42' } }],
+    });
+  }
+
+  if (text.includes('paint')) {
+    /*
+     * A call whose result is a shell and an edit.
+     *
+     * The terminal is one the host opened for this server, so its id is a host
+     * terminal URI already, and the file is really written beside the session
+     * before the update that names it, so a changeset reading either side of it
+     * has something to read.
+     */
+    const created = await ask('terminal/create', {
+      sessionId: session, command: 'echo', args: ['painted'], cwd,
+    });
+    const terminalId = String(created?.terminalId ?? '');
+    const path = `${cwd}/painted.txt`;
+    // The file as it was, then as it is: a diff carries both sides in words,
+    // and by the time it arrives the file itself only holds the new one.
+    writeFileSync(path, 'a blank canvas\n');
+    notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-paint',
+      title: 'Paint and preview',
+      name: 'paint',
+      status: 'in_progress',
+      rawInput: { path },
+    });
+    writeFileSync(path, 'a line of paint\n');
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-paint',
+      status: 'completed',
+      content: [
+        { type: 'terminal', terminalId },
+        { type: 'diff', path, oldText: 'a blank canvas\n', newText: 'a line of paint\n' },
+      ],
+    });
+    await ask('terminal/release', { sessionId: session, terminalId });
+  }
+
+  if (text.includes('away')) {
+    /*
+     * A diff of a path outside the session's own directories.
+     *
+     * Nothing is written: the bridge is meant to show this one and leave it out
+     * of the changeset, so a file appearing here would prove nothing.
+     */
+    const outside = `${cwd}/../elsewhere.txt`;
+    notify({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-away',
+      title: 'Edit something else',
+      name: 'edit_elsewhere',
+      status: 'in_progress',
+      rawInput: { path: outside },
+    });
+    notify({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-away',
+      status: 'completed',
+      content: [{ type: 'diff', path: outside, oldText: '', newText: 'elsewhere\n' }],
+    });
   }
 
   respond(id, { stopReason: stopReasonOf(text), ...countedFor(text) });
@@ -534,6 +835,7 @@ const onLine = (line) => {
         protocolVersion: 1,
         agentCapabilities: {
           ...(process.argv.includes('--no-load') ? {} : { loadSession: true }),
+          mcpCapabilities: { http: !process.argv.includes('--no-http-mcp') },
           ...(process.argv.includes('--prompt-caps')
             ? { promptCapabilities: { image: true, embeddedContext: true } }
             : {}),
@@ -544,18 +846,42 @@ const onLine = (line) => {
             ...(process.argv.includes('--extra-dirs') ? { additionalDirectories: {} } : {}),
           },
         },
-        authMethods: [],
+        authMethods: process.argv.includes('--signin') || process.argv.includes('--signin-fails') ? [{ id: 'api-key', name: 'API key' }] : [],
       });
       return;
 
+    case 'authenticate':
+      // The protocol's own `auth_required`, by the code the SDK's
+      // `RequestError.authRequired` carries, which is what the bridge reads.
+      if (message.params?.methodId !== 'api-key') {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Authentication required' } });
+        return;
+      }
+      // A key the server has decided against, said as this server says it and
+      // by the same code, so a client cannot tell a refusal from a request for
+      // a sign-in by the code alone.
+      if (process.argv.includes('--signin-fails')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'That API key was rejected' } });
+        return;
+      }
+      signedIn = true;
+      respond(message.id, {});
+      return;
+
     case 'session/new': {
+      if (process.argv.includes('--signin') && !signedIn) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Authentication required' } });
+        return;
+      }
       const id = nextSession();
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
       // Started with `--books`, the server says what the session had already
       // cost before any turn, before it answers, the way `session/load`
       // replays a resumed conversation before its response.
       if (process.argv.includes('--books')) notify(charge(0));
-      respond(message.id, { sessionId: id, modes: modes(), configOptions: configOptions() });
+      respond(message.id, process.argv.includes('--legacy')
+        ? { sessionId: id, modes: modes(), models: listed() }
+        : { sessionId: id, modes: modes(), configOptions: configOptions() });
       return;
     }
 
@@ -565,7 +891,9 @@ const onLine = (line) => {
       session = String(message.params?.sessionId ?? nextSession());
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
       if (process.argv.includes('--replay')) replayed();
-      respond(message.id, { modes: modes(), configOptions: configOptions() });
+      respond(message.id, process.argv.includes('--legacy')
+        ? { modes: modes(), models: listed() }
+        : { modes: modes(), configOptions: configOptions() });
       return;
     }
 
@@ -581,10 +909,25 @@ const onLine = (line) => {
       notify({ sessionUpdate: 'current_mode_update', currentModeId: mode });
       return;
 
-    case 'session/set_config_option':
-      model = String(message.params?.value ?? model);
+    case 'session/set_config_option': {
+      // Each option is set under its own id, so a test can read what the bridge
+      // asked for rather than what it meant.
+      const asked = String(message.params?.configId ?? '');
+      const value = message.params?.value;
+      if (asked === 'model') model = String(value ?? model);
+      if (asked === 'mode') mode = String(value ?? mode);
+      if (asked === 'thinking') thinking = String(value ?? thinking);
+      if (asked === 'telemetry') telemetry = value === true;
       respond(message.id, { configOptions: configOptions() });
       notify({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
+      return;
+    }
+
+    case 'session/set_model':
+      // The call a `--legacy` server takes a model through, which the SDK's
+      // agent no longer names and which this fixture answers anyway.
+      model = String(message.params?.modelId ?? model);
+      respond(message.id, {});
       return;
 
     case 'session/prompt':

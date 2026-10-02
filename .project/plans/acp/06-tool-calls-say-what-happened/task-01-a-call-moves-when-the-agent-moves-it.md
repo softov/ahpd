@@ -1,6 +1,6 @@
 ---
 title: A call moves when the agent moves it
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

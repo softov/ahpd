@@ -14,6 +14,8 @@ import { existsSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk';
 import type {
+  AuthenticateRequest,
+  AuthenticateResponse,
   ClientCapabilities,
   ContentBlock,
   InitializeRequest,
@@ -181,6 +183,9 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
         }
       : {}),
     ...(createTerminal !== undefined ? { terminal: true } : {}),
+    // A boolean option is set by the same request a select is, and the bridge
+    // draws it as a control and sets it, so a server is free to offer one.
+    session: { configOptions: { boolean: {} } },
   };
 
   /*
@@ -300,6 +305,8 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
         return reply;
       });
     },
+    authenticate: (request: AuthenticateRequest): Promise<AuthenticateResponse> =>
+      heard(() => connection.agent.request(methods.agent.authenticate, request)),
     newSession: (request: NewSessionRequest): Promise<NewSessionResponse> =>
       heard(() => connection.agent.request(methods.agent.session.new, request)),
     loadSession: (request: LoadSessionRequest): Promise<LoadSessionResponse> =>
@@ -310,6 +317,14 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       heard(() => connection.agent.request(methods.agent.session.setMode, request)),
     setSessionConfigOption: (request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> =>
       heard(() => connection.agent.request(methods.agent.session.setConfigOption, request)),
+    /*
+     * `session/set_model`, which the SDK's agent no longer names.
+     *
+     * Sent as a method named rather than as a typed call, because that is all
+     * the connection is left with, and a server that takes it is a server from
+     * before the config options - which is the only kind this is asked of.
+     */
+    setModel: (request): Promise<unknown> => heard(() => connection.agent.request('session/set_model', request)),
     prompt: (sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> => heard(() => connection.agent.request(methods.agent.session.prompt, {
       sessionId,
       prompt,

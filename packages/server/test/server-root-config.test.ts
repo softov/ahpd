@@ -61,10 +61,10 @@ const keySchema = (root: RootConfigPort, key: string): Record<string, unknown> =
   ((root.schema() as { properties: Record<string, { properties: Record<string, unknown> }> }).properties[key] ?? { properties: {} }).properties;
 
 describe('the daemon keys root config carries', () => {
-  it('are the seven of them, and none of the others', () => {
+  it('are the eight of them, and none of the others', () => {
     const { schema } = port();
     const properties = (schema() as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'wire']);
+    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'wire', 'mcpServers']);
     for (const key of ['stdio', 'configFile', 'connectionToken', 'connectionTokenFile', 'trustToken', 'issuer', 'resource', 'users', 'automations', 'sessions']) {
       expect(Object.keys(properties)).not.toContain(key);
     }
@@ -193,6 +193,73 @@ describe('the keys that apply while this daemon runs', () => {
 
   it('answers no restart for advancedTools, which applies here', async () => {
     expect(await port().write({ advancedTools: true })).toEqual({ restartNeeded: false });
+  });
+});
+
+describe('the mcpServers key', () => {
+  const SERVERS = {
+    search: { type: 'stdio', command: 'mcp-search', args: ['--stdio'], env: { KEY: 'k-1' } },
+    notes: { type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: 'Bearer t-1' } },
+  };
+  const withServers = (servers: unknown = SERVERS): RootConfigPort => {
+    put({ mcpServers: servers });
+    return daemonRootConfig(optionsFrom({ configFile: config }));
+  };
+
+  it('answers what the file holds, with an env and a header as set', async () => {
+    expect((await withServers().values()).mcpServers).toEqual({
+      search: { type: 'stdio', command: 'mcp-search', args: ['--stdio'], env: { KEY: '<set>' } },
+      notes: { type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: '<set>' } },
+    });
+  });
+
+  it('writes a server, says no restart, and leaves a credential that was sent back', async () => {
+    const root = withServers();
+    const answer = await root.write({ mcpServers: { search: { type: 'stdio', command: 'mcp-search', env: { KEY: '<set>' } }, new: { type: 'http', url: 'https://new.test' } } });
+    expect(answer).toEqual({ restartNeeded: false });
+    // The env was sent back as it was answered, which says leave it as it was.
+    expect((held().mcpServers as Record<string, { env?: Record<string, string> }>).search?.env).toEqual({ KEY: 'k-1' });
+    expect(held().mcpServers).toHaveProperty('new');
+  });
+
+  it('hands the written servers, credentials included, to the next session', async () => {
+    put({ mcpServers: SERVERS });
+    let next: unknown;
+    const root = daemonRootConfig(optionsFrom({ configFile: config }), {}, () => {}, (servers) => { next = servers; });
+    await root.write({ mcpServers: { search: { type: 'stdio', command: 'mcp-search', env: { KEY: '<set>' } } } });
+    expect((next as Record<string, { env?: Record<string, string> }>).search?.env).toEqual({ KEY: 'k-1' });
+    expect(next).toHaveProperty('notes');
+  });
+
+  it('hands on only the servers a session could open, and leaves the rest in the file', async () => {
+    put({ mcpServers: SERVERS });
+    let next: Record<string, unknown> = {};
+    const root = daemonRootConfig(optionsFrom({ configFile: config }), {}, () => {}, (servers) => { next = servers as Record<string, unknown>; });
+    await root.write({ mcpServers: { broken: { type: 'http' }, notes: { type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: '<set>' } } } });
+    // An http server with no url is not one, and the file still holds it, so the
+    // next start is the one that says so.
+    expect(next).not.toHaveProperty('broken');
+    expect(next.notes).toEqual({ type: 'http', url: 'https://notes.test/mcp', headers: { Authorization: 'Bearer t-1' } });
+    expect((held().mcpServers as Record<string, unknown>).broken).toEqual({ type: 'http' });
+  });
+
+  it('replaces a server whose type changed rather than merging the two', async () => {
+    const root = withServers();
+    await root.write({ mcpServers: { search: { type: 'http', url: 'https://search.test/mcp' }, notes: { type: 'stdio', command: 'mcp-notes' } } });
+    expect((held().mcpServers as Record<string, unknown>).search).toEqual({ type: 'http', url: 'https://search.test/mcp' });
+    // The header went with the http server it belonged to, rather than sitting
+    // in the stdio entry that replaced it.
+    expect((held().mcpServers as Record<string, unknown>).notes).toEqual({ type: 'stdio', command: 'mcp-notes' });
+  });
+
+  it('takes a server back when the client sends it as a null', async () => {
+    await withServers().write({ mcpServers: { search: null } });
+    expect(Object.keys(held().mcpServers as object)).toEqual(['notes']);
+  });
+
+  it('refuses a value the schema refuses, naming the key, and leaves the file', async () => {
+    await expect(withServers().write({ mcpServers: 'on' })).rejects.toThrow('mcpServers must be an object');
+    expect(held().mcpServers).toEqual(SERVERS);
   });
 });
 

@@ -7,6 +7,7 @@ import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
+import type { ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { checker } from '../../../tools/wire.mjs';
 
@@ -108,8 +109,22 @@ const capabilitiesOf = (log: string): unknown => {
   return held.find((one) => one.pid === session && one.method === 'initialize')?.params?.clientCapabilities;
 };
 
+/** A changeset source that only remembers what it was asked to observe. */
+function recorder(): { source: ChangesetSource; seen: { turnId: string; path: string; phase: string }[] } {
+  const seen: { turnId: string; path: string; phase: string }[] = [];
+  return {
+    seen,
+    source: {
+      scopes: () => [],
+      state: async () => undefined,
+      summary: () => undefined,
+      observe: (_dir, _session, turnId, path, phase) => { seen.push({ turnId, path, phase }); },
+    },
+  };
+}
+
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(options: { files?: boolean; shells?: boolean } = {}) {
+async function talking(options: { files?: boolean; shells?: boolean; changes?: ChangesetSource } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-ports-'));
   made.push(path);
   writeFileSync(join(path, 'note.txt'), 'the note body');
@@ -119,6 +134,7 @@ async function talking(options: { files?: boolean; shells?: boolean } = {}) {
     agents: [acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log }, provider: 'acp' })],
     ...(options.files === false ? {} : { resources: fileResources() }),
     ...(options.shells === false ? {} : { terminals: shellTerminals() }),
+    ...(options.changes === undefined ? {} : { changes: options.changes }),
   });
   const p = peer();
   const client = host.accept(p);
@@ -163,14 +179,20 @@ it('advertises exactly the ports it was given, and nothing more', async () => {
   const both = await talking();
   begin(both.client, both.chatUri, 't1', 'hello');
   await endedTurn(both.peer, both.chatUri, 1);
-  expect(capabilitiesOf(both.log)).toEqual({ fs: { readTextFile: true, writeTextFile: true }, terminal: true });
+  // The boolean option is not a port but a thing the bridge draws and sets, so
+  // it is in the handshake whatever ports the host gave.
+  expect(capabilitiesOf(both.log)).toEqual({
+    fs: { readTextFile: true, writeTextFile: true },
+    terminal: true,
+    session: { configOptions: { boolean: {} } },
+  });
 
   // A capability advertised without an implementation is a request nobody
   // answers, so a host with neither port asks a server for neither.
   const neither = await talking({ files: false, shells: false });
   begin(neither.client, neither.chatUri, 't1', 'hello');
   await endedTurn(neither.peer, neither.chatUri, 1);
-  expect(capabilitiesOf(neither.log)).toEqual({});
+  expect(capabilitiesOf(neither.log)).toEqual({ session: { configOptions: { boolean: {} } } });
 });
 
 it('reads and writes a file through the host\'s own store', async () => {
@@ -185,6 +207,19 @@ it('reads and writes a file through the host\'s own store', async () => {
   expect(prose(p, chatUri)).toContain('wrote it');
   // The bytes are on disk, written by the store the resource commands serve.
   expect(readFileSync(join(path, 'written.txt'), 'utf8')).toBe('written by the server');
+});
+
+it('hands both sides of an agent\'s write to the host\'s changeset', async () => {
+  const changes = recorder();
+  const { client, peer: p, chatUri, path } = await talking({ changes: changes.source });
+  begin(client, chatUri, 't1', 'write it please');
+  await endedTurn(p, chatUri, 1);
+  // Before and after, in that order: a changeset holding only the file as it is
+  // now cannot say what this turn did to it.
+  expect(changes.seen).toEqual([
+    { turnId: 't1', path: join(path, 'written.txt'), phase: 'before' },
+    { turnId: 't1', path: join(path, 'written.txt'), phase: 'after' },
+  ]);
 });
 
 it('opens a shell the host owns, waits for it, and reads what it printed', async () => {

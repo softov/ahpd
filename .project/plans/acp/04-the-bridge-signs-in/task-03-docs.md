@@ -1,6 +1,6 @@
 ---
 title: The docs show signing in
-status: todo
+status: done
 depends: [task-01-a-spec-may-sign-in.md, task-02-auth-required-is-its-own-error.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Options are controls
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

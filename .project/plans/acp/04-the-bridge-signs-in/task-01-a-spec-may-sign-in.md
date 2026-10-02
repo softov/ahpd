@@ -1,6 +1,6 @@
 ---
 title: A spec may sign in after initialize
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
