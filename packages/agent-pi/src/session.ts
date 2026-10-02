@@ -33,7 +33,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf, describe, mapEvent, readyRow, usageOf } from './mapping.js';
+import { activityOf, addUsage, describe, mapEvent, readyRow } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -125,6 +125,14 @@ export function piSession(
    * read from the same message.
    */
   let answered: AssistantMessage | undefined;
+  /**
+   * What the running turn has used over every call it made, or nothing yet.
+   *
+   * Each assistant `message_end` adds its own usage to this and sends what the
+   * turn has used so far, so a client watches the number grow rather than
+   * being handed the last answer's count, and the sum is what the turn ends on.
+   */
+  let spent: Bag | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
   let draft: Bag | undefined;
@@ -515,7 +523,24 @@ export function piSession(
 
     // Each new answer replaces the last, so a retried error is forgotten the
     // moment the retry answers.
-    if (event.type === 'message_end' && event.message.role === 'assistant') answered = event.message;
+    if (event.type === 'message_end' && event.message.role === 'assistant') {
+      answered = event.message;
+      /*
+       * What a turn used is every call it made, and a call is a message of its
+       * own, so this one adds to what the earlier ones used and sends the sum.
+       * A turn that runs tools spends most of what it costs between its first
+       * and its last call, so the total is sent as it stands rather than only
+       * at the settle. A call that used nothing hands the sum back as it was,
+       * and then nothing is sent for it.
+       */
+      const sum = addUsage(spent, event.message);
+      if (sum !== undefined && sum !== spent && active !== undefined) {
+        spent = sum;
+        active.usage = sum;
+        if (watched !== undefined) watched.usage = sum;
+        emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: sum });
+      }
+    }
 
     if (mapping !== undefined) {
       for (const action of mapEvent(mapping, event)) emit('chat', action);
@@ -581,11 +606,12 @@ export function piSession(
         }
         // Before the ending action: a client hangs usage on the turn it is
         // ending, and the ending is what moves that turn into the history.
-        const used = usageOf(answered);
-        if (used !== undefined && active !== undefined) {
-          active.usage = used;
-          if (watched !== undefined) watched.usage = used;
-          emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: used });
+        // The sum of the calls is already what it sent as it stood; what ends
+        // the turn is the whole of it.
+        if (spent !== undefined && active !== undefined) {
+          active.usage = spent;
+          if (watched !== undefined) watched.usage = spent;
+          emit('chat', { type: 'chat/usage', turnId: String(active.id), usage: spent });
         }
         if (cancelled) finish('cancelled');
         else if (answered?.stopReason === 'error') finish('error', answered.errorMessage);
@@ -739,6 +765,7 @@ export function piSession(
     failed = undefined;
     cancelled = false;
     answered = undefined;
+    spent = undefined;
     const startedAt = new Date().toISOString();
     /*
      * The model this turn runs on, so a client that reopens the chat can show

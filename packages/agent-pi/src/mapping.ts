@@ -162,6 +162,54 @@ export function usageOf(message: AssistantMessage | undefined): Bag | undefined 
 }
 
 /**
+ * One message's usage added to what the turn has used, and the turn's total.
+ *
+ * A turn's usage is every call it made, so each `message_end` adds to what the
+ * earlier ones used rather than replacing it, and the total goes out as it
+ * stands: a client watches the number grow through the turn, and it ends as the
+ * sum of the calls. The model is the last call's, so a turn that switched models
+ * mid-way reports the one it ended on.
+ *
+ * A call that failed before the provider answered used nothing and leaves the
+ * total as it was. A count no call reported is left out rather than sent as a
+ * zero, which is the rule `usageOf` keeps for one call.
+ *
+ * The cost is pi's own `usage.cost.total`, summed over the calls and priced by
+ * pi in dollars. The protocol names no field for what a turn cost, so it rides
+ * `_meta` beside the cache write.
+ */
+export function addUsage(total: Bag | undefined, message: AssistantMessage | undefined): Bag | undefined {
+  const one = usageOf(message);
+  if (one === undefined) return total;
+  const held = bag(total);
+  const was = bag(held._meta);
+  const now = bag(one._meta);
+  const sum = (before: unknown, after: unknown): number | undefined => {
+    const had = typeof before === 'number' ? before : undefined;
+    const got = typeof after === 'number' ? after : undefined;
+    return had === undefined && got === undefined ? undefined : (had ?? 0) + (got ?? 0);
+  };
+  const input = sum(held.inputTokens, one.inputTokens);
+  const output = sum(held.outputTokens, one.outputTokens);
+  const read = sum(held.cacheReadTokens, one.cacheReadTokens);
+  const wrote = sum(was.cacheWriteTokens, now.cacheWriteTokens);
+  const paid = sum(bag(was.cost).amount, message?.usage?.cost?.total);
+  const meta: Bag = {
+    ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
+    ...(paid !== undefined ? { cost: { amount: paid, currency: 'USD' } } : {}),
+  };
+  return {
+    ...(input !== undefined ? { inputTokens: input } : {}),
+    ...(output !== undefined ? { outputTokens: output } : {}),
+    ...(read !== undefined ? { cacheReadTokens: read } : {}),
+    ...(one.model !== undefined
+      ? { model: one.model }
+      : (held.model !== undefined ? { model: held.model } : {})),
+    ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
+  };
+}
+
+/**
  * What a call runs on, as its row is titled: the command of `bash` and
  * `powershell`, the path of `read`, `edit` and `write`, the pattern of `grep`
  * and `find`, and the path of `ls`, which is `.` when it names none. Any

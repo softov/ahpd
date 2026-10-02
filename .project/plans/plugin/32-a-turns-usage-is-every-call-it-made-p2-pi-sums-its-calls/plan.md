@@ -1,7 +1,7 @@
 ---
 title: pi sums every call of a turn, with its cost
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -28,11 +28,11 @@ A pi turn's usage is the sum of every assistant message's usage, sent after each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi sums its calls](task-01-sum.md) | todo | - |
+| [01 - pi sums its calls](task-01-sum.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-sum.md](task-01-sum.md).
+- **Done so far:** built 2026-10-01, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** keep the rule that an all-zero report from a failed call is not usage (`mapping.ts` 148-152).
