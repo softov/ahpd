@@ -45,8 +45,8 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       summary: `What this install names as a ${what}`,
       surfaces: { cli: { pattern: [what, 'list'] }, http: { method: 'GET', path: `/${what}/list` } },
       input: fields,
-      // Reading the names is not managing people, so it is the read half.
-      scopes: ['users:read'],
+      // Reading the names is not managing them, so it is that subject's read.
+      scopes: [`${what}:read`],
       run: async (context) => {
         const { path, directory } = people(context, served);
         const rows = await named(directory);
@@ -60,7 +60,7 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       description: 'Naming one that is already there sets its title and moves nothing.',
       surfaces: { cli: { pattern: [what, 'add', ':id'] }, http: { method: 'POST', path: `/${what}/add/{id}` } },
       input: { ...fields, id: { type: 'string', description: `The id a membership is written with.` } },
-      scopes: ['users:write'],
+      scopes: [`${what}:write`],
       run: async (context) => {
         const { directory } = people(context, served);
         const id = idOf(context, `${what} add`);
@@ -81,7 +81,7 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       description: 'Refused while a membership still names it, saying who holds it.',
       surfaces: { cli: { pattern: [what, 'rm', ':id'] }, http: { method: 'POST', path: `/${what}/rm/{id}` } },
       input: { ...fields, id: { type: 'string', description: 'The id to take out.' } },
-      scopes: ['users:write'],
+      scopes: [`${what}:write`],
       run: async (context) => {
         const { directory } = people(context, served);
         const id = idOf(context, `${what} rm`);

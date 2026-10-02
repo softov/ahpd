@@ -1,6 +1,6 @@
 ---
 title: The host serves user, team, project and role as schemes
-status: todo
+status: done
 depends: [task-01-subjects.md]
 layer: "sdk"
 refs:
@@ -22,7 +22,7 @@ refs:
 
 1. `list` on a scheme's root answers one entry per record; `read` answers the record as JSON, never a token.
 2. A write to the root creates from the advertised `manifest`; a write to a record's URI edits it; `remove` deletes it, refused while something names it, as the commands refuse.
-3. The host checks `<scheme>:read` and `<scheme>:write` as it does any scheme grant.
+3. The host checks `<scheme>:read` and `<scheme>:write` as it does any scheme grant, except that a signed-in person reads their own `user://<id>` without `user:read`.
 
 ## Validation
 

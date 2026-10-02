@@ -82,16 +82,70 @@ describe('the command registry', () => {
     for (const id of ['plugin.config', 'plugin.config.set', 'plugin.enable', 'plugin.disable']) {
       expect(scopes(id)).toEqual(['config:write']);
     }
-    for (const id of ['user.list', 'user.add', 'user.rm', 'user.token']) {
-      expect(scopes(id)).toEqual(['users:write']);
+    // Each scheme is its own subject, and a verb is gated by the one its own
+    // verb touches - decision `people-are-resource-schemes-with-a-grant-each`.
+    expect(scopes('user.list')).toEqual(['user:read', 'role:read']);
+    for (const id of ['user.add', 'user.rm', 'user.token', 'user.member']) {
+      expect(scopes(id)).toEqual(['user:write']);
     }
-    for (const id of ['team.list', 'project.list']) expect(scopes(id)).toEqual(['users:read']);
-    for (const id of ['team.add', 'team.rm', 'project.add', 'project.rm', 'user.member']) {
-      expect(scopes(id)).toEqual(['users:write']);
+    for (const id of ['team.list', 'project.list']) expect(scopes(id)).toEqual([
+      id.split('.')[0] === 'team' ? 'team:read' : 'project:read',
+    ]);
+    for (const id of ['team.add', 'team.rm', 'project.add', 'project.rm']) {
+      expect(scopes(id)).toEqual([`${id.split('.')[0]}:write`]);
     }
     // A person sets their own primary, so the declaration names no grant at
-    // all and the body asks for `users:write` only about somebody else's.
+    // all and the body asks for `user:write` only about somebody else's.
     expect(scopes('user.primary')).toEqual([]);
+  });
+
+  it('refuses each verb without its own subject, and allows it with that one', async () => {
+    const people = join(root, 'people.json');
+    writeFileSync(people, JSON.stringify({ roles: { keeper: ['user:write'] }, teams: [], projects: [], users: [] }));
+    /** A caller holding exactly the grants named, and nobody else. */
+    const caller = (grants: string[]) => ({
+      id: 'sam',
+      roles: ['holder'],
+      can: (grant: string) => grants.includes(grant),
+    });
+    /** One verb over `/api`, which is where a caller's grant is checked. */
+    const ask = async (id: string, input: Record<string, unknown>, grants: string[]): Promise<number> => {
+      const directory = fileUsers({ path: people });
+      const facts: ServedFacts = {
+        options: { users: people } as Options,
+        configFile: config,
+        users: directory,
+        running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+        turning: () => [],
+        restart: () => {},
+      };
+      const served = servedRegistry(facts);
+      const command = served.find(id);
+      expect(command, id).toBeDefined();
+      return registry.execute(command!, { surface: 'remote', input, request: { actor: caller(grants) } })
+        .then(() => 200, (error: { status?: number }) => error.status ?? 500);
+    };
+
+    // A team grant lets a caller name and take out teams, and nothing else.
+    expect(await ask('team.add', { id: 'backend' }, ['team:write'])).toBe(200);
+    expect(await ask('team.list', {}, ['team:read'])).toBe(200);
+    expect(await ask('team.rm', { id: 'backend' }, ['team:write'])).toBe(200);
+    // The same calls under somebody else's subject are refused, which is the
+    // whole of what the split bought.
+    expect(await ask('team.list', {}, ['project:read'])).toBe(403);
+    expect(await ask('team.add', { id: 'backend' }, ['user:write'])).toBe(403);
+    expect(await ask('project.add', { id: 'controllr' }, ['team:write'])).toBe(403);
+    // And a person's own grant does not reach their teams or projects.
+    expect(await ask('user.list', {}, ['user:write'])).toBe(403);
+    expect(await ask('user.add', { id: 'eve' }, ['team:write'])).toBe(403);
+    // The role given is bounded by what the caller holds, so it is one the
+    // caller has: decision `a-caller-gives-only-the-grants-it-holds`.
+    expect(await ask('user.add', { id: 'eve', role: ['keeper'] }, ['user:write'])).toBe(200);
+    expect(await ask('user.add', { id: 'eve', role: ['admin'] }, ['user:write'])).toBe(403);
+    // Listing people asks for the roles it prints, so a caller who may not
+    // read roles is refused.
+    expect(await ask('user.list', {}, ['user:read'])).toBe(403);
+    expect(await ask('user.list', {}, ['user:read', 'role:read'])).toBe(200);
   });
 
   it('checks a command scopes in the hook, on the remote surface', async () => {
@@ -477,7 +531,7 @@ describe('teams, projects and memberships', () => {
     // Somebody else's is a person managing people, which is what the grant is.
     const refused = await call(handler, 'POST', '/user/primary/bob', secret, { entry: 'backend:controllr' });
     expect(refused.status).toBe(403);
-    expect((await refused.json() as { message: string }).message).toBe('ada may not users:write here');
+    expect((await refused.json() as { message: string }).message).toBe('ada may not user:write here');
     // And no credential at all is nobody.
     expect((await call(handler, 'POST', '/user/primary/ada', undefined, { entry: 'backend:controllr' })).status).toBe(401);
   });

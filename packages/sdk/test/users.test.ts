@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { fileUsers, isGrant, signInRecord } from '../src/users.js';
+import { fileUsers, signInRecord } from '../src/users.js';
 import { scopeFor } from '../src/scopes.js';
 import type { Grant } from '../src/types/users.js';
 
@@ -184,15 +184,51 @@ it('reports a grant that is not a subject and a verb, and drops it', async () =>
   expect(said.some((one) => one.includes('session:edit'))).toBe(true);
 });
 
-it('takes users:write as a grant, and answers it from a role', async () => {
-  expect(isGrant('users:write')).toBe(true);
+it('reads an old users grant as the user subject, and says so once per role', async () => {
   writeFileSync(path, JSON.stringify({
-    roles: { keeper: ['users:write'] },
-    users: [{ id: 'k', roles: ['keeper'], token: '' }],
+    roles: { keeper: ['users:write'], reader: ['users:read'] },
+    users: [
+      { id: 'k', roles: ['keeper'], token: '' },
+      { id: 'r', roles: ['reader'], token: '' },
+    ],
   }));
-  const held = await open().verify(await open().mint('k'));
-  expect(held?.can('users:write')).toBe(true);
-  // The management of people is its own subject, not a wider settings grant.
+  const said: string[] = [];
+  const users = open((one) => said.push(one));
+  const held = await users.verify(await users.mint('k'));
+
+  // One subject for people, and only for people: decision
+  // `a-legacy-users-grant-is-the-user-subject-only`.
+  expect(held?.can('user:write')).toBe(true);
+  expect(held?.can('team:write')).toBe(false);
+  expect(held?.can('project:write')).toBe(false);
+  expect(held?.can('role:write')).toBe(false);
+  expect((await users.verify(await users.mint('r')))?.can('user:read')).toBe(true);
+  // Said for each role that is read that way, and once however often the file
+  // is read afterwards.
+  expect(said.filter((one) => one.includes('users:write')).length).toBe(1);
+  expect(said.filter((one) => one.includes('users:read')).length).toBe(1);
+  expect(said.some((one) => one.includes('role reader'))).toBe(true);
+  await users.list();
+  await users.list();
+  expect(said.length).toBe(2);
+});
+
+it('gives each scheme its own subject, so a role may see teams and not people', async () => {
+  writeFileSync(path, JSON.stringify({
+    roles: { teamreader: ['team:read'] },
+    users: [{ id: 't', roles: ['teamreader'], token: '' }],
+  }));
+  const held = await open().verify(await open().mint('t'));
+
+  // Decision `people-are-resource-schemes-with-a-grant-each`: the split is the
+  // whole point, so a team is not reachable through a user grant.
+  expect(held?.can('team:read')).toBe(true);
+  expect(held?.can('team:write')).toBe(false);
+  expect(held?.can('user:read')).toBe(false);
+  expect(held?.can('user:write')).toBe(false);
+  expect(held?.can('project:read')).toBe(false);
+  expect(held?.can('role:read')).toBe(false);
+  // And the management of people is its own subject, not a wider settings grant.
   expect(held?.can('config:write')).toBe(false);
 });
 
@@ -289,17 +325,17 @@ it('lists people without their credentials', async () => {
 });
 
 it('resolves role names to grants, and a person to the grants its roles hold', async () => {
-  writeFileSync(path, JSON.stringify({ roles: { people: ['users:write'] }, users: [] }));
+  writeFileSync(path, JSON.stringify({ roles: { people: ['user:write'] }, users: [] }));
   const users = open();
   await users.add('pat', ['people']);
   await users.add('ada', ['admin']);
 
   expect((await users.grantsOfRoles(['admin'])).sort()).toEqual(['*:*']);
-  expect((await users.grantsOfRoles(['people'])).sort()).toEqual(['users:write']);
+  expect((await users.grantsOfRoles(['people'])).sort()).toEqual(['user:write']);
   expect(await users.grantsOfRoles(['nobody'])).toEqual([]);
 
   expect((await users.grantsOfPerson('ada'))?.sort()).toEqual(['*:*']);
-  expect((await users.grantsOfPerson('pat'))?.sort()).toEqual(['users:write']);
+  expect((await users.grantsOfPerson('pat'))?.sort()).toEqual(['user:write']);
   expect(await users.grantsOfPerson('nobody')).toBeUndefined();
 });
 
@@ -339,7 +375,7 @@ it('parses the three forms of a membership, and the primary beside them', async 
   expect(held?.memberships).toEqual(['backend:*', 'frontend:controllr', 'frontend']);
   expect(held?.primary).toBe('backend:ahpd');
   // And a membership grants nothing: it says who pays, not what is allowed.
-  expect(held?.can('users:write')).toBe(false);
+  expect(held?.can('user:write')).toBe(false);
 });
 
 it('ignores a membership naming a team or a project this file does not define', async () => {

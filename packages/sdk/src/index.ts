@@ -54,6 +54,8 @@ export { fileUsage } from './usage.js';
 export type { FileUsageOptions } from './usage.js';
 export { fileUsers, signInRecord } from './users.js';
 export type { FileUserOptions } from './users.js';
+export { peopleProviders } from './people.js';
+export type { PeopleProvider } from './people.js';
 export { covers, membership, namesOf, scopeFor } from './scopes.js';
 export type { Membership, Scope, ScopeAnswer } from './scopes.js';
 export { githubIssuer, isIssuerUrl, issuerFrom, issuerKind, oidcIssuer } from './issuers.js';

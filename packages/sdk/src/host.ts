@@ -6817,6 +6817,27 @@ export function createHost(options: HostOptions): Host {
       };
 
       /**
+       * Whether this command is one signed-in person reading their own record.
+       *
+       * `user://<id>` is theirs and needs no `user:read`, because a client
+       * showing a person their own account has to be able to, and a client
+       * showing it to somebody else is refused by the grant as before - own
+       * only, exactly as it is on `user primary`.
+       */
+      const ownRecord = (method: string, params: Record<string, unknown>, who: Principal): boolean => {
+        if (method !== 'resourceRead') return false;
+        if (typeof params.uri !== 'string') return false;
+        const at = /^user:\/\/([^/]+)$/.exec(params.uri);
+        if (at === null) return false;
+        try {
+          return decodeURIComponent(at[1] as string) === who.id;
+        }
+        catch {
+          return false;
+        }
+      };
+
+      /**
        * The users gate for one command, which throws what the client is told.
        *
        * Asked of every command at the boundary, and of each channel an
@@ -6844,7 +6865,8 @@ export function createHost(options: HostOptions): Host {
             resources: [options.users.resource],
           });
         }
-        const missing = needed.find((one) => !who.can(one));
+        const excused = ownRecord(method, params, who) ? new Set<Grant>(['user:read']) : undefined;
+        const missing = needed.find((one) => excused?.has(one) !== true && !who.can(one));
         if (missing !== undefined) {
           // No `request` key: a role is not something a client can
           // negotiate, and the protocol says that field is omitted when

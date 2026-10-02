@@ -223,6 +223,17 @@ export interface UserFile {
 }
 
 /**
+ * A role this install defines, and the whole of what it confers.
+ *
+ * A name and the grants, with no title: nothing anywhere shows one, and a
+ * record's `roles` holds names, so a role is only ever what its grants are.
+ */
+export interface Role {
+  id: string;
+  grants: Grant[];
+}
+
+/**
  * The directory, as the host reaches it.
  *
  * A port so the enforcement layer never learns where a principal came from:
@@ -269,8 +280,30 @@ export interface Users {
   add(
     id: string,
     roles: string[],
-    options?: { issuer?: string; memberships?: string[]; primary?: string | null },
+    options?: { issuer?: string; rolesFrom?: string; memberships?: string[]; primary?: string | null },
   ): Promise<void>;
+  /**
+   * The roles this file defines, and the grants each holds.
+   *
+   * The file's own and not the built-ins beside them: what is editable is what
+   * is written down, and a role the file overrides is answered with the grants
+   * that override says.
+   */
+  roles(): Promise<Role[]>;
+  /**
+   * Name a role, or set the grants of one already named.
+   *
+   * A role in the file overrides a built-in of the same name, which is the
+   * whole of what naming one that is already there does.
+   */
+  addRole(id: string, grants: readonly Grant[]): Promise<void>;
+  /**
+   * Take a role out. `true` when one was there.
+   *
+   * Throws while a record still names it, saying who: a record naming a role
+   * nothing defines holds nothing and looks like a permission on the read.
+   */
+  removeRole(id: string): Promise<boolean>;
   /** The teams this directory names, in the order the file lists them. */
   teams(): Promise<Named[]>;
   /** The projects this directory names, in the order the file lists them. */

@@ -80,7 +80,7 @@ Reference: [00-host.md](host/00-host.md)
 | [34 - A session and an automation say who owns them, and a turn says who sent it](host/34-work-says-who-owns-it/plan.md) | high | built 2026-10-02 ([implemented.md](host/34-work-says-who-owns-it/implemented.md)) | - | usage meters; shares the turn sender with host 33 |
 
 | [35 - A person belongs to teams and projects, and work names which one it is for](host/35-a-person-belongs-to-teams-and-projects/plan.md) | high | built 2026-10-01 ([implemented.md](host/35-a-person-belongs-to-teams-and-projects/implemented.md)) | - | host 34's scope, the proxy listener, policy |
-| [36 - Users, teams, projects and roles are resources a client lists and edits](host/36-people-are-resources-a-client-manages/plan.md) | medium | planned 2026-10-01 | host 35 | the ahpapp people screen |
+| [36 - Users, teams, projects and roles are resources a client lists and edits](host/36-people-are-resources-a-client-manages/plan.md) | medium | built 2026-10-02 ([implemented.md](host/36-people-are-resources-a-client-manages/implemented.md)) | host 35 | ahpapp people/01, usage 04 |
 | [37 - A session two harnesses both list is listed once, under the harness it runs on](host/37-a-session-is-listed-once-under-its-own-harness/plan.md) | high | built 2026-10-02 ([implemented.md](host/37-a-session-is-listed-once-under-its-own-harness/implemented.md)) | claude 12 | - |
 
 Next free number in `host`: `38`.

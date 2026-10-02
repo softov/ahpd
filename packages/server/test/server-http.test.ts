@@ -556,8 +556,8 @@ describe('a request signs in', () => {
     expect(await unmoved.json()).toEqual({ plugins: [] });
   }, 30000);
 
-  it('answers user list for a role that holds users:write', async () => {
-    writeFileSync(usersFile, JSON.stringify({ roles: { keeper: ['users:write'] }, users: [] }));
+  it('answers user list for a role that holds user:read', async () => {
+    writeFileSync(usersFile, JSON.stringify({ roles: { keeper: ['user:read', 'role:read'] }, users: [] }));
     const directory = fileUsers({ path: usersFile });
     await directory.add('keeper', ['keeper']);
     const keeper = await directory.mint('keeper');
@@ -571,7 +571,7 @@ describe('a request signs in', () => {
   }, 30000);
 
   it('refuses a caller the roles and people it does not hold', async () => {
-    writeFileSync(usersFile, JSON.stringify({ roles: { people: ['users:write'] }, users: [] }));
+    writeFileSync(usersFile, JSON.stringify({ roles: { people: ['user:write'] }, users: [] }));
     const directory = fileUsers({ path: usersFile });
     await directory.add('pat', ['people']);
     await directory.add('ada', ['admin']);

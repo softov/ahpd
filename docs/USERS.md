@@ -368,7 +368,10 @@ The subjects are the host's own and any plugin's URI scheme:
 | `terminal` | `read`, `write` | Read watches a shell's output; write opens one, types into it and closes it |
 | `diagnostics` | `read` | `diagnosticsFetch` |
 | `config` | `read`, `write` | Read describes the host, as `status` and `plugin list` do; write changes a host-wide root setting, or replaces the root config |
-| `users` | `read`, `write` | Write adds, removes and mints for people, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. No command needs `read` yet |
+| `user` | `read`, `write` | Write adds, removes and mints for people, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. Read answers `user list`, and a person's own `user://<id>` record without any grant at all |
+| `team` | `read`, `write` | The teams this install names, which a membership is written out of. Read answers `team list`; write adds, titles and removes one |
+| `project` | `read`, `write` | The same for the projects, spelled after a membership's colon |
+| `role` | `read`, `write` | The roles this install defines. `user list` asks for `role:read` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -418,6 +421,12 @@ A grant that is not a subject and a verb is reported when the file is read and
 dropped. A file that is malformed is read as nobody - it fails closed - and it
 is never written over.
 
+A `users:read` or `users:write` written before the split is read as `user:read`
+or `user:write` and nothing more, and the daemon says so once at start for each
+role it read that way. An old grant used to cover people, teams, projects and
+roles together; it does not widen to the three subjects it never named, so a role
+that edited teams through `users:write` needs `team:write` added to it.
+
 `ahpd user list` prints the roles, the grants they resolved to, whether the door
 already identifies the record or the person still has to sign in, and the issuer
 when their credential comes from one:
@@ -426,6 +435,43 @@ when their credential comes from one:
 normal (guest) session:read automation:read sign-in http://127.0.0.1:9310
 sam (member) file:read file:write session:read session:write terminal:read terminal:write trusted
 ```
+
+## People as resources
+
+With a directory configured the host serves four schemes of its own over it, the
+same way it serves `computer:`: a client lists, creates, edits and removes
+people, teams, projects and roles through the same resource calls it uses for
+computers.
+
+| Scheme | A record is | A body carries |
+| --- | --- | --- |
+| `user://<id>` | One person's record | `roles`, `issuer`, `rolesFrom`, `memberships`, `primary` |
+| `team://<id>` | A team and its title | `title` |
+| `project://<id>` | A project and its title | `title` |
+| `role://<id>` | A role's grants, which are the whole of it | `grants` |
+
+The root lists what the file holds, a read answers the record as JSON, and a
+write to `<scheme>://<id>` makes it or edits it; `write` covers the removal as
+well. A record is written whole: a field a body does not name is the one the
+record already had, so a client that reads a record and writes it back has
+changed nothing. A removal is refused while something still names it - a
+membership naming a team, a record holding a role - and it says who, which is the
+refusal `ahpd team rm` makes.
+
+No answer carries a credential. The hash is in the file and the secret behind it
+was shown once by `ahpd user token`, and a person's record here is everything
+`ahpd user list` prints, which is not their token.
+
+Each scheme is advertised on the handshake under `ahpd.resourceProviders`, with
+its operations and the form a create is drawn from, so a client can draw the
+screen before it has asked for anything. A host with no users directory serves
+none of the four.
+
+The grant for a scheme is the subject of its own name: `team:read` lists teams,
+`team:write` makes and takes them away, and neither reaches anybody's record.
+The one exception is a person's own `user://<id>`, which they may read with no
+grant at all - a client showing somebody their own account has to be able to -
+while listing people and reading anybody else's still needs `user:read`.
 
 ## What a client is told
 

@@ -31,6 +31,7 @@ import {
   memoryAutomations,
   memorySessions,
   overStdio,
+  peopleProviders,
   raise,
   scheduledAutomations,
   shellTerminals,
@@ -300,6 +301,17 @@ export async function runForeground(options: Options): Promise<void> {
      * Absent stays absent, which is the install that never configured people.
      */
     ...(users === undefined ? {} : { users }),
+    /*
+     * People, teams, projects and roles, as four resource schemes.
+     *
+     * The same directory the gate above asks, served the way `computer:` is: a
+     * client lists `team://` and writes `team://backend`, and the host answers
+     * `team:read` and `team:write` for it as it does for any other scheme -
+     * decision `people-are-resource-schemes-with-a-grant-each`. Absent with no
+     * directory, so an install that never configured people advertises no
+     * screen over an empty root.
+     */
+    ...(users === undefined ? {} : { resourceProviders: peopleProviders(users) }),
     /*
      * The host's own tools, offered to every session's model.
      *

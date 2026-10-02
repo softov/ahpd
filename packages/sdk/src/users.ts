@@ -37,13 +37,30 @@ const roleIn = (table: Record<string, Grant[]> | undefined, name: string): Grant
   table !== undefined && Object.hasOwn(table, name) ? table[name] : undefined;
 
 /** The subjects the host itself answers to, beside any plugin's scheme. */
-export const SUBJECTS = ['file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config', 'users'] as const;
+export const SUBJECTS = [
+  'file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config',
+  // People, teams, projects and roles, one subject each, so somebody may be let
+  // see a team's names without being let see who is on it - decision
+  // `people-are-resource-schemes-with-a-grant-each`.
+  'user', 'team', 'project', 'role',
+] as const;
 
 /** `<subject>:<verb>`, with `*` in either position. */
 const GRANT = /^[^:\s]+:(?:read|write|\*)$/;
 
 /** Whether a string is a grant a role may hold. */
 export const isGrant = (value: string): value is Grant => GRANT.test(value);
+
+/**
+ * What a grant written before the split is read as.
+ *
+ * One `users` subject used to cover people, teams, projects and roles
+ * together, and a file saying `users:write` means it said so before the split -
+ * so it reads as `user:write` and nothing more, rather than widening to three
+ * subjects it never named - decision
+ * `a-legacy-users-grant-is-the-user-subject-only`.
+ */
+const LEGACY: Record<string, Grant> = { 'users:read': 'user:read', 'users:write': 'user:write' };
 
 /**
  * Whether a set of grants covers one.
@@ -304,12 +321,20 @@ export function fileUsers(options: FileUserOptions): Users {
   };
 
   /**
+   * A name a record or a membership could be written with.
+   *
+   * No space, no colon and no star: a membership is spelled around a colon, so
+   * a name holding one cannot be told from the grammar beside it.
+   */
+  const SPELLABLE = /^[^\s:*]+$/u;
+
+  /**
    * One entry with an id, in the order the file lists the others.
    *
    * Naming one that is already there sets its title when one is given, and moves nothing.
    */
   const withEntry = (list: Named[], id: string, title?: string): Named[] => {
-    if (!/^[^\s:*]+$/u.test(id)) throw new Error(`${id} cannot name a team or a project: it may not hold a space, a colon or a star`);
+    if (!SPELLABLE.test(id)) throw new Error(`${id} cannot name a team or a project: it may not hold a space, a colon or a star`);
     const at = list.findIndex((one) => one.id === id);
     if (at === -1) return [...list, { id, ...(title === undefined ? {} : { title }) }];
     return list.map((one, index) => (index === at && title !== undefined ? { ...one, title } : one));
@@ -352,6 +377,18 @@ export function fileUsers(options: FileUserOptions): Users {
         if (!Array.isArray(grants)) continue;
         const kept: Grant[] = [];
         for (const one of strings(grants)) {
+          /*
+           * A grant written before the split, read as the one subject it did
+           * name, and said once per role: a role that edited teams through
+           * `users:write` loses that here, and an operator who never reads the
+           * log would have a daemon that quietly answers `-32009` instead.
+           */
+          const legacy = LEGACY[one];
+          if (legacy !== undefined) {
+            kept.push(legacy);
+            once(`${options.path}: role ${name} holds ${one}, which this host reads as ${legacy}; teams, projects and roles need a grant of their own`);
+            continue;
+          }
           // A grant that is not `<subject>:<verb>` matches nothing, so it is
           // reported and dropped rather than left looking like a permission.
           if (isGrant(one)) kept.push(one);
@@ -668,6 +705,7 @@ export function fileUsers(options: FileUserOptions): Users {
 
     add: async (id, roles, options) => {
       const issuer = options?.issuer;
+      const rolesFrom = options?.rolesFrom;
       const memberships = options?.memberships;
       const primary = options?.primary;
       const { file, broken } = read();
@@ -725,10 +763,14 @@ export function fileUsers(options: FileUserOptions): Users {
       // role must not quietly move somebody off their team.
       const membershipFields = memberships === undefined ? {} : { memberships: [...memberships] };
       const primaryField = typeof primary === 'string' ? { primary } : {};
-      if (held === undefined) users.push({ id, roles: [...roles], token: '', ...(issuer === undefined ? {} : { issuer }), ...membershipFields, ...primaryField });
+      const issuerFields = {
+        ...(issuer === undefined ? {} : { issuer }),
+        ...(rolesFrom === undefined ? {} : { rolesFrom }),
+      };
+      if (held === undefined) users.push({ id, roles: [...roles], token: '', ...issuerFields, ...membershipFields, ...primaryField });
       else {
         held.roles = [...roles];
-        if (issuer !== undefined) held.issuer = issuer;
+        Object.assign(held, issuerFields);
         Object.assign(held, membershipFields);
         Object.assign(held, primaryField);
         // `null` is how a primary is taken away, which leaving a team is not:
@@ -746,6 +788,44 @@ export function fileUsers(options: FileUserOptions): Users {
         }
       }
       write({ ...file, users });
+    },
+
+    roles: async () => Object.entries(read().file.roles ?? {}).map(([id, grants]) => ({ id, grants: [...grants] })),
+
+    addRole: async (id, grants) => {
+      if (!SPELLABLE.test(id)) throw new Error(`${id} cannot name a role: it may not hold a space, a colon or a star`);
+      /*
+       * A grant that is not `<subject>:<verb>` is refused rather than dropped.
+       *
+       * The read reports one and drops it, which is what a file edited by hand
+       * needs; a write is somebody asking for the role, and a role holding a
+       * grant that matches nothing looks on every later read like a permission
+       * the host has and does not.
+       */
+      const kept: Grant[] = [];
+      for (const one of grants) {
+        if (!isGrant(one)) throw new Error(`${one} is not <subject>:read, <subject>:write or a *`);
+        kept.push(one);
+      }
+      const { file } = read();
+      // No prototype, for the reason the read has one: a role named `__proto__`
+      // is an own key, or that assignment would set the table's prototype.
+      const roles: Record<string, Grant[]> = Object.create(null) as Record<string, Grant[]>;
+      for (const [name, held] of Object.entries(file.roles ?? {})) roles[name] = [...held];
+      roles[id] = kept;
+      write({ ...file, roles });
+    },
+
+    removeRole: async (id) => {
+      const { file } = read();
+      const roles = file.roles ?? {};
+      if (!Object.hasOwn(roles, id)) return false;
+      const who = (file.users ?? []).filter((one) => strings(one.roles).includes(id)).map((one) => one.id);
+      if (who.length > 0) throw new Error(`${id} is still a role of ${who.join(', ')}; take them out of it first`);
+      const left: Record<string, Grant[]> = { ...roles };
+      delete left[id];
+      write({ ...file, roles: left });
+      return true;
     },
 
     teams: async () => [...entries(read().file.teams)],

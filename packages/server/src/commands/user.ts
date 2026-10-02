@@ -24,7 +24,7 @@ import type { ServedFacts } from './served.js';
 /**
  * Whether a caller may give a role, or write for a person, at all.
  *
- * `users:write` says a caller manages people; what it may hand out is bounded by
+ * `user:write` says a caller manages people; what it may hand out is bounded by
  * what it holds, or granting a role it does not have is `admin` under another
  * name - decision `a-caller-gives-only-the-grants-it-holds`. The terminal's own
  * run has no caller to hold to anything, and the deployment token holds every
@@ -112,7 +112,10 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Who is in the file',
     surfaces: { cli: { pattern: ['user', 'list'] }, http: { method: 'GET', path: '/user/list' } },
     input: fields,
-    scopes: ['users:write'],
+    // The two the answer is made of: who they are, and what the roles they
+    // hold resolved to - decision
+    // `people-are-resource-schemes-with-a-grant-each`.
+    scopes: ['user:read', 'role:read'],
     run: async (context) => {
       const { path, directory } = people(context, served);
       const rows = await directory.list();
@@ -143,7 +146,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     description: 'With --role <name> once per role, --membership <team[:project]> for what their work may be charged to, --primary <team[:project]> for where work naming no scope of its own lands, and --issuer <name> for a provider of their own.',
     surfaces: { cli: { pattern: ['user', 'add', ':id'] }, http: { method: 'POST', path: '/user/add/{id}' } },
     input: { ...whole, id: { type: 'string', description: 'The identifier their credential answers with.' } },
-    scopes: ['users:write'],
+    scopes: ['user:write'],
     run: async (context) => {
       const { directory } = people(context, served);
       const id = idOf(context, 'user add');
@@ -187,7 +190,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Take a person out of the file',
     surfaces: { cli: { pattern: ['user', 'rm', ':id'] }, http: { method: 'POST', path: '/user/rm/{id}' } },
     input: { ...fields, id: { type: 'string', description: 'The identifier to take out.' } },
-    scopes: ['users:write'],
+    scopes: ['user:write'],
     run: async (context) => {
       const { directory } = people(context, served);
       const id = idOf(context, 'user rm');
@@ -205,7 +208,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     description: 'The bare secret by default, so it can be piped; --url prints the whole ws:// URL a client can be given.',
     surfaces: { cli: { pattern: ['user', 'token', ':id'] }, http: { method: 'POST', path: '/user/token/{id}' } },
     input: { ...fields, id: { type: 'string', description: 'Whose credential to mint.' } },
-    scopes: ['users:write'],
+    scopes: ['user:write'],
     run: async (context) => {
       const { where, directory } = people(context, served);
       const id = idOf(context, 'user token');
@@ -238,7 +241,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
       id: { type: 'string', description: 'Whose memberships to replace.' },
       entries: { type: 'array', items: { type: 'string' }, description: 'A team, team:* or team:project. One or more.' },
     },
-    scopes: ['users:write'],
+    scopes: ['user:write'],
     run: async (context) => {
       const { directory } = people(context, served);
       const id = idOf(context, 'user member');
@@ -281,7 +284,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
   const primary = registry.action({
     id: 'user.primary',
     summary: 'Where their work that names no team and project is charged',
-    description: 'One of their own memberships, or --unset to take the one they have away. A person may set their own; changing another\'s needs users:write.',
+    description: 'One of their own memberships, or --unset to take the one they have away. A person may set their own; changing another\'s needs user:write.',
     surfaces: { cli: { pattern: ['user', 'primary', ':id', ':entry?'] }, http: { method: 'POST', path: '/user/primary/{id}' } },
     input: {
       ...unsetting,
@@ -306,8 +309,8 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
       const actor = context.request?.actor as Principal | undefined;
       // One's own primary is a person's own business - decision
       // `a-request-naming-no-scope-uses-the-persons-primary` - and it grants
-      // nothing, so holding `users:write` is asked only for somebody else's.
-      if (actor?.id !== id) bounded(context, ['users:write']);
+      // nothing, so holding `user:write` is asked only for somebody else's.
+      if (actor?.id !== id) bounded(context, ['user:write']);
       const one = await recordOf(directory, id);
       // `null` is how a primary is taken away, which is not the same as not
       // naming one: the second leaves whatever they had.

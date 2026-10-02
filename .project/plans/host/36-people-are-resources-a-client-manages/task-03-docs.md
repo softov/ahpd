@@ -1,6 +1,6 @@
 ---
 title: The docs name the four schemes and their grants
-status: todo
+status: done
 depends: [task-02-schemes.md]
 layer: "docs"
 refs: []

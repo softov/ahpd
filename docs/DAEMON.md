@@ -513,15 +513,24 @@ the grants their roles resolve to:
 | --- | --- |
 | `status`, `plugin list` | `config:read` |
 | `config` | `config:write` |
-| `user list`, `user add`, `user rm`, `user token` | `users:write` |
+| `user list` | `user:read`, `role:read` |
+| `user add`, `user rm`, `user token`, `user member` | `user:write` |
+| `team list` | `team:read` |
+| `team add`, `team rm` | `team:write` |
+| `project list` | `project:read` |
+| `project add`, `project rm` | `project:write` |
 | `plugin install`, `plugin remove` | the deployment's token only |
 | `plugin update` | the deployment's token only |
 | `plugin config`, `plugin enable`, `plugin disable` | the deployment's token only |
 | `restart` | the deployment's token only |
 
-`users:write` manages people at or below the caller: `user add` refuses a role,
+`user:write` manages people at or below the caller: `user add` refuses a role,
 and `user add`, `user token` and `user rm` refuse a person, that holds a grant
-the caller does not hold, so the grant is not `admin` under another name.
+the caller does not hold, so the grant is not `admin` under another name. Each of
+the four people subjects is its own, so a caller may be let name teams without
+being let read the people on them. `user list` asks for `role:read` as well,
+because the answer prints what each person's roles resolve to. See
+[USERS.md](USERS.md) for the subjects and the schemes.
 
 `plugin install` runs `npm install` and names a package the daemon loads at its
 next start, so it runs code as the host; no grant a person may hold confers
