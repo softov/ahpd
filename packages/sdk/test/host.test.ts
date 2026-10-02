@@ -1849,7 +1849,11 @@ describe('choosing a model', () => {
     const keys = Object.keys(cfg.schema.properties);
     expect(keys).toContain('permissionMode');
     expect(keys).toContain('effortLevel');
-    expect(keys).toContain('thinking');
+    // The three options an operator writes down as a preset are not controls a
+    // session offers, so the chips a client would draw for them are gone.
+    expect(keys).not.toContain('outputStyle');
+    expect(keys).not.toContain('thinking');
+    expect(keys).not.toContain('sandboxEnabled');
     expect(cfg.schema.properties.permissionMode?.enum).toContain('dontAsk');
     expect(cfg.values.permissionMode).toBe('default');
   });
@@ -1862,10 +1866,6 @@ describe('choosing a model', () => {
     };
     expect(cfg.schema.properties.permissionMode?.sessionMutable).toBe(true);
     expect(cfg.schema.properties.effortLevel?.sessionMutable).toBe(true);
-    // The CLI takes `thinking` when the query is built and has nowhere to put
-    // a later change, so a live control for it would be a switch that flips
-    // back.
-    expect(cfg.schema.properties.thinking?.sessionMutable).toBe(false);
   });
 
   it('answers back with what has already been chosen', async () => {
@@ -1909,34 +1909,31 @@ describe('choosing a model', () => {
     expect(sdk.effortsSet).toEqual(['max']);
   });
 
-  it('sets the sandbox on the reference host\'s three words, at creation and since', async () => {
-    const client = open();
-    await client.handle(hello(['0.8.0']));
-    await client.handle({
-      method: 'createSession',
-      params: { channel: 'ahp-session:/boxed', provider: 'claude', config: { sandboxEnabled: 'on' } },
+  it('runs each session on the preset it was created with', async () => {
+    const host = createHost({
+      path: '/home/softov',
+      agents: [claude({ paths: ['/home/softov'], presets: { work: { thinking: 'disabled', sandbox: 'on' }, test: {} } })],
+      ...machine(),
     });
-    await settle();
-    // Into the flag settings layer, which is the one `applyFlagSettings`
-    // moves later - so `on` at creation and `on` since reach the same place.
-    expect((sessionQueries().at(-1)?.options.settings as { sandbox?: unknown })?.sandbox).toEqual({ enabled: true });
-    const uri = 'ahp-session:/boxed';
-    for (const value of ['off', 'default', 'sideways']) {
-      client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { sandboxEnabled: value } } } });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.8.0']));
+    const made = async (channel: string, config: Record<string, unknown>) => {
+      await client.handle({ method: 'createSession', params: { channel, provider: 'claude', config } });
       await settle();
-    }
-    // `off` sets it, `default` clears it back to the settings files, and a
-    // word that is not one of the three is refused rather than passed on.
-    expect(sdk.sandboxSet).toEqual([{ enabled: false }, null]);
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { config: { schema: { properties: Record<string, { enum?: string[] }> }; values: Record<string, string> } } };
-    }).snapshot.state;
-    expect(state.config.values.sandboxEnabled).toBe('default');
-    expect(state.config.schema.properties.sandboxEnabled?.enum).toEqual(['default', 'on', 'off']);
-    // And absent from the harness's options when nobody asked.
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/unboxed', provider: 'claude' } });
-    await settle();
-    expect(sessionQueries().at(-1)?.options.settings).toBeUndefined();
+      return sessionQueries().at(-1)?.options as Record<string, unknown>;
+    };
+    // What the operator wrote the preset down as, in the query the CLI runs.
+    const onWork = await made('ahp-session:/onwork', { preset: 'work' });
+    expect(onWork.thinking).toEqual({ type: 'disabled' });
+    expect(onWork.settings).toEqual({ sandbox: { enabled: true } });
+    // And a preset that says nothing is the empty one, which changes nothing.
+    const onTest = await made('ahp-session:/ontest', { preset: 'test' });
+    expect(onTest.thinking).toEqual({ type: 'adaptive' });
+    expect(onTest.settings).toBeUndefined();
+    // A stored name nothing resolves is the first preset, which is what
+    // renaming or removing one leaves behind.
+    const onGone = await made('ahp-session:/ongone', { preset: 'gone' });
+    expect(onGone.thinking).toEqual({ type: 'disabled' });
   });
 
   it('sources the client\'s shell init script before every shell command, while one is in force', async () => {
@@ -2612,11 +2609,11 @@ describe('a session\'s config across a restart', () => {
     const client = await hostOnFile();
     await client.handle({
       method: 'createSession',
-      params: { channel: 'ahp-session:/made', provider: 'claude', config: { permissionMode: 'plan', thinking: 'disabled' } },
+      params: { channel: 'ahp-session:/made', provider: 'claude', config: { permissionMode: 'plan', permissions: { allow: ['Bash'] } } },
     });
     const options = await resumed('made');
     expect(options?.permissionMode).toBe('plan');
-    expect(options?.thinking).toEqual({ type: 'disabled' });
+    expect(options?.allowedTools).toEqual(['Bash']);
   });
 
   it('resumes a session with a change made while it ran', async () => {
@@ -2748,7 +2745,7 @@ describe('a session\'s config across a restart', () => {
   };
 
   it('resumes a stored value the schema no longer offers as the default, and says so', async () => {
-    const { client, said } = await staleHost({ permissionMode: 'nope', thinking: 'disabled' });
+    const { client, said } = await staleHost({ permissionMode: 'nope', permissions: { allow: ['Bash'] } });
     client.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-chat:/stale', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
@@ -2757,7 +2754,7 @@ describe('a session\'s config across a restart', () => {
     const options = sessionQueries().at(-1)?.options;
     expect(options?.permissionMode).toBe('default');
     // A value the schema still offers is passed as it was stored.
-    expect(options?.thinking).toEqual({ type: 'disabled' });
+    expect(options?.allowedTools).toEqual(['Bash']);
     expect(said.filter((line) => line.includes('permissionMode'))).toEqual([
       expect.stringMatching(/stale.*permissionMode.*"nope"/),
     ]);

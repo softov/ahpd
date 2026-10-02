@@ -1,7 +1,7 @@
 ---
 title: A Claude session runs on a preset, and the ahpd-only chips move into it
 domain: claude
-status: planned
+status: active
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -72,10 +72,10 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Each Claude option is one declaration](task-01-each-option-is-one-declaration.md) | todo | - |
-| [02 - Presets, and the `preset` key](task-02-presets-and-the-preset-key.md) | todo | 01, host/31 |
-| [03 - The ahpd-only chips move into presets](task-03-the-chips-move-into-presets.md) | todo | 02 |
-| [04 - Docs, and the six-modes line corrected](task-04-docs.md) | todo | 03 |
+| [01 - Each Claude option is one declaration](task-01-each-option-is-one-declaration.md) | done | - |
+| [02 - Presets, and the `preset` key](task-02-presets-and-the-preset-key.md) | done | 01, host/31 |
+| [03 - The ahpd-only chips move into presets](task-03-the-chips-move-into-presets.md) | implemented | 02 |
+| [04 - Docs, and the six-modes line corrected](task-04-docs.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -84,10 +84,10 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-each-option-is-one-declaration.md](task-01-each-option-is-one-declaration.md).
+- **Done so far:** tasks 01, 02 and 04 done 2026-10-02. Task 03 is implemented; the schema no longer declares `outputStyle`, `thinking` or `sandboxEnabled`.
+- **Next action:** Softov's check in ahpapp that a Claude composer draws none of the three chips; then task 03 is done and the plan closes.
 - **Open questions:** none.
-- **Watch out for:** `effortLevel` stays where it is: it is per model in VS Code too, and it is not a preset field.
+- **Watch out for:** a preset's `env` is laid under a signed-in credential, and `null` in it unsets a variable. A stored `thinking` or `sandboxEnabled` from before is kept and no longer read.
 
 ## Final verification checklist
 

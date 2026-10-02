@@ -14,6 +14,7 @@
 import type { PluginHost } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
+import { presetSchema } from './options.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = '@ahpd/agent-claude';
@@ -42,6 +43,10 @@ export const optionsSchema = {
       description: "The configuration directory the CLI reads inside a machine. /ahpd/claude by default; false leaves the image's own.",
     },
     workerStop: { type: 'string', enum: ['worker', 'session'], description: "What a stop given in a subagent's chat stops. worker by default." },
+    presets: {
+      type: 'object',
+      description: 'Named sets of Claude options, by name. One is what every session runs on; two or more offer a session a choice, and the first is the default.',
+    },
   },
 };
 
@@ -52,9 +57,21 @@ export const optionsSchema = {
  * ordinary install: the directories the daemon was started on are the ones
  * this backend lists. A deployment that wants the catalogue narrower than the
  * host names its own.
+ *
+ * `presets` is the one option whose contents `optionsSchema` cannot check: it
+ * says a preset is an object, and what a preset holds is checked here against
+ * the same declarations the session keys are made of. That a wrong preset is
+ * the daemon refusing to load this package rather than a session quietly
+ * running on something nobody wrote.
  */
 const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOptions => {
   const said = values as Partial<ClaudeOptions>;
+  if (said.presets !== undefined) {
+    for (const [name, preset] of Object.entries(said.presets)) {
+      const wrong = presetSchema(preset, `options.presets.${name}`);
+      if (wrong !== undefined) throw new Error(wrong);
+    }
+  }
   return { ...said, paths: said.paths ?? host.paths };
 };
 

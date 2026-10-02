@@ -85,6 +85,9 @@
       },
       "workerStop": {
         "required": false
+      },
+      "presets": {
+        "required": false
       }
     }
   }

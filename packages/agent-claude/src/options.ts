@@ -1,0 +1,207 @@
+/**
+ * The Claude options this backend takes, each declared once.
+ *
+ * An option is two things: what a value of it may be, and where the value
+ * goes. A value reaches the SDK in one of two places - the options `query()`
+ * is built from, which the CLI takes when the session starts, or the flag
+ * settings `applyFlagSettings` moves, which it takes on a session already
+ * running - and a declaration says which, so whoever holds a value does not
+ * have to know the option's name to place it.
+ *
+ * One declaration rather than two schemas and two translations, because the
+ * same option is offered in a session's config and written in a preset, and
+ * those drifted once already - decision
+ * `claude-options-are-declared-once-for-sessions-and-presets`.
+ */
+
+import type { Bag } from '@ahpd/sdk';
+
+/**
+ * One Claude option.
+ *
+ * A new SDK option is a new declaration here rather than a spread of whatever
+ * the SDK takes: a preset is checked when the plugin loads, and a preset that
+ * could set anything could set what this backend sets itself.
+ */
+export interface Declaration {
+  /** What one value is held to, in a preset and in a config bag alike. */
+  schema: Bag;
+  /** The `query()` options a value becomes; absent when the CLI takes it live instead. */
+  toQuery?: (value: unknown) => Bag;
+  /** The flag settings a value becomes; absent when the query takes it instead. */
+  toFlags?: (value: unknown) => Bag;
+  /** What this option is when nothing named one. */
+  fallback?: unknown;
+}
+
+/**
+ * The CLI's own sandbox, on the reference host's three words.
+ *
+ * `on` and `off` set it and `default` leaves it to the settings files. That
+ * is why `default` produces nothing rather than an unset: the layer is absent,
+ * so whatever those files say is what runs.
+ */
+export const sandbox: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['default', 'on', 'off'],
+    description: "The CLI's own sandbox for shell commands. On and off set it; default follows the settings files.",
+  },
+  toQuery: (value) => value === 'on' ? { settings: { sandbox: { enabled: true } } }
+    : value === 'off' ? { settings: { sandbox: { enabled: false } } }
+    : {},
+};
+
+/**
+ * Extended thinking, which the query is built with.
+ *
+ * What every session ran on before a preset could say otherwise, which is why
+ * it is the one option with a fallback: an install that names no preset is
+ * the empty preset, and it has to answer as it answered before.
+ */
+export const thinking: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['adaptive', 'disabled'],
+    description: 'Extended thinking. The agent decides when to think, or there is none.',
+  },
+  fallback: 'adaptive',
+  toQuery: (value) => value === 'adaptive' ? { thinking: { type: 'adaptive' } }
+    : value === 'disabled' ? { thinking: { type: 'disabled' } }
+    : {},
+};
+
+/**
+ * The voice the CLI answers in.
+ *
+ * The one option here the CLI takes live rather than at startup: it is in the
+ * flag settings layer, and which styles exist is only known once the CLI has
+ * answered, so a value is applied at the handshake rather than when the query
+ * is built.
+ */
+export const outputStyle: Declaration = {
+  schema: { type: 'string', description: 'The voice it answers in.' },
+  toFlags: (value) => typeof value === 'string' && value !== '' ? { outputStyle: value } : {},
+};
+
+/**
+ * Variables for the CLI's own process.
+ *
+ * The SDK's `env` *replaces* the subprocess environment rather than adding to
+ * it, so a lone entry is a CLI with no `PATH` and no `HOME`. The daemon's own
+ * environment is the base and these are laid over it, which is also what a
+ * credential pushed by a client is layered over.
+ */
+export const env: Declaration = {
+  schema: { type: 'object', description: "Variables for the CLI's process, over the daemon's own environment. null unsets one." },
+  toQuery: (value) => {
+    const held = variablesOf(value);
+    if (Object.keys(held).length === 0) return {};
+    const out: Record<string, string | undefined> = { ...process.env };
+    for (const [name, one] of Object.entries(held)) {
+      if (one === null) delete out[name];
+      else out[name] = one;
+    }
+    return { env: out };
+  },
+};
+
+/**
+ * Arguments the CLI is started with, beyond the ones this backend builds.
+ *
+ * The SDK's own shape: a name without the `--`, its value, and `null` for a
+ * flag that takes none.
+ */
+export const extraArgs: Declaration = {
+  schema: { type: 'object', description: 'Extra CLI arguments, by name and value. null for a flag that takes none.' },
+  toQuery: (value) => {
+    const held = variablesOf(value);
+    return Object.keys(held).length > 0 ? { extraArgs: held } : {};
+  },
+};
+
+/** Every declared option, by the name a preset gives it. */
+const DECLARED: Record<string, Declaration> = { sandbox, thinking, outputStyle, env, extraArgs };
+
+/** The options of one declaration, gathered into a single bag. */
+const through = (values: Bag, member: 'toQuery' | 'toFlags'): Bag => {
+  const out: Bag = {};
+  for (const [name, one] of Object.entries(DECLARED)) Object.assign(out, one[member]?.(values[name]) ?? {});
+  return out;
+};
+
+/**
+ * What each declared option is when nothing named one.
+ *
+ * Under everything else a session says, so a value somebody chose is a value
+ * somebody chose.
+ */
+export const optionDefaults = (): Bag => Object.fromEntries(
+  Object.entries(DECLARED).filter(([, one]) => one.fallback !== undefined).map(([name, one]) => [name, one.fallback]),
+);
+
+/** The `query()` options a set of declared values produces. */
+export const queryOptionsOf = (values: Bag): Bag => through(values, 'toQuery');
+
+/** The flag settings a set of declared values produces. */
+export const flagSettingsOf = (values: Bag): Bag => through(values, 'toFlags');
+
+/**
+ * What the preset a session names holds.
+ *
+ * A session stores the name and nothing else, so this is read where the
+ * session starts or resumes: a preset that has since been renamed or removed
+ * is the first one, which is what a stored name nobody can resolve has to
+ * mean to whoever stored it. Configuration that names no preset at all
+ * resolves to the first of none, which holds nothing.
+ */
+export const presetValues = (presets: Record<string, Bag> | undefined, named: unknown): Bag => {
+  const held = presets ?? {};
+  const said = typeof named === 'string' ? held[named] : undefined;
+  return { ...(said ?? held[Object.keys(held)[0] ?? '']) };
+};
+
+/**
+ * What is wrong with a preset, named; nothing when it holds.
+ *
+ * The plugin's own options are held to a JSON Schema by the daemon, and that
+ * schema cannot say that every value of one object is itself a shape:
+ * `additionalProperties` there is a yes or a no and never carries a schema,
+ * so `presets` is declared an object and what is inside one of its names is
+ * checked here instead - against the same declarations, so a preset and a
+ * config key cannot disagree about what an option may be.
+ */
+export const presetSchema = (value: unknown, by: string): string | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return `${by} is not an object of Claude options`;
+  for (const [name, given] of Object.entries(value)) {
+    const one = DECLARED[name];
+    if (one === undefined) return `${by}.${name} is not an option a preset holds`;
+    const wrong = heldTo(one.schema, given);
+    if (wrong !== undefined) return `${by}.${name} ${wrong}`;
+  }
+  return undefined;
+};
+
+/** What one value is held to by one field's schema, in the words a person reads. */
+const heldTo = (schema: Bag, value: unknown): string | undefined => {
+  const listed = Array.isArray(schema.enum) ? schema.enum : undefined;
+  if (listed !== undefined) return listed.includes(value) ? undefined : `is not one of ${listed.map(String).join(', ')}`;
+  if (schema.type === 'string') return typeof value === 'string' ? undefined : 'is not a string';
+  if (schema.type === 'object') {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'is not an object';
+    for (const [key, held] of Object.entries(value)) {
+      if (typeof held !== 'string' && held !== null) return `.${key} is not a string`;
+    }
+    return undefined;
+  }
+  return undefined;
+};
+
+/** An object, or nothing: the shape both `env` and `extraArgs` are written in. */
+const bagOf = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Bag : {});
+
+/** The name-and-value pairs of an `env` or an `extraArgs`, and nothing else. */
+const variablesOf = (value: unknown): Record<string, string | null> => Object.fromEntries(
+  Object.entries(bagOf(value))
+    .filter((entry): entry is [string, string | null] => typeof entry[1] === 'string' || entry[1] === null),
+);

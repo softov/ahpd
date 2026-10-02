@@ -432,17 +432,16 @@ invented number is worse than an absent field. A client reads an absent
 `supportsVision` as `false` and an absent `policyState` as "not disabled",
 which are the right answers.
 
-### Two platform keys the window pushes
+### The platform keys the window pushes
 
 `sandboxEnabled` and `shellInitScripts` are the reference host's platform
-config keys, declared on every backend of its own, and the Claude backend
-here declares both under the same names so the window's controls work
-against it. `sandboxEnabled` is `default`, `on` or `off`, and reaches the
-CLI's own `sandbox.enabled` setting through the flag settings layer - at
-creation and on a running session alike, since `applyFlagSettings` moves that
-layer live; `default` clears it back to whatever the settings files say. A
-sandbox asked for on a machine that cannot make one is the CLI's refusal to
-report, not a command run outside one. `shellInitScripts` is the list of
+config keys. The Claude backend here declares `shellInitScripts` under the same
+name so the window's control works against it. It does not declare
+`sandboxEnabled`: the sandbox is a field of a Claude preset (`sandbox`:
+`default`, `on` or `off`), set by whoever configured the backend, so the window
+draws no sandbox control for a Claude session. A sandbox asked for on a machine
+that cannot make one is the CLI's refusal to report, not a command run outside
+one. `shellInitScripts` is the list of
 `{ shell, script }` the window generates for the folder's shell profile and
 selected Python environment, `readOnly` so it is sent and not drawn. The
 SDK's shell tool has no setting for one, so a `PreToolUse` hook on `Bash`

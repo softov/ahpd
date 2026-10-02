@@ -7,6 +7,7 @@ import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sd
 import { protectedResource, urlOf } from './mcp.js';
 import { lineOf, pastLineOf, summarize, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
+import { flagSettingsOf, optionDefaults, presetValues, queryOptionsOf } from './options.js';
 import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, SubagentChat, SubagentRequest, WireTurn } from '@ahpd/sdk';
@@ -107,9 +108,6 @@ const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
  * hidden, since a profile that fails is something the model should hear.
  */
 const sourcing = (path: string): string => `{ . '${path.replaceAll("'", "'\\''")}'; } 2>/dev/null || printf 'shell init script exited %s\\n' "$?"`;
-
-/** The CLI's sandbox setting for the reference host's three words; `null` clears it back to the settings files. */
-const sandboxOf = (value: unknown): { enabled: boolean } | null => (value === 'on' ? { enabled: true } : value === 'off' ? { enabled: false } : null);
 
 interface PendingInput {
   id: string;
@@ -598,6 +596,15 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   workerStop?: 'worker' | 'session';
   /**
+   * The presets `claude()` was configured with, by name.
+   *
+   * A session stores the name its config carries and nothing else, so the
+   * values are resolved here, where the query is built: a preset that has since
+   * been renamed or removed is the first one. Absent is the empty preset, which
+   * holds nothing and leaves the session on what it always ran on.
+   */
+  presets?: Record<string, Bag>;
+  /**
    * The host's seam for a chat of one tool call's own.
    *
    * A subagent is a conversation inside one call, and the host owns what a
@@ -711,6 +718,22 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * backend declared a string are narrowed where they are read.
    */
   const settings: Record<string, unknown> = { permissionMode: 'default', ...options.settings };
+
+  /*
+   * The declared Claude options this session runs on, by field.
+   *
+   * What each is when nothing named one, then what the preset holds, under the
+   * names the declarations give them. A config key no longer reaches here: the
+   * three the preset took over are written by whoever configured this backend,
+   * not by a person at a session that is already running.
+   */
+  const values: Bag = { ...optionDefaults(), ...presetValues(options.presets, settings.preset) };
+
+  /**
+   * The `query()` options the declared values become. A pushed credential is
+   * laid over their `env`, so a preset never replaces a signed-in token.
+   */
+  const fromPreset = queryOptionsOf(values);
 
   /*
    * The shell init script, on disk where a shell can source it.
@@ -2194,13 +2217,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * the subprocess simply inherits, which is how every session worked
        * before this and how an automation's still does.
        */
-      ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+      ...fromPreset,
+      ...(options.env ? { env: { ...(fromPreset.env as Bag | undefined ?? process.env), ...options.env } } : {}),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
       ...(typeof settings.permissionMode === 'string' ? { permissionMode: settings.permissionMode } : {}),
-      // The flag settings layer, which `applyFlagSettings` moves later: one
-      // place for the sandbox, whether it was set at creation or since.
-      ...(sandboxOf(settings.sandboxEnabled) !== null ? { settings: { sandbox: sandboxOf(settings.sandboxEnabled) } } : {}),
       // Before every shell command, while a client has a script in force.
       hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [sourceFirst] }] },
       /*
@@ -2253,12 +2274,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * take. A client that names a session something else keeps what it had.
        */
       ...(options.resume === undefined && UUID.test(idOf(uri)) ? { sessionId: idOf(uri) } : {}),
-      // Set once, at creation, and that is why the schema marks it immutable:
-      // the CLI takes `thinking` when the query is built and has nowhere to
-      // put a later change, so offering it as a live control would be a
-      // switch that flips back.
-      ...(settings.thinking === 'disabled' ? { thinking: { type: 'disabled' } } : {}),
-      ...(settings.thinking === 'adaptive' ? { thinking: { type: 'adaptive' } } : {}),
       canUseTool,
     },
   } as Parameters<typeof query>[0]);
@@ -2542,15 +2557,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
     }
   };
 
-  /*
-   * Output styles this CLI has, learned at the handshake.
-   *
-   * Empty until then, which is why `setOutputStyle` does not refuse on an
-   * empty list: not knowing the styles and knowing there are none are
-   * different answers and only one of them is a reason to say no.
-   */
-  let styles: string[] = [];
-
   /** Which file each running edit tool is changing, by its call id. */
   const editing = new Map<string, string>();
 
@@ -2585,22 +2591,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '');
-    styles = list(init.available_output_styles).filter((s): s is string => typeof s === 'string');
     /*
-     * The style, settled both ways.
+     * The style the preset names, applied once the CLI is there to take it.
      *
-     * A style chosen at creation is only a *setting* until the CLI is told,
-     * and the CLI is not there to be told until now. One that was not chosen
-     * is whatever the CLI already runs on, and reporting anything else would
-     * draw a control sitting on a value that is not in force.
+     * It reaches the flag settings rather than the query, which the CLI only
+     * reads at startup, and it is applied when it differs from what the CLI
+     * already answers in - applying the style the CLI is running is a
+     * round-trip that changes nothing.
      */
-    const asked = str(settings.outputStyle);
-    const running = str(init.output_style);
-    if (asked !== undefined && asked !== running) {
-      await handle.applyFlagSettings({ outputStyle: asked }).catch(() => {});
-    }
-    else if (asked === undefined && running !== undefined) {
-      settings.outputStyle = running;
+    const asked = str(values.outputStyle);
+    if (asked !== undefined && asked !== str(init.output_style)) {
+      await handle.applyFlagSettings(flagSettingsOf(values)).catch(() => {});
     }
     await discover(mcp);
     customizations = customizationsOf(init, mcp, skills, wanted, plugins);
@@ -3090,12 +3091,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       }
       if (key === 'shellInitScripts') return setShellInit(value);
       const said = typeof value === 'string' ? value : '';
-      if (key === 'sandboxEnabled') {
-        if (said !== 'default' && said !== 'on' && said !== 'off') return `sandboxEnabled takes default, on or off, not ${said}`;
-        settings.sandboxEnabled = said;
-        void handle.applyFlagSettings({ sandbox: sandboxOf(said) }).catch(() => {});
-        return true;
-      }
       if (key === 'model') {
         try {
           await handle.setModel(said === 'default' ? undefined : said);
@@ -3110,20 +3105,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
         if (!found) return `The harness has no effort level called ${said}`;
         settings.effortLevel = found;
         void handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
-        return true;
-      }
-      /*
-       * Taken unvalidated until the CLI has said what it has.
-       *
-       * Before the handshake the list is not known, and refusing then would
-       * refuse every style there is - so it is taken and the CLI is left to
-       * disagree. The only wrong answer is a control that reports success and
-       * changes nothing.
-       */
-      if (key === 'outputStyle') {
-        if (styles.length > 0 && !styles.includes(said)) return `The harness has no output style called ${said}`;
-        settings.outputStyle = said;
-        void handle.applyFlagSettings({ outputStyle: said }).catch(() => {});
         return true;
       }
       /*

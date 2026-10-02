@@ -86,6 +86,19 @@ export interface ClaudeOptions {
    * runs with it.
    */
   workerStop?: 'worker' | 'session';
+  /**
+   * Named sets of Claude options, by the name a person gives them.
+   *
+   * A session runs on one of these, and the first is what one runs on when
+   * nothing says otherwise - which is also what a session whose preset has
+   * since been renamed or removed runs on. Each field is declared in
+   * `options.ts`, so what a preset may hold is what an SDK option is and a
+   * preset is checked when the plugin loads.
+   *
+   * Naming none is not a case of its own: it is the one empty preset, so an
+   * install that configures nothing behaves as it did before presets existed.
+   */
+  presets?: Record<string, Bag>;
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
@@ -96,6 +109,16 @@ export function claude(options: ClaudeOptions): Agent {
   const dir = dirs[0];
   if (dir === undefined)
     throw new Error('claude() needs at least one directory to work in.');
+
+  /**
+   * The presets this backend runs sessions on, by name.
+   *
+   * One is nothing to choose between, so the key is offered from two - and
+   * the first is the default, because JSON keeps the order the operator wrote
+   * and that is the one a session nobody chose a preset for runs on.
+   */
+  const presets = Object.keys(options.presets ?? {});
+  const first = presets[0];
 
   /**
    * Which directory a session goes in.
@@ -112,16 +135,6 @@ export function claude(options: ClaudeOptions): Agent {
     return asked;
   };
 
-  /*
-   * What the probe learned about output styles.
-   *
-   * The schema is otherwise fixed, but this one property's choices belong to
-   * the harness rather than to the protocol - a person's own styles live in
-   * their settings - so it is learned once at startup, the way models are,
-   * and the control is simply absent until it is known.
-   */
-  let styles: string[] = [];
-
   /**
    * Whether the models this harness offers carry effort controls of their own.
    *
@@ -133,7 +146,6 @@ export function claude(options: ClaudeOptions): Agent {
    * the session key only while there is nothing better.
    */
   let perModelEffort = false;
-  let style: string | undefined;
 
   /**
    * What a session can be told to do differently.
@@ -145,8 +157,6 @@ export function claude(options: ClaudeOptions): Agent {
    *
    * `sessionMutable` is what each row turns on: the permission mode, the model
    * and the effort level are things the CLI takes on a *running* session.
-   * `thinking` is fixed when the query is built, so offering it live would be
-   * a switch that flips back.
    */
   const schema = (): Bag => ({
     // A JSON Schema object, and it has to say so: `type` is required, and a
@@ -197,6 +207,29 @@ export function claude(options: ClaudeOptions): Agent {
         sessionMutable: true,
       },
       /*
+       * Which preset this session runs on, and only from two of them.
+       *
+       * One is nothing to choose between, so a client would draw a control with
+       * a single entry; two are a real choice, and the first is the default
+       * because JSON keeps the order the operator wrote and the first is the
+       * one a session nobody chose for runs on. Fixed when the session is
+       * created: the preset's values are already in the query by then.
+       */
+      ...(presets.length > 1
+        ? {
+            preset: {
+              scope: 'session',
+              type: 'string',
+              title: 'Preset',
+              description: 'The named set of Claude options this session runs on. Fixed when it is created.',
+              enum: [...presets],
+              enumLabels: [...presets],
+              default: first,
+              sessionMutable: false,
+            },
+          }
+        : {}),
+      /*
        * The model is not a config property.
        *
        * A session has no model; each message has one. The choices are carried
@@ -216,51 +249,6 @@ export function claude(options: ClaudeOptions): Agent {
           sessionMutable: true,
         },
       }),
-      // Learned, so absent until the probe has answered and absent for good
-      // on a harness that has no styles.
-      ...(styles.length > 0
-        ? {
-            outputStyle: {
-        scope: 'session',
-              type: 'string',
-              title: 'Output style',
-              description: 'The voice it answers in.',
-              enum: styles,
-              enumLabels: styles.map((name) => name.charAt(0).toUpperCase() + name.slice(1)),
-              ...(style !== undefined ? { default: style } : {}),
-              sessionMutable: true,
-            },
-          }
-        : {}),
-      thinking: {
-        type: 'string',
-        title: 'Thinking',
-        description: 'Fixed when the session is created.',
-        enum: ['adaptive', 'disabled'],
-        enumLabels: ['Adaptive', 'Off'],
-        enumDescriptions: ['The agent decides when to think', 'No extended thinking'],
-        default: 'adaptive',
-        sessionMutable: false,
-      },
-      /*
-       * The sandbox, on the reference host's three words.
-       *
-       * A platform key the reference client draws a control for on every
-       * backend that declares it. The CLI has a sandbox of its own for shell
-       * commands, `sandbox.enabled` in its settings, and that is what the
-       * three values reach: `on` and `off` set it, `default` leaves it to the
-       * settings files. Live, because the flag settings take it mid-session.
-       */
-      sandboxEnabled: {
-        scope: 'session',
-        type: 'string',
-        title: 'Sandbox',
-        description: 'Sandbox behavior for this session. Default follows the global setting.',
-        enum: ['default', 'on', 'off'],
-        enumLabels: ['Default', 'On', 'Off'],
-        default: 'default',
-        sessionMutable: true,
-      },
       /*
        * Scripts a client generated, sourced before every shell command.
        *
@@ -312,9 +300,9 @@ export function claude(options: ClaudeOptions): Agent {
           deny: { type: 'array', title: 'Denied tools', items: { type: 'string', title: 'Tool name' } },
         },
         default: { allow: [], deny: [] },
-        // Unlike `thinking`, this one really can move on a running session:
-        // the SDK takes the lists when the query is built, and `canUseTool`
-        // is where this host already sits between the agent and the person.
+        // Live: the SDK takes the lists when the query is built, and
+        // `canUseTool` is where this host already sits between the agent and
+        // the person.
         sessionMutable: true,
       },
     },
@@ -325,10 +313,8 @@ export function claude(options: ClaudeOptions): Agent {
     // Beside its schema or not at all: a value with no property to draw it is
     // a control a client cannot show and cannot change.
     ...(perModelEffort ? {} : { effortLevel: 'high' }),
-    thinking: 'adaptive',
-    sandboxEnabled: 'default',
     permissions: { allow: [], deny: [] },
-    ...(style !== undefined ? { outputStyle: style } : {}),
+    ...(presets.length > 1 ? { preset: first } : {}),
   });
 
   /**
@@ -416,12 +402,10 @@ export function claude(options: ClaudeOptions): Agent {
 
     directories: () => [...dirs],
 
-    // The styles are kept as well as handed on: `schema()` is asked before any
+    // The models are kept as well as handed on: `schema()` is asked before any
     // session exists, and it can only offer what has already been learned.
     probe: async () => {
       const offered = await probe(dir);
-      styles = offered.outputStyles ?? [];
-      style = offered.outputStyle;
       perModelEffort = offered.models.some((model) => model.configSchema !== undefined);
       return offered;
     },
@@ -573,6 +557,9 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.credentials?.[ANTHROPIC]
         ? { env: { ANTHROPIC_API_KEY: start.credentials[ANTHROPIC] } }
         : {}),
+      // The presets, so a session can resolve the name its config carries to
+      // the values it runs on.
+      ...(presets.length > 0 ? { presets: options.presets } : {}),
       });
     },
   };
