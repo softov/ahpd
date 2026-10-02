@@ -657,25 +657,24 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   let reached: HostOptions | undefined;
 
   /*
-   * A name that repeats is one module loaded twice with different options,
-   * which only works when each of its entries says which agent provider it is,
-   * and which is what tells their root config keys apart - decision
-   * `a-repeated-plugin-is-keyed-by-its-provider`. An entry of a repeated name
-   * that says none is refused here, where its agents would clash anyway.
+   * A name that repeats is one module configured twice, which decision
+   * `a-plugin-loads-once-and-each-preset-is-a-variant` refuses: a plugin is
+   * loaded once and its options are what make its variants, so the second and
+   * later entries of a name are problems naming it. A switched-off entry still
+   * counts, since root config would key it the same.
    */
   const repeats = new Map<string, number>();
   for (const spec of specs) repeats.set(nameOf(spec), (repeats.get(nameOf(spec)) ?? 0) + 1);
-  const keyed = (spec: PluginSpec): boolean => {
-    const said = typeof spec === 'string' ? undefined : spec.options?.['provider'];
-    return repeats.get(nameOf(spec)) === 1 || (typeof said === 'string' && said !== '');
-  };
+  const taken = new Set<string>();
 
   for (const spec of specs) {
-    if (typeof spec !== 'string' && spec.enabled === false) continue;
-    if (!keyed(spec)) {
-      problems.push(`plugin ${nameOf(spec)} is named ${repeats.get(nameOf(spec))} times and sets no provider, so its agents would clash with the others of the same plugin`);
+    const named = nameOf(spec);
+    if (taken.has(named)) {
+      problems.push(`plugin ${named} is named ${String(repeats.get(named))} times; write it once and use its options for variants`);
       continue;
     }
+    taken.add(named);
+    if (typeof spec !== 'string' && spec.enabled === false) continue;
     let resolved: Resolved;
     try {
       resolved = resolvePlugin(spec, { configDir: options.configDir, cwd: options.cwd });

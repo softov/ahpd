@@ -170,7 +170,7 @@ it('lists a manifest, and its title, without importing the entry', async () => {
   expect(row.path).toBe(join(dir, 'entry.js'));
 });
 
-it('contributes two backends for two specs that name different providers', async () => {
+it('contributes one backend, and refuses a second spec of the same name', async () => {
   const a = createFakeModel({ script: [{ text: 'answered by a' }], stream: true });
   const b = createFakeModel({ script: [{ text: 'answered by b' }], stream: true });
   const { options, loaded, problems } = await load([
@@ -178,31 +178,27 @@ it('contributes two backends for two specs that name different providers', async
     { name: SOURCE, options: { provider: 'cofold-b', displayName: 'Cofold B', adapter: b, memory: true } },
   ]);
 
-  expect(problems).toEqual([]);
-  expect(loaded).toHaveLength(2);
-  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-cofold', '@ahpd/agent-cofold']);
+  // A plugin is loaded once and its options are what make its variants, which
+  // this package takes in a later plan. Until then a second spec of one name is
+  // refused.
+  expect(problems).toEqual([`plugin ${SOURCE} is named 2 times; write it once and use its options for variants`]);
+  expect(loaded).toHaveLength(1);
+  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-cofold']);
 
   const host = createHost(options);
   const p = peer();
   const client = host.accept(p);
   const ready = await initialize(client);
-  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'cofold-a', 'cofold-b']);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'cofold-a']);
 
   const first = await open(client, 'cofold-a', 'a');
-  const second = await open(client, 'cofold-b', 'b');
   begin(client, first.chatUri, 't1', 'say a');
   await until(() => ended(p, first.chatUri));
-  begin(client, second.chatUri, 't1', 'say b');
-  await until(() => ended(p, second.chatUri));
 
-  const answered = async (chatUri: string): Promise<string | undefined> => {
-    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
-    };
-    return opened.snapshot.state.turns[0]?.responseParts[0]?.content;
+  const opened = await client.handle({ method: 'subscribe', params: { channel: first.chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
   };
-  expect(await answered(first.chatUri)).toBe('answered by a');
-  expect(await answered(second.chatUri)).toBe('answered by b');
+  expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('answered by a');
 });
 
 it('refuses the package when its @ahpd/sdk peer range is not satisfied', async () => {

@@ -102,21 +102,12 @@ export const maskOption = (schema: Record<string, unknown> | undefined, option: 
 /**
  * The key each entry of `plugins` is carried under in root config.
  *
- * One name is `plugins.<name>`, as it was. A name that repeats is one module
- * loaded twice with different options, so each of its entries is keyed
- * `plugins.<name>#<provider>` from its own `provider` option - decision
- * `a-repeated-plugin-is-keyed-by-its-provider`.
+ * `plugins.<name>`, always: a plugin is loaded once and its options make its
+ * variants, so there is one entry per name to key - decision
+ * `a-plugin-loads-once-and-each-preset-is-a-variant`.
  */
-export const keyed = (specs: readonly PluginSpec[]): { key: string; spec: PluginSpec }[] => {
-  const repeats = new Map<string, number>();
-  for (const spec of specs) repeats.set(nameOf(spec), (repeats.get(nameOf(spec)) ?? 0) + 1);
-  return specs.map((spec) => {
-    const name = nameOf(spec);
-    const said = typeof spec === 'string' ? undefined : spec.options?.['provider'];
-    const provider = repeats.get(name) === 1 || typeof said !== 'string' || said === '' ? '' : `#${said}`;
-    return { key: `plugins.${name}${provider}`, spec };
-  });
-};
+export const keyed = (specs: readonly PluginSpec[]): { key: string; spec: PluginSpec }[] =>
+  specs.map((spec) => ({ key: `plugins.${nameOf(spec)}`, spec }));
 
 /**
  * The options schema to mask each of these plugin keys with.

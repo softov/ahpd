@@ -15,6 +15,7 @@
  */
 
 import type { Bag } from '@ahpd/sdk';
+import { modelsProblem } from './models.js';
 
 /**
  * One Claude option.
@@ -131,6 +132,20 @@ export const extraArgs: Declaration = {
 /** Every declared option, by the name a preset gives it. */
 const DECLARED: Record<string, Declaration> = { sandbox, thinking, outputStyle, env, extraArgs };
 
+/**
+ * What a preset holds beside the declared options, by the name it gives them.
+ *
+ * These three are what make a preset a variant rather than a set of values: its
+ * name is what a client reads instead of the id, and its models are what the
+ * picker offers. They belong inside the preset, because two presets of one
+ * plugin are two agents and each of them is one of these.
+ */
+const OF_A_VARIANT: Record<string, Bag> = {
+  name: { type: 'string', description: 'What a client reads instead of the id, which is the preset key.' },
+  models: { type: 'array', description: 'The models this preset offers.' },
+  keepCliModels: { type: 'boolean', description: 'With models, add them to the CLI model list rather than replace it.' },
+};
+
 /** The options of one declaration, gathered into a single bag. */
 const through = (values: Bag, member: 'toQuery' | 'toFlags'): Bag => {
   const out: Bag = {};
@@ -155,21 +170,6 @@ export const queryOptionsOf = (values: Bag): Bag => through(values, 'toQuery');
 export const flagSettingsOf = (values: Bag): Bag => through(values, 'toFlags');
 
 /**
- * What the preset a session names holds.
- *
- * A session stores the name and nothing else, so this is read where the
- * session starts or resumes: a preset that has since been renamed or removed
- * is the first one, which is what a stored name nobody can resolve has to
- * mean to whoever stored it. Configuration that names no preset at all
- * resolves to the first of none, which holds nothing.
- */
-export const presetValues = (presets: Record<string, Bag> | undefined, named: unknown): Bag => {
-  const held = presets ?? {};
-  const said = typeof named === 'string' ? held[named] : undefined;
-  return { ...(said ?? held[Object.keys(held)[0] ?? '']) };
-};
-
-/**
  * What is wrong with a preset, named; nothing when it holds.
  *
  * The plugin's own options are held to a JSON Schema by the daemon, and that
@@ -177,14 +177,22 @@ export const presetValues = (presets: Record<string, Bag> | undefined, named: un
  * `additionalProperties` there is a yes or a no and never carries a schema,
  * so `presets` is declared an object and what is inside one of its names is
  * checked here instead - against the same declarations, so a preset and a
- * config key cannot disagree about what an option may be.
+ * config key cannot disagree about what an option may be, and against the
+ * list `modelsProblem` reads, so a preset's models are held as strictly as a
+ * harness's own are.
  */
 export const presetSchema = (value: unknown, by: string): string | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return `${by} is not an object of Claude options`;
   for (const [name, given] of Object.entries(value)) {
+    if (name === 'models') {
+      const wrong = modelsProblem(given, `${by}.models`);
+      if (wrong !== undefined) return wrong;
+      continue;
+    }
     const one = DECLARED[name];
-    if (one === undefined) return `${by}.${name} is not an option a preset holds`;
-    const wrong = heldTo(one.schema, given);
+    const held = one?.schema ?? OF_A_VARIANT[name];
+    if (held === undefined) return `${by}.${name} is not an option a preset holds`;
+    const wrong = heldTo(held, given);
     if (wrong !== undefined) return `${by}.${name}${wrong.startsWith('.') ? '' : ' '}${wrong}`;
   }
   return undefined;
@@ -195,6 +203,7 @@ const heldTo = (schema: Bag, value: unknown): string | undefined => {
   const listed = Array.isArray(schema.enum) ? schema.enum : undefined;
   if (listed !== undefined) return listed.includes(value) ? undefined : `is not one of ${listed.map(String).join(', ')}`;
   if (schema.type === 'string') return typeof value === 'string' ? undefined : 'is not a string';
+  if (schema.type === 'boolean') return typeof value === 'boolean' ? undefined : 'is not true or false';
   if (schema.type === 'object') {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'is not an object';
     for (const [key, held] of Object.entries(value)) {

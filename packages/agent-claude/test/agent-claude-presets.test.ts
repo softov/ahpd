@@ -5,17 +5,19 @@ import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { claude } from '../src/claude.js';
+import type { Agent } from '@ahpd/sdk';
 
 /*
- * Presets, and the `preset` key a session is created on.
+ * Presets, and the agent each of them registers.
  *
- * A preset is a named set of Claude options an operator writes once, and a
- * session runs on one of them. The cases here are the three shapes that takes:
- * no preset, where nothing is offered and a session runs as it always did;
- * one preset, where there is nothing to choose and the session runs on it
- * anyway; and two or more, where `preset` is a key, defaults to the first and
- * is what tells one session from another. A stored name nobody can resolve is
- * the last case, because that is what removing a preset leaves behind.
+ * A preset is a variant of this package: its key is the id clients name, it
+ * carries a name and a model list of its own, and one load of the plugin
+ * registers one agent per preset. The built-in `claude` is there unless it is
+ * written `false`, and an object under its key is laid over it. The cases here
+ * are the shapes that takes: none written, the built-in alone; a variant beside
+ * it, with its own name and models; the built-in dropped; the built-in
+ * overridden; and the two ways a load is refused - a top-level option that
+ * belongs inside a preset, and a preset map that leaves nothing to register.
  */
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -54,16 +56,16 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** One session's `query()` options, created with a preset name in its config. */
-const queried = async (presets: Record<string, Record<string, unknown>> | undefined, preset: unknown, env?: Record<string, string>): Promise<Record<string, unknown>> => {
+/** One session's `query()` options, on a variant holding the given values. */
+const queried = async (preset: Record<string, unknown> | undefined, env?: Record<string, string>): Promise<Record<string, unknown>> => {
   sdk.options = [];
   createSession({
     uri: 'ahp-session:/preset',
     chatUri: 'ahp-chat:/preset',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-preset-')),
     emit: () => {},
-    settings: preset === undefined ? {} : { preset },
-    ...(presets === undefined ? {} : { presets }),
+    settings: {},
+    ...(preset === undefined ? {} : { preset }),
     ...(env === undefined ? {} : { env }),
   });
   await settle();
@@ -73,8 +75,8 @@ const queried = async (presets: Record<string, Record<string, unknown>> | undefi
 };
 
 /** What a backend offers a client, by key. */
-const offered = (presets?: Record<string, Record<string, unknown>>) => {
-  const agent = claude({ paths: ['/tmp/ahpd-preset'], ...(presets === undefined ? {} : { presets }) });
+const offered = (preset?: Record<string, unknown>) => {
+  const agent = claude({ paths: ['/tmp/ahpd-preset'], ...(preset === undefined ? {} : { preset }) });
   return agent.schema().properties as Record<string, Record<string, unknown>>;
 };
 
@@ -86,42 +88,80 @@ const load = (options: Record<string, unknown>) => loadPlugins([{ name: SOURCE, 
   log: () => {},
 });
 
-it('offers no preset key with none configured, and runs on what it ran on', async () => {
+/** The agents one load registered, beside the echo the base always carries. */
+const agentsOf = async (options: Record<string, unknown>) => {
+  const { problems, options: served } = await load(options);
+  expect(problems).toEqual([]);
+  return (served.agents ?? []).slice(1);
+};
+
+/** What one registered agent offers the picker, models and all. */
+const modelsOf = async (agent: Agent | undefined) => (await agent?.probe?.())?.models;
+
+it('registers the built-in alone when no preset is written', async () => {
+  const agents = await agentsOf({});
+  expect(agents).toHaveLength(1);
+  expect([agents[0]?.provider, agents[0]?.displayName]).toEqual(['claude', 'Claude Code']);
+});
+
+it('registers an agent per variant, each with its own name and models', async () => {
+  const agents = await agentsOf({
+    presets: { 'claude-openrouter': { name: 'Claude OpenRouter', models: ['stealth/space-bunny-alpha', { id: 'claude-sonnet-5', name: 'Sonnet' }] } },
+  });
+  expect(agents.map((one) => [one.provider, one.displayName])).toEqual([
+    ['claude', 'Claude Code'],
+    ['claude-openrouter', 'Claude OpenRouter'],
+  ]);
+  // The picker offers each variant's own models, which is what a session-level
+  // preset could not do: models are read off the agent at root.
+  expect(await modelsOf(agents[1])).toEqual([
+    { id: 'stealth/space-bunny-alpha', name: 'stealth/space-bunny-alpha' },
+    { id: 'claude-sonnet-5', name: 'Sonnet' },
+  ]);
+  // The built-in names none, so the CLI's own list is what it offers.
+  expect(await modelsOf(agents[0])).toEqual([]);
+});
+
+it('names a variant after its own key when it names none', async () => {
+  const agents = await agentsOf({ presets: { 'claude-openrouter': {} } });
+  expect(agents.map((one) => [one.provider, one.displayName])).toEqual([
+    ['claude', 'Claude Code'],
+    ['claude-openrouter', 'claude-openrouter'],
+  ]);
+});
+
+it('registers only the variants when the built-in is false', async () => {
+  const agents = await agentsOf({ presets: { claude: false, 'claude-openrouter': { name: 'Claude OpenRouter' } } });
+  expect(agents.map((one) => [one.provider, one.displayName])).toEqual([['claude-openrouter', 'Claude OpenRouter']]);
+});
+
+it('lays an object under the built-in over it', async () => {
+  const agents = await agentsOf({ presets: { claude: { name: 'Claude at work' } } });
+  expect([agents[0]?.provider, agents[0]?.displayName]).toEqual(['claude', 'Claude at work']);
+});
+
+it('refuses a top-level option that belongs inside a preset, naming where it goes', async () => {
+  for (const key of ['provider', 'displayName', 'models', 'keepCliModels']) {
+    const { loaded, problems } = await load({ [key]: key === 'models' ? ['a'] : 'x' });
+    expect(loaded).toEqual([]);
+    // The daemon's own schema check answers first - the option is not one this
+    // package holds at the top level any more - and the load is refused after
+    // it, saying where the option goes now.
+    expect(problems.join('\n')).toMatch(
+      new RegExp(`options\\.${key} is written per variant, as presets\\.<id>\\.${key}$`, 'u'),
+    );
+  }
+});
+
+it('refuses a load that leaves no variant to register', async () => {
+  const { loaded, problems } = await load({ presets: { claude: false } });
+  expect(loaded).toEqual([]);
+  expect(problems[0]).toMatch(/presets names no variant left to register an agent for$/u);
+});
+
+it('offers no preset key on a session, which picks the agent instead', () => {
   expect(offered()).not.toHaveProperty('preset');
-  // Today's options: the sandbox layer absent, thinking on, nothing else.
-  const options = await queried(undefined, undefined);
-  expect(options.settings).toBeUndefined();
-  expect(options.thinking).toEqual({ type: 'adaptive' });
-});
-
-it('offers no preset key with one configured, and runs on it', async () => {
-  expect(offered({ work: { thinking: 'disabled' } })).not.toHaveProperty('preset');
-  expect((await queried({ work: { thinking: 'disabled' } }, undefined)).thinking).toEqual({ type: 'disabled' });
-});
-
-it('offers the preset names from two, and defaults to the first', () => {
-  const keys = offered({ work: {}, test: { thinking: 'disabled' } });
-  expect(keys.preset?.enum).toEqual(['work', 'test']);
-  expect(keys.preset?.default).toBe('work');
-  // Fixed when the session is created, so a client cannot draw a live control
-  // for a value the query was already built with.
-  expect(keys.preset?.sessionMutable).toBe(false);
-});
-
-it('runs each session on its own preset', async () => {
-  const presets = { work: {}, test: { thinking: 'disabled', sandbox: 'on' } };
-  expect((await queried(presets, 'test')).thinking).toEqual({ type: 'disabled' });
-  expect((await queried(presets, 'test')).settings).toEqual({ sandbox: { enabled: true } });
-  const work = await queried(presets, 'work');
-  expect(work.thinking).toEqual({ type: 'adaptive' });
-  expect(work.settings).toBeUndefined();
-});
-
-it('resolves a stored name that no longer exists to the first preset', async () => {
-  // What removing `test` and restarting leaves in the store: the name, and
-  // nothing of the values it used to mean.
-  const options = await queried({ work: { thinking: 'disabled' } }, 'test');
-  expect(options.thinking).toEqual({ type: 'disabled' });
+  expect(offered({ thinking: 'disabled' })).not.toHaveProperty('preset');
 });
 
 it('fails the plugin load over a preset field it does not hold, naming it', async () => {
@@ -134,17 +174,43 @@ it('fails the plugin load over a preset field it does not hold, naming it', asyn
   );
 });
 
-it('takes a preset whose fields are all declared', async () => {
+it('takes a preset whose fields are all declared, and holds its models like a harness\'s', async () => {
   const { loaded, problems } = await load({
-    presets: { work: { sandbox: 'on', thinking: 'adaptive', outputStyle: 'concise', env: { ANTHROPIC_MODEL: 'claude-opus-5' }, extraArgs: { 'debug': null } } },
+    presets: {
+      work: {
+        name: 'Claude at work', sandbox: 'on', thinking: 'adaptive', outputStyle: 'concise',
+        env: { ANTHROPIC_MODEL: 'claude-opus-5' }, extraArgs: { 'debug': null },
+        models: ['stealth/space-bunny-alpha', { fetch: 'https://x', match: 'a/*', key: { fromEnv: 'K' } }],
+        keepCliModels: true,
+      },
+    },
   });
   expect(problems).toEqual([]);
   expect(loaded.map((one) => one.name)).toEqual([NAME]);
+  expect((await load({ presets: { work: { models: [{ name: 'x' }] } } })).problems[0])
+    .toMatch(/options\.presets\.work\.models\[0\] has neither an id nor a fetch$/u);
+  expect((await load({ presets: { work: { models: 'claude-opus-5' } } })).problems[0])
+    .toMatch(/options\.presets\.work\.models is not a list$/u);
+  expect((await load({ presets: { work: { keepCliModels: 'yes' } } })).problems[0])
+    .toMatch(/options\.presets\.work\.keepCliModels is not true or false$/u);
 });
-it('lays a signed-in credential over a preset env, and lets a preset unset a variable', async () => {
+
+it('builds a session query from the declared values of its own variant', async () => {
+  const options = await queried({ sandbox: 'on', thinking: 'disabled' });
+  expect(options.settings).toEqual({ sandbox: { enabled: true } });
+  expect(options.thinking).toEqual({ type: 'disabled' });
+});
+
+it('leaves a variant that names nothing on what a session always ran on', async () => {
+  const options = await queried({});
+  expect(options.settings).toBeUndefined();
+  expect(options.thinking).toEqual({ type: 'adaptive' });
+});
+
+it('lays a signed-in credential over a variant env, and lets it unset a variable', async () => {
   process.env.AHPD_PRESET_PROBE = 'daemon';
-  const presets = { work: { env: { ANTHROPIC_API_KEY: 'from-preset', ANTHROPIC_BASE_URL: 'https://gateway', AHPD_PRESET_PROBE: null } } };
-  const env = (await queried(presets, 'work', { ANTHROPIC_API_KEY: 'signed-in' })).env as Record<string, string | undefined>;
+  const preset = { env: { ANTHROPIC_API_KEY: 'from-preset', ANTHROPIC_BASE_URL: 'https://gateway', AHPD_PRESET_PROBE: null } };
+  const env = (await queried(preset, { ANTHROPIC_API_KEY: 'signed-in' })).env as Record<string, string | undefined>;
   delete process.env.AHPD_PRESET_PROBE;
   expect(env.ANTHROPIC_API_KEY).toBe('signed-in');
   expect(env.ANTHROPIC_BASE_URL).toBe('https://gateway');
@@ -152,30 +218,20 @@ it('lays a signed-in credential over a preset env, and lets a preset unset a var
   expect(env.PATH).toBe(process.env.PATH);
 });
 
-it('loads twice as two harnesses, each under its own provider and name', async () => {
-  // Both entries set a provider, which a repeated name has to: see
-  // a-repeated-plugin-is-keyed-by-its-provider.
-  const { problems, options } = await loadPlugins([
-    { name: SOURCE, options: { provider: 'claude' } },
-    { name: SOURCE, options: { provider: 'claude-openrouter', displayName: 'Claude Code (OpenRouter)' } },
-  ], {
-    base: { path: '/tmp/ahpd-preset', agents: [] },
-    configDir: REPO,
-    cwd: REPO,
-    log: () => {},
-  });
-  expect(problems).toEqual([]);
-  expect((options.agents ?? []).map((one) => [one.provider, one.displayName])).toEqual([
-    ['claude', 'Claude Code'],
-    ['claude-openrouter', 'Claude Code (OpenRouter)'],
-  ]);
+it('probes the endpoint the variant names, not the daemon\'s own', () => {
+  const at = (preset: Record<string, unknown> | undefined) =>
+    (claude({ paths: ['/tmp/ahpd-preset'], ...(preset === undefined ? {} : { preset }) }).endpoints?.() ?? [])
+      .flatMap((one) => [one.url]);
+  expect(at({ env: { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api/' } })).toEqual(['https://openrouter.ai/api/v1/models']);
+  // The daemon's own is what a variant that names none runs on.
+  expect(at(undefined)).toEqual([`${(process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`]);
 });
 
-it('reads a preset env value from the daemon environment, and fails the load when it is not there', async () => {
+it('reads a variant env value from the daemon environment, and fails the load when it is not there', async () => {
   process.env.AHPD_PRESET_KEY = 'sk-from-daemon';
   const presets = { router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_KEY' } } } };
   expect((await load({ presets })).problems).toEqual([]);
-  const env = (await queried(presets, 'router')).env as Record<string, string | undefined>;
+  const env = (await queried(presets.router)).env as Record<string, string | undefined>;
   expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-daemon');
   delete process.env.AHPD_PRESET_KEY;
 

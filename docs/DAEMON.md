@@ -412,7 +412,7 @@ built over that answers a turn with the wrong backend.
 
 `ahpd plugin config` reads and writes a plugin's options in `config.json`, and `ahpd plugin enable` and `ahpd plugin disable` set its `enabled`.
 The plugin is named as `plugins` names it, and one the file does not name is refused.
-One module named twice is two backends, which is how `claude` and `claude-openrouter` are configured; each of the two entries must set a different `provider`, and an entry of a repeated name that sets none is reported and skipped, since its agents would clash with the other's anyway.
+One module is named once. A name written twice is reported and the second entry is skipped, since a plugin's options are what make its variants and root config keys one entry under `plugins.<name>`.
 
 ```bash
 ahpd plugin config @ahpd/agent-claude                       # every option it sets
@@ -545,7 +545,7 @@ The merged files are checked against the same schema the flags are, before anyth
 
 ### What a client can configure
 
-The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools` and `wire`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. One module loaded twice is two backends, so each of its entries is keyed `plugins.<name>#<provider>` from its own `provider` option, and an entry of a repeated name that sets none is refused at start. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
+The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools` and `wire`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
 
 `advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
 

@@ -1,6 +1,7 @@
 ---
 title: A plugin loaded more than once is keyed by its provider in root config
-status: accepted
+status: superseded
+superseded-by: decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md
 date: 2026-10-02
 refs:
   - "[code://packages/server/src/rootconfig.ts](../../packages/server/src/rootconfig.ts) - `plugins.<name>`, one key per `plugins` entry"

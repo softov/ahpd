@@ -1909,31 +1909,30 @@ describe('choosing a model', () => {
     expect(sdk.effortsSet).toEqual(['max']);
   });
 
-  it('runs each session on the preset it was created with', async () => {
+  it('runs each session on the variant its own agent was built with', async () => {
     const host = createHost({
       path: '/home/softov',
-      agents: [claude({ paths: ['/home/softov'], presets: { work: { thinking: 'disabled', sandbox: 'on' }, test: {} } })],
+      agents: [
+        claude({ paths: ['/home/softov'], preset: { thinking: 'disabled', sandbox: 'on' } }),
+        claude({ paths: ['/home/softov'], provider: 'claude-test' }),
+      ],
       ...machine(),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.8.0']));
-    const made = async (channel: string, config: Record<string, unknown>) => {
-      await client.handle({ method: 'createSession', params: { channel, provider: 'claude', config } });
+    const made = async (channel: string, provider: string) => {
+      await client.handle({ method: 'createSession', params: { channel, provider, config: {} } });
       await settle();
       return sessionQueries().at(-1)?.options as Record<string, unknown>;
     };
-    // What the operator wrote the preset down as, in the query the CLI runs.
-    const onWork = await made('ahp-session:/onwork', { preset: 'work' });
+    // What the operator wrote the variant down as, in the query the CLI runs.
+    const onWork = await made('ahp-session:/onwork', 'claude');
     expect(onWork.thinking).toEqual({ type: 'disabled' });
     expect(onWork.settings).toEqual({ sandbox: { enabled: true } });
-    // And a preset that says nothing is the empty one, which changes nothing.
-    const onTest = await made('ahp-session:/ontest', { preset: 'test' });
+    // And a variant that says nothing is the empty one, which changes nothing.
+    const onTest = await made('ahp-session:/ontest', 'claude-test');
     expect(onTest.thinking).toEqual({ type: 'adaptive' });
     expect(onTest.settings).toBeUndefined();
-    // A stored name nothing resolves is the first preset, which is what
-    // renaming or removing one leaves behind.
-    const onGone = await made('ahp-session:/ongone', { preset: 'gone' });
-    expect(onGone.thinking).toEqual({ type: 'disabled' });
   });
 
   it('sources the client\'s shell init script before every shell command, while one is in force', async () => {

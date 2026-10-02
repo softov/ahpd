@@ -163,32 +163,28 @@ it('lists a manifest, and its title, without importing the entry', async () => {
   expect(row.path).toBe(join(dir, 'entry.js'));
 });
 
-it('contributes two backends for two specs that name different commands', async () => {
+it('contributes one backend, and refuses a second spec of the same name', async () => {
   const { options, loaded, problems } = await load([
     spec('copilot', { displayName: 'Copilot' }),
     spec('codex', { displayName: 'Codex' }),
   ]);
 
-  expect(problems).toEqual([]);
-  expect(loaded).toHaveLength(2);
-  // One package, two backends: the command is the difference, so nothing here
-  // needs a second package per ACP server.
-  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-acp', '@ahpd/agent-acp']);
+  // A plugin is loaded once and its options are what make its variants, which
+  // ACP takes in a later plan. Until then a second spec of one name is refused.
+  expect(problems).toEqual([`plugin ${SOURCE} is named 2 times; write it once and use its options for variants`]);
+  expect(loaded).toHaveLength(1);
+  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-acp']);
 
   const host = createHost(options);
   const p = peer();
   const client = host.accept(p);
   const ready = await initialize(client);
-  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'copilot', 'codex']);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'copilot']);
 
   const first = await open(client, 'copilot', 'one');
   begin(client, first.chatUri, 't1', 'hi');
   await until(() => types(p, first.chatUri).includes('chat/turnComplete'));
-
-  const second = await open(client, 'codex', 'two');
-  begin(client, second.chatUri, 't1', 'hi');
-  await until(() => types(p, second.chatUri).includes('chat/turnComplete'));
-  expect(types(p, second.chatUri).at(-1)).toBe('chat/turnComplete');
+  expect(types(p, first.chatUri).at(-1)).toBe('chat/turnComplete');
 });
 
 it('reports a spec with nothing to spawn, and loads nothing for it', async () => {

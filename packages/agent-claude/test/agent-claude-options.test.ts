@@ -50,7 +50,6 @@ it('declares every option its README lists, and no other', () => {
 
 it.each<[string, unknown]>([
   ['paths', 'x'],
-  ['provider', 5],
   ['computerExecutable', 5],
   ['computerConfigDir', true],
   ['workerStop', 'all'],

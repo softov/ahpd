@@ -25,77 +25,82 @@ ahpd --plugin @ahpd/agent-claude
 }
 ```
 
-It takes no options in the ordinary install: it catalogues whatever directories the daemon was started on. A configuration may narrow or rename that:
+It takes no options in the ordinary install: it catalogues whatever directories the daemon was started on. A configuration may narrow that:
 
 | option | |
 | --- | --- |
 | `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
-| `provider` | the id clients name. `claude` unless something else already is |
-| `displayName` | what a client reads instead of the id. `Claude Code` by default |
-| `models` | the models the picker offers, in place of the CLI's: a model id, `{ "id", "name" }`, or `{ "fetch": "<url>", "match": "<pattern>", "key": { "fromEnv": "NAME" } }`, which reads an OpenAI-shaped model list and keeps the ids the pattern covers (`*` is any run of characters). A fetch that fails is logged and offers nothing |
-| `keepCliModels` | with `models`, add them to the CLI's list rather than replace it |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
 | `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
 | `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
-| `presets` | named sets of Claude options, by name. One is what every session runs on; two or more offer a session a choice, and the first is the default |
+| `presets` | the variants of this package, by the id clients name. Each key registers an agent of its own, with its own name, models and options |
+
+The package is loaded once. Its variants are written under `presets`, and each one is a harness in the picker of its own.
 
 ### Presets
 
-A preset is a set of Claude options an operator writes once and sessions run on, rather than options each session offers a control for. Two of them give a session a `preset` to choose from, fixed when the session is created:
+The built-in `claude` is Claude Code as it runs here, named `Claude Code`, and it is registered whether or not it is written. An object under its key is laid over it, and `false` drops it:
 
 ```json
 {
   "plugins": [
     { "name": "@ahpd/agent-claude", "options": {
       "presets": {
-        "work": { "thinking": "adaptive", "sandbox": "on" },
-        "read-only": { "thinking": "disabled", "sandbox": "on", "outputStyle": "concise" }
+        "claude": { "thinking": "adaptive", "sandbox": "on" },
+        "read-only": { "name": "Claude, read only", "thinking": "disabled", "sandbox": "on", "outputStyle": "concise" }
       }
     } }
   ]
 }
 ```
 
-A preset holds five fields, and each is checked when the plugin loads, so a preset that names anything else is the daemon refusing this package rather than a session quietly running on something nobody wrote:
+Two presets, two entries in the picker, and a session picks the agent rather than a preset of it. Every key is the id clients name for that agent, and a preset that names none of its own is called by its key.
+
+A preset holds eight fields, and each is checked when the plugin loads, so a preset that names anything else is the daemon refusing this package rather than an agent quietly running as something nobody wrote:
 
 | field | |
 | --- | --- |
+| `name` | what a client reads instead of the id. Defaults to the preset's key |
+| `models` | the models that agent offers in the picker, in place of the CLI's: a model id, `{ "id", "name" }`, or `{ "fetch": "<url>", "match": "<pattern>", "key": { "fromEnv": "NAME" } }`, which reads an OpenAI-shaped model list and keeps the ids the pattern covers (`*` is any run of characters). A fetch that fails is logged and offers nothing |
+| `keepCliModels` | with `models`, add them to the CLI's list rather than replace it |
 | `sandbox` | the CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
 | `thinking` | extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
 | `outputStyle` | the name of a style from the CLI's own settings |
 | `env` | variables for the CLI's process, laid over the daemon's own environment. A value is a string, `null` to unset the variable, or `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, which must be set when the plugin loads |
 | `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none |
 
-With one preset there is nothing to choose and every session runs on it; with none, a session runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer. The first preset is the default in both senses, and a session whose own stored `preset` names one that has since been renamed or removed runs on the first, which is what is left of a choice that no longer resolves.
+With nothing written the built-in runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer.
 
 ### A second Claude on another endpoint
 
-Load the package twice, the second time under its own `provider` and `displayName` and with one preset that points the CLI elsewhere. It is listed as a harness of its own, and the key stays in the daemon's environment:
+A preset with its own name, its own models and an `env` that points the CLI elsewhere is a second agent on the picker, from the one entry:
 
 ```json
 {
   "plugins": [
-    "@ahpd/agent-claude",
     { "name": "@ahpd/agent-claude", "options": {
-      "provider": "claude-openrouter",
-      "displayName": "Claude Code (OpenRouter)",
-      "models": [
-        "stealth/space-bunny-alpha",
-        { "fetch": "https://openrouter.ai/api/v1/models", "match": "anthropic/*" }
-      ],
       "presets": {
-        "openrouter": { "env": {
-          "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
-          "ANTHROPIC_AUTH_TOKEN": { "fromEnv": "OPENROUTER_API_KEY" },
-          "ANTHROPIC_API_KEY": "",
-          "ANTHROPIC_MODEL": "stealth/space-bunny-alpha",
-          "ANTHROPIC_SMALL_FAST_MODEL": "stealth/space-bunny-alpha"
-        } }
+        "claude-openrouter": {
+          "name": "Claude OpenRouter",
+          "models": [
+            "stealth/space-bunny-alpha",
+            { "fetch": "https://openrouter.ai/api/v1/models", "match": "anthropic/*" }
+          ],
+          "env": {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+            "ANTHROPIC_AUTH_TOKEN": { "fromEnv": "OPENROUTER_API_KEY" },
+            "ANTHROPIC_API_KEY": "",
+            "ANTHROPIC_MODEL": "stealth/space-bunny-alpha",
+            "ANTHROPIC_SMALL_FAST_MODEL": "stealth/space-bunny-alpha"
+          }
+        }
       }
     } }
   ]
 }
 ```
+
+Both agents carry their key in the daemon's environment, and the endpoint a preset names is the one it is probed at.
 
 ## In your own host
 

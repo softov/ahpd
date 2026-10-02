@@ -249,30 +249,22 @@ describe('a credential in a plugin key', () => {
   });
 });
 
-describe('one plugin loaded twice', () => {
-  const twice = async (): Promise<RootConfigPort> => await withPlugins([
-    { name: CLAUDE, options: { provider: 'claude', displayName: 'Claude Code' } },
-    { name: CLAUDE, options: { provider: 'openrouter', displayName: 'OpenRouter' } },
-  ], undefined, repo);
-
-  it('is one key per entry, each carrying its own provider', async () => {
-    const values = await (await twice()).values() as Record<string, { options: Record<string, unknown> }>;
-    expect(Object.keys(values)).toEqual([`plugins.${CLAUDE}#claude`, `plugins.${CLAUDE}#openrouter`]);
-    expect(values[`plugins.${CLAUDE}#claude`]?.options).toEqual({ provider: 'claude', displayName: 'Claude Code' });
-    expect(values[`plugins.${CLAUDE}#openrouter`]?.options).toEqual({ provider: 'openrouter', displayName: 'OpenRouter' });
+describe('one Claude entry', () => {
+  it('is keyed by its name, with its own options under it', async () => {
+    const root = await withPlugins([{ name: CLAUDE, options: { presets: { work: { thinking: 'disabled' } } } }], undefined, repo);
+    const values = await root.values() as Record<string, { options: Record<string, unknown> }>;
+    expect(Object.keys(values)).toEqual([`plugins.${CLAUDE}`]);
+    expect(values[`plugins.${CLAUDE}`]?.options).toEqual({ presets: { work: { thinking: 'disabled' } } });
   });
 
-  it('is a write to each key that edits its own entry and no other', async () => {
-    const root = await twice();
-    await root.write({ [`plugins.${CLAUDE}#openrouter`]: { options: { displayName: 'Router' } } });
-    expect(held().plugins).toEqual([
-      { name: CLAUDE, options: { provider: 'claude', displayName: 'Claude Code' } },
-      { name: CLAUDE, options: { provider: 'openrouter', displayName: 'Router' } },
-    ]);
+  it('is a write that edits its own entry', async () => {
+    const root = await withPlugins([{ name: CLAUDE, options: { presets: { work: { thinking: 'disabled' } } } }], undefined, repo);
+    await root.write({ [`plugins.${CLAUDE}`]: { options: { presets: { work: { thinking: 'adaptive' } } } } });
+    expect(held().plugins).toEqual([{ name: CLAUDE, options: { presets: { work: { thinking: 'adaptive' } } } }]);
   });
 
   it('is refused by key when no entry holds that one', async () => {
-    const root = await twice();
+    const root = await withPlugins([{ name: CLAUDE, options: {} }], undefined, repo);
     await expect(root.write({ [`plugins.${CLAUDE}#gemini`]: { enabled: false } }))
       .rejects.toThrow(`plugins.${CLAUDE}#gemini is not in plugins`);
   });

@@ -47,7 +47,7 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** One session's `query()` options, running on a preset of the given values. */
+/** One session's `query()` options, on a variant holding the given values. */
 const queried = async (preset: Record<string, unknown>): Promise<Record<string, unknown>> => {
   sdk.options = [];
   sdk.flags = [];
@@ -56,7 +56,7 @@ const queried = async (preset: Record<string, unknown>): Promise<Record<string, 
     chatUri: 'ahp-chat:/declared',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
     emit: () => {},
-    presets: { work: preset },
+    preset,
   });
   await settle();
   const one = sdk.options.at(0);

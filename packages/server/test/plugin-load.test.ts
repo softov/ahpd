@@ -90,33 +90,34 @@ describe('loadPlugins', () => {
 });
 
 describe('one plugin named twice', () => {
-  it('loads both entries when each names its own provider', async () => {
+  it('refuses the second entry, whatever options it carries, and loads the first', async () => {
     const { loaded, options, problems } = await load([
-      { name: './fixtures/plugin-provider', options: { provider: 'first' } },
-      { name: './fixtures/plugin-provider', options: { provider: 'second' } },
-    ]);
-
-    expect(problems).toEqual([]);
-    expect(loaded).toHaveLength(2);
-    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'first', 'second']);
-  });
-
-  it('refuses the entry that names none, and loads the one that does', async () => {
-    const { loaded, options, problems } = await load([
-      { name: './fixtures/plugin-provider', options: { provider: 'first' } },
-      { name: './fixtures/plugin-provider' },
+      './fixtures/plugin-hello',
+      { name: './fixtures/plugin-hello', options: { provider: 'second' } },
     ]);
 
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('is named 2 times and sets no provider');
+    expect(problems[0]).toContain('is named 2 times; write it once and use its options for variants');
     expect(loaded).toHaveLength(1);
-    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'first']);
+    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'hello']);
   });
 
-  it('loads the one entry that is not a repeat, with no provider of its own', async () => {
-    const { problems } = await load(['./fixtures/plugin-provider']);
+  it('refuses the second entry even when the first is switched off', async () => {
+    // A switched-off entry still counts: root config would key it the same.
+    const { problems } = await load([
+      { name: './fixtures/plugin-hello', enabled: false },
+      './fixtures/plugin-hello',
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is named 2 times; write it once and use its options for variants');
+  });
+
+  it('loads the one entry that is not a repeat', async () => {
+    const { loaded, problems } = await load(['./fixtures/plugin-hello']);
 
     expect(problems).toEqual([]);
+    expect(loaded).toHaveLength(1);
   });
 });
 

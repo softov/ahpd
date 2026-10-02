@@ -27,12 +27,17 @@ export type ModelEntry =
   | { id: string; name?: string }
   | { fetch: string; match?: string; key?: { fromEnv: string } };
 
-/** What is wrong with the `models` option, named; nothing when it holds. */
-export const modelsProblem = (value: unknown): string | undefined => {
+/**
+ * What is wrong with a `models` list, named; nothing when it holds.
+ *
+ * `by` names the option the list was written under, which is a preset's when a
+ * preset holds one, so the problem says where to look.
+ */
+export const modelsProblem = (value: unknown, by = 'options.models'): string | undefined => {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) return 'options.models is not a list';
+  if (!Array.isArray(value)) return `${by} is not a list`;
   for (const [index, entry] of value.entries()) {
-    const at = `options.models[${String(index)}]`;
+    const at = `${by}[${String(index)}]`;
     if (typeof entry === 'string') {
       if (entry === '') return `${at} is an empty id`;
       continue;

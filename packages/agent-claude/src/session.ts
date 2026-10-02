@@ -7,7 +7,7 @@ import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sd
 import { protectedResource, urlOf } from './mcp.js';
 import { lineOf, pastLineOf, summarize, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
-import { flagSettingsOf, optionDefaults, presetValues, queryOptionsOf } from './options.js';
+import { flagSettingsOf, optionDefaults, queryOptionsOf } from './options.js';
 import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { Status, idOf, tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, SubagentChat, SubagentRequest, WireTurn } from '@ahpd/sdk';
@@ -616,14 +616,13 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   workerStop?: 'worker' | 'session';
   /**
-   * The presets `claude()` was configured with, by name.
+   * The declared options this backend's variant holds.
    *
-   * A session stores the name its config carries and nothing else, so the
-   * values are resolved here, where the query is built: a preset that has since
-   * been renamed or removed is the first one. Absent is the empty preset, which
-   * holds nothing and leaves the session on what it always ran on.
+   * Read where the query is built, so a preset and a session go through the
+   * same translation. Absent is a variant that names no option, which leaves
+   * the session on what it always ran on.
    */
-  presets?: Record<string, Bag>;
+  preset?: Bag;
   /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
   offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
   /**
@@ -756,12 +755,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
   /*
    * The declared Claude options this session runs on, by field.
    *
-   * What each is when nothing named one, then what the preset holds, under the
-   * names the declarations give them. A config key no longer reaches here: the
-   * three the preset took over are written by whoever configured this backend,
-   * not by a person at a session that is already running.
+   * What each is when nothing named one, then what this backend's variant
+   * holds, under the names the declarations give them. These are written by
+   * whoever configured this backend, never by a session's config keys.
    */
-  const values: Bag = { ...optionDefaults(), ...presetValues(options.presets, settings.preset) };
+  const values: Bag = { ...optionDefaults(), ...options.preset };
 
   /**
    * The `query()` options the declared values become. A pushed credential is

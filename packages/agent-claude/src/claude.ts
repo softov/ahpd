@@ -39,6 +39,19 @@ export const claudeExecutablePath = (home: string = homedir()): string => {
 const ANTHROPIC = 'https://api.anthropic.com';
 
 /**
+ * The API base URL a variant's own `env` names, or nothing.
+ *
+ * Where the CLI would be pointed, which is the endpoint a probe should ask: a
+ * preset on another gateway is not reachable at the daemon's own base URL.
+ */
+const baseUrlOf = (preset: Bag | undefined): string | undefined => {
+  const said = (preset?.['env'] as Bag | undefined)?.['ANTHROPIC_BASE_URL'];
+  const named = typeof said === 'object' && said !== null ? (said as Bag)['fromEnv'] : undefined;
+  const url = typeof named === 'string' ? process.env[named] : said;
+  return typeof url === 'string' && url !== '' ? url : undefined;
+};
+
+/**
  * Claude Code, as an agent backend.
  *
  * Everything the host would otherwise have to know about one particular
@@ -58,9 +71,9 @@ export interface ClaudeOptions {
    * may be here, the way it does on the reference host.
    */
   paths: string[];
-  /** The id clients name. `claude` unless something else already is. */
+  /** The id clients name. The variant's own key, `claude` for the built-in. */
   provider?: string;
-  /** What a client reads instead of the id. `Claude Code` by default. */
+  /** What a client reads instead of the id. The variant's own `name`. */
   displayName?: string;
   /**
    * Where the CLI is *inside a machine*, for a session that names one.
@@ -90,18 +103,15 @@ export interface ClaudeOptions {
    */
   workerStop?: 'worker' | 'session';
   /**
-   * Named sets of Claude options, by the name a person gives them.
+   * The declared options this variant runs its sessions on.
    *
-   * A session runs on one of these, and the first is what one runs on when
-   * nothing says otherwise - which is also what a session whose preset has
-   * since been renamed or removed runs on. Each field is declared in
-   * `options.ts`, so what a preset may hold is what an SDK option is and a
-   * preset is checked when the plugin loads.
-   *
-   * Naming none is not a case of its own: it is the one empty preset, so an
-   * install that configures nothing behaves as it did before presets existed.
+   * One variant, not a map of them: the plugin resolves its presets and calls
+   * `claude()` once per preset, and each of those is a harness of its own with
+   * its own id, name and models. Each field is declared in `options.ts`, so what
+   * a preset may hold is what an SDK option is and a preset is checked when the
+   * plugin loads.
    */
-  presets?: Record<string, Bag>;
+  preset?: Bag;
   /**
    * The models this harness offers, by id, with a name, or fetched from an
    * endpoint's model list and filtered. Without it, the CLI's own list.
@@ -130,16 +140,6 @@ export function claude(options: ClaudeOptions): Agent {
     named ??= ownModels(options.models, options.log);
     return offeredModels(cli, await named, options.keepCliModels);
   };
-
-  /**
-   * The presets this backend runs sessions on, by name.
-   *
-   * One is nothing to choose between, so the key is offered from two - and
-   * the first is the default, because JSON keeps the order the operator wrote
-   * and that is the one a session nobody chose a preset for runs on.
-   */
-  const presets = Object.keys(options.presets ?? {});
-  const first = presets[0];
 
   /**
    * Which directory a session goes in.
@@ -228,29 +228,6 @@ export function claude(options: ClaudeOptions): Agent {
         sessionMutable: true,
       },
       /*
-       * Which preset this session runs on, and only from two of them.
-       *
-       * One is nothing to choose between, so a client would draw a control with
-       * a single entry; two are a real choice, and the first is the default
-       * because JSON keeps the order the operator wrote and the first is the
-       * one a session nobody chose for runs on. Fixed when the session is
-       * created: the preset's values are already in the query by then.
-       */
-      ...(presets.length > 1
-        ? {
-            preset: {
-              scope: 'session',
-              type: 'string',
-              title: 'Preset',
-              description: 'The named set of Claude options this session runs on. Fixed when it is created.',
-              enum: [...presets],
-              enumLabels: [...presets],
-              default: first,
-              sessionMutable: false,
-            },
-          }
-        : {}),
-      /*
        * The model is not a config property.
        *
        * A session has no model; each message has one. The choices are carried
@@ -335,7 +312,6 @@ export function claude(options: ClaudeOptions): Agent {
     // a control a client cannot show and cannot change.
     ...(perModelEffort ? {} : { effortLevel: 'high' }),
     permissions: { allow: [], deny: [] },
-    ...(presets.length > 1 ? { preset: first } : {}),
   });
 
   /**
@@ -464,10 +440,12 @@ export function claude(options: ClaudeOptions): Agent {
 
     // What to probe when the network is in question: the API, which answers
     // an unauthenticated request with 401 - reached, and refusing - and the
-    // base URL the CLI would use where one is set.
+    // base URL the CLI would use where one is set. This variant's own `env`
+    // first, because a preset on another endpoint is probed there and not
+    // where the daemon's own environment would send it.
     endpoints: () => [{
       name: 'Anthropic API',
-      url: `${(process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`,
+      url: `${(baseUrlOf(options.preset) ?? process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`,
       expectedStatus: 401,
     }],
 
@@ -580,9 +558,9 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.credentials?.[ANTHROPIC]
         ? { env: { ANTHROPIC_API_KEY: start.credentials[ANTHROPIC] } }
         : {}),
-      // The presets, so a session can resolve the name its config carries to
-      // the values it runs on.
-      ...(presets.length > 0 ? { presets: options.presets } : {}),
+      // The declared options this variant was configured with, which its
+      // sessions are built from.
+      ...(options.preset === undefined ? {} : { preset: options.preset }),
       ...(options.models === undefined ? {} : { offerModels: offer }),
       });
     },
