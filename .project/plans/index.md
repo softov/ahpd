@@ -162,7 +162,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 
-Next free number in `plugin`: `33`.
+| [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
+
+Next free number in `plugin`: `34`.
 
 ## container
 
