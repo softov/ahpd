@@ -1,7 +1,7 @@
 ---
 title: A turn's usage is every model call it made, sent as it runs, with the harness's cost
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -52,8 +52,8 @@ harness per-call usage -> backend sums the turn -> chat/usage (running total, _m
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - claude counts every call, subagents and cache writes included, with its cost](../32-a-turns-usage-is-every-call-it-made-p1-claude-counts-every-call/plan.md) | planned | - |
-| [p2 - pi sums every call of a turn, with its cost](../32-a-turns-usage-is-every-call-it-made-p2-pi-sums-its-calls/plan.md) | planned | - |
+| [p1 - claude counts every call, subagents and cache writes included, with its cost](../32-a-turns-usage-is-every-call-it-made-p1-claude-counts-every-call/plan.md) | built 2026-10-01 | - |
+| [p2 - pi sums every call of a turn, with its cost](../32-a-turns-usage-is-every-call-it-made-p2-pi-sums-its-calls/plan.md) | built 2026-10-01 | - |
 | [p3 - cofold counts each step, and sends the run's cost](../32-a-turns-usage-is-every-call-it-made-p3-cofold-counts-each-step/plan.md) | planned | - |
 | [p4 - ACP sends the cost and tokens its agent reports](../32-a-turns-usage-is-every-call-it-made-p4-acp-reports-what-it-has/plan.md) | planned | - |
 
@@ -64,8 +64,8 @@ harness per-call usage -> backend sums the turn -> chat/usage (running total, _m
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-01.
-- **Next action:** any of p1 to p4; they are independent.
+- **Done so far:** planned 2026-10-01; p1 and p2 built 2026-10-01.
+- **Next action:** p3 or p4; they are independent.
 - **Open questions:** none.
 - **Watch out for:** `chat/usage` must be sent before `chat/turnComplete`, or the reducer hangs it on nothing (comment at claude `session.ts` 2665-2667).
 
