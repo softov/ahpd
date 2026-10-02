@@ -247,7 +247,7 @@ Reference: [00-proxy.md](proxy/00-proxy.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | planned 2026-10-01; tasks 01-02 todo | - | the proxy listener |
+| [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | built 2026-10-01 ([implemented.md](proxy/01-the-proxy-knows-its-providers-and-models/implemented.md)) | - | the proxy listener |
 
 Next free number in `proxy`: `02`.
 

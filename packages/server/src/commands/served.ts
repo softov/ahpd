@@ -15,6 +15,7 @@ import type { Users } from '@ahpd/sdk';
 import type { Options } from './options.js';
 import { declareConfig } from './config.js';
 import { declarePlugin } from './plugin.js';
+import { declareProxy } from './proxy.js';
 import { declareRestart } from './restart.js';
 import { declareStatus } from './status.js';
 import { declareUser } from './user.js';
@@ -63,6 +64,7 @@ export const servedRegistry = (facts: ServedFacts): Registry<object> => {
   declareConfig(registry, facts);
   declareUser(registry, facts);
   declarePlugin(registry, facts);
+  declareProxy(registry, facts);
   declareRestart(registry, facts);
   return registry;
 };

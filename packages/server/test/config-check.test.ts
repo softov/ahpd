@@ -196,6 +196,82 @@ describe('the schema', () => {
   });
 });
 
+describe('the proxy key', () => {
+  it('is there without any configuration, as the three built-in providers', () => {
+    expect(folded({}).proxy.providers).toEqual({
+      openrouter: { endpoint: 'https://openrouter.ai/api/v1', accepts: ['openai-chat'], key: { env: 'OPENROUTER_API_KEY' } },
+      anthropic: { endpoint: 'https://api.anthropic.com', accepts: ['anthropic-messages'], key: { env: 'ANTHROPIC_API_KEY' } },
+      openai: { endpoint: 'https://api.openai.com/v1', accepts: ['openai-chat'], key: { env: 'OPENAI_API_KEY' } },
+    });
+    expect(folded({}).proxy.models).toEqual({});
+  });
+
+  it('adds a provider that is not built in, and the model names that use it', () => {
+    const options = folded({
+      proxy: {
+        providers: { 'local-vllm': { endpoint: 'http://localhost:8000/v1', accepts: ['openai-chat'] } },
+        models: {
+          'deepseek/deepseek-v4.1-flash': [{ provider: 'local-vllm', id: 'deepseek-v4.1-flash', price: { input: 0.2, output: 0.8 } }],
+          'anthropic/fable-5': [{ provider: 'anthropic', id: 'fable-5' }],
+        },
+      },
+    });
+    expect(options.warnings).toEqual([]);
+    expect(Object.keys(options.proxy.providers)).toEqual(['openrouter', 'anthropic', 'openai', 'local-vllm']);
+    expect(options.proxy.providers['local-vllm']).toEqual({ endpoint: 'http://localhost:8000/v1', accepts: ['openai-chat'] });
+    expect(options.proxy.models).toEqual({
+      'deepseek/deepseek-v4.1-flash': [{ provider: 'local-vllm', id: 'deepseek-v4.1-flash', price: { input: 0.2, output: 0.8 } }],
+      'anthropic/fable-5': [{ provider: 'anthropic', id: 'fable-5' }],
+    });
+  });
+
+  it('replaces a built-in whole, so its key can be another variable', () => {
+    const gateway = { endpoint: 'https://gateway.test/anthropic', accepts: ['anthropic-messages'], key: { env: 'GATEWAY_KEY' } };
+    const options = folded({ proxy: { providers: { anthropic: gateway } } });
+    expect(options.proxy.providers['anthropic']).toEqual(gateway);
+    // The other two are untouched by a file that names one.
+    expect(Object.keys(options.proxy.providers)).toEqual(['openrouter', 'anthropic', 'openai']);
+  });
+
+  it('refuses a model naming a provider that is not there, built in or added', () => {
+    expect(refusal({ proxy: { models: { 'anthropic/fable-5': [{ provider: 'nowhere', id: 'fable-5' }] } } }))
+      .toBe(`${config}: proxy.models.anthropic/fable-5 names nowhere, which is not a provider`);
+  });
+
+  it('refuses a model name that is not <maker>/<name>', () => {
+    for (const name of ['fable-5', 'anthropic/', '/fable-5', 'a/b/c']) {
+      expect(refusal({ proxy: { models: { [name]: [{ provider: 'anthropic', id: 'fable-5' }] } } }))
+        .toBe(`${config}: proxy.models.${name} is not a model name: write it as <maker>/<name>`);
+    }
+  });
+
+  it('refuses a provider with no accepts, or one it does not speak', () => {
+    expect(refusal({ proxy: { providers: { x: { endpoint: 'http://x.test', accepts: [] } } } }))
+      .toBe(`${config}: proxy.providers.x.accepts must be a list of one of anthropic-messages, openai-chat`);
+    expect(refusal({ proxy: { providers: { x: { endpoint: 'http://x.test', accepts: ['grpc'] } } } }))
+      .toBe(`${config}: proxy.providers.x.accepts must be one of anthropic-messages, openai-chat`);
+  });
+
+  it('refuses a provider with no endpoint, and a key that is not a variable name', () => {
+    expect(refusal({ proxy: { providers: { x: { accepts: ['openai-chat'] } } } }))
+      .toBe(`${config}: proxy.providers.x.endpoint is required`);
+    expect(refusal({ proxy: { providers: { x: { endpoint: 'http://x.test', accepts: ['openai-chat'], key: {} } } } }))
+      .toBe(`${config}: proxy.providers.x.key.env is required`);
+  });
+
+  it('refuses a model entry with no provider, or with a provider that is not text', () => {
+    expect(refusal({ proxy: { models: { 'anthropic/fable-5': [{ id: 'fable-5' }] } } }))
+      .toBe(`${config}: proxy.models.anthropic/fable-5[0].provider is required`);
+    expect(refusal({ proxy: { models: { 'anthropic/fable-5': { provider: 'anthropic', id: 'fable-5' } } } }))
+      .toBe(`${config}: proxy.models.anthropic/fable-5 must be a list`);
+  });
+
+  it('refuses a proxy that is not an object', () => {
+    expect(refusal({ proxy: 'on' })).toBe(`${config}: proxy must be an object`);
+    expect(refusal({ proxy: [] })).toBe(`${config}: proxy must be an object`);
+  });
+});
+
 /** The daemon as a process, over stdio, with this file. */
 const run = (value: unknown): Promise<{ code: number | null; stderr: string }> => {
   put(value);
@@ -227,5 +303,22 @@ describe('the daemon', () => {
     const said = await run({ port: '8080' });
     expect(said.code).toBe(2);
     expect(said.stderr).toContain(`${config}: port must be an integer`);
+  }, 20000);
+
+  it('starts with a proxy that adds a provider and a model name', async () => {
+    const said = await run({
+      proxy: {
+        providers: { 'local-vllm': { endpoint: 'http://localhost:8000/v1', accepts: ['openai-chat'] } },
+        models: { 'deepseek/deepseek-v4.1-flash': [{ provider: 'local-vllm', id: 'deepseek-v4.1-flash' }] },
+      },
+    });
+    expect(said.code).toBe(0);
+    expect(said.stderr).toContain('ahpd over stdio');
+  }, 20000);
+
+  it('refuses to start when a model names a provider that is not there', async () => {
+    const said = await run({ proxy: { models: { 'anthropic/fable-5': [{ provider: 'nowhere', id: 'fable-5' }] } } });
+    expect(said.code).toBe(2);
+    expect(said.stderr).toContain(`${config}: proxy.models.anthropic/fable-5 names nowhere, which is not a provider`);
   }, 20000);
 });

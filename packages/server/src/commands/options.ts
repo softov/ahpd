@@ -3,8 +3,8 @@
  *
  * Every flag is a field here: `@cofold/commands` spells each one for the
  * terminal, for help, for completion and for the JSON input a command is run
- * with. `http` is the one field that is not a flag, because only the file sets
- * it. `configSchema` is the same fields as the file writes them, and
+ * with. `http` and `proxy` are the fields that are not flags, because only the
+ * file sets them. `configSchema` is the same fields as the file writes them, and
  * `optionsFrom` checks `config.json` against it and folds the canonical input a
  * surface produced over it.
  *
@@ -19,6 +19,7 @@ import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type Op
 import type { PluginSpec } from '@ahpd/sdk';
 import type { Config, HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
+import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
 /** What this daemon was told, after argv and the configuration file were folded. */
 export interface Options {
@@ -63,6 +64,8 @@ export interface Options {
    * decision put it in the configuration.
    */
   http?: HttpSetting;
+  /** The providers this proxy calls and the model names that point at them. */
+  proxy: ProxyConfiguration;
   /** Plugins to load, in the order they apply. */
   plugins: PluginSpec[];
   /** Load none, whatever the configuration file names. */
@@ -226,6 +229,10 @@ export const serverFields = {
     },
     description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
   },
+  proxy: {
+    ...proxySchema,
+    description: 'The providers this proxy calls and the model names that point at them: providers are keyed by the id a model entry names, and a model name is written <maker>/<name> with the entries serving it. An entry under a built-in id replaces it whole. A key is named by the environment variable holding it, never written here. Set in the configuration file only.',
+  },
   plugins: {
     type: 'array',
     items: { type: 'string' },
@@ -251,7 +258,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['http'] as const;
+const FILE_ONLY = ['http', 'proxy'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'pluginOptions'] as const;
@@ -355,6 +362,11 @@ export const servedPluginWriteFields = {
  * A key the schema names with a value it refuses stops the start with
  * `<file>: <key> must be ...`, naming the file `source` says set it. A key it
  * does not name answers one line, and the caller carries on without it.
+ *
+ * `proxy` is checked further than the schema reaches, because whether a model
+ * name's provider exists is only known once the file's providers are over the
+ * built-ins. That is a bad value rather than an unknown key, so it stops the
+ * start the same way one does.
  */
 export function checkConfig(file: object, source: (key: string) => string): string[] {
   const warnings: string[] = [];
@@ -370,6 +382,8 @@ export function checkConfig(file: object, source: (key: string) => string): stri
       stop(`${source(key)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  const problems = proxyProblems((file as Config).proxy);
+  if (problems.length > 0) stop(problems.map((one) => `${source('proxy')}: ${one}`).join('\n'));
   return warnings;
 }
 
@@ -469,6 +483,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   const issuer = given('issuer');
   const wire = given('wire');
   const http = httpOf(file.http, source('http'));
+  const proxy = proxyConfiguration(given('proxy'));
 
   return {
     port: given('port') ?? 9187,
@@ -488,6 +503,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     sessions: given('sessions') ?? 'file',
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
+    proxy,
     plugins,
     noPlugins,
     updateCheck: given('updateCheck') ?? true,

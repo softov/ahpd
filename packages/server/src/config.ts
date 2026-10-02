@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
 import { issuerKind, type PluginSpec } from '@ahpd/sdk';
+import type { ProxySetting } from './proxy/providers.js';
 
 /**
  * The HTTP API, as the configuration turns it on.
@@ -27,7 +28,8 @@ export interface HttpSetting {
 
 /**
  * What a config file may say. Every key is what a flag would have said, or
- * `http`; the keys are `configSchema`'s, which the file is checked against.
+ * `http` and `proxy`; the keys are `configSchema`'s, which the file is checked
+ * against.
  */
 export interface Config {
   /** TCP port to bind. 0 lets the OS choose. */
@@ -111,6 +113,19 @@ export interface Config {
    * asked for an API keeps.
    */
   http?: boolean | HttpSetting;
+  /**
+   * The providers this proxy calls, and the model names that point at them.
+   *
+   * A provider is an endpoint and the APIs it answers in; a model name is
+   * `<maker>/<name>` and lists the providers serving it, each under that
+   * provider's own model id. Three providers are built in and are there without
+   * this key, so the proxy knows where it would call before anybody configures
+   * anything, and an entry here replaces one of them whole or adds one that is
+   * not built in. A key is named by the environment variable holding it and is
+   * never written here - decision
+   * `a-model-is-named-by-its-maker-and-runs-on-a-provider`.
+   */
+  proxy?: ProxySetting;
   /**
    * The plugins to load, in the order they apply.
    *

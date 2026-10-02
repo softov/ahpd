@@ -1,7 +1,7 @@
 ---
 title: The proxy knows its providers and model names
 domain: proxy
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -58,8 +58,8 @@ config.json proxy.providers + proxy.models -> checked at start -> ahpd proxy lis
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Providers and model names in config](task-01-config.md) | todo | - |
-| [02 - ahpd proxy list](task-02-list.md) | todo | 01 |
+| [01 - Providers and model names in config](task-01-config.md) | done | - |
+| [02 - ahpd proxy list](task-02-list.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -68,13 +68,11 @@ config.json proxy.providers + proxy.models -> checked at start -> ahpd proxy lis
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-01.
-- **Next action:** [task-01-config.md](task-01-config.md).
-- **Open questions:**
-  1. Which built-ins? - proposed: `openrouter`, `anthropic`, `openai`.
-- **Watch out for:** unknown config keys warn and start, bad values stop (`checkConfig`); a provider a model name points to that does not exist is a bad value.
+- **Done so far:** built 2026-10-01; see [implemented.md](implemented.md).
+- **Next action:** the proxy listener plan.
+- **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A config adding a provider and a model name starts and lists both; one pointing at a missing provider refuses to start.
-- [ ] `plans/index.md` updated.
+- [x] A config adding a provider and a model name starts and lists both; one pointing at a missing provider refuses to start.
+- [x] `plans/index.md` updated.
