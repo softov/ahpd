@@ -1,7 +1,7 @@
 ---
 title: A prompt carries what the agent accepts, and only what it accepts
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -44,8 +44,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - begin carries a message's attachments](task-01-begin-carries-attachments.md) | todo | - |
-| [02 - Blocks the agent accepts](task-02-blocks-the-agent-accepts.md) | todo | 01 |
+| [01 - begin carries a message's attachments](task-01-begin-carries-attachments.md) | done | - |
+| [02 - Blocks the agent accepts](task-02-blocks-the-agent-accepts.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -53,13 +53,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-begin-carries-attachments.md](task-01-begin-carries-attachments.md).
-- **Open questions:** none.
-- **Watch out for:** every backend implements `begin`; the new argument is optional.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] An image reaches an agent that takes images.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] An image reaches an agent that takes images.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

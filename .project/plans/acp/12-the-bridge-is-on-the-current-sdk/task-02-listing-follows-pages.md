@@ -1,6 +1,6 @@
 ---
 title: Listing follows pages on one connection
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

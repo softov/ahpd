@@ -1,6 +1,6 @@
 ---
 title: begin carries a message's attachments
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

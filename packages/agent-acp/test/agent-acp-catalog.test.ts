@@ -103,11 +103,11 @@ const runTurn = async (session: Session, watch: Watcher, turnId: string, text: s
   await until(() => watch.endings().length > before);
 };
 
-/** Every request the fixture was sent, in order. */
-const requests = (log: string): { method?: string; params?: Record<string, unknown> }[] => {
+/** Every request the fixture was sent, in order, and which server took it. */
+const requests = (log: string): { pid?: number; method?: string; params?: Record<string, unknown> }[] => {
   try {
     return readFileSync(log, 'utf8').trim().split('\n').filter(Boolean)
-      .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
+      .map((line) => JSON.parse(line) as { pid?: number; method?: string; params?: Record<string, unknown> });
   }
   catch {
     // No file yet is no requests yet.
@@ -221,6 +221,28 @@ it('lists the sessions the server lists, mapping the fields the contract wants',
   expect(rows?.[1]?.title).toBe('listed-2');
   expect(rows?.[1]?.workingDirectories).toEqual(['file:///tmp/two', 'file:///tmp/two-b']);
   expect(Number.isNaN(Date.parse(String(rows?.[1]?.createdAt)))).toBe(false);
+});
+
+it('lists every page of a catalogue the server did not fit into one answer', async () => {
+  const { agent, log } = backend(['--pages']);
+  const rows = await agent.list?.();
+  // The second page is only reached by asking for the cursor the first one
+  // named, so a bridge that reads one page reports one session and no error.
+  expect(rows?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
+});
+
+it('lists a second time on the connection the first one left open', async () => {
+  const { agent, log } = backend();
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+
+  // A subscribe is a list, and a client that reconnects is another: spawning a
+  // server for each is a subprocess per subscribe for a catalogue that has not
+  // changed. The log names the process each request reached.
+  const pids = new Set(requests(log).map((one) => one.pid));
+  expect(pids.size).toBe(1);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
 });
 
 it('reads back the turn this process watched and nothing for one it did not', async () => {

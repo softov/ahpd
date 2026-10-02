@@ -1,7 +1,10 @@
 /** One agent session: its lifecycle, its turns, and what it is waiting for. */
 
+import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { BoundTool } from './agent.js';
+
+export type { MessageAttachment };
 
 /**
  * Emits one state action on a session's channel.
@@ -354,8 +357,14 @@ export interface Session {
    * `origin` (`{ kind: 'agent' }` for a message another session's agent
    * sent) and `_meta` (where from, in the reference client's
    * `vscode.chat.delegation` spelling). Absent, the message is the user's.
+   *
+   * `attachments` are the message's own, in the protocol's spelling: what a
+   * client pasted or picked is handed over rather than described in the text,
+   * so a backend that can see an image sees the image and one that cannot is
+   * the only thing that has to say so. Absent for a message that carried none,
+   * which is every message this host writes itself.
    */
-  begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom): void;
+  begin(turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]): void;
   /**
    * Run the latest turn again, without adding a message.
    *

@@ -4,18 +4,19 @@
  * `@agentclientprotocol/sdk` owns the JSON-RPC framing, the request ids and
  * the notification routing, so all this file does is spawn the program, hand
  * the SDK its two byte streams, and name the calls a session makes on a
- * connection. The `Client` handler is the server's way in: every
- * `session/update` it sends arrives at `sessionUpdate`, and every permission
- * it asks for arrives at `requestPermission`.
+ * connection. The client app is the server's way in: every `session/update` it
+ * sends arrives at the handler registered for it, and every permission it asks
+ * for arrives at the one for that.
  */
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
-import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk';
+import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk';
 import type {
-  Client,
   ClientCapabilities,
+  ContentBlock,
+  InitializeRequest,
   InitializeResponse,
   ListSessionsRequest,
   ListSessionsResponse,
@@ -24,14 +25,13 @@ import type {
   NewSessionRequest,
   NewSessionResponse,
   PromptResponse,
-  RequestPermissionRequest,
   RequestPermissionResponse,
-  SessionNotification,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
   SetSessionModeRequest,
   SetSessionModeResponse,
 } from '@agentclientprotocol/sdk';
+import { sdkVersion } from '@ahpd/sdk';
 import type { AcpConnection, AcpConnectionOptions } from './types.js';
 
 /**
@@ -42,8 +42,15 @@ import type { AcpConnection, AcpConnectionOptions } from './types.js';
  */
 const REFUSED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
 
-/** The version this bridge reports; it names the AHP package rather than a harness. */
-const CLIENT_INFO = { name: 'ahpd', version: '0.0.1' };
+/**
+ * What this bridge reports in the handshake; it names the AHP package rather
+ * than a harness.
+ *
+ * The version is read from the manifest rather than written down here, because
+ * a `clientInfo` that names a build this process is not is the one number in
+ * the handshake nobody can act on.
+ */
+const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
 
 /**
  * How long a call that failed because the stream closed waits to hear why.
@@ -176,7 +183,16 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     ...(createTerminal !== undefined ? { terminal: true } : {}),
   };
 
-  const client: Client = {
+  /*
+   * The client this bridge is, one registration per method a server may call.
+   *
+   * The same handlers the handshake advertises answer what it calls, so a
+   * method this bridge has nothing for is one no server is told about - and a
+   * server that calls it anyway gets the protocol's own "method not found"
+   * rather than a request that never answers.
+   */
+  const app = client({ name: CLIENT_INFO.name });
+  app.onNotification(methods.client.session.update, (context) => {
     /*
      * One update, routed by the session id the server named.
      *
@@ -185,31 +201,25 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
      * an update for a session this bridge did not open and dropping it is
      * better than writing it into the wrong turn.
      */
-    sessionUpdate: (params: SessionNotification): void => {
-      handlers.update(params.sessionId, params.update);
-    },
-    /*
-     * A person's answer, or the protocol's refusal.
-     *
-     * The optional members below are the same shape: present only when the
-     * session has something to answer with, which is also what the handshake
-     * advertised.
-     */
-    requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-      const answer = await handlers.permission?.(params);
-      if (answer === undefined || answer === 'cancelled') return REFUSED;
-      return { outcome: { outcome: 'selected', optionId: answer.optionId } };
-    },
-    ...(readTextFile !== undefined ? { readTextFile } : {}),
-    ...(writeTextFile !== undefined ? { writeTextFile } : {}),
-    ...(createTerminal !== undefined ? { createTerminal } : {}),
-    ...(terminalOutput !== undefined ? { terminalOutput } : {}),
-    ...(waitForTerminalExit !== undefined ? { waitForTerminalExit } : {}),
-    ...(killTerminal !== undefined ? { killTerminal } : {}),
-    ...(releaseTerminal !== undefined ? { releaseTerminal } : {}),
-  };
+    handlers.update(context.params.sessionId, context.params.update);
+  });
+  /*
+   * A person's answer, or the protocol's refusal.
+   */
+  app.onRequest(methods.client.session.requestPermission, async (context): Promise<RequestPermissionResponse> => {
+    const answer = await handlers.permission?.(context.params);
+    if (answer === undefined || answer === 'cancelled') return REFUSED;
+    return { outcome: { outcome: 'selected', optionId: answer.optionId } };
+  });
+  if (readTextFile !== undefined) app.onRequest(methods.client.fs.readTextFile, (context) => readTextFile(context.params));
+  if (writeTextFile !== undefined) app.onRequest(methods.client.fs.writeTextFile, (context) => writeTextFile(context.params));
+  if (createTerminal !== undefined) app.onRequest(methods.client.terminal.create, (context) => createTerminal(context.params));
+  if (terminalOutput !== undefined) app.onRequest(methods.client.terminal.output, (context) => terminalOutput(context.params));
+  if (waitForTerminalExit !== undefined) app.onRequest(methods.client.terminal.waitForExit, (context) => waitForTerminalExit(context.params));
+  if (killTerminal !== undefined) app.onRequest(methods.client.terminal.kill, (context) => killTerminal(context.params));
+  if (releaseTerminal !== undefined) app.onRequest(methods.client.terminal.release, (context) => releaseTerminal(context.params));
 
-  const connection = new ClientSideConnection((_agent) => client, stream);
+  const connection = app.connect(stream);
 
   /**
    * The handshake's reply, kept so it is asked for once.
@@ -280,30 +290,34 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   return {
     initialize: (): Promise<InitializeResponse> => {
       if (handshake !== undefined) return Promise.resolve(handshake);
-      return heard(() => connection.initialize({
+      const greeting: InitializeRequest = {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities,
         clientInfo: CLIENT_INFO,
-      })).then((reply) => {
+      };
+      return heard(() => connection.agent.request(methods.agent.initialize, greeting)).then((reply) => {
         handshake = reply;
         return reply;
       });
     },
-    newSession: (request: NewSessionRequest): Promise<NewSessionResponse> => heard(() => connection.newSession(request)),
-    loadSession: (request: LoadSessionRequest): Promise<LoadSessionResponse> => heard(() => connection.loadSession(request)),
+    newSession: (request: NewSessionRequest): Promise<NewSessionResponse> =>
+      heard(() => connection.agent.request(methods.agent.session.new, request)),
+    loadSession: (request: LoadSessionRequest): Promise<LoadSessionResponse> =>
+      heard(() => connection.agent.request(methods.agent.session.load, request)),
     listSessions: (request: ListSessionsRequest): Promise<ListSessionsResponse> =>
-      heard(() => connection.listSessions(request)),
+      heard(() => connection.agent.request(methods.agent.session.list, request)),
     setSessionMode: (request: SetSessionModeRequest): Promise<SetSessionModeResponse> =>
-      heard(() => connection.setSessionMode(request)),
+      heard(() => connection.agent.request(methods.agent.session.setMode, request)),
     setSessionConfigOption: (request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> =>
-      heard(() => connection.setSessionConfigOption(request)),
-    prompt: (sessionId: string, text: string): Promise<PromptResponse> => heard(() => connection.prompt({
+      heard(() => connection.agent.request(methods.agent.session.setConfigOption, request)),
+    prompt: (sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> => heard(() => connection.agent.request(methods.agent.session.prompt, {
       sessionId,
-      prompt: [{ type: 'text', text }],
+      prompt,
     })),
-    cancel: (sessionId: string): Promise<void> => heard(() => connection.cancel({ sessionId })),
+    cancel: (sessionId: string): Promise<void> =>
+      heard(() => connection.agent.notify(methods.agent.session.cancel, { sessionId })),
     closeSession: (sessionId: string): Promise<void> =>
-      heard(() => connection.closeSession({ sessionId })).then(() => {}),
+      heard(() => connection.agent.request(methods.agent.session.close, { sessionId })).then(() => {}),
     ended,
     stderrTail,
     close: async (): Promise<void> => {

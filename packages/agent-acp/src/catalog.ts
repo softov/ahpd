@@ -44,6 +44,27 @@ const placeOf = new Map<string, string>();
 
 const keyOf = (provider: string, id: string): string => `${provider}\n${id}`;
 
+/** The listing connection a provider holds, by the options that opened it. */
+const listings = new WeakMap<AcpOptions, Listing>();
+
+/**
+ * How long a provider's listing connection waits after its last read before it
+ * goes.
+ *
+ * A daemon is asked for the catalogue on every subscribe and on every
+ * reconnect, so the connection is worth keeping between reads; a minute of
+ * silence is a provider nobody is watching, and a server that outlives the
+ * interest in it is a subprocess with nothing to do.
+ */
+const IDLE_MS = 60_000;
+
+/** One provider's held connection to the server that lists its sessions. */
+interface Listing {
+  connection: AcpConnection;
+  /** Armed once the last read settles, and disarmed by the next one. */
+  idle?: NodeJS.Timeout;
+}
+
 /** One row for a session this process watched, in the contract's spelling. */
 const listedOf = (session: WatchedSession): Listed => ({
   id: session.id,
@@ -155,8 +176,8 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
  * ACP keeps the conversation and hands it back through `session/load`, so a
  * session opened after a restart is read by replaying it: the same updates a
  * live turn would have mapped, split into the turns they were. One connection
- * for the read, as `catalogueOf` spawns one for a list, because a read is not a
- * session and must not leave a server behind.
+ * for the read, because a read is not a session and must not leave a server
+ * behind.
  *
  * The load asks for the folder the server last said this conversation lives in,
  * because a server that keeps a conversation by its folder finds nothing when
@@ -194,33 +215,86 @@ export async function loadedSession(
 }
 
 /**
+ * The listing connection this provider holds, or a new one.
+ *
+ * Keyed by the options rather than by the provider, because one process can
+ * register the same provider twice with two different commands and each is its
+ * own server. The options are the registration's own object, so the key is that
+ * and nothing has to be spelled a second time to be equal to it.
+ */
+const listingFor = (options: AcpOptions): Listing => {
+  const known = listings.get(options);
+  if (known !== undefined) return known;
+  const held: Listing = { connection: server(options, { update: () => {} }) };
+  listings.set(options, held);
+  // A server that is gone cannot answer the next read, so it is not kept.
+  void held.connection.ended.then(() => { dropListing(options, held); });
+  return held;
+};
+
+/** Let a provider go of its listing connection, and stop the timer that would. */
+const dropListing = (options: AcpOptions, held: Listing): void => {
+  if (listings.get(options) !== held) return;
+  listings.delete(options);
+  if (held.idle !== undefined) clearTimeout(held.idle);
+  void held.connection.close();
+};
+
+/** Arm the close of a connection nobody has read from in a minute. */
+const idleClose = (options: AcpOptions, held: Listing): void => {
+  if (listings.get(options) !== held) return;
+  if (held.idle !== undefined) clearTimeout(held.idle);
+  const timer = setTimeout(() => { dropListing(options, held); }, IDLE_MS);
+  timer.unref();
+  held.idle = timer;
+};
+
+/**
  * The sessions the server lists, or this process's own record when it cannot.
  *
- * One connection per read rather than one held open: a bridge nobody asks to
- * list spawns nothing, and a read does not leave a server behind. A server that
- * cannot be reached, or one whose listing fails, falls back to the record - a
+ * One connection for the whole catalogue rather than one per read: a client
+ * subscribes to a chat by asking for the list, and spawning a server for each
+ * of those is a subprocess per subscribe for a catalogue that has not changed.
+ * It goes a minute after the last read, so a provider nobody is watching costs
+ * nothing, and it is dropped at once when the server behind it dies.
+ *
+ * The pages are followed to the end, because `session/list` is paged and a
+ * server holding more than one page of conversations is otherwise a bridge that
+ * reports a list of only the ones it happened to be shown. A server that cannot
+ * be reached, or one whose listing fails, falls back to the record - a
  * catalogue read must answer, and must never take the daemon down over a
  * subprocess that did not start.
  */
 export async function catalogueOf(options: AcpOptions, provider: string): Promise<Listed[]> {
   const now = new Date().toISOString();
-  let connection: AcpConnection | undefined;
+  const held = listingFor(options);
   try {
-    connection = server(options, { update: () => {} });
-    const handshake = await connection.initialize();
+    const handshake = await held.connection.initialize();
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
-    const request: ListSessionsRequest = options.cwd === undefined ? {} : { cwd: options.cwd };
-    const listed = await connection.listSessions(request);
-    for (const info of listed.sessions) {
+    const sessions: SessionInfo[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const request: ListSessionsRequest = {
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(cursor === undefined ? {} : { cursor }),
+      };
+      const page = await held.connection.listSessions(request);
+      sessions.push(...page.sessions);
+      // A cursor handed back twice is a server that would page forever.
+      if (page.nextCursor === undefined || page.nextCursor === null || page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
+    }
+    for (const info of sessions) {
       placeOf.set(keyOf(provider, info.sessionId), info.cwd);
     }
-    return listed.sessions.map((info) => listedFrom(info, now));
+    return sessions.map((info) => listedFrom(info, now));
   }
   catch {
+    dropListing(options, held);
     return watchedRows(provider);
   }
   finally {
-    connection?.close();
+    idleClose(options, held);
   }
 }
 

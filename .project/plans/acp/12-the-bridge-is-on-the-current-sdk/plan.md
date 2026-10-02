@@ -1,7 +1,7 @@
 ---
 title: The bridge is on the current SDK entry, and lists sessions properly
 domain: acp
-status: planned
+status: built
 priority: low
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -49,8 +49,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The current client entry and version](task-01-the-current-client-entry.md) | todo | - |
-| [02 - Listing follows pages on one connection](task-02-listing-follows-pages.md) | todo | - |
+| [01 - The current client entry and version](task-01-the-current-client-entry.md) | done | - |
+| [02 - Listing follows pages on one connection](task-02-listing-follows-pages.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -58,13 +58,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-current-client-entry.md](task-01-the-current-client-entry.md).
-- **Open questions:** none.
-- **Watch out for:** plan 01 changes `connectAcp` too; do this plan after it.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] No deprecated import; `clientInfo` has the real version; a long list is whole.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] No deprecated import; `clientInfo` has the real version; a long list is whole.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

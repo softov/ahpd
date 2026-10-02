@@ -22,6 +22,7 @@ import type { Bag } from '../src/types/common.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Agent, Listed } from '../src/types/agent.js';
+import type { MessageAttachment } from '../src/types/session.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
@@ -188,6 +189,28 @@ const naming = (agent: Agent): Agent => ({
   },
 });
 
+/**
+ * Echo under a backend that writes down what each turn was handed.
+ *
+ * The words of a message reach a backend as `begin`'s `text` and what was
+ * attached to it as an argument of its own, so the record a test reads is what
+ * says the host passed the attachment on rather than writing it into the
+ * prose - which is the only thing a backend that can see an image would notice.
+ */
+const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agent => ({
+  ...agent,
+  create: (start) => {
+    const session = agent.create(start);
+    return {
+      ...session,
+      begin: (turnId, text, model, from, attachments) => {
+        seen.push(attachments);
+        session.begin(turnId, text, model, from, attachments);
+      },
+    };
+  },
+});
+
 const archive = (client: Awaited<ReturnType<typeof running>>['client']) => client.handle({
   method: 'dispatchAction',
   params: { channel: SESSION, action: { type: 'session/isArchivedChanged', isArchived: true } },
@@ -199,6 +222,33 @@ const statusOf = async (client: Awaited<ReturnType<typeof running>>['client']): 
   };
   return answer.snapshot.state.status;
 };
+
+it('hands the attachments on a client\'s message to the backend that begins the turn', async () => {
+  const seen: (MessageAttachment[] | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, watching(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  const shot = { type: 'embeddedResource', label: 'shot.png', data: 'AAAA', contentType: 'image/png' };
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chat,
+      action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is this?', attachments: [shot] } },
+    },
+  });
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  expect(seen).toEqual([[shot]]);
+});
+
+it('hands over no attachment at all for a message that carried none', async () => {
+  const seen: (MessageAttachment[] | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, watching(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  await ask(client, chat, 't1');
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  // Absent rather than an empty list, so a backend can tell a message that
+  // carried nothing from one it was handed nothing to look at.
+  expect(seen).toEqual([undefined]);
+});
 
 it('carries the archived bit into the status a client reads', async () => {
   const { client } = await running(memorySessions());

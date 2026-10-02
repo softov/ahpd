@@ -1,6 +1,6 @@
 ---
 title: The current client entry and version
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

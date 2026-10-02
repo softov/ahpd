@@ -45,7 +45,7 @@ import { lookup } from 'node:dns/promises';
 import type { Claim, StartTerminals, Terminal, TerminalStore } from './types/terminals.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from './types/containers.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
-import type { MessageFrom, Ran } from './types/session.js';
+import type { MessageAttachment, MessageFrom, Ran } from './types/session.js';
 import type { WriteMode } from './types/resources.js';
 import type { ChangesetOperationContext, ChangesetState } from './types/changes.js';
 import type { Clients, Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
@@ -5379,6 +5379,7 @@ export function createHost(options: HostOptions): Host {
     from: MessageFrom | undefined,
     sender?: Owner,
     queuedAs?: string,
+    attachments?: MessageAttachment[],
   ): string | undefined | Promise<string | undefined> => {
     /*
      * A turn with nowhere to charge.
@@ -5402,7 +5403,7 @@ export function createHost(options: HostOptions): Host {
       if (sender !== undefined) senders.set(queuedAs ?? turnId, sender);
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       if (command === '' || !options.terminals) {
-        if (queuedAs === undefined) session.begin(turnId, text, model, from);
+        if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments);
         else session.queue(queuedAs, text, model, from);
         return undefined;
       }
@@ -6666,6 +6667,21 @@ export function createHost(options: HostOptions): Host {
       ...(origin === undefined ? {} : { origin }),
       ...(meta === undefined ? {} : { _meta: meta }),
     };
+  };
+
+  /**
+   * What a client attached to its message, read off the message itself.
+   *
+   * `Message.attachments` is optional and a client that sent none says nothing,
+   * so an empty list is no list rather than an empty one. The backend is handed
+   * them as they arrived rather than a rendering of them: an agent that can
+   * read an image reads the image, and what it cannot is said in the turn's own
+   * text rather than here, which is the backend's call to make.
+   */
+  const messageAttachments = (message: Record<string, unknown>): MessageAttachment[] | undefined => {
+    if (!Array.isArray(message.attachments)) return undefined;
+    const held = message.attachments.filter((one) => typeof one === 'object' && one !== null) as MessageAttachment[];
+    return held.length === 0 ? undefined : held;
   };
 
   /** Every resource identifier any agent here advertised. */
@@ -10139,7 +10155,7 @@ export function createHost(options: HostOptions): Host {
               turn: String(action.turnId ?? ''),
               text: String(message.text ?? ''),
             });
-            const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection));
+            const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection), undefined, messageAttachments(message));
             if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
           })();
           return;
@@ -10195,7 +10211,7 @@ export function createHost(options: HostOptions): Host {
             void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
             const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
             beginTurn(
-              beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection)),
+              beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection), undefined, messageAttachments(message)),
               (why) => refuse(connection.peer, channel, action, origin, why),
             );
             break;

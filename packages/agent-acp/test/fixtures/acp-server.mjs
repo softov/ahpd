@@ -32,6 +32,9 @@
  * - text containing `stop=<reason>` answers the prompt with that stop reason
  *   rather than `end_turn`, so a turn that stopped early can be told apart from
  *   one that finished;
+ * - text containing `blocks` reports the content blocks the prompt arrived in,
+ *   as `blocks=text|image|resource` with each block's text or its URI, so a
+ *   test can read exactly what a client sent;
  * - text containing `chatter` says one line on stderr and answers normally, so
  *   a test can read that a healthy server's noise never reaches a client;
  * - text containing `noisy` says two lines on stderr and then exits with code
@@ -51,6 +54,16 @@
  * Two flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
  * conversation, and `--no-close` stops it advertising `session/close`.
+ *
+ * `--prompt-caps` advertises `promptCapabilities.image` and `embeddedContext`,
+ * the two a client must ask for before it may send an image or an embedded
+ * file in a prompt, and `--extra-dirs` advertises
+ * `sessionCapabilities.additionalDirectories`. A server started without them
+ * advertises neither, which is what a prompt and a session have to survive.
+ *
+ * `--pages` makes `session/list` answer in two pages, the first with a
+ * `nextCursor`, which is what a server whose catalogue does not fit in one
+ * answer looks like.
  *
  * `--grandchild=<file>` starts a process of this server's own at startup and
  * writes its pid into that file, which is how a test reads what a close left
@@ -126,6 +139,19 @@ const LISTED = [
   { sessionId: 'listed-1', cwd: '/tmp/one', title: 'One', updatedAt: '2026-01-01T00:00:00.000Z' },
   { sessionId: 'listed-2', cwd: '/tmp/two', additionalDirectories: ['/tmp/two-b'] },
 ];
+
+/**
+ * The same two sessions as two pages, for a server whose catalogue does not fit
+ * in one answer.
+ *
+ * The first answer carries a cursor and the second does not, which is what tells
+ * a client that asked for the first one to come back for the rest. A bridge
+ * that reads one page reports a catalogue of one session rather than a failure,
+ * so this is the only way a test can see the difference.
+ */
+const paged = (cursor) => (cursor === undefined || cursor === null
+  ? { sessions: LISTED.slice(0, 1), nextCursor: 'page-2' }
+  : { sessions: LISTED.slice(1) });
 
 const write = (message) => {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -356,6 +382,19 @@ const promptScript = async (id, params) => {
     return;
   }
 
+  if (text.includes('blocks')) {
+    const blocks = Array.isArray(params?.prompt) ? params.prompt : [];
+    // One block as `<type>:<what it carries>`, which is enough to tell an image
+    // block from a text block naming the same image.
+    const said = blocks.map((block) => {
+      const what = block?.type === 'text'
+        ? String(block.text ?? '')
+        : String(block?.uri ?? block?.resource?.uri ?? '');
+      return `${block?.type}:${what}`;
+    });
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `blocks=${said.join('|')}` } });
+  }
+
   if (text.includes('read')) {
     const answer = await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` });
     notify({
@@ -495,7 +534,15 @@ const onLine = (line) => {
         protocolVersion: 1,
         agentCapabilities: {
           ...(process.argv.includes('--no-load') ? {} : { loadSession: true }),
-          sessionCapabilities: { list: {}, resume: {}, ...(process.argv.includes('--no-close') ? {} : { close: {} }) },
+          ...(process.argv.includes('--prompt-caps')
+            ? { promptCapabilities: { image: true, embeddedContext: true } }
+            : {}),
+          sessionCapabilities: {
+            list: {},
+            resume: {},
+            ...(process.argv.includes('--no-close') ? {} : { close: {} }),
+            ...(process.argv.includes('--extra-dirs') ? { additionalDirectories: {} } : {}),
+          },
         },
         authMethods: [],
       });
@@ -523,7 +570,9 @@ const onLine = (line) => {
     }
 
     case 'session/list':
-      respond(message.id, { sessions: LISTED });
+      respond(message.id, process.argv.includes('--pages')
+        ? paged(message.params?.cursor)
+        : { sessions: LISTED });
       return;
 
     case 'session/set_mode':

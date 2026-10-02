@@ -1,6 +1,6 @@
 ---
 title: Blocks the agent accepts
-status: todo
+status: done
 depends: [task-01-begin-carries-attachments.md]
 layer: "agent-acp"
 refs:

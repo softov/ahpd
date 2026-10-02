@@ -25,13 +25,15 @@
 
 import { pathToFileURL } from 'node:url';
 import type {
-  AgentCapabilities,
   AvailableCommand,
+  BlobResourceContents,
+  ContentBlock,
   CreateTerminalRequest,
   CreateTerminalResponse,
   KillTerminalRequest,
   KillTerminalResponse,
   PermissionOptionKind,
+  PromptCapabilities,
   ReadTextFileRequest,
   ReadTextFileResponse,
   ReleaseTerminalRequest,
@@ -43,6 +45,7 @@ import type {
   StopReason,
   TerminalOutputRequest,
   TerminalOutputResponse,
+  TextResourceContents,
   Usage,
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
@@ -50,7 +53,7 @@ import type {
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { machineAsked, Status } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
 import { confirmationOptions, mapUpdate } from './mapping.js';
@@ -81,16 +84,30 @@ const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
 };
 
 /**
- * Whether the handshake said the server can close a session.
+ * Whether the handshake advertised something ACP writes as an empty object.
  *
- * `session/close` is advertised as an empty object rather than a boolean, so
- * what is read is whether the key is there at all - the same way
+ * `session/close`, `sessionCapabilities.additionalDirectories` and every entry
+ * of `promptCapabilities` are advertised this way, so what is read is whether
+ * the key is there at all rather than what it says - the same way
  * `catalog.ts` reads the server's own catalogue.
  */
-const closesSessions = (capabilities: AgentCapabilities | undefined): boolean => {
-  const close = capabilities?.sessionCapabilities?.close;
-  return close !== undefined && close !== null;
-};
+const advertised = <T>(capability: T | null | undefined): boolean =>
+  capability !== undefined && capability !== null;
+
+/**
+ * Whether an attachment carries its bytes with it, which is what an inline one
+ * is.
+ *
+ * The protocol writes its variants as a `const enum`, whose members name
+ * themselves as strings but narrow nothing at runtime, so the words the
+ * protocol declares are what these test for.
+ */
+const inline = (one: MessageAttachment): one is Extract<MessageAttachment, { data: string }> =>
+  (one as { type: string }).type === 'embeddedResource';
+
+/** Whether an attachment is a reference to a resource rather than bytes. */
+const referencing = (one: MessageAttachment): one is Extract<MessageAttachment, { uri: string }> =>
+  (one as { type: string }).type === 'resource';
 
 /**
  * How long a server is given to answer `session/close` before the connection
@@ -161,6 +178,10 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   let acpSessionId: string | undefined;
   /** Whether the server said it can be asked to close that conversation. */
   let closes = false;
+  /** What the server said it can take in a prompt, once the handshake has said it. */
+  let takes: PromptCapabilities | undefined;
+  /** Whether the server said it can be given directories beside the one it runs in. */
+  let extras = false;
   /**
    * The updates a server replayed while this session was opening.
    *
@@ -670,8 +691,19 @@ export function acpSession(options: AcpOptions, start: Start): Session {
         opening = undefined;
       });
       const handshake = await connection.initialize();
-      closes = closesSessions(handshake.agentCapabilities);
-      const extra = start.additional !== undefined && start.additional.length > 0
+      closes = advertised(handshake.agentCapabilities?.sessionCapabilities?.close);
+      takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
+      extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
+      /*
+       * The directories beside the one the server runs in, only to a server that
+       * advertised them.
+       *
+       * ACP calls this an optional capability, and a server that never said it
+       * takes them cannot be handed a field it does not know: the directories
+       * are remembered on this session either way, so nothing is lost by not
+       * sending them.
+       */
+      const extra = extras && start.additional !== undefined && start.additional.length > 0
         ? { additionalDirectories: start.additional }
         : {};
       /*
@@ -924,12 +956,107 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   };
 
   /**
+   * The URI an attachment with no URI of its own is sent under.
+   *
+   * A pasted image is bytes with a name and nothing to point at, and ACP's
+   * blocks name what they carry. The scheme is this bridge's own, as the one a
+   * command leaf uses: nothing reads it, so it has to be honest rather than
+   * resolve.
+   */
+  const attachmentUri = (label: string): string => `acp-attachment:${provider}/${label}`;
+
+  /** An attachment the server cannot take, named where the text can carry it. */
+  const named = (label: string): ContentBlock => ({ type: 'text', text: `[${label}]` });
+
+  /**
+   * The content a `resource` attachment points at, read as the store holds it.
+   *
+   * ACP's embedded resource carries the bytes rather than pointing at them, so
+   * a file the client named by URI is read here - the same read
+   * `fs/read_text_file` makes, and for the same reason: the agent gets what the
+   * person attached rather than a path it cannot open.
+   */
+  const contentOf = async (
+    uri: string,
+    mime: string | undefined,
+  ): Promise<TextResourceContents | BlobResourceContents | undefined> => {
+    const store = start.resources;
+    if (store === undefined) return undefined;
+    try {
+      const read = await store.read(uri);
+      const said = mime ?? read.contentType;
+      return read.encoding === 'base64'
+        ? { uri, blob: read.data, ...(said === undefined ? {} : { mimeType: said }) }
+        : { uri, text: read.data, ...(said === undefined ? {} : { mimeType: said }) };
+    }
+    catch {
+      // A file the store will not read is an attachment this turn cannot carry.
+      return undefined;
+    }
+  };
+
+  /**
+   * The blocks one turn is prompted with: what was said, then whatever of the
+   * message's attachments the server said it can take.
+   *
+   * ACP asks a server to opt into everything past text, so an image is an image
+   * block only where `promptCapabilities.image` says so, and a file is an
+   * embedded resource only where `embeddedContext` does. Whatever the server
+   * did not ask for is named in the text rather than dropped, because a message
+   * carrying a picture the agent never heard about is a message that is missing
+   * something.
+   */
+  const blocksFor = async (text: string, attachments: MessageAttachment[] | undefined): Promise<ContentBlock[]> => {
+    const blocks: ContentBlock[] = [{ type: 'text', text }];
+    for (const one of attachments ?? []) {
+      // What the producer wrote for the model is text, which every server takes.
+      const written = (one as { modelRepresentation?: unknown }).modelRepresentation;
+      if ((one as { type: string }).type === 'simple' && typeof written === 'string' && written !== '') {
+        blocks.push({ type: 'text', text: written });
+        continue;
+      }
+      const picture = inline(one) && one.contentType.startsWith('image/');
+      if (picture && takes?.image === true) {
+        blocks.push({
+          type: 'image',
+          data: one.data,
+          mimeType: one.contentType,
+          uri: attachmentUri(one.label),
+        });
+        continue;
+      }
+      /*
+       * An image the server will not take is named rather than sent as a
+       * resource, because `embeddedContext` is about context a message refers
+       * to and an image is not that; the sentence that named it is what the
+       * agent is left with.
+       */
+      if (!picture && takes?.embeddedContext === true) {
+        const resource = inline(one)
+          ? { uri: attachmentUri(one.label), blob: one.data, mimeType: one.contentType }
+          : referencing(one) ? await contentOf(one.uri, one.contentType) : undefined;
+        if (resource !== undefined) {
+          blocks.push({ type: 'resource', resource });
+          continue;
+        }
+      }
+      blocks.push(named(one.label));
+    }
+    return blocks;
+  };
+
+  /**
    * One turn: the prompt is sent, and what comes back ends it.
    *
    * A cancel that arrived while the server was still being opened ends the
    * turn without a prompt at all, because there is nothing running to stop.
    */
-  const run = async (turnId: string, text: string, chosen: Chosen | undefined): Promise<void> => {
+  const run = async (
+    turnId: string,
+    text: string,
+    chosen: Chosen | undefined,
+    attachments: MessageAttachment[] | undefined,
+  ): Promise<void> => {
     /** The connection this turn opened, which outlives `live` once it dies. */
     let connection: AcpConnection | undefined;
     try {
@@ -958,7 +1085,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       };
       await chooseModel(held, chosen);
       mapping.prompted = true;
-      const response = await held.connection.prompt(held.sessionId, text);
+      const response = await held.connection.prompt(held.sessionId, await blocksFor(text, attachments));
       saidUsage(response.usage);
       stopReasonFor(turnId, response.stopReason);
     }
@@ -1112,6 +1239,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     text: string,
     model: Chosen | undefined,
     from: MessageFrom | undefined,
+    attachments: MessageAttachment[] | undefined,
     queuedMessageId?: string,
   ): void => {
     if (closed || active !== undefined) return;
@@ -1124,7 +1252,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       emit('session', { type: 'session/titleChanged', title });
     }
     openTurn(turnId, text, from, queuedMessageId);
-    void run(turnId, text, model);
+    void run(turnId, text, model, attachments);
   };
 
   /**
@@ -1150,6 +1278,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       String(message.text ?? ''),
       next.model as Chosen | undefined,
       next.from as MessageFrom | undefined,
+      // A queued message carries no attachments: `Session.queue` takes none.
+      undefined,
       String(next.id),
     );
   };
@@ -1209,7 +1339,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from) => begin(turnId, text, model, from),
+    begin: (turnId, text, model, from, attachments) => begin(turnId, text, model, from, attachments),
 
     /**
      * A person's `!command`, run by the host in one of its own shells.

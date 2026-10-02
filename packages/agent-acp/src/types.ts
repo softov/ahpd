@@ -7,6 +7,7 @@
  */
 
 import type {
+  ContentBlock,
   CreateTerminalRequest,
   CreateTerminalResponse,
   InitializeResponse,
@@ -142,8 +143,13 @@ export interface AcpConnection {
   setSessionMode(request: SetSessionModeRequest): Promise<SetSessionModeResponse>;
   /** Set one of the server's own session config options. */
   setSessionConfigOption(request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse>;
-  /** Send one prompt and wait for the turn to stop. */
-  prompt(sessionId: string, text: string): Promise<PromptResponse>;
+  /**
+   * Send one prompt and wait for the turn to stop.
+   *
+   * The blocks are what the session decided the server can take, which is the
+   * handshake's business rather than this connection's.
+   */
+  prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse>;
   /** The ACP cancel notification, which asks the server to stop a running prompt. */
   cancel(sessionId: string): Promise<void>;
   /**
