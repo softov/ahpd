@@ -14,6 +14,7 @@
  * that has stopped without saying so.
  */
 
+import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
@@ -99,11 +100,12 @@ export interface TurnMapping {
   settle(requestId: string): Bag | undefined;
 }
 
-/** cofold's token counts, in the protocol's spelling. */
-const usageOf = (usage: Usage, model: string | undefined): Bag => {
+/** cofold's token counts, in the protocol's spelling, and what they cost. */
+const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag => {
   const extra: Bag = {
     ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
     ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
+    ...(cost !== undefined ? { cost: { amount: cost, currency: 'USD' } } : {}),
   };
   return {
     inputTokens: usage.inputTokens,
@@ -111,9 +113,11 @@ const usageOf = (usage: Usage, model: string | undefined): Bag => {
     ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}),
     ...(model !== undefined ? { model } : {}),
     /*
-     * The protocol names no field for cache writes or reasoning tokens, and
-     * both are measurements rather than guesses, so they ride `_meta` rather
-     * than being dropped or flattened into a field that means something else.
+     * The protocol names no field for cache writes, reasoning tokens or what
+     * the calls cost, and each is a measurement rather than a guess, so they
+     * ride `_meta` rather than being dropped or flattened into a field that
+     * means something else. The cost is cofold's own tally in dollars, and it
+     * is there only for an adapter with a price row.
      */
     ...(Object.keys(extra).length > 0 ? { _meta: extra } : {}),
   };
@@ -201,6 +205,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    */
   let textStreamed = false;
   let reasoningStreamed = false;
+  /**
+   * What the turn's steps have used between them, which each one adds to.
+   *
+   * A turn is as many model calls as it takes steps, and the run's outcome
+   * counts them all - but only once it is over. Held here so a client watches
+   * the number grow, and sent as it stands rather than only at the end.
+   */
+  let spent: Usage = ZERO_USAGE;
   /** Tool calls waiting on a result, by the id the model gave them. */
   const open = new Map<string, OpenCall>();
   /** Requests a client is being asked about, by the run's request id. */
@@ -304,12 +316,19 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           reasoningStreamed = false;
           return only([]);
         /*
-         * The step's reply, once it is whole. An adapter that streamed has
-         * already sent every part as a delta, and cofold's step usage arrives
-         * with `run.finished` rather than here, so this is empty for one that
-         * streamed. An adapter that did not stream never sent a delta at all,
-         * and this is where its text and its reasoning reach the client -
-         * otherwise the turn would finish having said nothing.
+         * The step's reply, once it is whole, and what the step used. An
+         * adapter that streamed has already sent every part as a delta, so the
+         * text below is empty for one that streamed. An adapter that did not
+         * stream never sent a delta at all, and this is where its text and its
+         * reasoning reach the client - otherwise the turn would finish having
+         * said nothing.
+         *
+         * The step's `usage` is here and not only in the run's outcome: a turn
+         * that runs tools spends most of what it costs between its first and
+         * its last step, so this one adds to what the earlier ones used and
+         * sends the total as it stands. The protocol replaces the active turn's
+         * usage on each `chat/usage`, so a client watching the number sees it
+         * grow rather than being handed deltas it has to add up itself.
          */
         case 'model.completed': {
           const actions: Bag[] = [];
@@ -325,6 +344,8 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           // mistaken for this one having been silent.
           textStreamed = true;
           reasoningStreamed = true;
+          spent = addUsage(spent, event.usage);
+          actions.push({ type: 'chat/usage', turnId, usage: usageOf(spent, options.model) });
           return only(actions);
         }
         /* A steer is already in the transcript the client typed it into. */
@@ -578,7 +599,13 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             actions.push({ type: 'chat/turnCancelled', turnId, duration: Date.now() - options.startedAt });
             return only(actions);
           }
-          actions.push({ type: 'chat/usage', turnId, usage: usageOf(outcome.usage, options.model) });
+          /*
+           * The run's own tally, which counts every step the turn made, sent
+           * last so the turn ends on the whole of it. It is the same number
+           * the steps sent as they went, and the cost is cofold's, in dollars
+           * and only for an adapter that carries a price row.
+           */
+          actions.push({ type: 'chat/usage', turnId, usage: usageOf(outcome.usage, options.model, outcome.cost) });
           const duration = Date.now() - options.startedAt;
           if (outcome.status === 'failed') {
             /*

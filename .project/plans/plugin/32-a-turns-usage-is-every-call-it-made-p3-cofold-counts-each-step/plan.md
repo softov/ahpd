@@ -1,7 +1,7 @@
 ---
 title: cofold counts each step, and sends the run's cost
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -27,11 +27,11 @@ Each cofold step adds its usage to the turn and sends the running total; `run.fi
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - cofold counts each step](task-01-steps.md) | todo | - |
+| [01 - cofold counts each step](task-01-steps.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-steps.md](task-01-steps.md).
+- **Done so far:** built 2026-10-01, see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** awaiting and cancelled outcomes send no final usage today (`mapping.ts` 573-578); the running totals already sent stand.
