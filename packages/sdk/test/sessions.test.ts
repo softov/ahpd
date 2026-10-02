@@ -131,6 +131,34 @@ it('keeps the settings a session was given, so a resumed one still has them', as
   expect(store.config('one')).toBeUndefined();
 });
 
+it('keeps the scope a session is charged to across a restart, and forgets it with the session', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  store.setScope('a', { team: 'backend', project: 'ahpd' });
+  store.setScope('b', { team: 'frontend' });
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
+    { id: 'a', scope: { team: 'backend', project: 'ahpd' } },
+    { id: 'b', scope: { team: 'frontend' } },
+  ]);
+  // Read back by a second store on the same file, which is what a restart is.
+  const second = fileSessions({ file });
+  expect(second.scope('a')).toEqual({ team: 'backend', project: 'ahpd' });
+  expect(second.scope('b')).toEqual({ team: 'frontend' });
+  expect(second.scope('nobody')).toBeUndefined();
+  // Charged to nothing on purpose is kept as `null`, apart from never decided.
+  second.setScope('c', null);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ file }).scope('c')).toBeNull();
+  second.setScope('a', undefined);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ file }).scope('a')).toBeUndefined();
+  second.forget('b');
+  second.forget('c');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+});
+
 it('keeps a session\'s pull request baseline across a restart, empty included, and forgets it with the session', async () => {
   const file = join(root, 'sessions.json');
   const store = fileSessions({ file });

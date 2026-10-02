@@ -35,6 +35,12 @@ const directory = (good = 'good-token', resource: Users['resource'] = RECORD): U
   grantsOfRoles: async () => [],
   grantsOfPerson: async () => undefined,
   add: async () => {},
+  teams: async () => [],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
   remove: async () => false,
   mint: async () => good,
 });

@@ -4,21 +4,21 @@
  * The path comes from `--users` or the configuration key and from nowhere else:
  * a verb that invented a file because neither was set would write a directory
  * nobody asked for, and the next daemon to start would not be the one that
- * reads it. Every sub-command declares the same fields, so a flag is accepted
- * wherever on the line it is typed and no sub-command has a smaller surface
- * than the others. Served over HTTP, the file and the address are the daemon's
- * own and the request cannot name either.
+ * reads it. Every sub-command accepts the file and the address, so a flag is
+ * accepted wherever on the line it is typed; what a record is written with is
+ * declared by the verb that writes it. Served over HTTP, the file and the
+ * address are the daemon's own and the request cannot name either.
  */
 
 import { hostname } from 'node:os';
 import { output } from '@cofold/commands';
 import type { Command, CommandContext, Registry } from '@cofold/commands';
 import { HttpError } from '@cofold/remote';
-import { fileUsers, refusalReason } from '@ahpd/sdk';
-import type { Grant, Principal } from '@ahpd/sdk';
+import { covers, fileUsers, refusalReason } from '@ahpd/sdk';
+import type { Grant, Principal, Users } from '@ahpd/sdk';
 import { loadConfig, personalUrl } from '../config.js';
 import { isRoot, SIGN_IN } from './authorize.js';
-import { conflict, servedUserFields, stop, userFields } from './options.js';
+import { conflict, servedUserAddFields, servedUserFields, servedUserPrimaryFields, stop, unsetField, userAddFields, userFields, userPrimaryFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /**
@@ -50,7 +50,7 @@ const bounded = (context: Pick<CommandContext, 'request' | 'surface'>, grants: r
  * a network. Served, the daemon's own directory and bound address are used, and
  * a daemon with no directory refuses.
  */
-function people(
+export function people(
   context: { input: Readonly<Record<string, unknown>>; surface?: string; error(text: string): void },
   served?: ServedFacts,
 ) {
@@ -80,15 +80,32 @@ function people(
 }
 
 /** The id a sub-command was given; one spelled like an option is refused as an unknown flag would be. */
-const idOf = (context: { value<T = string>(name: string): T }, verb: string): string => {
+export const idOf = (context: { value<T = string>(name: string): T }, command: string): string => {
   const id = context.value<string>('id');
-  if (id.startsWith('-')) stop(`user ${verb} takes an id: ahpd user ${verb} <id>`);
+  if (id.startsWith('-')) stop(`${command} takes an id: ahpd ${command} <id>`);
   return id;
+};
+
+/**
+ * The record of somebody who is in the file, or the refusal of one who is not.
+ *
+ * A verb that changes a person's memberships takes their roles with it, so it
+ * has to read the record to write it back, and reading it is also the check
+ * that the id names somebody at all.
+ */
+const recordOf = async (directory: Users, id: string) => {
+  const one = (await directory.list()).find((row) => row.id === id);
+  if (one === undefined) stop(`No user called ${id}.`);
+  return one;
 };
 
 export const declareUser = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   /** The fields the surface accepts: served, the daemon's own file and address are absent. */
   const fields = served === undefined ? userFields : servedUserFields;
+  /** The whole record, which is what `user add` writes. */
+  const whole = served === undefined ? userAddFields : servedUserAddFields;
+  /** The unset, which is what `user primary` writes when it is not setting one. */
+  const unsetting = served === undefined ? userPrimaryFields : servedUserPrimaryFields;
 
   const list = registry.action({
     id: 'user.list',
@@ -111,6 +128,10 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
           one.trusted ? 'trusted' : 'sign-in',
           ...(one.issuer === undefined ? [] : [one.issuer]),
           ...(one.rolesFrom === undefined ? [] : [`rolesFrom=${one.rolesFrom}`]),
+          // Who their work may be charged to, which is what they may name and
+          // where it lands when the work names none of it.
+          ...(one.memberships === undefined || one.memberships.length === 0 ? [] : [`of ${one.memberships.join(' ')}`]),
+          ...(one.primary === undefined ? [] : [`primary ${one.primary}`]),
         ].join(' ')).join('\n')}\n`;
       return output(rows, text);
     },
@@ -119,13 +140,13 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
   const add = registry.action({
     id: 'user.add',
     summary: 'Add a person',
-    description: 'With --role <name> once per role and --issuer <name> for a provider of their own.',
+    description: 'With --role <name> once per role, --membership <team[:project]> for what their work may be charged to, --primary <team[:project]> for where work naming no scope of its own lands, and --issuer <name> for a provider of their own.',
     surfaces: { cli: { pattern: ['user', 'add', ':id'] }, http: { method: 'POST', path: '/user/add/{id}' } },
-    input: { ...fields, id: { type: 'string', description: 'The identifier their credential answers with.' } },
+    input: { ...whole, id: { type: 'string', description: 'The identifier their credential answers with.' } },
     scopes: ['users:write'],
     run: async (context) => {
       const { directory } = people(context, served);
-      const id = idOf(context, 'add');
+      const id = idOf(context, 'user add');
       const roles = context.list<string>('role');
       const held = roles.length > 0 ? roles : ['guest'];
       const issuer = context.optional<string>('issuer');
@@ -133,15 +154,31 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
       // the roles they hold now are bounded as well as the ones being given.
       const current = await directory.grantsOfPerson(id) ?? [];
       bounded(context, [...await directory.grantsOfRoles(held), ...current]);
-      // A role name or an issuer name that resolves to nothing is refused by
-      // the directory; said here so it reads as the verb's own refusal rather
-      // than a stack trace.
-      await directory.add(id, held, issuer === undefined ? {} : { issuer })
+      const memberships = context.list<string>('membership');
+      const primary = context.optional<string>('primary');
+      /*
+       * Each left alone when the flag is not there, the way `issuer` is: adding
+       * a role to somebody who already belongs to a team must not move their
+       * work. `primary` is checked against the memberships named here, and
+       * against the record's own when none are.
+       */
+      const record = {
+        ...(issuer === undefined ? {} : { issuer }),
+        ...(memberships.length === 0 ? {} : { memberships }),
+        ...(primary === undefined ? {} : { primary }),
+      };
+      // A role, an issuer, a membership or a primary that names nothing is
+      // refused by the directory; said here so it reads as the verb's own
+      // refusal rather than a stack trace.
+      await directory.add(id, held, record)
         .catch((error: unknown) => {
           stop(error instanceof Error ? error.message : String(error));
         });
-      return output({ id, roles: held, ...(issuer === undefined ? {} : { issuer }) },
-        `Added ${id} (${held.join(', ')})${issuer === undefined ? '' : ` through ${issuer}`}. Give them a credential: ahpd user token ${id}\n`);
+      return output(
+        { id, roles: held, ...record },
+        `Added ${id} (${held.join(', ')})${issuer === undefined ? '' : ` through ${issuer}`}`
+        + `${memberships.length === 0 ? '' : `, of ${memberships.join(' ')}`}`
+        + `. Give them a credential: ahpd user token ${id}\n`);
     },
   });
 
@@ -153,7 +190,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     scopes: ['users:write'],
     run: async (context) => {
       const { directory } = people(context, served);
-      const id = idOf(context, 'rm');
+      const id = idOf(context, 'user rm');
       const target = await directory.grantsOfPerson(id);
       if (target !== undefined) bounded(context, target);
       const gone = await directory.remove(id);
@@ -171,7 +208,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     scopes: ['users:write'],
     run: async (context) => {
       const { where, directory } = people(context, served);
-      const id = idOf(context, 'token');
+      const id = idOf(context, 'user token');
       const target = await directory.grantsOfPerson(id);
       if (target !== undefined) bounded(context, target);
       const secret = await directory.mint(id);
@@ -190,5 +227,99 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     },
   });
 
-  return [list, add, rm, token];
+  const member = registry.action({
+    id: 'user.member',
+    summary: 'What their work may be charged to',
+    description: 'Replaces the whole list. Each entry is team, team:* or team:project, and the teams and projects have to be named already: ahpd team add, ahpd project add. --unset takes the whole list away.',
+    surfaces: { cli: { pattern: ['user', 'member', ':id', ':entries...'] }, http: { method: 'POST', path: '/user/member/{id}' } },
+    input: {
+      ...fields,
+      unset: { ...unsetField, description: 'Take every membership away, rather than naming one.' },
+      id: { type: 'string', description: 'Whose memberships to replace.' },
+      entries: { type: 'array', items: { type: 'string' }, description: 'A team, team:* or team:project. One or more.' },
+    },
+    scopes: ['users:write'],
+    run: async (context) => {
+      const { directory } = people(context, served);
+      const id = idOf(context, 'user member');
+      const entries = context.list<string>('entries');
+      const away = context.flag('unset');
+      if (away && entries.length > 0) stop('--unset and a membership cannot both be given.');
+      const one = await recordOf(directory, id);
+      /*
+       * The empty list is a request rather than a missing argument: over
+       * `/api` the entries are the body, and a body that names none is how a
+       * person is taken off every team. On a line the entries are positional,
+       * so the same request is spelled --unset.
+       */
+      const wanted = away || entries.length === 0 ? [] : entries;
+      // A membership naming a team or a project this file does not hold is
+      // refused by the directory, said here so it reads as the verb's own.
+      await directory.add(id, one.roles, { memberships: wanted })
+        .catch((error: unknown) => {
+          stop(error instanceof Error ? error.message : String(error));
+        });
+      /*
+       * A primary the new list does not cover is taken away, and said.
+       *
+       * Refusing here would refuse the only way out: a person cannot leave a
+       * team whose primary they are on before they can name another. The line
+       * says so, because their work lands somewhere else afterwards.
+       */
+      const lost = one.primary !== undefined && !covers(wanted, one.primary) ? one.primary : undefined;
+      if (wanted.length === 0) {
+        return output({ id, memberships: [] },
+          `${id} may charge their work to nothing`
+          + `${lost === undefined ? '.' : `; their primary ${lost} was taken away with it.`}\n`);
+      }
+      return output({ id, memberships: wanted, ...(lost === undefined ? {} : { dropped: lost }) },
+        `${id} may charge their work to ${wanted.join(', ')}`
+        + `${lost === undefined ? '' : `; their primary ${lost} is not one of these, so it was taken away`}.\n`);
+    },
+  });
+
+  const primary = registry.action({
+    id: 'user.primary',
+    summary: 'Where their work that names no team and project is charged',
+    description: 'One of their own memberships, or --unset to take the one they have away. A person may set their own; changing another\'s needs users:write.',
+    surfaces: { cli: { pattern: ['user', 'primary', ':id', ':entry?'] }, http: { method: 'POST', path: '/user/primary/{id}' } },
+    input: {
+      ...unsetting,
+      id: { type: 'string', description: 'Whose primary to set or take away.' },
+      entry: { type: 'string', description: 'One of their memberships, written team or team:project.' },
+    },
+    /*
+     * No grant of its own: the body decides, because the one question is
+     * whether the record being written is the caller's own, and a declaration
+     * cannot say that.
+     */
+    scopes: [],
+    run: async (context) => {
+      const { directory } = people(context, served);
+      const id = idOf(context, 'user primary');
+      const entry = context.optional<string>('entry');
+      const away = context.flag('unset');
+      if (entry === undefined && !away) {
+        stop('user primary takes a membership to charge to, or --unset to take theirs away: ahpd user primary <id> <team[:project]>, ahpd user primary <id> --unset');
+      }
+      if (entry !== undefined && away) stop('--unset and a membership cannot both be given.');
+      const actor = context.request?.actor as Principal | undefined;
+      // One's own primary is a person's own business - decision
+      // `a-request-naming-no-scope-uses-the-persons-primary` - and it grants
+      // nothing, so holding `users:write` is asked only for somebody else's.
+      if (actor?.id !== id) bounded(context, ['users:write']);
+      const one = await recordOf(directory, id);
+      // `null` is how a primary is taken away, which is not the same as not
+      // naming one: the second leaves whatever they had.
+      const wanted = away ? { primary: null } : entry === undefined ? {} : { primary: entry };
+      await directory.add(id, one.roles, wanted)
+        .catch((error: unknown) => {
+          stop(error instanceof Error ? error.message : String(error));
+        });
+      if (away) return output({ id, primary: null }, `${id} has no primary, so work naming no team and project has nowhere to land.\n`);
+      return output({ id, primary: entry }, `${id} charges work that names no team and project to ${entry}.\n`);
+    },
+  });
+
+  return [list, add, rm, token, member, primary];
 };

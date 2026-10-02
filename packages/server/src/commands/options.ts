@@ -301,7 +301,12 @@ export const configSchema: { type: 'object'; properties: Record<ConfigKey, JsonS
   },
 };
 
-/** The fields a person is managed with, which every `user` sub-command accepts. */
+/**
+ * The fields a person is managed with, which every `user` sub-command accepts.
+ *
+ * What a record is written with is not here: those are on the verb that writes
+ * them, so a flag is never offered where it is read by nothing.
+ */
 export const userFields = {
   configFile: serverFields.configFile,
   users: serverFields.users,
@@ -321,6 +326,55 @@ export const userFields = {
   url: {
     type: 'boolean',
     description: 'Print the whole ws:// URL a client can be given.',
+  },
+} satisfies Record<string, Field>;
+
+/** The record fields a whole person is created with, in one go. */
+const recordFields = {
+  membership: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'What their work may be charged to, written team, team:* or team:project. Repeatable; user member replaces the whole list.',
+    cli: { value: 'TEAM[:PROJECT]' },
+  },
+  primary: {
+    type: 'string',
+    description: 'The one of those that work naming no scope of its own is charged to.',
+    cli: { value: 'TEAM[:PROJECT]' },
+  },
+} satisfies Record<string, Field>;
+
+/** What `user add` takes: the whole record, in one call. */
+export const userAddFields = {
+  ...userFields,
+  ...recordFields,
+} satisfies Record<string, Field>;
+
+/**
+ * The flag an unset is spelled, the way `plugin config` spells one.
+ *
+ * A verb whose argument is positional cannot say "none of those" by leaving it
+ * out, so the empty case is named rather than implied.
+ */
+export const unsetField = {
+  type: 'boolean',
+  description: 'Take it away, rather than setting one.',
+} satisfies Field;
+
+/** What `user primary` takes, which is a flag rather than a second way to name one. */
+export const userPrimaryFields = {
+  ...userFields,
+  unset: { ...unsetField, description: 'Take their primary away, rather than setting one.' },
+} satisfies Record<string, Field>;
+
+/** The fields a team or a project is managed with, which every verb naming one accepts. */
+export const teamFields = {
+  configFile: serverFields.configFile,
+  users: serverFields.users,
+  title: {
+    type: 'string',
+    description: 'What a client shows for it. Without one, its id is what it shows.',
+    cli: { value: 'TEXT' },
   },
 } satisfies Record<string, Field>;
 
@@ -348,6 +402,22 @@ export const servedUserFields = {
   issuer: userFields.issuer,
   role: userFields.role,
   url: userFields.url,
+} satisfies Record<string, Field>;
+
+/** The `user add` fields a request may set, which is the whole record. */
+export const servedUserAddFields = {
+  ...servedUserFields,
+  ...recordFields,
+} satisfies Record<string, Field>;
+
+/** The `user primary` fields a request may set, which is the unset. */
+export const servedUserPrimaryFields = {
+  unset: userPrimaryFields.unset,
+} satisfies Record<string, Field>;
+
+/** The team and project fields a request may set; the file is the daemon's. */
+export const servedTeamFields = {
+  title: teamFields.title,
 } satisfies Record<string, Field>;
 
 /** The plugin-write fields a request may set; the configuration file is the daemon's. */

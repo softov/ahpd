@@ -10,16 +10,23 @@
  * whoever runs the suite.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRegistry } from '@cofold/commands';
-import type { AuthorizeRequest } from '@cofold/commands';
+import type { AuthorizeRequest, Output } from '@cofold/commands';
+import { fileUsers } from '@ahpd/sdk';
+import type { Named } from '@ahpd/sdk';
+import type { Options } from '../src/commands/options.js';
 import { optionsFrom } from '../src/commands/options.js';
 import { cliRegistry } from '../src/commands/registry.js';
+import { apiOrigins } from '../src/commands/run.js';
 import { checkScopes } from '../src/commands/scopes.js';
+import { servedRegistry } from '../src/commands/served.js';
+import type { ServedFacts } from '../src/commands/served.js';
 import { declareUser } from '../src/commands/user.js';
+import { apiHandler } from '../src/http.js';
 
 const registry = cliRegistry();
 
@@ -78,6 +85,13 @@ describe('the command registry', () => {
     for (const id of ['user.list', 'user.add', 'user.rm', 'user.token']) {
       expect(scopes(id)).toEqual(['users:write']);
     }
+    for (const id of ['team.list', 'project.list']) expect(scopes(id)).toEqual(['users:read']);
+    for (const id of ['team.add', 'team.rm', 'project.add', 'project.rm', 'user.member']) {
+      expect(scopes(id)).toEqual(['users:write']);
+    }
+    // A person sets their own primary, so the declaration names no grant at
+    // all and the body asks for `users:write` only about somebody else's.
+    expect(scopes('user.primary')).toEqual([]);
   });
 
   it('checks a command scopes in the hook, on the remote surface', async () => {
@@ -204,5 +218,281 @@ describe('--plugin-option', () => {
   it('is not a key the configuration file may hold', () => {
     writeFileSync(config, JSON.stringify({ pluginOptions: ['a.k=1'] }));
     expect(optionsFrom({ configFile: config }).warnings.join('\n')).toContain('pluginOptions is not a setting ahpd knows');
+  });
+});
+
+describe('teams, projects and memberships', () => {
+  const AUTHORITY = '127.0.0.1:9350';
+  let file: string;
+
+  beforeEach(() => {
+    file = join(root, 'users.json');
+    writeFileSync(file, JSON.stringify({ roles: {}, teams: [], projects: [], users: [] }));
+  });
+
+  /** A command run as the terminal runs it, against this case's file. */
+  const cli = async (id: string, input: Record<string, unknown> = {}): Promise<Output> =>
+    (await registry.execute(registry.find(id)!, {
+      surface: 'cli',
+      input: { configFile: config, users: file, ...input },
+    })) as Output;
+
+  /** The same file served under `/api`, with a deployment token when one is named. */
+  const api = (token?: string) => {
+    const directory = fileUsers({ path: file });
+    const facts: ServedFacts = {
+      options: { users: file } as Options,
+      configFile: config,
+      users: directory,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    return apiHandler({
+      registry: servedRegistry(facts),
+      ...(token === undefined ? {} : { token }),
+      users: directory,
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+  };
+
+  /** A request to the API at `path`, with the `Host` a client sends and the credential when there is one. */
+  const call = (
+    handler: ReturnType<typeof api>,
+    method: 'GET' | 'POST',
+    path: string,
+    token?: string,
+    body: unknown = {},
+  ): Promise<Response> => handler(new Request(`http://${AUTHORITY}/api${path}`, {
+    method,
+    headers: {
+      host: AUTHORITY,
+      ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+    },
+    ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+  }));
+
+  /** What a command printed, whether it spent anything printing it. */
+  const plain = async (id: string, input: Record<string, unknown> = {}): Promise<string> => {
+    const said = (await cli(id, input)).plain;
+    return typeof said === 'function' ? said() : String(said);
+  };
+
+  /**
+   * The file as it stands, which is what every one of these verbs writes.
+   *
+   * An absent list is an empty one: taking the last team out leaves the key
+   * behind once and the read drops it, because the file never had to say so.
+   */
+  const held = (): { teams: Named[]; projects: Named[]; users: { id: string; memberships?: string[]; primary?: string }[] } => {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<{
+      teams: Named[]; projects: Named[]; users: { id: string; memberships?: string[]; primary?: string }[];
+    }>;
+    return { teams: parsed.teams ?? [], projects: parsed.projects ?? [], users: parsed.users ?? [] };
+  };
+
+  it('names, lists and takes out, at the terminal', async () => {
+    await cli('team.add', { id: 'backend', title: 'Backend' });
+    await cli('project.add', { id: 'controllr' });
+    expect(await plain('team.list')).toBe('backend  Backend\n');
+    expect(await plain('project.list')).toBe('controllr\n');
+    // Naming one that is there keeps the title it was not given, and moves nobody off it.
+    expect(await plain('team.add', { id: 'backend' })).toContain('is already named');
+    expect(held().teams).toEqual([{ id: 'backend', title: 'Backend' }]);
+    await cli('team.rm', { id: 'backend' });
+    await cli('project.rm', { id: 'controllr' });
+    expect(held()).toMatchObject({ teams: [], projects: [] });
+    await expect(cli('team.rm', { id: 'backend' })).rejects.toThrow('No team called backend.');
+  });
+
+  it('names, lists and takes out, under /api', async () => {
+    const handler = api('root-secret');
+    const statuses = await Promise.all([
+      call(handler, 'POST', '/team/add/backend', 'root-secret', { title: 'Backend' }),
+      call(handler, 'POST', '/project/add/controllr', 'root-secret'),
+    ]);
+    expect(statuses.map((one) => one.status)).toEqual([200, 200]);
+    const listed = await call(handler, 'GET', '/team/list', 'root-secret');
+    expect(await listed.json()).toEqual([{ id: 'backend', title: 'Backend' }]);
+    expect(await (await call(handler, 'GET', '/project/list', 'root-secret')).json()).toEqual([{ id: 'controllr' }]);
+    expect((await call(handler, 'POST', '/team/rm/backend', 'root-secret')).status).toBe(200);
+    expect((await call(handler, 'POST', '/project/rm/controllr', 'root-secret')).status).toBe(200);
+    expect(held()).toMatchObject({ teams: [], projects: [] });
+  });
+
+  it('refuses to take out a team or a project a membership names, saying who', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend:controllr'] });
+    await expect(cli('team.rm', { id: 'backend' })).rejects.toThrow('backend is still a team of ada; take them out of it first');
+    await expect(cli('project.rm', { id: 'controllr' })).rejects.toThrow('controllr is still a project of ada; take them out of it first');
+    // Served, the same refusal is a 400 with the sentence in it.
+    const handler = api('root-secret');
+    const refused = await call(handler, 'POST', '/team/rm/backend', 'root-secret');
+    expect(refused.status).toBe(400);
+    expect((await refused.json() as { message: string }).message).toContain('still a team of ada');
+    // Nothing went, and the membership still says what it said.
+    expect(held().teams).toEqual([{ id: 'backend' }]);
+    expect(held().users[0]?.memberships).toEqual(['backend:controllr']);
+  });
+
+  it('replaces the memberships, and refuses an entry naming nothing the file holds', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend:controllr'] });
+    // A team or a project the file does not name is refused here rather than
+    // written and dropped on the next read.
+    await expect(cli('user.member', { id: 'ada', entries: ['backend:other'] })).rejects.toThrow('membership backend:other names no project called other');
+    await expect(cli('user.member', { id: 'ada', entries: ['sales'] })).rejects.toThrow('membership sales names no team called sales');
+    // And the whole list goes: the second entry is not left behind.
+    await cli('user.member', { id: 'ada', entries: ['backend:*', 'backend'] });
+    expect(held().users[0]?.memberships).toEqual(['backend:*', 'backend']);
+    await expect(cli('user.member', { id: 'eve', entries: ['backend'] })).rejects.toThrow('No user called eve.');
+    // An empty list takes the whole thing away rather than being refused, and
+    // takes the primary with it: it is the only way out of a team whose primary
+    // you are on.
+    expect(await plain('user.member', { id: 'ada', entries: [] })).toContain('may charge their work to nothing');
+    expect(held().users[0]).toMatchObject({ memberships: [] });
+    expect(held().users[0]?.primary).toBeUndefined();
+    // On a line the entries are positional, so the same request is spelled --unset.
+    await cli('user.member', { id: 'ada', entries: ['backend:controllr'] });
+    await cli('user.primary', { id: 'ada', entry: 'backend:controllr' });
+    expect(await plain('user.member', { id: 'ada', unset: true })).toContain('their primary backend:controllr was taken away with it');
+    expect(held().users[0]).toMatchObject({ memberships: [] });
+    await expect(cli('user.member', { id: 'ada', entries: ['backend'], unset: true })).rejects.toThrow('--unset and a membership cannot both be given');
+  });
+
+  it('adds a person with the memberships and the primary in one call', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    expect(await plain('user.add', { id: 'bob', membership: ['backend:controllr'], primary: 'backend:controllr' }))
+      .toContain('Added bob (guest), of backend:controllr');
+    expect(held().users[0]).toMatchObject({ memberships: ['backend:controllr'], primary: 'backend:controllr' });
+    // A team or a project the file does not name is refused here as it is on
+    // `user member`, because both are written through the same directory call.
+    await expect(cli('user.add', { id: 'eve', membership: ['backend:other'] })).rejects.toThrow('membership backend:other names no project called other');
+    // Adding a role to somebody who already has a team leaves the team alone.
+    await cli('user.add', { id: 'bob', role: ['member'] });
+    expect(held().users[0]).toMatchObject({ roles: ['member'], memberships: ['backend:controllr'], primary: 'backend:controllr' });
+    // And the record fields are only offered where they are read.
+    const offered = (id: string): readonly string[] => (registry.find(id)?.options ?? []).map((one) => one.name);
+    expect(offered('user.add')).toEqual(expect.arrayContaining(['--membership', '--primary']));
+    for (const id of ['user.list', 'user.rm', 'user.token', 'user.member', 'user.primary']) {
+      expect(offered(id)).not.toContain('--membership');
+      expect(offered(id)).not.toContain('--primary');
+    }
+    // The unset is on the two verbs that can take something away.
+    expect(offered('user.member')).toContain('--unset');
+    expect(offered('user.primary')).toContain('--unset');
+  });
+
+  it('says what each person may charge their work to, and takes it away', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend:controllr'] });
+    await cli('user.primary', { id: 'ada', entry: 'backend:controllr' });
+    const said = await plain('user.list');
+    expect(said).toContain('of backend:controllr');
+    expect(said).toContain('primary backend:controllr');
+    // The same, over the API, where the answer is the data rather than a line.
+    const listed = await call(api('root-secret'), 'GET', '/user/list', 'root-secret');
+    expect(await listed.json()).toMatchObject([{ id: 'ada', memberships: ['backend:controllr'], primary: 'backend:controllr' }]);
+  });
+
+  it('sets a primary only inside the memberships, and takes it away when they move', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend:*'] });
+    await cli('user.primary', { id: 'ada', entry: 'backend:controllr' });
+    expect(held().users[0]?.primary).toBe('backend:controllr');
+    // A wildcard is not a place, and neither is a project nobody named.
+    await expect(cli('user.primary', { id: 'ada', entry: 'backend:*' })).rejects.toThrow('primary backend:* is not team or team:project');
+    await expect(cli('user.primary', { id: 'ada', entry: 'backend:other' })).rejects.toThrow('primary backend:other names no project called other');
+    await expect(cli('user.primary', { id: 'ada', entry: 'sales' })).rejects.toThrow('primary sales names no team called sales');
+    // Leaving the team the primary named is the way their work moves, so it is
+    // not refused: the primary goes with the memberships and the line says so.
+    expect(await plain('user.member', { id: 'ada', entries: ['backend'] }))
+      .toContain('their primary backend:controllr is not one of these, so it was taken away');
+    expect(held().users[0]).toMatchObject({ memberships: ['backend'] });
+    expect(held().users[0]?.primary).toBeUndefined();
+    await cli('user.primary', { id: 'ada', entry: 'backend' });
+    expect(held().users[0]?.primary).toBe('backend');
+  });
+
+  it('lets a person whose role was taken out still set their own primary', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend'] });
+    // The role is defined, held, and then taken out of the file, which says
+    // nothing about the record that still holds it. `user primary` and `user
+    // member` write the whole record back, and refusing them over a role nobody
+    // is being given would lock the person out of the file for wanting to say
+    // where their work is charged.
+    const held0 = JSON.parse(readFileSync(file, 'utf8')) as {
+      roles?: Record<string, string[]>;
+      users: { id: string; roles: string[] }[];
+    };
+    held0.roles = { writer: ['file:write'] };
+    for (const one of held0.users) one.roles = ['writer'];
+    writeFileSync(file, JSON.stringify(held0));
+    delete held0.roles;
+    writeFileSync(file, JSON.stringify(held0));
+
+    await cli('user.primary', { id: 'ada', entry: 'backend' });
+    expect(held().users[0]?.primary).toBe('backend');
+    await cli('user.member', { id: 'ada', entries: ['backend'] });
+    expect(held().users[0]).toMatchObject({ roles: ['writer'], memberships: ['backend'], primary: 'backend' });
+  });
+
+  it('lets a person set their own primary over /api, and not somebody else\'s', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('project.add', { id: 'controllr' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.add', { id: 'bob' });
+    await cli('user.member', { id: 'ada', entries: ['backend:controllr'] });
+    await cli('user.member', { id: 'bob', entries: ['backend:controllr'] });
+    const secret = await fileUsers({ path: file }).mint('ada');
+    const handler = api();
+    const mine = await call(handler, 'POST', '/user/primary/ada', secret, { entry: 'backend:controllr' });
+    expect(mine.status).toBe(200);
+    expect(held().users.find((one) => one.id === 'ada')?.primary).toBe('backend:controllr');
+    // `unset` is the same request as naming nothing, which the path cannot say.
+    expect((await call(handler, 'POST', '/user/primary/ada', secret, { unset: true })).status).toBe(200);
+    expect(held().users.find((one) => one.id === 'ada')?.primary).toBeUndefined();
+    // A body that says neither is not a request at all.
+    const neither = await call(handler, 'POST', '/user/primary/ada', secret, {});
+    expect(neither.status).toBe(400);
+    expect((await neither.json() as { message: string }).message).toContain('or --unset to take theirs away');
+    // And a body that says both is two requests.
+    expect((await call(handler, 'POST', '/user/primary/ada', secret, { entry: 'backend:controllr', unset: true })).status).toBe(400);
+    // Their own memberships are as much a grant's business as a role.
+    expect((await call(handler, 'POST', '/user/member/bob', secret, { entries: [] })).status).toBe(403);
+    expect((await call(handler, 'POST', '/user/member/bob', secret, { entries: ['backend'] })).status).toBe(403);
+    // Somebody else's is a person managing people, which is what the grant is.
+    const refused = await call(handler, 'POST', '/user/primary/bob', secret, { entry: 'backend:controllr' });
+    expect(refused.status).toBe(403);
+    expect((await refused.json() as { message: string }).message).toBe('ada may not users:write here');
+    // And no credential at all is nobody.
+    expect((await call(handler, 'POST', '/user/primary/ada', undefined, { entry: 'backend:controllr' })).status).toBe(401);
+  });
+
+  it('takes the whole list away over /api when the body carries an empty one', async () => {
+    await cli('team.add', { id: 'backend' });
+    await cli('user.add', { id: 'ada' });
+    await cli('user.member', { id: 'ada', entries: ['backend'] });
+    await cli('user.primary', { id: 'ada', entry: 'backend' });
+    const handler = api('root-secret');
+    // The memberships are a list, so an empty one clears them; the primary is
+    // one value, and it goes with them because they were all it covered.
+    const cleared = await call(handler, 'POST', '/user/member/ada', 'root-secret', { entries: [] });
+    expect(cleared.status).toBe(200);
+    expect(held().users[0]).toMatchObject({ memberships: [] });
+    expect(held().users[0]?.primary).toBeUndefined();
   });
 });

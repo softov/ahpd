@@ -1,3 +1,5 @@
+import type { Scope } from '../scopes.js';
+
 /**
  * The pull requests a session's branch had when it started, and the ones it
  * has made its own since.
@@ -20,6 +22,12 @@ export interface PullRequestBaseline {
  * looked since the last change, `IsArchived` says somebody put it away - and
  * `config` is the settings a session is running under, which the host resolved
  * from a schema and hands back to the backend when it resumes one.
+ *
+ * `scope` is a third of the same kind: the team and project a session's work is
+ * charged to, resolved from what the person asked and their memberships rather
+ * than from a schema. It sits beside the session rather than in `config`,
+ * because a backend is handed `config` when it resumes and has no idea what a
+ * charge is.
  *
  * Neither belongs to a backend. A transcript comes back from a harness on its
  * own; whether a person has read it does not, and a harness asked would have
@@ -47,6 +55,20 @@ export interface SessionStore {
   config(id: string): Record<string, unknown> | undefined;
   /** Replace it. Merging is the caller's, which already holds the defaults. */
   setConfig(id: string, values: Record<string, unknown>): void;
+  /**
+   * What this session's work is charged to: `null` when it was decided that
+   * nothing is (a host with no people or no teams, a root connection, a session
+   * a clock started), `undefined` when nothing was decided yet.
+   */
+  scope(id: string): Scope | null | undefined;
+  /**
+   * Record the scope, `null` for charged to nothing, or forget it with `undefined`.
+   *
+   * The answer rather than the name that was chosen, because the answer is what
+   * a later turn needs and a name would have to be resolved again by somebody
+   * who is not there.
+   */
+  setScope(id: string, value: Scope | null | undefined): void;
   /**
    * What the agent recorded as worth coming back to, or nothing where it
    * recorded nothing.

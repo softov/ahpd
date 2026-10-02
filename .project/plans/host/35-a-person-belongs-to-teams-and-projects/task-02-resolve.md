@@ -1,6 +1,6 @@
 ---
 title: A scope is resolved from what work names, or the primary
-status: todo
+status: done
 depends: [task-01-file.md]
 layer: "sdk"
 refs:
@@ -29,3 +29,14 @@ refs:
 - `pnpm -F @ahpd/sdk test`.
 
 ## Resume
+
+- `scopes.ts` holds `Scope`, the membership parser (`membership`), `namesOf` and `scopeFor`; `index.ts` exports them and `scopes.test.ts` covers each case.
+- `scopeFor(principal, named?)` takes the principal or nothing, so a host with no directory and a root connection answer `undefined` - no scope and no refusal - without a second rule for it at the call site.
+- The refusal is one string naming what the person may name, and `namesOf` expands a `team:*` into the projects the install knows rather than quoting the wildcard: a refusal that said `luiz may name backend:*` would name nothing anybody can pick.
+- One check the task does not state, because it follows from what a refusal has to be able to say: a named project the file does not define is refused even under a `backend:*` membership. A wildcard says any *known* project, and otherwise any spelling would be chargeable.
+- `Principal` gained `projects` (task 01's file list gave it only memberships and primary). Without them a wildcard membership cannot be expanded into anything, and the plan's own runtime path reads `users file (teams, projects, memberships, primary) -> Principal`; task 04 step 1 needs the same list for the picker. Noted here as well as in task 01.
+
+Two from the review of what was built, both settled by Softov on 2026-10-01:
+
+- **A file that names no team at all is a host that has not been given the subject yet.** `scopeFor` refused anybody whose memberships did not resolve, so a fresh users file - a record per person, no `teams` key - refused every session's first turn with `belongs to no team and project, so there is nothing to charge`. It answers nothing at all instead, exactly as a host with no users directory does, and the refusal starts at the first team the file names. This needed a field: "the file defines no teams" is a fact about the file rather than about a person, and a principal that holds no memberships cannot say it, so `Principal.teams` carries the list and an absent one means the directory did not say.
+- **A principal with no `projects` is a directory that does not know, not one that says there is none.** The check for a named project was written to refuse anything the file did not list, which is right for a `fileUsers` principal and wrong for one built by hand or by an embedder without a file. `undefined` skips the check and `[]` refuses, which is the distinction the type already draws.

@@ -31,6 +31,8 @@ import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
+import { namesOf, scopeFor } from './scopes.js';
+import type { ScopeAnswer } from './scopes.js';
 import { accepts } from './configvalues.js';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from './artifacttools.js';
 import { debugLogs, hostLogPath } from './debuglogs.js';
@@ -3916,9 +3918,8 @@ export function createHost(options: HostOptions): Host {
    * host-owned and "not passed to agents". So they are merged over what the
    * backend said and stripped back out before it is handed anything.
    *
-   * Offered at all only when there is a `worktrees` port and the directory is
-   * a repository: `isolation` with one value is a control a client draws and
-   * nobody can move.
+   * `scope` is a seventh of the same kind, and is offered whenever there is a
+   * person rather than only under a `worktrees` port.
    */
   /**
    * How many branches ride along in the schema before a client has to ask.
@@ -4120,6 +4121,53 @@ export function createHost(options: HostOptions): Host {
     );
   };
 
+  /** What each session's work is charged to, refusal included, by session uri. */
+  const charged = new Map<string, ScopeAnswer | undefined>();
+
+  /**
+   * Resolve what a session is charged to and write the answer down.
+   *
+   * Stored as `null` when a host with people runs it for nobody (a root
+   * connection, an automation), so a resumed session is not charged to
+   * whoever sends its next turn.
+   */
+  const charge = (uri: string, principal: Principal | undefined, named?: string): void => {
+    const answer = scopeFor(principal, named);
+    charged.set(uri, answer);
+    const nobody = answer === undefined && principal === undefined && options.users !== undefined;
+    kept.setScope(idOf(uri), answer?.scope ?? (nobody ? null : undefined));
+  };
+
+  /**
+   * The `scope` picker, and what it starts on.
+   *
+   * The choices are the asking person's own memberships, and the default is
+   * what naming nothing resolves to. Nothing at all when there is nobody to ask.
+   */
+  const scoping = (principal: Principal | undefined): { properties: Bag; defaults: Record<string, string> } => {
+    const names = principal === undefined ? [] : namesOf(principal);
+    const scope = scopeFor(principal)?.scope;
+    const spelled = scope === undefined
+      ? undefined
+      : scope.project === undefined ? scope.team : `${scope.team}:${scope.project}`;
+    return {
+      properties: names.length === 0
+        ? {}
+        : {
+          scope: {
+            type: 'string',
+            title: 'Team and project',
+            description: 'Which team and project this session charges its work to',
+            enum: names,
+            enumLabels: names,
+            ...(spelled === undefined ? {} : { default: spelled }),
+            sessionMutable: false,
+          },
+        },
+      defaults: spelled === undefined ? {} : { scope: spelled },
+    };
+  };
+
   /**
    * What a new session settled on, as this host's half of its config.
    *
@@ -4133,10 +4181,21 @@ export function createHost(options: HostOptions): Host {
    * session's schema once a provisional session exists, and it sends
    * `{ isolation: 'folder' }` or nothing at all.
    */
-  const settle = async (uri: string, where: string | undefined, config: Record<string, unknown>): Promise<void> => {
+  const settle = async (
+    uri: string,
+    where: string | undefined,
+    config: Record<string, unknown>,
+    principal?: Principal,
+  ): Promise<void> => {
     const mine = await isolating(where, typeof config.isolation === 'string' ? config.isolation : undefined);
-    offered.set(uri, mine.schema);
-    decided.set(uri, { ...mine.defaults, ...mineOf(config) });
+    const scoped = scoping(principal);
+    const properties = (typeof mine.schema.properties === 'object' && mine.schema.properties !== null
+      ? mine.schema.properties
+      : {}) as Bag;
+    offered.set(uri, { ...mine.schema, properties: { ...properties, ...scoped.properties } });
+    const mine_ = { ...mine.defaults, ...scoped.defaults, ...mineOf(config) };
+    decided.set(uri, mine_);
+    charge(uri, principal, mine_.scope);
   };
 
   /**
@@ -4486,6 +4545,7 @@ export function createHost(options: HostOptions): Host {
     // would keep them for ever.
     marks.delete(idOf(uri));
     decided.delete(uri);
+    charged.delete(uri);
     kept.forget(idOf(uri));
     offered.delete(uri);
     owners.delete(uri);
@@ -4569,7 +4629,7 @@ export function createHost(options: HostOptions): Host {
         held.agent,
         uri,
         held.defaultChat,
-        held.config,
+        backendsOwn(held.config),
         talking,
         to,
         credentials,
@@ -4674,7 +4734,7 @@ export function createHost(options: HostOptions): Host {
       held.agent,
       uri,
       chatUri,
-      held.config,
+      backendsOwn(held.config),
       talking,
       held.workingDirectory,
       credentials,
@@ -4687,6 +4747,7 @@ export function createHost(options: HostOptions): Host {
   const HOSTS_OWN = [
     'isolation', 'branch', 'worktreeIncludeFiles',
     'worktreeBranchPrefix', 'worktreeCreateNewBranch', 'worktreeBranchTrack',
+    'scope',
   ];
 
   /** What the backend is given: everything except what this host answered. */
@@ -4830,6 +4891,16 @@ export function createHost(options: HostOptions): Host {
     from: MessageFrom | undefined,
     queuedAs?: string,
   ): string | undefined => {
+    /*
+     * A turn with nowhere to charge.
+     *
+     * Asked here rather than when the session was created, because the name
+     * may have arrived since - a client picks a scope, sends it in the config
+     * and then says something - and refused here rather than at the picker,
+     * because a picker is a suggestion and this is the thing being asked for.
+     */
+    const uncharged = charged.get(session.uri)?.refusal;
+    if (uncharged !== undefined) return uncharged;
     const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
     if (command === '' || !options.terminals) {
       if (queuedAs === undefined) session.begin(turnId, text, model, from);
@@ -5234,7 +5305,7 @@ export function createHost(options: HostOptions): Host {
       const held = sessions.get(at);
       if (!held) throw new Error(`${session} is not a session this host is running`);
       const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
-      const chat = spawn(held.agent, at, chatUri, held.config, undefined, held.workingDirectory, undefined, held.additional);
+      const chat = spawn(held.agent, at, chatUri, backendsOwn(held.config), undefined, held.workingDirectory, undefined, held.additional);
       log(`opened ${chatUri} in ${at}`);
       if (asked.title !== undefined) { chat.setTitle?.(asked.title); keepTitle(at, chatUri, asked.title); }
       dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
@@ -7844,7 +7915,7 @@ export function createHost(options: HostOptions): Host {
             along(0, config.isolation === 'worktree' ? 'Making a working tree' : 'Starting the session');
             const running = await isolated(uri, config, where);
             along(1, 'Starting the agent');
-            await settle(uri, where, config);
+            await settle(uri, where, config, connection.principal);
             // A `disposable:<profile>` setting is a machine made for this
             // session, with this harness's needs and this folder, before the
             // backend is started with it.
@@ -7997,7 +8068,7 @@ export function createHost(options: HostOptions): Host {
             ? asked.filter((one) => one !== held.workingDirectory)
             : held.additional;
           if (asked.length > 0) beside.set(chatUri, peers ?? []);
-          const chat = spawn(held.agent, uri, chatUri, held.config, made, held.workingDirectory, undefined, peers);
+          const chat = spawn(held.agent, uri, chatUri, backendsOwn(held.config), made, held.workingDirectory, undefined, peers);
           if (origin !== undefined) madeFrom.set(chatUri, origin);
           log(`opened ${chatUri} in ${uri}`);
           // `summary`, not `chat`: the reducer reads `action.summary.resource`,
@@ -8457,6 +8528,13 @@ export function createHost(options: HostOptions): Host {
             typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir,
             typeof answered.isolation === 'string' ? answered.isolation : undefined,
           );
+          /*
+           * The same picker a session of this host's own is created with, asked
+           * for the person asking: `resolveSessionConfig` is what a client
+           * draws its new-session form from, so a scope missing from it is a
+           * scope nobody can pick before the session exists.
+           */
+          const scoped = scoping(connection.principal);
           const theirs = sessionSchema(agent);
           /*
            * A contributed key's own values, asked for here rather than left
@@ -8472,12 +8550,13 @@ export function createHost(options: HostOptions): Host {
           const properties = {
             ...contributed,
             ...(typeof mine.schema.properties === 'object' && mine.schema.properties !== null ? mine.schema.properties : {}),
+            ...scoped.properties,
           };
           // Iterative, as a real host's is: what has been answered comes back
           // answered, so re-asking does not quietly undo a choice.
           return {
             schema: { ...theirs, properties },
-            values: { ...agent.defaults(), ...mine.defaults, ...answered },
+            values: { ...agent.defaults(), ...mine.defaults, ...scoped.defaults, ...answered },
           };
         },
         /**
@@ -8531,6 +8610,20 @@ export function createHost(options: HostOptions): Host {
             }
           }
           const port = options.worktrees;
+          if (property === 'scope') {
+            /*
+             * The choices are the asking person's, so asked for here rather
+             * than offered in the enum alone: a person with a `team:*` holds
+             * one choice per project, and a client that would rather not draw
+             * them all asks. A host with nobody signed in has nothing to offer
+             * and says so with an empty list, like any other property here.
+             */
+            const who = connection.principal;
+            if (who === undefined) return { items: [] };
+            const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';
+            const found = namesOf(who).filter((one) => one.toLowerCase().includes(query));
+            return { items: found.map((name) => ({ value: name, label: name })) };
+          }
           if (property !== 'branch' || !port) return { items: [] };
           const where = (asked ?? `file://${dir}`).replace(/^file:\/\//, '');
           const repository = await port.repository(where).catch(() => undefined);
@@ -9156,7 +9249,26 @@ export function createHost(options: HostOptions): Host {
             // a conversation whose second half cannot see the files its
             // first half was about.
             const ran = wheres.get(named)?.[0]?.replace(/^file:\/\//, '');
-            const session = spawn(owner, named, chatUriFor(named), storedConfig(owner, id), { resume: id, seed }, ran);
+            /*
+             * What the work is charged to: the one this session was settled
+             * with, or the one this turn's sender resolves to.
+             *
+             * A session's charge was decided by whoever created it, possibly
+             * before this process started, and it is read back rather than
+             * decided again - which would answer for whoever is asking now,
+             * or refuse the first turn of a session that was perfectly well
+             * charged, because this daemon was started by somebody who is not
+             * the person who created it. A session the store holds no charge
+             * for is the one case where nobody decided it: one begun before
+             * this host charged anything is settled now, from the principal
+             * the turn arrived on, exactly as a new session is.
+             */
+            const was = kept.scope(id);
+            const restored = storedConfig(owner, id);
+            if (was === null) charged.set(named, undefined);
+            else if (was !== undefined) charged.set(named, { scope: was });
+            else charge(named, connection.principal, typeof restored.scope === 'string' ? restored.scope : undefined);
+            const session = spawn(owner, named, chatUriFor(named), restored, { resume: id, seed }, ran);
             log(`resumed ${named}`);
             dispatch(named, { type: 'session/ready' });
             summaryMoved(named);
@@ -9412,16 +9524,24 @@ export function createHost(options: HostOptions): Host {
              * the controls have somewhere to write, then sends the first
              * message. Applied together and started once, because two keys in
              * one action are one decision.
+             *
+             * `scope` is the one of them that decides no restart: a backend is
+             * handed a folder to work in and has never heard of a charge, so
+             * starting it again would throw away a conversation for a word it
+             * cannot read. It is settled and refused beside the others.
              */
             const settled = decided.get(session.uri) ?? {};
             const ours = Object.entries(config)
-              .filter(([key]) => HOSTS_OWN.includes(key))
+              .filter(([key]) => HOSTS_OWN.includes(key) && key !== 'scope')
               // Only what actually differs. A client that sends its whole
               // config bag back - the same `isolation` it was given - is
               // agreeing with this host, and restarting a session to arrive
               // where it already is would be a session that disposed and
               // reopened itself for nothing.
               .filter(([key, value]) => value !== settled[key]);
+            /** The same, less the key that starts nothing. */
+            const rescoped = Object.entries(config)
+              .filter(([key, value]) => key === 'scope' && value !== settled[key]);
             /*
              * The fixed keys a backend or a plugin declared.
              *
@@ -9440,62 +9560,75 @@ export function createHost(options: HostOptions): Host {
              * one action are one decision - and a restart is a backend start.
              */
             const moved = [...ours, ...fixed];
-            if (moved.length > 0 && owning !== undefined) {
-              const bad = ours.find(([, value]) => typeof value !== 'string');
+            if ((moved.length > 0 || rescoped.length > 0) && owning !== undefined) {
+              const bad = [...ours, ...rescoped].find(([, value]) => typeof value !== 'string');
               const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
               if (bad !== undefined) {
                 for (const [key] of moved) undo(key);
+                for (const [key] of rescoped) undo(key);
                 no(`${bad[0]} takes a string`);
               }
               else if (started) {
                 for (const [key] of moved) undo(key);
-                no(`${moved[0]?.[0]} is fixed once the session has started`);
+                for (const [key] of rescoped) undo(key);
+                no(`${moved[0]?.[0] ?? rescoped[0]?.[0]} is fixed once the session has started`);
               }
               else {
                 const mine = { ...settled };
-                for (const [key, value] of ours) mine[key] = value as string;
+                for (const [key, value] of [...ours, ...rescoped]) mine[key] = value as string;
                 decided.set(session.uri, mine);
+                // What the work is charged to is decided with the rest of the
+                // window, so a scope that moved is resolved again here or the
+                // turn would be charged to the session it was created as.
+                if (rescoped.length > 0) charge(session.uri, connection.principal, mine.scope);
                 const uri = session.uri;
-                /*
-                 * The restart, held while it runs.
-                 *
-                 * A turn can arrive in the window between the whole config
-                 * being pushed and the backend being ready - VS Code sends
-                 * both back to back - so `applyDispatch` waits on this
-                 * promise before it touches the session. It is cleared before
-                 * the promise settles to its consumers, so an action that
-                 * waited re-runs against the backend that is actually there.
-                 */
-                const work = (async () => {
-                  await restart(uri, tokensFor(owning.agent.provider));
-                })();
-                restarting.set(uri, work);
-                const clear = (): void => {
-                  if (restarting.get(uri) === work) restarting.delete(uri);
+                /** What the clients are told, once the decision is in force. */
+                const tell = (): void => {
+                  for (const [key, value] of [...moved, ...rescoped]) {
+                    /*
+                     * The value the session actually has, when the restart
+                     * changed it. A source is made into a machine on the way
+                     * in, so a client told the source back would hold a value
+                     * the session is not running with. This host's own keys
+                     * are not in the backend's config, so they stay as they
+                     * were sent.
+                     */
+                    const answered = owning.config[key] ?? value;
+                    if (!HOSTS_OWN.includes(key)) remember(key, answered);
+                    dispatch(uri, { type: 'session/configChanged', config: { [key]: answered } }, origin);
+                  }
                 };
-                void work.then(
-                  () => {
-                    clear();
-                    for (const [key, value] of moved) {
-                      /*
-                       * The value the session actually has, when the restart
-                       * changed it. A source is made into a machine on the way
-                       * in, so a client told the source back would hold a value
-                       * the session is not running with. This host's own keys
-                       * are not in the backend's config, so they stay as they
-                       * were sent.
-                       */
-                      const answered = owning.config[key] ?? value;
-                      if (!HOSTS_OWN.includes(key)) remember(key, answered);
-                      dispatch(uri, { type: 'session/configChanged', config: { [key]: answered } }, origin);
-                    }
-                  },
-                  (error: unknown) => {
-                    clear();
-                    lives.delete(uri);
-                    no(error instanceof Error ? error.message : String(error));
-                  },
-                );
+                if (moved.length === 0) tell();
+                else {
+                  /*
+                   * The restart, held while it runs.
+                   *
+                   * A turn can arrive in the window between the whole config
+                   * being pushed and the backend being ready - VS Code sends
+                   * both back to back - so `applyDispatch` waits on this
+                   * promise before it touches the session. It is cleared before
+                   * the promise settles to its consumers, so an action that
+                   * waited re-runs against the backend that is actually there.
+                   */
+                  const work = (async () => {
+                    await restart(uri, tokensFor(owning.agent.provider));
+                  })();
+                  restarting.set(uri, work);
+                  const clear = (): void => {
+                    if (restarting.get(uri) === work) restarting.delete(uri);
+                  };
+                  void work.then(
+                    () => {
+                      clear();
+                      tell();
+                    },
+                    (error: unknown) => {
+                      clear();
+                      lives.delete(uri);
+                      no(error instanceof Error ? error.message : String(error));
+                    },
+                  );
+                }
               }
             }
             for (const [key, value] of Object.entries(config)) {

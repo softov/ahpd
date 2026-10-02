@@ -39,6 +39,12 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
   grantsOfRoles: async () => [],
   grantsOfPerson: async () => undefined,
   add: async () => {},
+  teams: async () => [],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
   remove: async () => false,
   mint: async () => '',
 });

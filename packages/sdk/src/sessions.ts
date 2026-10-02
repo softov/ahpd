@@ -2,6 +2,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { Scope } from './scopes.js';
 import type { PullRequestBaseline, SessionStore } from './types/sessions.js';
 
 /**
@@ -27,6 +28,7 @@ interface HeldChatTitles {
 export function memorySessions(): SessionStore & HeldChatTitles {
   const flags = new Map<string, number>();
   const config = new Map<string, Record<string, unknown>>();
+  const scope = new Map<string, Scope | null>();
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
@@ -35,6 +37,8 @@ export function memorySessions(): SessionStore & HeldChatTitles {
     setFlags: (id, value) => { flags.set(id, value); },
     config: (id) => config.get(id),
     setConfig: (id, values) => { config.set(id, values); },
+    scope: (id) => scope.get(id),
+    setScope: (id, value) => { if (value === undefined) scope.delete(id); else scope.set(id, value); },
     artifacts: (id) => artifacts.get(id),
     setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
     pullRequests: (id) => pullRequests.get(id),
@@ -54,7 +58,7 @@ export function memorySessions(): SessionStore & HeldChatTitles {
       const held = chatTitles.get(id);
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget: (id) => { flags.delete(id); config.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
+    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
   };
 }
 
@@ -79,6 +83,7 @@ interface Saved {
     id: string;
     flags?: number;
     config?: Record<string, unknown>;
+    scope?: Scope | null;
     artifacts?: Record<string, unknown>[];
     pullRequests?: PullRequestBaseline;
     chatTitles?: Record<string, string>;
@@ -123,6 +128,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       sessions: [...known].map((id) => {
         const flags = inner.flags(id);
         const config = inner.config(id);
+        const scope = inner.scope(id);
         const artifacts = inner.artifacts(id);
         const pullRequests = inner.pullRequests(id);
         const chatTitles = inner.chatTitlesOf(id);
@@ -130,13 +136,14 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           id,
           ...(flags === 0 ? {} : { flags }),
           ...(config === undefined ? {} : { config }),
+          ...(scope === undefined ? {} : { scope }),
           ...(artifacts === undefined ? {} : { artifacts }),
           ...(pullRequests === undefined ? {} : { pullRequests }),
           ...(chatTitles === undefined || Object.keys(chatTitles).length === 0 ? {} : { chatTitles }),
         };
       // A row with none of them is a session somebody looked at and left
       // alone, which is nothing to remember.
-      }).filter((row) => row.flags !== undefined || row.config !== undefined
+      }).filter((row) => row.flags !== undefined || row.config !== undefined || row.scope !== undefined
         || row.artifacts !== undefined || row.pullRequests !== undefined || row.chatTitles !== undefined),
     };
     try {
@@ -181,6 +188,16 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       known.add(row.id);
       if (typeof row.flags === 'number') inner.setFlags(row.id, row.flags);
       if (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)) inner.setConfig(row.id, row.config);
+      // A scope is a team and optionally a project. A row written by a version
+      // that meant something else is ignored rather than guessed at.
+      const scope = row.scope as Partial<Scope> | null | undefined;
+      if (scope === null) inner.setScope(row.id, null);
+      else if (typeof scope === 'object' && scope !== null && typeof scope.team === 'string' && scope.team !== ''
+        && (scope.project === undefined || (typeof scope.project === 'string' && scope.project !== ''))) {
+        inner.setScope(row.id, scope.project === undefined
+          ? { team: scope.team }
+          : { team: scope.team, project: scope.project });
+      }
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
       // Only an object with two arrays of strings is a baseline this version
       // understands; anything else is ignored rather than guessed at.
@@ -210,6 +227,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     config: (id) => inner.config(id),
     setFlags: (id, value) => { known.add(id); inner.setFlags(id, value); later(); },
     setConfig: (id, values) => { known.add(id); inner.setConfig(id, values); later(); },
+    scope: (id) => inner.scope(id),
+    setScope: (id, value) => { known.add(id); inner.setScope(id, value); later(); },
     artifacts: (id) => inner.artifacts(id),
     setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
     pullRequests: (id) => inner.pullRequests(id),

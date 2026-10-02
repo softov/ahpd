@@ -3,7 +3,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { same } from './listen.js';
 import { issuerFrom } from './issuers.js';
-import type { Grant, Issuer, Principal, UserFile, UserRecord, Users } from './types/users.js';
+import { covers, membership } from './scopes.js';
+import type { Grant, Issuer, Named, Principal, UserFile, UserRecord, Users } from './types/users.js';
 
 /**
  * The user directory, in a file.
@@ -211,6 +212,124 @@ export function fileUsers(options: FileUserOptions): Users {
   /** Whether a name is one this directory can resolve, saying nothing. */
   const knows = (name: string): boolean => (options.issuerFor ?? issuerFrom)(name) !== undefined;
 
+  /**
+   * One of the file's `teams` or `projects`, kept as it was written.
+   *
+   * Nothing is dropped from an entry, because the file is written back from
+   * what was read and this install's own file is the only one that will ever
+   * carry fields this version does not know.
+   */
+  const entries = (value: unknown): Named[] => (Array.isArray(value) ? value : [])
+    .filter((one): one is Named => typeof one === 'object' && one !== null
+      && typeof (one as Named).id === 'string' && (one as Named).id !== '');
+
+  /** What an entry list spells, which is what a membership is checked against. */
+  const names = (list: Named[]): Set<string> => new Set(list.map((one) => one.id));
+
+  /** What the file's two lists spell, which is what a membership names. */
+  const spellingOf = (file: UserFile): { teams: Set<string>; projects: Set<string> } => ({
+    teams: names(entries(file.teams)),
+    projects: names(entries(file.projects)),
+  });
+
+  /**
+   * Why a membership names nothing this file holds, and nothing when it does.
+   *
+   * A team or a project this file does not define is what a check of an
+   * existing record reports and a check of a new one refuses - the same
+   * reading as a role nothing defines.
+   */
+  const problemWith = (entry: string, teams: Set<string>, projects: Set<string>): string | undefined => {
+    const parsed = membership(entry);
+    if (parsed === undefined) return 'is not team, team:* or team:project';
+    if (!teams.has(parsed.team)) return `names no team called ${parsed.team}`;
+    if (parsed.project !== undefined && parsed.project !== '*' && !projects.has(parsed.project)) {
+      return `names no project called ${parsed.project}`;
+    }
+    return undefined;
+  };
+
+  /**
+   * The memberships a record holds that mean something, saying why not for each.
+   *
+   * An entry that names nothing is dropped rather than kept looking like one
+   * somebody belongs to, which is the reading a role nothing defines gets.
+   */
+  const membershipsOf = (record: UserRecord, teams: Set<string>, projects: Set<string>): string[] => {
+    const kept: string[] = [];
+    for (const entry of strings(record.memberships)) {
+      const why = problemWith(entry, teams, projects);
+      if (why === undefined) kept.push(entry);
+      else once(`${options.path}: user ${record.id} has membership ${entry}, ${why}`);
+    }
+    return kept;
+  };
+
+  /**
+   * The membership work that names no scope of its own is charged to.
+   *
+   * One of their own memberships, covered by the rule `scopeFor` resolves a
+   * named scope with, and checked as a place as a membership is: a wildcard is
+   * not a place and a project this file does not name is not one anybody works
+   * in - decision `a-request-naming-no-scope-uses-the-persons-primary`.
+   */
+  const primaryOf = (
+    record: UserRecord,
+    memberships: readonly string[],
+    teams: Set<string>,
+    projects: Set<string>,
+  ): string | undefined => {
+    const wanted = record.primary;
+    if (typeof wanted !== 'string' || wanted === '') return undefined;
+    const why = membership(wanted)?.project === '*' || !covers(memberships, wanted)
+      ? 'which is not team or team:project of their own memberships'
+      : problemWith(wanted, teams, projects);
+    if (why !== undefined) {
+      once(`${options.path}: user ${record.id} has primary ${wanted}, ${why}`);
+      return undefined;
+    }
+    return wanted;
+  };
+
+  /**
+   * What a record holds and where its work lands, said once for each that
+   * names nothing.
+   *
+   * What a person is answered with; the file keeps what it says either way.
+   */
+  const settledOf = (record: UserRecord, teams: Set<string>, projects: Set<string>): { memberships: string[]; primary?: string } => {
+    const memberships = membershipsOf(record, teams, projects);
+    const primary = primaryOf(record, memberships, teams, projects);
+    return { memberships, ...(primary === undefined ? {} : { primary }) };
+  };
+
+  /**
+   * One entry with an id, in the order the file lists the others.
+   *
+   * Naming one that is already there sets its title when one is given, and moves nothing.
+   */
+  const withEntry = (list: Named[], id: string, title?: string): Named[] => {
+    if (!/^[^\s:*]+$/u.test(id)) throw new Error(`${id} cannot name a team or a project: it may not hold a space, a colon or a star`);
+    const at = list.findIndex((one) => one.id === id);
+    if (at === -1) return [...list, { id, ...(title === undefined ? {} : { title }) }];
+    return list.map((one, index) => (index === at && title !== undefined ? { ...one, title } : one));
+  };
+
+  /**
+   * Who names a team or a project that is being taken out, by membership or by
+   * primary, read as written rather than as they resolve.
+   *
+   * A name the file no longer holds still counts: taking it out would move
+   * them on a word said in a log and nowhere else.
+   */
+  const holders = (file: UserFile, id: string, what: 'team' | 'project'): string[] =>
+    (file.users ?? [])
+      .filter((one) => [...strings(one.memberships), ...(one.primary === undefined ? [] : [one.primary])].some((held) => {
+        const parsed = membership(held);
+        return parsed !== undefined && (what === 'team' ? parsed.team === id : parsed.project === id);
+      }))
+      .map((one) => one.id);
+
   /** What the file says, and whether it said nothing because it is broken. */
   const read = (): { file: UserFile; broken: boolean } => {
     let text: string;
@@ -240,21 +359,45 @@ export function fileUsers(options: FileUserOptions): Users {
         }
         roles[name] = kept;
       }
+      /*
+       * The teams and projects, and what the memberships beside them may name.
+       *
+       * Read before the records, because a membership naming a team this file
+       * does not define is checked against what the file holds. A file with
+       * neither key holds no teams and no projects, so every membership in it
+       * is reported and none of them is held - which is what a file written
+       * before teams existed should say rather than quietly mean something else.
+       */
+      const teams = entries(held.teams);
+      const projects = entries(held.projects);
+      const { teams: teamNames, projects: projectNames } = spellingOf(held);
       return {
         file: {
           roles,
+          ...(teams.length === 0 ? {} : { teams }),
+          ...(projects.length === 0 ? {} : { projects }),
           users: (Array.isArray(held.users) ? held.users : [])
             .filter((one): one is UserRecord => typeof one === 'object' && one !== null && typeof (one as UserRecord).id === 'string')
-            .map((one) => ({
-              id: one.id,
-              roles: strings(one.roles),
-              token: typeof one.token === 'string' ? one.token : '',
-              // Both flags are kept rather than dropped, or a file would lose
-              // them the next time anything wrote to it.
-              ...(typeof one.issuer === 'string' && one.issuer !== '' ? { issuer: one.issuer } : {}),
-              ...(typeof one.rolesFrom === 'string' && one.rolesFrom !== '' ? { rolesFrom: one.rolesFrom } : {}),
-              ...(typeof one.trustToken === 'boolean' ? { trustToken: one.trustToken } : {}),
-            })),
+            .map((one) => {
+              const record: UserRecord = {
+                id: one.id,
+                roles: strings(one.roles),
+                token: typeof one.token === 'string' ? one.token : '',
+                // Both flags are kept rather than dropped, or a file would lose
+                // them the next time anything wrote to it.
+                ...(typeof one.issuer === 'string' && one.issuer !== '' ? { issuer: one.issuer } : {}),
+                ...(typeof one.rolesFrom === 'string' && one.rolesFrom !== '' ? { rolesFrom: one.rolesFrom } : {}),
+                ...(typeof one.trustToken === 'boolean' ? { trustToken: one.trustToken } : {}),
+                // And these two, as the file spelled them. Checked below and
+                // held as written, because the file is written back from what
+                // was read: dropping an entry here would lose a membership
+                // naming a team the next `team add` is about to name.
+                ...(one.memberships === undefined ? {} : { memberships: strings(one.memberships) }),
+                ...(typeof one.primary === 'string' && one.primary !== '' ? { primary: one.primary } : {}),
+              };
+              settledOf(record, teamNames, projectNames);
+              return record;
+            }),
         },
         broken: false,
       };
@@ -312,7 +455,14 @@ export function fileUsers(options: FileUserOptions): Users {
     const loose = `${options.path}.tmp`;
     // 0600: the file holds hashes rather than secrets, and who may read it is
     // still nobody but the account the daemon runs as.
-    writeFileSync(loose, `${JSON.stringify({ roles: file.roles ?? {}, users: file.users ?? [] }, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(loose, `${JSON.stringify({
+      roles: file.roles ?? {},
+      // The teams and the projects, as they were read: the file is the whole of
+      // the state, and dropping either would lose every membership naming one.
+      ...(file.teams === undefined ? {} : { teams: file.teams }),
+      ...(file.projects === undefined ? {} : { projects: file.projects }),
+      users: file.users ?? [],
+    }, null, 2)}\n`, { mode: 0o600 });
     renameSync(loose, options.path);
   };
 
@@ -362,6 +512,19 @@ export function fileUsers(options: FileUserOptions): Users {
      * the next command.
      */
     const stamped = grantsOf(fromIssuer, read().file);
+    /**
+     * Their record as it stands now, and what it holds.
+     *
+     * Empty for somebody who is no longer in the file, which is what
+     * `standing` answers separately.
+     */
+    const holding = (): { memberships: string[]; primary?: string } => {
+      const { file } = read();
+      const one = (file.users ?? []).find((now) => now.id === record.id);
+      if (one === undefined) return { memberships: [] };
+      const { teams, projects } = spellingOf(file);
+      return settledOf(one, teams, projects);
+    };
     return {
       id: record.id,
       roles: [...record.roles, ...fromIssuer],
@@ -369,6 +532,20 @@ export function fileUsers(options: FileUserOptions): Users {
       // the door asks once per connection, and the person's answer does not
       // change while their socket is open.
       trusted: record.trustToken ?? trustAll,
+      /*
+       * The memberships and the primary, re-read rather than stamped.
+       *
+       * Not a permission, so nothing here decides whether a command is
+       * allowed - but the file is read on every question all the same, and a
+       * membership somebody was added to while their socket is open is one
+       * their next picker offers.
+       */
+      get memberships(): readonly string[] { return holding().memberships; },
+      get primary(): string | undefined { return holding().primary; },
+      // The projects their `team:*` memberships are a choice among, and the
+      // teams they are written out of.
+      get projects(): readonly Named[] { return read().file.projects ?? []; },
+      get teams(): readonly Named[] { return read().file.teams ?? []; },
       standing: () => (read().file.users ?? []).some((one) => one.id === record.id),
       can: (grant: Grant) => {
         const { file } = read();
@@ -470,6 +647,10 @@ export function fileUsers(options: FileUserOptions): Users {
           trusted: one.trustToken ?? trustAll,
           ...(issuer === undefined ? {} : { issuer }),
           ...(one.rolesFrom === undefined ? {} : { rolesFrom: one.rolesFrom }),
+          // Who their work may be charged to, which is not a permission and is
+          // asked beside one rather than through `can`.
+          ...(one.memberships === undefined ? {} : { memberships: [...one.memberships] }),
+          ...(one.primary === undefined ? {} : { primary: one.primary }),
         };
       });
     },
@@ -487,17 +668,27 @@ export function fileUsers(options: FileUserOptions): Users {
 
     add: async (id, roles, options) => {
       const issuer = options?.issuer;
+      const memberships = options?.memberships;
+      const primary = options?.primary;
       const { file, broken } = read();
+      const users = file.users ?? [];
+      const held = users.find((one) => one.id === id);
       /*
        * A role name that resolves to nothing is refused here.
        *
        * A typo used to be accepted and to grant nothing, which looks the same
        * as a person who has no permissions and is only discovered when
-       * something is refused. A broken file skips this and is refused by the
-       * write below, which is the more useful thing to say about it.
+       * something is refused. A role the record already holds is not one this
+       * call is giving, so it is not the one refused: a role taken out of the
+       * file stays on the records that have it, and refusing everything else
+       * would lock them out of the file entirely. A broken file skips this and
+       * is refused by the write below, which is the more useful thing to say
+       * about it.
        */
       if (!broken) {
-        const unknown = roles.find((role) => roleIn(file.roles, role) === undefined && roleIn(BUILT_IN, role) === undefined);
+        const was = new Set(held?.roles ?? []);
+        const unknown = roles.find((role) => !was.has(role)
+          && roleIn(file.roles, role) === undefined && roleIn(BUILT_IN, role) === undefined);
         if (unknown !== undefined) {
           const has = [...new Set([...Object.keys(file.roles ?? {}), ...Object.keys(BUILT_IN)])].sort();
           throw new Error(`no role called ${unknown}; this host has ${has.join(', ')}`);
@@ -508,17 +699,87 @@ export function fileUsers(options: FileUserOptions): Users {
         if (issuer !== undefined && !knows(issuer)) {
           throw new Error(`no issuer called ${issuer}; this host takes github or an issuer URL it may reach`);
         }
+        // What the record will hold, so a primary is checked against what it
+        // is being set beside. Only what this call names is checked: a
+        // membership the file already holds is not being given here, and a
+        // team it names that nobody has named yet is the operator's next
+        // `team add` rather than a mistake in this verb.
+        const { teams: teamNames, projects: projectNames } = spellingOf(file);
+        for (const entry of memberships ?? []) {
+          const why = problemWith(entry, teamNames, projectNames);
+          if (why !== undefined) throw new Error(`membership ${entry} ${why}`);
+        }
+        if (typeof primary === 'string') {
+          // A place before a membership: the read drops a primary naming a team
+          // or a project this file does not hold, and a write must not leave
+          // the file holding one the next read would drop.
+          const why = problemWith(primary, teamNames, projectNames);
+          if (why !== undefined) throw new Error(`primary ${primary} ${why}`);
+          const wanted = memberships ?? held?.memberships ?? [];
+          if (membership(primary)?.project === '*' || !covers(wanted, primary)) {
+            throw new Error(`primary ${primary} is not team or team:project of ${id}'s memberships`);
+          }
+        }
       }
-      const users = file.users ?? [];
-      const held = users.find((one) => one.id === id);
-      if (held === undefined) users.push({ id, roles: [...roles], token: '', ...(issuer === undefined ? {} : { issuer }) });
+      // Each left alone when the verb names none, the way `issuer` is: setting a
+      // role must not quietly move somebody off their team.
+      const membershipFields = memberships === undefined ? {} : { memberships: [...memberships] };
+      const primaryField = typeof primary === 'string' ? { primary } : {};
+      if (held === undefined) users.push({ id, roles: [...roles], token: '', ...(issuer === undefined ? {} : { issuer }), ...membershipFields, ...primaryField });
       else {
         held.roles = [...roles];
-        // Left alone when the verb names none, so setting a role does not
-        // silently move somebody to the host's default provider.
         if (issuer !== undefined) held.issuer = issuer;
+        Object.assign(held, membershipFields);
+        Object.assign(held, primaryField);
+        // `null` is how a primary is taken away, which leaving a team is not:
+        // that goes with the memberships below.
+        if (primary === null) delete held.primary;
+        /*
+         * A primary the memberships no longer cover goes with them.
+         *
+         * Left in the file it would be an entry every read drops, and the file
+         * would say something nothing reads - so the write that took the
+         * membership away takes the primary with it.
+         */
+        if (memberships !== undefined && held.primary !== undefined && !covers(memberships, held.primary)) {
+          delete held.primary;
+        }
       }
       write({ ...file, users });
+    },
+
+    teams: async () => [...entries(read().file.teams)],
+
+    projects: async () => [...entries(read().file.projects)],
+
+    addTeam: async (id, title) => {
+      const { file } = read();
+      write({ ...file, teams: withEntry(entries(file.teams), id, title) });
+    },
+
+    addProject: async (id, title) => {
+      const { file } = read();
+      write({ ...file, projects: withEntry(entries(file.projects), id, title) });
+    },
+
+    removeTeam: async (id) => {
+      const { file } = read();
+      const list = entries(file.teams);
+      if (!list.some((one) => one.id === id)) return false;
+      const who = holders(file, id, 'team');
+      if (who.length > 0) throw new Error(`${id} is still a team of ${who.join(', ')}; take them out of it first`);
+      write({ ...file, teams: list.filter((one) => one.id !== id) });
+      return true;
+    },
+
+    removeProject: async (id) => {
+      const { file } = read();
+      const list = entries(file.projects);
+      if (!list.some((one) => one.id === id)) return false;
+      const who = holders(file, id, 'project');
+      if (who.length > 0) throw new Error(`${id} is still a project of ${who.join(', ')}; take them out of it first`);
+      write({ ...file, projects: list.filter((one) => one.id !== id) });
+      return true;
     },
 
     remove: async (id) => {

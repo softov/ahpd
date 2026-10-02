@@ -18,6 +18,7 @@ import { declarePlugin } from './plugin.js';
 import { declareProxy } from './proxy.js';
 import { declareRestart } from './restart.js';
 import { declareStatus } from './status.js';
+import { declareTeams } from './teams.js';
 import { declareUser } from './user.js';
 import { checkScopes } from './scopes.js';
 
@@ -63,6 +64,7 @@ export const servedRegistry = (facts: ServedFacts): Registry<object> => {
   declareStatus(registry, facts);
   declareConfig(registry, facts);
   declareUser(registry, facts);
+  declareTeams(registry, facts);
   declarePlugin(registry, facts);
   declareProxy(registry, facts);
   declareRestart(registry, facts);

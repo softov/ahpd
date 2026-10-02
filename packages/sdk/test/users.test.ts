@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { fileUsers, isGrant, signInRecord } from '../src/users.js';
+import { scopeFor } from '../src/scopes.js';
 import type { Grant } from '../src/types/users.js';
 
 /*
@@ -318,4 +319,266 @@ it('fails closed on a file that is absent, empty or malformed', async () => {
   // And it refuses to be written over, so a file somebody broke is not
   // silently replaced by the next command.
   await expect(broken.add('a', ['member'])).rejects.toThrow(/not a user file/);
+});
+
+it('parses the three forms of a membership, and the primary beside them', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }, { id: 'frontend', title: 'Front end' }],
+    projects: [{ id: 'ahpd' }, { id: 'controllr' }],
+    users: [{
+      id: 'luiz',
+      roles: ['member'],
+      token: '',
+      memberships: ['backend:*', 'frontend:controllr', 'frontend'],
+      primary: 'backend:ahpd',
+    }],
+  }));
+  const users = open();
+  const held = await users.verify(await users.mint('luiz'));
+
+  expect(held?.memberships).toEqual(['backend:*', 'frontend:controllr', 'frontend']);
+  expect(held?.primary).toBe('backend:ahpd');
+  // And a membership grants nothing: it says who pays, not what is allowed.
+  expect(held?.can('users:write')).toBe(false);
+});
+
+it('ignores a membership naming a team or a project this file does not define', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [{ id: 'ahpd' }],
+    users: [{
+      id: 'luiz',
+      roles: ['member'],
+      token: '',
+      memberships: ['backend:ahpd', 'frontend:controllr', 'backend:nowhere', 'backend:', 'ops'],
+    }],
+  }));
+  const said: string[] = [];
+  const users = open((one) => said.push(one));
+  const held = await users.verify(await users.mint('luiz'));
+
+  // Only the one naming what the file holds survives.
+  expect(held?.memberships).toEqual(['backend:ahpd']);
+  expect(said.some((one) => one.includes('no team called frontend'))).toBe(true);
+  expect(said.some((one) => one.includes('no project called nowhere'))).toBe(true);
+  expect(said.some((one) => one.includes('not team, team:* or team:project'))).toBe(true);
+  // Said once, however often the file is read.
+  const heard = said.length;
+  await users.grantsOfPerson('luiz');
+  expect(said.length).toBe(heard);
+});
+
+it('ignores a primary that is not a concrete membership of theirs', async () => {
+  const said: string[] = [];
+  const withPrimary = async (primary: string, memberships: string[]): Promise<string | undefined> => {
+    writeFileSync(path, JSON.stringify({
+      teams: [{ id: 'backend' }, { id: 'frontend' }],
+      projects: [{ id: 'ahpd' }],
+      users: [{ id: 'luiz', roles: [], token: '', memberships, primary }],
+    }));
+    const users = open((one) => said.push(one));
+    return (await users.verify(await users.mint('luiz')))?.primary;
+  };
+
+  // `*` is not a place, and a team they belong to by another membership is
+  // not a place either.
+  expect(await withPrimary('backend:*', ['backend:*'])).toBeUndefined();
+  expect(await withPrimary('frontend', ['backend:*'])).toBeUndefined();
+  expect(await withPrimary('backend', ['backend'])).toBe('backend');
+  // A wildcard covers the projects of its team, which is what makes
+  // `backend:ahpd` a primary for somebody in `backend:*`.
+  expect(await withPrimary('backend:ahpd', ['backend:*'])).toBe('backend:ahpd');
+  expect(said.filter((one) => one.includes('primary')).length).toBe(2);
+});
+
+it('lets a person move their own teams when a role they hold is no longer defined', async () => {
+  writeFileSync(path, JSON.stringify({
+    roles: { writer: ['file:write'] },
+    teams: [{ id: 'backend' }],
+    users: [{ id: 'luiz', roles: ['writer'], token: '', memberships: ['backend'] }],
+  }));
+  const users = open();
+  // The role is taken out of the file, which says nothing about the records
+  // that still hold it. A write that re-read those records and refused them
+  // would lock the person out of the file entirely, over a role they are not
+  // being given and were not asking for.
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    users: [{ id: 'luiz', roles: ['writer'], token: '', memberships: ['backend'] }],
+  }));
+  await users.add('luiz', ['writer'], { memberships: ['backend'], primary: 'backend' });
+  expect((await users.list())[0]).toMatchObject({ memberships: ['backend'], primary: 'backend' });
+  // A role this call really is giving is still refused.
+  await expect(users.add('luiz', ['writer', 'ghostwriter'])).rejects.toThrow('no role called ghostwriter');
+});
+
+it('reads a file written before teams and projects were in it', async () => {
+  writeFileSync(path, JSON.stringify({ roles: { guest: ['session:read'] }, users: [{ id: 'ana', roles: ['guest'], token: '' }] }));
+  const users = open();
+  const held = await users.verify(await users.mint('ana'));
+  expect(held?.id).toBe('ana');
+  // No teams and no projects means no memberships, rather than a file that will
+  // not read.
+  expect(held?.memberships).toEqual([]);
+  expect(held?.primary).toBeUndefined();
+  expect(await users.list()).toEqual([{ id: 'ana', roles: ['guest'], grants: ['session:read'], trusted: false }]);
+});
+
+it('writes the teams and the projects back, and reads them again', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [{ id: 'ahpd', title: 'AHP daemon' }],
+    users: [{ id: 'ana', roles: ['member'], token: '', memberships: ['backend:ahpd'], primary: 'backend:ahpd' }],
+  }));
+  const users = open();
+  await users.mint('ana');
+
+  const written = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  expect(written['teams']).toEqual([{ id: 'backend' }]);
+  expect(written['projects']).toEqual([{ id: 'ahpd', title: 'AHP daemon' }]);
+  // The membership rides along with the write that minting made.
+  expect((written['users'] as Record<string, unknown>[])[0]?.['memberships']).toEqual(['backend:ahpd']);
+  expect((await users.list())[0]?.memberships).toEqual(['backend:ahpd']);
+});
+
+it('re-reads a membership added while the connection is open', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [{ id: 'ahpd' }],
+    users: [{ id: 'ana', roles: ['member'], token: '' }],
+  }));
+  const users = open();
+  const held = await users.verify(await users.mint('ana'));
+  expect(held?.memberships).toEqual([]);
+
+  // The file is read on every question, as roles are.
+  const file = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  (file['users'] as Record<string, unknown>[])[0] = {
+    ...(file['users'] as Record<string, unknown>[])[0] as object,
+    memberships: ['backend:*'],
+    primary: 'backend:ahpd',
+  };
+  writeFileSync(path, JSON.stringify(file));
+  expect(held?.memberships).toEqual(['backend:*']);
+  expect(held?.primary).toBe('backend:ahpd');
+});
+
+it('keeps a membership a write does not concern, even one naming nothing yet', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    // A team the operator is about to name, which the read cannot make sense of
+    // yet but which is not the write's to decide.
+    users: [{ id: 'luiz', roles: ['member'], token: '', memberships: ['backend', 'sales'] }],
+  }));
+  const users = open();
+  const held = await users.verify(await users.mint('luiz'));
+  expect(held?.memberships).toEqual(['backend']);
+
+  // Minting writes the file back, and must not take the unreadable entry with
+  // it: a write that erases what the read ignored has no undo but the operator's
+  // own memory of what they wrote.
+  await users.mint('luiz');
+  const after = JSON.parse(readFileSync(path, 'utf8')) as { users: { memberships?: string[] }[] };
+  expect(after.users[0]?.memberships).toEqual(['backend', 'sales']);
+
+  // Naming the team is what makes it mean something, and it means something at
+  // once, with no write of the record in between.
+  await users.addTeam('sales');
+  expect(held?.memberships).toEqual(['backend', 'sales']);
+  expect(held?.teams).toEqual([{ id: 'backend' }, { id: 'sales' }]);
+});
+
+it('keeps a primary a write does not concern, even one naming nothing yet', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    users: [{ id: 'luiz', roles: ['member'], token: '', memberships: ['backend', 'sales'], primary: 'sales' }],
+  }));
+  const users = open();
+  const held = await users.verify(await users.mint('luiz'));
+  expect(held?.primary).toBeUndefined();
+
+  await users.mint('luiz');
+  const after = JSON.parse(readFileSync(path, 'utf8')) as { users: { primary?: string }[] };
+  expect(after.users[0]?.primary).toBe('sales');
+
+  await users.addTeam('sales');
+  expect(held?.primary).toBe('sales');
+});
+
+it('ignores a primary naming a project the file no longer has, and the write keeps it', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [{ id: 'ahpd' }],
+    users: [{ id: 'luiz', roles: [], token: '', memberships: ['backend:*'], primary: 'backend:ahpd' }],
+  }));
+  const said: string[] = [];
+  const users = open((one) => said.push(one));
+  const held = await users.verify(await users.mint('luiz'));
+  expect(held?.primary).toBe('backend:ahpd');
+  expect(said.length).toBe(0);
+
+  // The project is taken out by hand, which is what a file edited outside this
+  // host looks like. A primary is checked the way a membership is, so it stops
+  // being a place rather than outliving the project.
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [],
+    users: [{ id: 'luiz', roles: [], token: '', memberships: ['backend:*'], primary: 'backend:ahpd' }],
+  }));
+  expect(held?.primary).toBeUndefined();
+  expect(said.some((one) => one.includes('primary backend:ahpd') && one.includes('no project called ahpd'))).toBe(true);
+  // And the write that follows does not quietly settle it either.
+  await users.mint('luiz');
+  const after = JSON.parse(readFileSync(path, 'utf8')) as { users: { primary?: string }[] };
+  expect(after.users[0]?.primary).toBe('backend:ahpd');
+});
+
+it('falls to the membership left when the primary names a project that is gone', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }, { id: 'frontend' }],
+    projects: [{ id: 'ahpd' }],
+    users: [{ id: 'luiz', roles: [], token: '', memberships: ['backend:*', 'frontend'], primary: 'backend:ahpd' }],
+  }));
+  const users = open();
+  const held = await users.verify(await users.mint('luiz'));
+  expect(scopeFor(held)).toEqual({ scope: { team: 'backend', project: 'ahpd' } });
+
+  // The project is taken out of the file, so the primary is naming a place that
+  // is not there; the work falls to the one concrete membership rather than
+  // being refused, which is the same answer a person with no primary would get.
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }, { id: 'frontend' }],
+    projects: [],
+    users: [{ id: 'luiz', roles: [], token: '', memberships: ['backend:*', 'frontend'], primary: 'backend:ahpd' }],
+  }));
+  expect(held?.primary).toBeUndefined();
+  expect(scopeFor(held)).toEqual({ scope: { team: 'frontend' } });
+});
+
+it('refuses to take out a team or a project a primary names, saying who', async () => {
+  writeFileSync(path, JSON.stringify({
+    teams: [{ id: 'backend' }],
+    projects: [{ id: 'ahpd' }],
+    users: [{ id: 'luiz', roles: [], token: '', memberships: ['backend:*'], primary: 'backend:ahpd' }],
+  }));
+  const users = open();
+  await expect(users.removeProject('ahpd')).rejects.toThrow('ahpd is still a project of luiz; take them out of it first');
+  await expect(users.removeTeam('backend')).rejects.toThrow('backend is still a team of luiz; take them out of it first');
+
+  // Once the memberships go, so does the primary and so are the two free.
+  await users.add('luiz', [], { memberships: [] });
+  expect(await users.removeProject('ahpd')).toBe(true);
+  expect(await users.removeTeam('backend')).toBe(true);
+});
+
+it('keeps a title an add does not give, and refuses an id a membership could not spell', async () => {
+  writeFileSync(path, JSON.stringify({ projects: [{ id: 'ahpd', title: 'AHP daemon' }], users: [] }));
+  const users = open();
+  await users.addProject('ahpd');
+  expect(await users.projects()).toEqual([{ id: 'ahpd', title: 'AHP daemon' }]);
+  await users.addProject('ahpd', 'The daemon');
+  expect(await users.projects()).toEqual([{ id: 'ahpd', title: 'The daemon' }]);
+  for (const id of ['a:b', '*', 'two words']) {
+    await expect(users.addTeam(id)).rejects.toThrow('may not hold a space, a colon or a star');
+  }
 });

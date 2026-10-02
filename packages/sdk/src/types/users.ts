@@ -71,6 +71,46 @@ export interface Principal {
    * default and means no.
    */
   trusted?: boolean;
+  /**
+   * The teams and projects their work may be charged to, as written.
+   *
+   * A question about what they may do is `can`; this is about who pays, and it
+   * grants nothing - decision
+   * `teams-and-projects-are-memberships-in-the-users-file`.
+   */
+  readonly memberships?: readonly string[];
+  /**
+   * The membership work that names no scope of its own is charged to.
+   *
+   * Decision `a-request-naming-no-scope-uses-the-persons-primary`.
+   */
+  readonly primary?: string | undefined;
+  /**
+   * The projects this install names, as the file holds them.
+   *
+   * What a `team:*` membership is a choice among: the membership says any
+   * project of that team is theirs, and this is which projects there are. A
+   * refusal says what may be named and a picker says what may be picked, and
+   * neither can say it from the memberships alone.
+   */
+  readonly projects?: readonly Named[];
+  /**
+   * The teams this install names. Empty or absent, work is charged to nothing,
+   * as on a host with no directory.
+   */
+  readonly teams?: readonly Named[];
+}
+
+/**
+ * A team or a project the file names.
+ *
+ * An id and, optionally, what a client shows for it. A project is a name and
+ * not a folder: it may span several repositories or none, which is why this is
+ * an entry in the users file rather than a path anywhere.
+ */
+export interface Named {
+  id: string;
+  title?: string;
 }
 
 /**
@@ -112,6 +152,23 @@ export interface UserRecord {
   rolesFrom?: string;
   /** Whether a connection token of theirs authorizes them, over the host's default. */
   trustToken?: boolean;
+  /**
+   * The teams and projects their work may be charged to.
+   *
+   * Each is written `team`, `team:*` or `team:project` - decision
+   * `teams-and-projects-are-memberships-in-the-users-file`. A membership grants
+   * nothing and says no permission: it says what a piece of work may be
+   * charged to, which is a question roles are never asked.
+   */
+  memberships?: string[];
+  /**
+   * The membership work that names no team and project of its own is charged
+   * to, and one a person sets for themselves.
+   *
+   * `team` or `team:project`, never `*`, and one of their memberships -
+   * decision `a-request-naming-no-scope-uses-the-persons-primary`.
+   */
+  primary?: string;
 }
 
 /**
@@ -158,6 +215,10 @@ export interface Issuer {
 export interface UserFile {
   /** A role's grants, overriding a built-in of the same name. */
   roles?: Record<string, Grant[]>;
+  /** The teams this install names, which a membership spells before its colon. */
+  teams?: Named[];
+  /** The projects this install names, which a membership spells after its colon. */
+  projects?: Named[];
   users?: UserRecord[];
 }
 
@@ -197,8 +258,37 @@ export interface Users {
   grantsOfRoles(roles: readonly string[]): Promise<Grant[]>;
   /** What a person's roles resolve to, or nothing when nobody has that id. */
   grantsOfPerson(id: string): Promise<Grant[] | undefined>;
-  /** Add a person, or set the roles of one who is already there. */
-  add(id: string, roles: string[], options?: { issuer?: string }): Promise<void>;
+  /**
+   * Add a person, or set the roles of one who is already there.
+   *
+   * `memberships` replaces what they hold and `primary` sets where their work is
+   * charged to, `null` taking the primary away. Each is left alone when the
+   * options name none, the way `issuer` is, so setting a role does not quietly
+   * move somebody off their team. Only what the options name is checked.
+   */
+  add(
+    id: string,
+    roles: string[],
+    options?: { issuer?: string; memberships?: string[]; primary?: string | null },
+  ): Promise<void>;
+  /** The teams this directory names, in the order the file lists them. */
+  teams(): Promise<Named[]>;
+  /** The projects this directory names, in the order the file lists them. */
+  projects(): Promise<Named[]>;
+  /** Name a team, or set the title of one that is already named. */
+  addTeam(id: string, title?: string): Promise<void>;
+  /** Name a project, or set the title of one that is already named. */
+  addProject(id: string, title?: string): Promise<void>;
+  /**
+   * Take a team out. `true` when one was there.
+   *
+   * Throws while a membership still names it, saying who does: an entry the
+   * memberships beside it no longer match is one everybody holding it is
+   * silently dropped from on every read.
+   */
+  removeTeam(id: string): Promise<boolean>;
+  /** Take a project out, refused the same way while a membership names it. */
+  removeProject(id: string): Promise<boolean>;
   /** Remove a person. `true` when one was there. */
   remove(id: string): Promise<boolean>;
   /** A fresh secret for one person, answered once and stored only as its hash. */

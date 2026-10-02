@@ -1,7 +1,7 @@
 ---
 title: A person belongs to teams and projects, and work names which one it is for
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -47,6 +47,7 @@ AHP: session picker `scope` (fixed after the first turn) -> scopeFor ; proxy: he
 
 | What | Source | Task |
 | --- | --- | --- |
+| The proxy reads the scope from the `X-AHP-Scope` header or the `?scope=` query string, both `team:project` | Softov, 2026-10-01, asked "how does a request name its team:project?": "X-AHP-Scope + ?scope=" | the proxy listener |
 | An AHP session picks its scope in a picker, settable until the first turn and fixed after | Softov, 2026-10-01, asked "On AHP, when is a session's team:project chosen?": "Picker, fixed after first turn" | 04 |
 | A project may later list repositories; it starts as an id and a title | Softov, 2026-10-01: "A project is not just one git folder... eventually a project could have many git as needed or none." | 01 |
 | A person sets their own primary; changing someone else's needs `users:write` | (defaulted: "the default one setted by the user") | 03 |
@@ -61,25 +62,23 @@ AHP: session picker `scope` (fixed after the first turn) -> scopeFor ; proxy: he
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Teams, projects and memberships in the users file](task-01-file.md) | todo | - |
-| [02 - A scope is resolved from what work names, or the primary](task-02-resolve.md) | todo | 01 |
-| [03 - Commands for teams, projects and memberships](task-03-commands.md) | todo | 01 |
-| [04 - A session picks its scope](task-04-session-picker.md) | todo | 02 |
+| [01 - Teams, projects and memberships in the users file](task-01-file.md) | done | - |
+| [02 - A scope is resolved from what work names, or the primary](task-02-resolve.md) | done | 01 |
+| [03 - Commands for teams, projects and memberships](task-03-commands.md) | done | 01 |
+| [04 - A session picks its scope](task-04-session-picker.md) | done | 02 |
 
 ## Risks and tradeoffs
 
-- A membership that names a removed team or project is reported and ignored, like a role that names nothing.
+- A membership or a primary that names a removed team or project is reported and ignored by the read, like a role that names nothing, and kept as written by every write. `team rm` and `project rm` refuse while one names it, so the file only holds such an entry when it was edited outside this host.
 - The proxy reads the header and query string in its own listener plan; this plan gives it `scopeFor`.
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-01.
-- **Next action:** [task-01-file.md](task-01-file.md).
-- **Open questions:**
-  1. The proxy header and query names? - proposed: `X-AHP-Scope` and `?scope=`, both `team:project`.
-- **Watch out for:** a malformed users file fails closed and refuses writes; new keys must keep that.
+- **Done so far:** built 2026-10-01; see [implemented.md](implemented.md).
+- **Next action:** none; the proxy listener reads the scope from `X-AHP-Scope` or `?scope=`.
+- **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A person with `backend:*` and `frontend:controllr` and primary `backend:ahpd` resolves nothing named to `backend:ahpd`, `frontend:controllr` to itself, and `frontend:other` to a refusal.
-- [ ] `plans/index.md` updated.
+- [x] A person with `backend:*` and `frontend:controllr` and primary `backend:ahpd` resolves nothing named to `backend:ahpd`, `frontend:controllr` to itself, and `frontend:other` to a refusal.
+- [x] `plans/index.md` updated.

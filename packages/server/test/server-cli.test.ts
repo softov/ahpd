@@ -898,7 +898,7 @@ describe('user', () => {
     for (const args of [['user'], ['user', 'toy', '--users', users], ['--json', 'user']]) {
       const said = await cli(args);
       expect(said.code).toBe(2);
-      expect(said.stderr).toBe('ahpd: user takes list, add, rm or token.\n');
+      expect(said.stderr).toBe('ahpd: user takes list, add, rm, token, member or primary.\n');
       expect(said.stdout).toBe('');
     }
   });
