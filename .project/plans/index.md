@@ -26,7 +26,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 
 | [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; tasks 01, 02, 04, 06, 08, 09, 10, 11 implemented, 05 and 07 dropped; 03 waits on cofold | - | - |
 
-| [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | planned 2026-09-30; tasks 01-05 todo | daemon 09 | - |
+| [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | built 2026-10-02 ([implemented.md](daemon/10-a-first-run-sets-the-daemon-up/implemented.md)) | daemon 09 | - |
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | built 2026-10-02 ([implemented.md](daemon/11-root-config-carries-the-daemon-and-its-plugins/implemented.md)) | - | - |
 | [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |
 | [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |

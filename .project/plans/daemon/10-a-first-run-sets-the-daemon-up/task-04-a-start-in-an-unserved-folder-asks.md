@@ -1,6 +1,6 @@
 ---
 title: A start in an unserved folder asks to trust it, and `--no-cwd`
-status: todo
+status: done
 depends: [task-01-a-question-with-its-default.md]
 layer: "server"
 refs:
@@ -27,5 +27,3 @@ As the decision says: at a terminal, a folder not under `paths` is asked about a
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

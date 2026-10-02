@@ -41,6 +41,8 @@ import {
   usageProvider,
 } from '@ahpd/sdk';
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
+import { here } from '../ask.js';
+import { offerConfigure, askToServe } from './configure.js';
 import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
@@ -804,6 +806,17 @@ export const declareRun = (registry: Registry<object>): Command => registry.acti
   surfaces: { cli: { pattern: ['run'] } },
   input: flagFields,
   run: async (context) => {
-    await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>), context.input as Readonly<Record<string, unknown>>);
+    const input = context.input as Readonly<Record<string, unknown>>;
+    const configFile = context.optional<string>('configFile') ?? configPath();
+    // Before anything else, because a first run is refused for having no
+    // backend and this is the way in. The options are read after it, so a file
+    // it wrote is the one this run starts from.
+    const say = (line: string): void => { process.stderr.write(`${line}\n`); };
+    await offerConfigure({ configFile, term: here, say });
+    const options = optionsFrom(input);
+    // After the options, which is what says whether this folder is served, and
+    // before the host is built, so a folder answered for is one this run serves.
+    await askToServe(options, configFile, here, say);
+    await runForeground(options, input);
   },
 });

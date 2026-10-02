@@ -1,6 +1,6 @@
 ---
 title: A start with no configuration offers configure
-status: todo
+status: done
 depends: [task-02-ahpd-configure.md]
 layer: "server"
 refs:
@@ -25,5 +25,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

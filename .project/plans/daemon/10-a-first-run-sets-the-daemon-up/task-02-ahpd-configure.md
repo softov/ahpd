@@ -1,6 +1,6 @@
 ---
 title: "`ahpd configure`"
-status: todo
+status: done
 depends: [task-01-a-question-with-its-default.md]
 layer: "server"
 refs:
@@ -27,5 +27,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

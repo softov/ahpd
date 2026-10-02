@@ -194,13 +194,22 @@ describe('a valid file', () => {
       automations: 'file', sessions: 'file', usagePer: 'turn', plugins: [], updateCheck: true, warnings: [],
     });
   });
+
+  it('serves the current folder, or only what is named under --no-cwd', () => {
+    expect(folded({}).paths).toEqual([process.cwd()]);
+    put({ paths: [home] });
+    expect(optionsFrom({ configFile: config, noCwd: true }).paths).toEqual([home]);
+    // Nothing named and nothing served would be a daemon with nothing to work in.
+    put({});
+    expect(() => optionsFrom({ configFile: config, noCwd: true })).toThrow(/--no-cwd serves only/u);
+  });
 });
 
 describe('the schema', () => {
   it('is built from the flags, so a new one is checked in the file too', () => {
     const keys = Object.keys(configSchema.properties);
     for (const key of Object.keys(serverFields)) {
-      if (['stdio', 'configFile', 'noPlugins', 'pluginOptions'].includes(key)) continue;
+      if (['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'].includes(key)) continue;
       expect(keys).toContain(key);
     }
   });

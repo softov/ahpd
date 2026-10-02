@@ -1,6 +1,6 @@
 ---
 title: Docs say how to configure the daemon
-status: todo
+status: done
 depends: [task-02-ahpd-configure.md, task-03-a-start-with-no-configuration-offers-configure.md, task-04-a-start-in-an-unserved-folder-asks.md]
 layer: "docs"
 refs:
@@ -23,5 +23,3 @@ The quick start is `npm i -g @ahpd/server` then `ahpd configure`; `docs/DAEMON.m
 ## Validation
 
 - Read against the code of tasks 02 to 04.
-
-## Resume

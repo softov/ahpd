@@ -75,16 +75,16 @@ Close the client and the host keeps running. Reconnect from another client and t
 
 # Quick start
 
-`ahpd` bundles no agent. A backend is a plugin, so the install is the daemon plus one:
+`ahpd` bundles no agent. A backend is a plugin, so the install is the daemon and then `ahpd configure`, which asks at the terminal for the backends, the address, the port, the token and the folders, writes `~/.config/ahpd/config.json` and installs the backends it is given:
 
 Global Installation:
 ```bash
 npm i -g @ahpd/server
-ahpd plugin install @ahpd/agent-claude
-ahpd --plugin @ahpd/agent-claude --path /work/project
+ahpd configure
+ahpd --path /work/project
 ```
 
-`ahpd plugin install` installs the package into `~/.config/ahpd` and adds it to `plugins` there, so the next run loads it. A plugin installed with `npm i -g` is not seen: a bare name is resolved from the configuration directory only.
+Every question shows what the configuration holds now, so Enter keeps it and a second run of `ahpd configure` edits what is there. To add a backend without the questions, `ahpd plugin install @ahpd/agent-claude` installs the package into `~/.config/ahpd` and adds it to `plugins` there, so the next run loads it. A plugin installed with `npm i -g` is not seen: a bare name is resolved from the configuration directory only.
 
 npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's own global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
@@ -93,7 +93,7 @@ Using npx on the fly
 npx @ahpd/server --plugin @ahpd/agent-claude --path /work/project
 ```
 
-The plugin still comes from the configuration directory, so the `ahpd plugin install` above is needed either way.
+The plugin still comes from the configuration directory, so `ahpd configure` (or `ahpd plugin install @ahpd/agent-claude`) has to have run once either way.
 
 Running from Source:
 
@@ -162,6 +162,18 @@ Each capability is optional, and a host without one still works with every clien
 
 ## CLI & Daemon Configuration
 
+### First run
+
+`ahpd configure` asks, at the terminal, for each setting a first install needs and writes the file the daemon reads:
+
+```bash
+ahpd configure
+```
+
+The backends, the host to bind, the port, the connection token and the folders to serve, in that order. Every question shows the value the configuration holds now, so Enter keeps it and running it again edits what is there instead of replacing it. A backend answered for that the file does not already name is installed into `~/.config/ahpd`, and one the file already names is switched off (`enabled: false`, its options kept) when it is answered No. The token is written to `~/.config/ahpd/connection-token`, which `config.json` names as `connectionTokenFile`, or is the token you type instead; a token already in the configuration is kept and moved into that file rather than generated over. Every key it was not asked about is left where it is.
+
+Started at a terminal with no `config.json` at all, `ahpd` and `ahpd start` offer to run it for you first. Without a terminal nothing is asked, and the daemon starts as it always has.
+
 ### Background Service
 
 Detach the daemon from your terminal to run persistently:
@@ -185,6 +197,14 @@ ahpd \
   --path /work/api \
   --path /work/web
 ```
+
+Started at a terminal in a folder that is not one of those, `ahpd` asks whether to serve it, and a yes adds it to `paths` so it is asked once:
+
+```
+Serve /work/other? [y/N]:
+```
+
+`--no-cwd` is the other half: serve only what `--path` and `paths` name, and ask about no folder at all. With neither naming one it is refused.
 
 > Note: `--path` is a catalogue entry, **not a filesystem sandbox**. Clients with access to the host may request resources or terminals elsewhere on the machine if the configured ports allow it.
 

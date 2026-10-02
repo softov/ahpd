@@ -9,9 +9,12 @@
 import { isFlag, optionTable, optionsOf, output, tokenize } from '@cofold/commands';
 import type { Command, OptionTableEntry, Registry } from '@cofold/commands';
 import { globalOptions } from '@cofold/terminal';
+import { here } from '../ask.js';
+import { configPath } from '../config.js';
 import { start } from '../daemon.js';
 import { checkingUpdates, updateLine } from '../update.js';
 import { manifest } from '../version.js';
+import { askToServe, offerConfigure } from './configure.js';
 import { optionsFrom, programGlobals, secret, flagFields, stop, conflict } from './options.js';
 
 /** The options that belong to the process typing the line, never to the child. */
@@ -81,7 +84,23 @@ export const declareStart = (registry: Registry<object>): Command => registry.ac
   surfaces: { cli: { pattern: ['start'] } },
   input: flagFields,
   run: async (context) => {
-    const options = optionsFrom(context.input as Readonly<Record<string, unknown>>);
+    const input = context.input as Readonly<Record<string, unknown>>;
+    const configFile = context.optional<string>('configFile') ?? configPath();
+    /*
+     * Before the child is spawned, and never by it. A detached process has no
+     * terminal, so a question asked here is a question only this one can put,
+     * and the options are read after it so the child starts from whatever it
+     * wrote.
+     */
+    const say = (line: string): void => { process.stderr.write(`${line}\n`); };
+    await offerConfigure({ configFile, term: here, say });
+    const options = optionsFrom(input);
+    /*
+     * And before the child is spawned, for the same reason. A folder answered
+     * for is written to the file the child reads and is added here, so both this
+     * record and the daemon behind it name the same folders.
+     */
+    await askToServe(options, configFile, here, say);
     // A detached process has no pipe to answer on, so it would read an
     // immediate end and exit having served nobody.
     if (options.stdio) stop('--stdio cannot be detached: it serves the process that started it.');

@@ -26,6 +26,7 @@ import type { Registry, Runner } from '@cofold/commands';
 import { commandsFrom, httpTransport, loadManifest } from '@cofold/remote';
 import { API_PREFIX } from '../http.js';
 import { declareConfig } from './config.js';
+import { declareConfigure } from './configure.js';
 import { declarePlugin } from './plugin.js';
 import { declareProxy } from './proxy.js';
 import { declareRun } from './run.js';
@@ -56,6 +57,7 @@ export const cliRegistry = (): Registry<object> => {
   declareRestart(registry);
   declareStatus(registry);
   declareConfig(registry);
+  declareConfigure(registry);
   declareUser(registry);
   declareTeams(registry);
   declarePlugin(registry);

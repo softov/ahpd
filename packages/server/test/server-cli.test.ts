@@ -374,6 +374,23 @@ describe('the flags of a run', () => {
     expect(said.stderr).toContain('Unknown option --plugins');
   });
 
+  it('serves only what is named under --no-cwd, and refuses when nothing is', async () => {
+    writeFileSync(config, JSON.stringify({ plugins: [BACKEND], sessions: 'memory', automations: 'memory' }));
+    const refused = await cli(['--stdio', '--no-cwd', '--plugin', BACKEND, '--config-file', config]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('--no-cwd serves only');
+    // A refusal that did not say what to do instead is a sentence over.
+    expect(refused.stderr).toContain('--path');
+    expect(refused.stderr).toContain('ahpd configure');
+
+    writeFileSync(config, JSON.stringify({ paths: [home], plugins: [BACKEND], sessions: 'memory', automations: 'memory' }));
+    const serving = await cli(['--stdio', '--no-cwd', '--plugin', BACKEND, '--config-file', config]);
+    expect(serving.code).toBe(0);
+    expect(serving.stderr).toContain(`sessions in ${home}`);
+    // On a pipe, so nothing was asked about the folder it was started in.
+    expect(serving.stderr).not.toContain('Serve ');
+  }, 20000);
+
   it('refuses an --automations it does not have', async () => {
     const said = await cli(['--stdio', '--automations', 'potato', '--config-file', config]);
     expect(said.code).toBe(2);

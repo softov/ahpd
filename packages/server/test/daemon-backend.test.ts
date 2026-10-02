@@ -29,11 +29,14 @@ afterEach(() => { rmSync(home, { recursive: true, force: true }); });
  * `--stdio` mode and a line written there would be a frame nobody sent.
  * `named` is whether the file is handed over with `--config-file`; without it
  * the file is the one under the configuration directory, which is `home`'s.
+ * `written` is whether there is one at all, which is what a first run has not.
  */
-const run = async (config: Record<string, unknown>, named = true): Promise<{ code: number | null; said: string; path: string }> => {
+const run = async (config: Record<string, unknown>, named = true, written = true): Promise<{ code: number | null; said: string; path: string }> => {
   const path = named ? join(home, 'config.json') : join(home, 'ahpd', 'config.json');
   if (!named) mkdirSync(join(home, 'ahpd'));
-  writeFileSync(path, JSON.stringify({ paths: [], withoutConnectionToken: true, sessions: 'memory', automations: 'memory', ...config }));
+  if (written) {
+    writeFileSync(path, JSON.stringify({ paths: [], withoutConnectionToken: true, sessions: 'memory', automations: 'memory', ...config }));
+  }
   const child = spawn(
     process.execPath,
     ['--conditions', 'development', '--import', './scripts/dev.mjs', 'packages/server/src/main.ts', '--stdio', ...(named ? ['--config-file', path] : [])],
@@ -59,6 +62,8 @@ it('refuses to start when nothing contributed a backend, and names the fix', asy
   const { code, said, path } = await run({});
   expect(code).toBe(1);
   expect(said).toContain('No backend is loaded');
+  // Started on a pipe, so it is offered no configuration and asked nothing.
+  expect(said).not.toContain('Run ahpd configure now?');
   // The sentence is for somebody holding a configuration file, so it names
   // the key they have to edit, the file it is in, and a package they can put
   // in it. The file because this is the sentence an upgrade from a daemon
@@ -87,6 +92,16 @@ it('names the command with the file the daemon was started with', async () => {
   // does not read.
   expect(said).toContain(`ahpd plugin install @ahpd/agent-claude --config-file ${path}`);
   expect(said).toContain('npm i in');
+});
+
+it('asks nothing when there is no configuration file and no terminal, and refuses as it did', async () => {
+  const { code, said } = await run({}, false, false);
+  expect(code).toBe(1);
+  // Nothing was written, so the offer was open; stdin is a pipe, so it was not
+  // put, and the run ends where a first run has always ended.
+  expect(said).not.toContain('Run ahpd configure now?');
+  expect(said).toContain('No backend is loaded');
+  expect(said).toContain('ahpd plugin install @ahpd/agent-claude ');
 });
 
 it('starts when a plugin brought one', async () => {

@@ -31,6 +31,8 @@ export interface Options {
   stdio: boolean;
   /** The directories whose sessions this host serves, the first being the default. */
   paths: string[];
+  /** Serve only `paths`, and ask about no folder at all. */
+  noCwd: boolean;
   /** The secret every connection must present, given directly. */
   token?: string;
   /** A file holding that secret. Written with a fresh one if it does not exist. */
@@ -190,6 +192,11 @@ export const serverFields = {
     description: 'A directory this host serves. Repeatable; the first is the default a client gets when it names none.',
     cli: { flag: '--path', value: 'DIR' },
   },
+  noCwd: {
+    type: 'boolean',
+    description: 'Serve only the folders named above, and never ask about the folder this was started in. Refused when none is named.',
+    cli: { negatable: false },
+  },
   connectionToken: {
     type: 'string',
     description: 'Require this secret on every connection.',
@@ -302,7 +309,7 @@ export const serverFields = {
 const FILE_ONLY = ['http', 'usage', 'proxy', 'policies'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
-const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'pluginOptions'] as const;
+const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
 
 /** A copy of `fields` without the keys named. */
 const without = <T extends Record<string, Field>, K extends keyof T>(fields: T, keys: readonly K[]): Omit<T, K> =>
@@ -529,6 +536,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   const source = (key: string): string => loaded.sourceOf(key) ?? configFile ?? configPath();
   const warnings = checkConfig(file, source);
   const noPlugins = input['noPlugins'] === true;
+const noCwd = input['noCwd'] === true;
 
   /** A key as the flag gave it, or the file under it. */
   const given = <K extends ConfigKey>(key: K): Config[K] => (input[key] as Config[K] | undefined) ?? file[key];
@@ -585,7 +593,17 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
   }
 
   const paths = [...given('paths') ?? []];
-  if (paths.length === 0) paths.push(process.cwd());
+  if (paths.length === 0) {
+    /*
+     * `--no-cwd` with nothing named would serve nothing at all, which is not a
+     * daemon anybody meant to start. Refused rather than answered with the
+     * current folder, since that is the one folder the flag says not to serve.
+     */
+    if (noCwd) {
+      stop('--no-cwd serves only what --path or "paths" names, and neither does. Pass --path, or run ahpd configure.');
+    }
+    paths.push(process.cwd());
+  }
 
   const token = given('connectionToken');
   const tokenFile = given('connectionTokenFile');
@@ -602,6 +620,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     host: given('host') ?? '127.0.0.1',
     stdio: input['stdio'] === true,
     paths,
+    noCwd,
     ...(token === undefined ? {} : { token }),
     ...(tokenFile === undefined ? {} : { tokenFile }),
     open: given('withoutConnectionToken') ?? false,

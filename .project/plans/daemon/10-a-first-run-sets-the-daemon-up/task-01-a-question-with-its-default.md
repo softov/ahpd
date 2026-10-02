@@ -1,6 +1,6 @@
 ---
 title: A question at the terminal, with its default
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -25,5 +25,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

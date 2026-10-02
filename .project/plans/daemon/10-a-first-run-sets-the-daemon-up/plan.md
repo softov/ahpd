@@ -1,7 +1,7 @@
 ---
 title: "`ahpd configure` sets the daemon up, and a first start at a terminal offers it"
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-09-30
@@ -47,6 +47,9 @@ The files read are the `refs` above.
 | The token: Enter generates one into a `connectionTokenFile` beside `config.json`, or the person types one; an existing token is kept by default | Softov, 2026-09-30, asked about the token: "Both offered" | 02 |
 | A start at a terminal with no `config.json` offers configure; without a terminal it refuses as today | Softov, 2026-09-29, "Both"; 2026-09-30: "then start could ask for configuration.... not configured. start?" | 03 |
 | No flags for configure's questions yet; start flags, `plugin install` and `plugin config` serve a script | Softov, 2026-09-30, asked about a non-interactive configure: "Later" | - |
+| The trust question's Enter is No (`[y/N]`); a folder is served only on a typed yes | Softov, 2026-10-02, asked which answer Enter picks: "No" | 04 |
+| A backend already configured and answered No is switched off (`enabled: false`), its options kept, as `plugin disable` does | Softov, 2026-10-02, asked what No does to a configured backend: "Switch it off" | 02 |
+| A literal `connectionToken` is an existing token: Enter keeps it, moved into the token file | the row above: "an existing token is kept by default" | 02 |
 
 ## Proposed architecture
 
@@ -58,11 +61,11 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A question at the terminal, with its default](task-01-a-question-with-its-default.md) | todo | - |
-| [02 - `ahpd configure`](task-02-ahpd-configure.md) | todo | 01 |
-| [03 - A start with no configuration offers configure](task-03-a-start-with-no-configuration-offers-configure.md) | todo | 02 |
-| [04 - A start in an unserved folder asks to trust it, and `--no-cwd`](task-04-a-start-in-an-unserved-folder-asks.md) | todo | 01 |
-| [05 - Docs](task-05-docs.md) | todo | 02, 03, 04 |
+| [01 - A question at the terminal, with its default](task-01-a-question-with-its-default.md) | done | - |
+| [02 - `ahpd configure`](task-02-ahpd-configure.md) | done | 01 |
+| [03 - A start with no configuration offers configure](task-03-a-start-with-no-configuration-offers-configure.md) | done | 02 |
+| [04 - A start in an unserved folder asks to trust it, and `--no-cwd`](task-04-a-start-in-an-unserved-folder-asks.md) | done | 01 |
+| [05 - Docs](task-05-docs.md) | done | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -71,16 +74,13 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** open questions answered 2026-09-30.
-- **Next action:** [task-01-a-question-with-its-default.md](task-01-a-question-with-its-default.md).
-- **Open questions:** none.
-- **Watch out for:** `start` spawns a detached child with no terminal: the questions are asked by the parent before it spawns, never by the child.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md) and [deferred.md](deferred.md).
 
 ## Final verification checklist
 
 - [ ] In an empty `XDG_CONFIG_HOME`, `ahpd configure` with Enter at every question writes a `config.json` that starts, and installs `@ahpd/agent-claude`.
-- [ ] Run again, it shows every value it wrote as the default.
+- [x] Run again, it shows every value it wrote as the default.
 - [ ] `ahpd start` in `/tmp/new` asks to trust it; yes adds it to `paths`; `ahpd start --no-cwd` there asks nothing.
-- [ ] `ahpd start < /dev/null` with no configuration refuses as today.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] `ahpd start < /dev/null` with no configuration refuses as today.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

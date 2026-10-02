@@ -98,6 +98,55 @@ that should not wait for a restart.
 whatever directories the daemon was started on. What it does take is in
 [PLUGINS.md](PLUGINS.md), beside the other backends.
 
+## `ahpd configure`
+
+The install is two commands, and the second one is asked for rather than typed:
+
+```bash
+npm i -g @ahpd/server
+ahpd configure
+```
+
+It asks at the terminal which backends to serve (Claude, cofold, pi), the host
+to bind, the port, the connection token and which folders to serve, in that
+order. Every question shows what the configuration holds now, so Enter keeps it
+and a second run edits what is there rather than replacing it:
+
+```
+Claude? [Y/n]:
+cofold? [y/N]: n
+pi? [y/N]: n
+Host [127.0.0.1]:
+Port [9187]:
+Connection token [generate one in /home/me/.config/ahpd/connection-token]:
+Serve /work/project? [Y/n]:
+```
+
+A backend answered Yes that the file does not already name is installed into
+the configuration directory, which is where a bare name is resolved from, and
+named in `plugins` afterwards. Answered No on one the file does already name, it
+is switched off with `enabled: false` and its options kept, exactly as
+`ahpd plugin disable` writes it. The token goes in a file of its own beside the
+configuration, written `0600`, and `"connectionTokenFile"` names it; type a token
+instead to write one you already have. A token already written as a literal
+`connectionToken` is a token clients are presenting, so Enter keeps it and moves
+it into that file rather than generating over it. A folder answered No is left
+out of `"paths"`, and a key this command was not asked about is left where it
+is. Answering No to every folder is refused rather than written, because an
+empty `paths` serves the current folder anyway.
+
+Started at a terminal with no `config.json` at all, `ahpd` and `ahpd start` ask
+whether to run it first:
+
+```
+No configuration. Run ahpd configure now? [Y/n]:
+```
+
+Answering no starts as a daemon with no backend did before the offer existed,
+which is the refusal at the top of this page. Nothing is asked without a
+terminal, so a script, a container and `ahpd start` from a supervisor carry on
+to that refusal rather than block on a prompt nobody can see.
+
 ## Commands
 
 ```
@@ -108,6 +157,8 @@ ahpd restart                stop it and start it again with the same line;
                             --force restarts while a turn is running
 ahpd status                 say whether one is, and where
 ahpd config                 say where the configuration is, and what it says
+ahpd configure              ask at the terminal for each setting a first install
+                            needs, and write them
 ahpd plugin list            what the configuration names, and what a run would
                             load, without loading any of it
 ahpd plugin install <name>  install a plugin into the configuration directory
@@ -207,6 +258,7 @@ anything has been let go of.
 | `--port <n>` | Default `9187`. `0` picks a free one |
 | `--host <addr>` | Default `127.0.0.1`. `0.0.0.0` accepts from other machines and needs a token |
 | `--path <dir>` | A directory this host catalogues. Repeatable. Default: where the daemon started |
+| `--no-cwd` | Serve only the directories named above, and ask about none. Refused when none is named. See below |
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
@@ -259,6 +311,35 @@ it: the window's folder dialog lists `..` from wherever it is and picks what is
 typed, and a host that refused everything outside `--path` was one where no
 folder outside it could be picked at all. Who may ask is decided once, by the
 connection token - which is why a host on `0.0.0.0` will not start without one.
+
+### `--no-cwd`, and asking to serve a folder
+
+A folder a host serves is one its agents read, edit and run in, which is what
+Claude Code asks a person to trust before it does. Started at a terminal in a
+folder that is under none of the ones configured, `ahpd` asks about it:
+
+```
+Serve /work/new? [y/N]:
+```
+
+Yes writes it to `paths` in `config.json`, so it is asked once and every run
+after it serves it, and the run that was asked serves it too. No starts without
+it. A folder inside one that is configured is not asked about, and nothing is
+asked without a terminal.
+
+`--no-cwd` is the other half: serve only what `--path` and `paths` name, and ask
+about no folder at all.
+
+```bash
+ahpd start --no-cwd --path /work/api
+```
+
+With neither naming a directory it is refused, because a daemon with no folder
+has nothing to work in:
+
+```
+--no-cwd serves only what --path or "paths" names, and neither does. Pass --path, or run ahpd configure.
+```
 
 ### `--update-check`, and knowing when it is old
 
@@ -453,17 +534,18 @@ A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a
 `--path` or a `--plugin` on the command line **replaces** its list rather than
 adding to it, so a file naming two and a flag naming a third loads one, not
-three. `"updateCheck": false` is `--no-update-check`. `--no-plugins` has no
-key, because leaving `plugins` out is already the off, and `--plugin-option` has
+three. `"updateCheck": false` is `--no-update-check`. `--no-plugins` and
+`--no-cwd` have no key, because leaving `plugins` out is already the off and an
+empty `paths` is already the only folder a run serves, and `--plugin-option` has
 none, because an entry's `options` is where the file sets the same thing.
 
-The merged files are checked against the same schema the flags are, before anything starts. A wrong value on a key ahpd knows refuses the start with exit code 2 and a line naming the file that set the key, and the key: `"port": "8080"` is `/home/you/.config/ahpd/config.json: port must be an integer`, and `"http": { "port": 70000 }` is `...: http.port must be an integer between 0 and 65535`. A key ahpd does not know, such as `"plugin"` for `"plugins"` or one a newer version added, is one line in the log, `/home/you/.config/ahpd/config.json: plugin is not a setting ahpd knows; ignored`, and the daemon starts without it. `stdio`, `configFile`, `noPlugins` and `pluginOptions` mean something only when typed, so the file warns about them the same way.
+The merged files are checked against the same schema the flags are, before anything starts. A wrong value on a key ahpd knows refuses the start with exit code 2 and a line naming the file that set the key, and the key: `"port": "8080"` is `/home/you/.config/ahpd/config.json: port must be an integer`, and `"http": { "port": 70000 }` is `...: http.port must be an integer between 0 and 65535`. A key ahpd does not know, such as `"plugin"` for `"plugins"` or one a newer version added, is one line in the log, `/home/you/.config/ahpd/config.json: plugin is not a setting ahpd knows; ignored`, and the daemon starts without it. `stdio`, `configFile`, `noPlugins`, `noCwd` and `pluginOptions` mean something only when typed, so the file warns about them the same way.
 
 `ahpd config` prints every file it read, then each key and its value; with more than one file, each key also names the file that set it. `ahpd config --json` answers `files`, `config` and `sources`, the file per key.
 
 ### What a client can configure
 
-The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools` and `wire`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. One module loaded twice is two backends, so each of its entries is keyed `plugins.<name>#<provider>` from its own `provider` option, and an entry of a repeated name that sets none is refused at start. Nothing else the file holds is there, so `stdio`, `configFile`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
+The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools` and `wire`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. One module loaded twice is two backends, so each of its entries is keyed `plugins.<name>#<provider>` from its own `provider` option, and an entry of a repeated name that sets none is refused at start. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
 
 `advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
 
