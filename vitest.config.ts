@@ -20,4 +20,7 @@ export default defineConfig({
       '@ahpd/agent-pi': fileURLToPath(new URL('./packages/agent-pi/src/index.ts', import.meta.url)),
     },
   },
+  test: {
+    globalSetup: ['./tools/test-tmpdir.ts'],
+  },
 });
