@@ -1,6 +1,6 @@
 ---
 title: Work is owned by a typed reference, user, team or project
-status: proposed
+status: accepted
 date: 2026-10-01
 refs:
   - "[code://packages/sdk/src/sessions.ts#L76-L86](../../packages/sdk/src/sessions.ts#L76-L86) - the persisted session fields, none of them an owner"

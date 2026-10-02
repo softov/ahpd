@@ -1,6 +1,6 @@
 ---
 title: The usage store answers a pool's live total, not only appends
-status: proposed
+status: accepted
 date: 2026-10-01
 refs:
   - "[code://packages/sdk/src/sessions.ts#L109-L153](../../packages/sdk/src/sessions.ts#L109-L153) - the versioned file store pattern the default copies"

@@ -46,6 +46,7 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 | --- | --- | --- |
 | A turn carries the person who sent it; a turn an automation started carries the automation's creator | Softov, 2026-09-30, in [host 33](../33-a-session-tool-acts-as-the-person-it-works-for/plan.md): "Who sent the turn" | 02, 03 |
 | A host with no users directory records no owner | (defaulted: there is no person to record) | 01 |
+| A root connection records `root:<host>` as owner | Softov, 2026-10-01, asked the root owner's spelling: "root:<host>" | 01 |
 
 ## Proposed architecture
 
@@ -72,8 +73,7 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 
 - **Done so far:** planned 2026-10-01.
 - **Next action:** [task-01-session-owner.md](task-01-session-owner.md).
-- **Open questions:**
-  1. What does a root connection (the door token) record as owner? - proposed: nothing, like a host with no users directory.
+- **Open questions:** none.
 - **Watch out for:** the owner is host-side only; the protocol's session state has no field for it.
 
 ## Final verification checklist

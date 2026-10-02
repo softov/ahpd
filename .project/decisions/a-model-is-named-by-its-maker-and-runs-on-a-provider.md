@@ -1,6 +1,6 @@
 ---
 title: A model is named by its maker, and where it runs is a provider
-status: proposed
+status: accepted
 date: 2026-10-01
 refs:
   - "[code://packages/agent-pi/src/models.ts#L34](../../packages/agent-pi/src/models.ts#L34) - pi spells a model `<pi provider>/<model id>`"

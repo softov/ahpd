@@ -1,6 +1,6 @@
 ---
 title: Model use and computer time are two record types behind one usage port
-status: proposed
+status: accepted
 date: 2026-10-01
 refs:
   - "[code://packages/sdk/src/types/plugin.ts#L30-L41](../../packages/sdk/src/types/plugin.ts#L30-L41) - `PortKey`, the closed union a new port joins"
@@ -18,6 +18,9 @@ A shared store (postgres, several daemons) is expected later, as a plugin.
 
 There are two record types: model use, written by the proxy and by the agent meter with a `source` of `proxy` or `agent`, and computer time.
 Both are kept and totalled by one `usage` port.
+Every record has one base: `at`, `owner`, `team`, `project`, `cost`, `source`, `session`, `turn`, `agent`, `computer` and `kind`, so a model record says by itself which agent and computer it ran on and a listing never joins records.
+A model record adds `model: { name, provider, input, output, cache }`; a computer record adds `seconds`, and is charged to the machine's owner.
+Source: Softov, 2026-10-01, asked whether the base says where the work ran: "base says where"; asked how a shared machine's time is charged: "for now machine owner pays".
 Source: Softov, 2026-10-01, asked "Starting direction for the usage record": "models and agents same shape... computer another shape and store?"; then asked "one store port or two?": "One port, two record types".
 
 ## Consequences
