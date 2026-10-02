@@ -53,6 +53,14 @@ export interface Options {
   automations: 'file' | 'memory';
   /** Where the read and archived bits and a session's settings go. */
   sessions: 'file' | 'memory';
+  /**
+   * Whether a turn is written down once, when it ends, or a record per report.
+   *
+   * `usage.per` in the file, and defaulted here: `turn` is the mode the meter
+   * was written for. It has no flag, as a mode of writing a record down is the
+   * deployment's rather than one run's.
+   */
+  usagePer: 'turn' | 'report';
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
   /**
@@ -216,6 +224,13 @@ export const serverFields = {
     enum: ['file', 'memory'],
     description: "Where the read and archived bits and a session's settings go.",
   },
+  usage: {
+    type: 'object',
+    properties: {
+      per: { type: 'string', enum: ['turn', 'report'] },
+    },
+    description: 'How a turn is written down: per "turn" writes one record when the turn ends, which is the default, and per "report" writes one record for every usage report a turn sends. Set in the configuration file only.',
+  },
   wire: {
     type: 'string',
     description: 'Append every frame, both directions, to this file as JSON lines.',
@@ -258,7 +273,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['http', 'proxy'] as const;
+const FILE_ONLY = ['http', 'usage', 'proxy'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'pluginOptions'] as const;
@@ -571,6 +586,7 @@ export function optionsFrom(input: Readonly<Record<string, unknown>>): Options {
     advancedTools: given('advancedTools') ?? false,
     automations: given('automations') ?? 'file',
     sessions: given('sessions') ?? 'file',
+    usagePer: given('usage')?.per ?? 'turn',
     ...(wire === undefined ? {} : { wire }),
     ...(http === undefined ? {} : { http }),
     proxy,

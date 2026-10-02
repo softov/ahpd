@@ -419,6 +419,12 @@ own tools declare nothing so this key does not touch them.
 `http` (or `http: { "port": N }`) serves the commands over HTTP under `/api`; it
 has no flag, because it is a property of a deployment rather than of one run.
 See [An HTTP API](#an-http-api-for-the-commands-the-terminal-runs).
+`usage` (`{ "per": "report" }`) says how a turn is written down. The default,
+`turn`, holds what a turn has used and writes one record when the turn ends;
+`report` writes one record for every usage report, each holding what that report
+added since the one before it, so a turn that is still running is already
+billed for what it has spent. Both bill the same work, and a wrong value is
+`...: usage.per must be one of turn, report`.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a

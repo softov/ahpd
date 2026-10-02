@@ -1,6 +1,6 @@
 ---
 title: The daemon chooses per turn or per report
-status: todo
+status: done
 depends: [task-01-the-host-meters-turns.md]
 layer: "server"
 refs:

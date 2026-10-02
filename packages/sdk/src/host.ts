@@ -31,6 +31,7 @@ import { worktreeFor, worktreesOf } from './worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { tail, older } from './paging.js';
 import { memorySessions } from './sessions.js';
+import { meter } from './meter.js';
 import { namesOf, scopeFor } from './scopes.js';
 import type { ScopeAnswer } from './scopes.js';
 import { accepts } from './configvalues.js';
@@ -3524,6 +3525,27 @@ export function createHost(options: HostOptions): Host {
       : agent;
     if (closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
     if (resuming?.resume !== undefined) resumedSessions.add(uri);
+    /*
+     * What this session's turns cost, kept against each turn until it ends.
+     *
+     * Only where the host was given somewhere to keep usage: a host with no
+     * `usage` port records nothing, and a meter that had one would only hold a
+     * running sum nobody reads. The owner and the scope are asked of the turn
+     * and the session when the record is written rather than held here, because
+     * both can move while the turn runs.
+     */
+    const metering = options.usage === undefined ? undefined : meter({
+      usage: options.usage,
+      ...(options.usagePer === undefined ? {} : { per: options.usagePer }),
+      onProblem: log,
+      session: uri,
+      chat: chatUri,
+      agent: agent.provider,
+      computer: () => computerId(config.computer),
+      senderOf,
+      owner: () => kept.owner(idOf(uri)),
+      scope: () => charged.get(uri)?.scope,
+    });
     const session = used.create({
       uri,
       chatUri,
@@ -3592,6 +3614,26 @@ export function createHost(options: HostOptions): Host {
         if (action.type === 'chat/turnStarted' && typeof action.queuedMessageId === 'string') {
           const waiting = senders.get(action.queuedMessageId);
           if (waiting !== undefined) senders.set(turn, waiting);
+        }
+        /*
+         * What this turn used, kept against it until it ends.
+         *
+         * Read here rather than where a turn is run because this is the one
+         * place every action a backend sends goes through, and before the
+         * sender is let go of below, because the record says who sent the work.
+         * The three endings are the ones `settleRun` reads: a turn that failed
+         * is ended by its `chat/error`, not by a completion after it.
+         */
+        if (metering !== undefined) {
+          if (action.type === 'chat/turnStarted') {
+            const asked = ((action.message ?? {}) as Bag).model;
+            metering.started(turn,
+              typeof action.startedAt === 'string' ? action.startedAt : new Date().toISOString(),
+              typeof (asked as Bag | undefined)?.id === 'string' ? ((asked as Bag).id as string) : undefined);
+          }
+          else if (action.type === 'chat/usage') metering.reported(turn, (action.usage ?? {}) as Bag);
+          else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
+            || action.type === 'chat/error') metering.ended(turn);
         }
         const sender = senderOf(turn);
         // A turn that has ended is let go of, once what a usage record will want

@@ -214,6 +214,16 @@ export interface HostOptions {
    */
   usage?: Usage;
   /**
+   * Whether a turn leaves one record, or each of its reports leaves one.
+   *
+   * `turn`, the default, holds each running turn's last report and writes it
+   * when the turn ends; `report` writes what each report added as it arrives, so
+   * a turn that is still running is already billed for what it has spent - the
+   * mode decision `the-agent-meter-writes-per-turn-or-per-report` chose between.
+   * It says nothing without a `usage` port.
+   */
+  usagePer?: 'turn' | 'report';
+  /**
    * Tools this host contributes to every session it runs.
    *
    * The protocol's `serverTools`: tools that are the *host's* rather than a

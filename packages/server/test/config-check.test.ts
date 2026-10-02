@@ -81,6 +81,10 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ http: { port: 0, host: '' } })).toContain(`${config}: http.host must be`);
   });
 
+  it('refuses a usage.per that is neither a turn nor a report', () => {
+    expect(refusal({ usage: { per: 'session' } })).toBe(`${config}: usage.per must be one of turn, report`);
+  });
+
   it('refuses http.host without http.port', () => {
     expect(refusal({ http: { host: '127.0.0.1' } })).toContain('http.host');
     expect(refusal({ http: { host: '127.0.0.1' } })).toContain('http.port');
@@ -130,6 +134,7 @@ describe('a valid file', () => {
       advancedTools: true,
       automations: 'memory',
       sessions: 'memory',
+      usage: { per: 'report' },
       wire: join(home, 'wire.jsonl'),
       http: { port: 0, host: '127.0.0.1' },
       plugins: ['a', { name: 'b', options: { x: 1 }, enabled: false }],
@@ -150,6 +155,7 @@ describe('a valid file', () => {
       advancedTools: true,
       automations: 'memory',
       sessions: 'memory',
+      usagePer: 'report',
       wire: join(home, 'wire.jsonl'),
       http: { port: 0, host: '127.0.0.1' },
       plugins: ['a', { name: 'b', options: { x: 1 }, enabled: false }],
@@ -172,7 +178,7 @@ describe('a valid file', () => {
     const options = folded({});
     expect(options).toMatchObject({
       port: 9187, host: '127.0.0.1', open: false, trustToken: false, advancedTools: false,
-      automations: 'file', sessions: 'file', plugins: [], updateCheck: true, warnings: [],
+      automations: 'file', sessions: 'file', usagePer: 'turn', plugins: [], updateCheck: true, warnings: [],
     });
   });
 });
@@ -189,6 +195,11 @@ describe('the schema', () => {
   it('gives http no flag', () => {
     expect(Object.keys(flagFields)).not.toContain('http');
     expect(Object.keys(serverFields)).toContain('http');
+  });
+
+  it('gives usage no flag either', () => {
+    expect(Object.keys(flagFields)).not.toContain('usage');
+    expect(Object.keys(serverFields)).toContain('usage');
   });
 
   it('names the keys Config does', () => {

@@ -1,7 +1,7 @@
 ---
 title: A turn writes what it used to the usage store, charged to its owner, team and project
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -15,6 +15,7 @@ decisions:
   - decisions/the-agent-meter-writes-per-turn-or-per-report.md
   - decisions/agent-usage-is-charged-to-owner-team-and-project-pools.md
   - decisions/usage-and-computer-time-are-two-records-behind-one-port.md
+  - decisions/a-model-record-with-no-model-named-has-an-empty-name.md
 refs:
   - "[code://packages/sdk/src/types/usage.ts](../../../../packages/sdk/src/types/usage.ts) - `ModelUse`, `UsageBase`, the `Usage` port"
   - "[code://packages/sdk/src/host.ts#L3585-L3600](../../../../packages/sdk/src/host.ts#L3585-L3600) - the dispatch loop, where a turn's sender is read and let go of"
@@ -38,6 +39,7 @@ A daemon configured for it writes one record per report instead of one per turn.
 | [One record per turn, or per report when configured](../../../decisions/the-agent-meter-writes-per-turn-or-per-report.md) | Softov, 2026-10-02 | 01, 02 |
 | [Pools are owner, `team:<team>` and `project:<team>:<project>`](../../../decisions/agent-usage-is-charged-to-owner-team-and-project-pools.md) | Softov, 2026-10-02 | 01 |
 | [Records share one base; model records nest `model`](../../../decisions/usage-and-computer-time-are-two-records-behind-one-port.md) | Softov, 2026-10-01 | 01 |
+| [A record with no model named has an empty name](../../../decisions/a-model-record-with-no-model-named-has-an-empty-name.md) | Softov, 2026-10-02 | 01 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -52,19 +54,19 @@ A daemon configured for it writes one record per report instead of one per turn.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host meters turns](task-01-the-host-meters-turns.md) | todo | - |
-| [02 - The daemon chooses per turn or per report](task-02-per-turn-or-per-report.md) | todo | 01 |
+| [01 - The host meters turns](task-01-the-host-meters-turns.md) | done | - |
+| [02 - The daemon chooses per turn or per report](task-02-per-turn-or-per-report.md) | done | 01 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** both tasks; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A completed, a cancelled and a failed turn each leave one record with the turn's last report, its owner, scope and pools.
-- [ ] Per report, the records of one turn sum to its last report.
-- [ ] A turn on a host with no users, or with no teams, writes a record charged to no pool.
-- [ ] Worker chats are not counted twice.
-- [ ] `usage/00-usage.md` runtime path updated; `plans/index.md` updated.
+- [x] A completed, a cancelled and a failed turn each leave one record with the turn's last report, its owner, scope and pools.
+- [x] Per report, the records of one turn sum to its last report.
+- [x] A turn on a host with no users, or with no teams, writes a record charged to no pool.
+- [x] Worker chats are not counted twice.
+- [x] `usage/00-usage.md` runtime path updated; `plans/index.md` updated.

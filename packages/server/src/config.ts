@@ -27,9 +27,22 @@ export interface HttpSetting {
 }
 
 /**
+ * How this host writes down what its work cost.
+ *
+ * `per: 'turn'` - the default - is one record for a turn, holding what the turn
+ * had used when it ended. `per: 'report'` is one record for every `chat/usage`,
+ * each holding what that report added since the one before it, which keeps a
+ * long turn's spending visible while it is still running.
+ */
+export interface UsageSetting {
+  /** `turn` writes one record when a turn ends, `report` one per report. */
+  per?: 'turn' | 'report';
+}
+
+/**
  * What a config file may say. Every key is what a flag would have said, or
- * `http` and `proxy`; the keys are `configSchema`'s, which the file is checked
- * against.
+ * `http`, `usage` and `proxy`; the keys are `configSchema`'s, which the file is
+ * checked against.
  */
 export interface Config {
   /** TCP port to bind. 0 lets the OS choose. */
@@ -56,6 +69,15 @@ export interface Config {
    * beside this configuration, or `memory` until the process ends.
    */
   sessions?: 'file' | 'memory';
+  /**
+   * How a turn is written down, one record per turn or one per report.
+   *
+   * `turn` is the default: the running sum every harness reports is held until
+   * the turn ends, and one record holds it. `report` writes each report's own
+   * addition as it arrives - decision
+   * `the-agent-meter-writes-per-turn-or-per-report`.
+   */
+  usage?: UsageSetting;
   /**
    * The file the people who may use this host are in.
    *

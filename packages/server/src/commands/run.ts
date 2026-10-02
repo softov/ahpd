@@ -358,6 +358,9 @@ export async function runForeground(options: Options): Promise<void> {
       folder: join(configDir(), 'usage'),
       onProblem: (message) => process.stdout.write(`${message}\n`),
     }),
+    // Whether that is one record per turn or one per report, which `usage.per`
+    // in the configuration file chose.
+    usagePer: options.usagePer,
     /*
      * When, as well as what.
      *
