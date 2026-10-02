@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { memoryAutomations } from '../src/automations.js';
+import { memorySessions } from '../src/sessions.js';
 import { idOf } from '../src/catalog.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Agent, Start } from '../src/types/agent.js';
+import type { StartSession } from '../src/types/automations.js';
+import type { Principal, Users } from '../src/types/users.js';
 import type { Chosen, MessageFrom, Session } from '../src/types/session.js';
 
 /*
@@ -91,6 +94,7 @@ const runState = async (
       lifecycle: { status: string; startedAt?: string; completedAt?: string; error?: { message?: string } };
       sessions: string[];
       primarySession?: string;
+      owner?: string;
     };
   };
 }).snapshot.state;
@@ -599,4 +603,95 @@ it('lets go of a session a run was holding when the session is disposed', async 
   }).snapshot.state;
   expect(state.sessions).toEqual([]);
   expect(state.primarySession).toBeUndefined();
+});
+
+/*
+ * Whose work an automation is.
+ *
+ * An automation is work nobody starts, so nothing about it says who to charge
+ * until somebody records that: the connection that created it, and from then
+ * on every run it makes - scheduled or pressed - is that person's.
+ */
+
+const ana: Principal = { id: 'ana', roles: [], can: () => true, teams: [{ id: 'backend' }] };
+
+const people = (): Users => ({
+  resource: {
+    resource: 'ahpd://users',
+    resource_name: 'ahpd users',
+    authorization_servers: ['https://example.test/users'],
+    required: false,
+  },
+  verify: async () => undefined,
+  list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
+  add: async () => {},
+  teams: async () => [{ id: 'backend' }],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
+  remove: async () => false,
+  mint: async () => 'nonsense',
+});
+
+it('records whose work an automation is, and gives every run of it that owner', async () => {
+  const store = memoryAutomations();
+  const asked: StartSession[] = [];
+  const start = async (options: StartSession): Promise<string> => { asked.push(options); return 'echo:/one'; };
+
+  expect(store.create(ONE, DEFINITION, 'user:ana').owner).toBe('user:ana');
+  expect(store.get(ONE)?.owner).toBe('user:ana');
+  // A patch does not move it: a colleague who edited the definition did not
+  // take it over.
+  store.update(ONE, { title: 'Renamed' });
+  expect(store.get(ONE)?.owner).toBe('user:ana');
+
+  const run = await store.run(ONE, { kind: 'manual' }, start);
+  expect(run?.owner).toBe('user:ana');
+  // And the session is handed the owner too, because the host is what opens
+  // it and a store that fetched the owner to do that would be a second thing.
+  expect(asked[0]?.owner).toBe('user:ana');
+
+  // An automation made before this names nobody, and neither does a run of it.
+  expect(store.create('ahp-automation:/plain', DEFINITION).owner).toBeUndefined();
+  const older = await store.run('ahp-automation:/plain', { kind: 'trigger' }, start);
+  expect(older?.owner).toBeUndefined();
+  expect(asked[1]?.owner).toBeUndefined();
+});
+
+it('takes the owner from the connection that made it, and a run is that person\'s work', async () => {
+  const store = memoryAutomations();
+  const sessions = memorySessions();
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR, pace: 0 })],
+    automations: store,
+    sessions,
+    users: people(),
+  });
+  const client = host.accept(peer(), ana);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await write(client, DEFINITION);
+
+  // The catalogue says whose it is, which is the whole of what a create knows
+  // that a definition does not.
+  expect((await entries(client))[0]).toMatchObject({ owner: 'user:ana' });
+  expect(store.get(ONE)?.owner).toBe('user:ana');
+
+  // A run pressed here is still that person's work: the manual origin is
+  // `{ kind: 'manual' }` and carries nobody, and what runs at nine is the
+  // thing somebody wrote rather than whoever presses the button.
+  const run = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
+  }) as { resource: string };
+  const state = await runState(client, run.resource);
+  expect(state.owner).toBe('user:ana');
+  // And the session it started is owned the same way.
+  expect(sessions.owner(idOf(state.primarySession ?? ''))).toBe('user:ana');
 });

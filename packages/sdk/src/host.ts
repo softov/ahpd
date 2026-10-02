@@ -54,6 +54,7 @@ import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { RunEnding, StartSession } from './types/automations.js';
 import type { Peer } from './types/rpc.js';
+import type { Owner } from './types/usage.js';
 
 /** `file://` and a path. A string, so this file needs no filesystem to say it. */
 const uriOf = (path: string): string => `file://${path}`;
@@ -3580,19 +3581,42 @@ export function createHost(options: HostOptions): Host {
           const dir = dirOf(uri);
           if (dir !== undefined) void refreshWatched(dir);
         }
+        /*
+         * Who sent this turn, and a queued one finding out which turn it became.
+         *
+         * The sender was recorded against the queued message's id, because that
+         * is the only id a queued message has; the backend names the turn it
+         * ran as, and the sender follows it there.
+         */
+        const turn = String(action.turnId ?? '');
+        if (action.type === 'chat/turnStarted' && typeof action.queuedMessageId === 'string') {
+          const waiting = senders.get(action.queuedMessageId);
+          if (waiting !== undefined) senders.set(turn, waiting);
+        }
+        const sender = senderOf(turn);
+        // A turn that has ended is let go of, once what a usage record will want
+        // has been read off it.
+        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') senders.delete(turn);
         // The two ends of a turn, as the host sees them: the backend saying it
         // began, and saying it finished or was stopped. A per-token delta is
         // not an event, because a plugin that wants the stream is a client.
         if (action.type === 'chat/turnStarted') {
-          void fire({ type: 'turn_start', session: uri, chat: chatUri, turn: String(action.turnId ?? '') });
+          void fire({
+            type: 'turn_start',
+            session: uri,
+            chat: chatUri,
+            turn,
+            ...(sender === undefined ? {} : { sender }),
+          });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
           void fire({
             type: 'turn_end',
             session: uri,
             chat: chatUri,
-            turn: String(action.turnId ?? ''),
+            turn,
             status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
+            ...(sender === undefined ? {} : { sender }),
           });
         }
         /*
@@ -4145,6 +4169,67 @@ export function createHost(options: HostOptions): Host {
 
   /** What each session's work is charged to, refusal included, by session uri. */
   const charged = new Map<string, ScopeAnswer | undefined>();
+
+  /**
+   * Whose work a session started on this connection is.
+   *
+   * A typed reference, the spelling the usage rules use - decision
+   * `work-is-owned-by-a-typed-reference`. A person who has signed in owns what
+   * they start, and a root connection is the host itself rather than somebody.
+   * A host with no users directory has nobody to name at all, so a session
+   * there records no owner rather than one that says nothing.
+   */
+  const ownerFor = (connection: Connection): Owner | undefined => {
+    if (options.users === undefined) return undefined;
+    if (connection.principal !== undefined) return `user:${connection.principal.id}`;
+    return connection.root === true ? `root:${options.hostName ?? 'host'}` : undefined;
+  };
+
+  /**
+   * The principal behind each owner, for as long as this process runs.
+   *
+   * The owner says whose the work is and outlives a restart; what a scope is
+   * resolved against is the memberships behind that name, and the directory
+   * answers those afresh every time - so a session whose owner has since moved
+   * teams is charged under what they hold now. Keyed by the owner rather than
+   * by the session, so one person opening twenty sessions is one entry.
+   */
+  const principals = new Map<string, Principal>();
+
+  /** The person an owner names, or nothing where this process never met them. */
+  const principalFor = (owner: Owner | undefined): Principal | undefined =>
+    owner === undefined ? undefined : principals.get(owner);
+
+  /**
+   * What a session opened on behalf of an owner is told, and nothing where
+   * nobody owns it.
+   *
+   * The person rides along whenever this host knows them - whoever asked now,
+   * or whoever it met before - because that is what a scope change before the
+   * first turn is resolved against.
+   */
+  const forWhom = (owner: Owner | undefined, principal?: Principal): { owner: Owner; principal?: Principal } | undefined => {
+    if (owner === undefined) return undefined;
+    const person = principal ?? principalFor(owner);
+    return { owner, ...(person === undefined ? {} : { principal: person }) };
+  };
+
+  /**
+   * Who sent each running turn, by the id the host handed it.
+   *
+   * The same typed reference a session's owner is, and the same connection:
+   * a person who asks a question sends the turn, and a turn an automation
+   * started is the automation's owner's rather than anybody's (task 03).
+   *
+   * By turn rather than by session because two people can be talking in one
+   * session and only the turn says which of them it was, and it lasts as long
+   * as the turn does - a turn that has ended is let go of, and nothing is kept
+   * for a session's history, where the usage record will already have it.
+   */
+  const senders = new Map<string, Owner>();
+
+  /** Who sent this turn, or nobody where this host did not start it. */
+  const senderOf = (turn: string): Owner | undefined => senders.get(turn);
 
   /**
    * Resolve what a session is charged to and write the answer down.
@@ -4903,6 +4988,8 @@ export function createHost(options: HostOptions): Host {
    * Answers why the command cannot run when the backend has no `Session.ran`,
    * for the caller to refuse with; handing the text to the model instead is
    * the one thing the prefix promises not to do.
+   *
+   * `sender` is who asked, held against this turn for as long as it runs.
    */
   const beginOrRun = (
     session: Session,
@@ -4911,6 +4998,7 @@ export function createHost(options: HostOptions): Host {
     text: string,
     model: ReturnType<typeof modelIn>,
     from: MessageFrom | undefined,
+    sender?: Owner,
     queuedAs?: string,
   ): string | undefined => {
     /*
@@ -4923,6 +5011,15 @@ export function createHost(options: HostOptions): Host {
      */
     const uncharged = charged.get(session.uri)?.refusal;
     if (uncharged !== undefined) return uncharged;
+    /*
+     * Who sent it, against the id this turn will be known by: the turn id when
+     * it starts now, and the queued message's id when it waits its turn. A
+     * queued message is one turn that has not been given an id yet, and the
+     * backend says which turn it became when it runs - so the sender is moved
+     * across there rather than looked for here under an id it will never
+     * carry again.
+     */
+    if (sender !== undefined) senders.set(queuedAs ?? turnId, sender);
     const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
     if (command === '' || !options.terminals) {
       if (queuedAs === undefined) session.begin(turnId, text, model, from);
@@ -5316,7 +5413,11 @@ export function createHost(options: HostOptions): Host {
       // the backend's.
       const where = await isolated(made, config, asked.workingDirectory);
       await settle(made, asked.workingDirectory, config);
-      openSession(made, provider, backendsOwn(config), where, undefined, undefined, undefined, asked.title);
+      // The owner of the session this one was made inside, which is what a
+      // tool acting for somebody means: the work is theirs whichever session
+      // it ends up running in.
+      openSession(made, provider, backendsOwn(config), where, undefined, undefined, undefined, asked.title,
+        forWhom(kept.owner(idOf(uri))));
       const lead = byChat.get(chatUriFor(made));
       if (lead === undefined) throw new Error(`${made} did not start`);
       lead.chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
@@ -6166,6 +6267,11 @@ export function createHost(options: HostOptions): Host {
    * somebody made, and an automation coming round at nine in the morning is
    * not. Both need the same eight steps, and a second copy of them would be a
    * second answer to what creating a session means.
+   *
+   * `by` is who asked: whose the work belongs to, and the person behind a
+   * `user:` owner, which is what a later scope change is resolved against. An
+   * automation carries a name rather than a connection, so it passes the first
+   * and leaves the second to the directory.
    */
   const openSession = (
     uri: string,
@@ -6176,6 +6282,7 @@ export function createHost(options: HostOptions): Host {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
+    by?: { owner?: Owner; principal?: Principal },
   ): void => {
     named(uri, 'session');
     if (sessions.has(uri))
@@ -6184,6 +6291,13 @@ export function createHost(options: HostOptions): Host {
     const agent = agents.get(provider);
     if (!agent)
       throw new RpcError(-32002, `No provider called ${provider}`);
+    // Whose this is, written down beside the session rather than in its config:
+    // a backend is handed `config` when it resumes and has no idea what an
+    // owner is, and this outlives the process that decided it.
+    if (by?.owner !== undefined) {
+      kept.setOwner(idOf(uri), by.owner);
+      if (by.principal !== undefined) principals.set(by.owner, by.principal);
+    }
     // Snapshotted before the backend is handed its tools, so this session's
     // whole life runs under the strategy the root config named at this
     // moment and a later root change waits for the next session.
@@ -6271,6 +6385,10 @@ export function createHost(options: HostOptions): Host {
       backendsOwn(config),
       where,
       wanted.origin,
+      undefined,
+      undefined,
+      undefined,
+      forWhom(wanted.owner),
     );
     // The only place that knows a session was started by a clock rather than a
     // person, and the run it belongs to.
@@ -6278,7 +6396,13 @@ export function createHost(options: HostOptions): Host {
       void fire({ type: 'automation_fire', automation: wanted.origin.automation, run: wanted.origin.run });
     }
     const chatUri = chatUriFor(uri);
-    byChat.get(chatUri)?.chat.begin(crypto.randomUUID(), wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
+    // The first turn is sent by whoever made the automation, whoever pressed
+    // the button or whose clock came round - and by nobody at all where the
+    // automation names no owner, which is the absence this host already knows
+    // how to answer for.
+    const turnId = crypto.randomUUID();
+    if (wanted.owner !== undefined) senders.set(turnId, wanted.owner);
+    byChat.get(chatUri)?.chat.begin(turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
     return uri;
   };
 
@@ -7433,6 +7557,10 @@ export function createHost(options: HostOptions): Host {
          * the whole of `AutomationManualRunOrigin` - it carries no room for
          * who asked, and a run's origin goes on the wire in every catalogue
          * row the automation appears in.
+         *
+         * Which is why a run pressed here is the automation maker's work and
+         * not the presser's: the owner rides on the automation and travels
+         * with the run, and this origin says only that a person pressed it.
          */
         runAutomation: async (params) => {
           const store = need(options.automations, 'runAutomation');
@@ -7553,6 +7681,7 @@ export function createHost(options: HostOptions): Host {
             }
             forgetExpiry(resource);
             connection.principal = held;
+            principals.set(`user:${held.id}`, held);
             if (ownId(connection.clientId)) holders.set(connection.clientId, held.id);
             if (expiresIn !== undefined) {
               connection.principalUntil = Date.now() + expiresIn * 1000;
@@ -7947,7 +8076,11 @@ export function createHost(options: HostOptions): Host {
             // how every session worked before there was anything to push.
             // Handed over, since `openSession` refuses a name this still holds.
             release();
-            openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), peers);
+            // Whose this is: this connection's person, kept beside the session
+            // so a scope change before the first turn is resolved against who
+            // owns the work rather than against whoever sent it.
+            openSession(uri, provider, backendsOwn(config), running, undefined, tokensFor(provider), peers, undefined,
+              forWhom(ownerFor(connection), connection.principal));
             if (!claims.has(given)) claims.set(given, { kind: 'session', of: uri });
             // Complete, which the protocol spells as `progress === total`.
             along(2, 'Ready');
@@ -8103,7 +8236,7 @@ export function createHost(options: HostOptions): Host {
             // No action to refuse here: a first message that cannot run as a
             // command fails the call, which the client shows as the chat not
             // opening with it.
-            const refused = beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_));
+            const refused = beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), ownerFor(connection));
             if (refused !== undefined) throw new Error(refused);
           }
           return {};
@@ -8980,6 +9113,10 @@ export function createHost(options: HostOptions): Host {
          * actually holds with `automation/set`. So neither of these echoes:
          * what goes out is the store's answer, which is not necessarily what
          * was asked for.
+         *
+         * A create is also where an automation learns whose work it is, from
+         * this connection - and a patch never moves it, because a colleague
+         * who edited the definition did not take it over.
          */
         if (type === 'automation/createRequested' || type === 'automation/updateRequested') {
           const store = options.automations;
@@ -8992,7 +9129,7 @@ export function createHost(options: HostOptions): Host {
           const made = type === 'automation/createRequested'
             ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
               ? action.definition
-              : {}) as Bag)
+              : {}) as Bag, ownerFor(connection))
             : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
               ? action.changes
               : {}) as Bag);
@@ -9304,7 +9441,7 @@ export function createHost(options: HostOptions): Host {
               turn: String(action.turnId ?? ''),
               text: String(message.text ?? ''),
             });
-            const refused = beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message));
+            const refused = beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection));
             if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
           })();
           return;
@@ -9359,7 +9496,7 @@ export function createHost(options: HostOptions): Host {
             // whether or not the backend is free to run it this moment.
             void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
             const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-            const refused = beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message));
+            const refused = beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection));
             if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
             break;
           }
@@ -9599,10 +9736,28 @@ export function createHost(options: HostOptions): Host {
                 const mine = { ...settled };
                 for (const [key, value] of [...ours, ...rescoped]) mine[key] = value as string;
                 decided.set(session.uri, mine);
-                // What the work is charged to is decided with the rest of the
-                // window, so a scope that moved is resolved again here or the
-                // turn would be charged to the session it was created as.
-                if (rescoped.length > 0) charge(session.uri, connection.principal, mine.scope);
+                /*
+                 * What the work is charged to is decided with the rest of the
+                 * window, so a scope that moved is resolved again here or the
+                 * turn would be charged to the session it was created as.
+                 *
+                 * Resolved against the session's owner and not against whoever
+                 * sent the change: the work belongs to the person who started
+                 * it, and a colleague who can see the session is not thereby
+                 * able to move its charge onto their own team. A root-owned
+                 * session names no person, so it goes to nobody - and a session
+                 * this host began before it recorded an owner is answered for
+                 * exactly as it always was. An owner this process has not seen
+                 * sign in cannot be checked, so the turn is refused until they do.
+                 */
+                if (rescoped.length > 0) {
+                  const owner = kept.owner(idOf(session.uri));
+                  const person = owner === undefined ? connection.principal : principalFor(owner);
+                  if (owner?.startsWith('user:') === true && person === undefined) {
+                    charged.set(session.uri, { refusal: `${owner.slice('user:'.length)} has to sign in once before this session's scope can change` });
+                  }
+                  else charge(session.uri, person, mine.scope);
+                }
                 const uri = session.uri;
                 /** What the clients are told, once the decision is in force. */
                 const tell = (): void => {
@@ -9867,6 +10022,7 @@ export function createHost(options: HostOptions): Host {
               String(message.text ?? ''),
               modelIn(model),
               messageFrom(message),
+              ownerFor(connection),
               String(action.id ?? ''),
             );
             if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);

@@ -13,6 +13,7 @@ import type { Emit } from '../src/types/session.js';
 import type { TerminalStore } from '../src/types/terminals.js';
 import type { PluginContext } from '../src/types/plugin.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Principal, Users } from '../src/types/users.js';
 
 /*
  * The first events, at the host's own moments.
@@ -130,6 +131,55 @@ const probeTool = (run: () => Promise<string> | string): HostTool => ({
   run,
 });
 
+/** Two people, because who sent a turn is a connection's business and not a session's. */
+const PEOPLE: Record<string, Principal> = {
+  ana: {
+    id: 'ana', roles: [], can: () => true,
+    memberships: ['backend:ahpd'], primary: 'backend:ahpd', projects: [{ id: 'ahpd' }], teams: [{ id: 'backend' }],
+  },
+  bo: {
+    id: 'bo', roles: [], can: () => true,
+    memberships: ['backend:controllr'], primary: 'backend:controllr', projects: [{ id: 'controllr' }],
+    teams: [{ id: 'backend' }],
+  },
+};
+
+/** A directory, for a host to have somebody to name. Nobody authenticates against it here. */
+const directory = (): Users => ({
+  resource: { resource: 'ahpd://users', resource_name: 'ahpd users', authorization_servers: [], required: false },
+  verify: async () => undefined,
+  list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
+  add: async () => {},
+  teams: async () => [{ id: 'backend' }],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
+  remove: async () => false,
+  mint: async () => 'nonsense',
+});
+
+/** A turn event as the two facts a turn carries: which one, and who sent it. */
+const asked = (event: HostEvent): { turn: string; sender?: string } => {
+  const { turn, sender } = event as { turn: string; sender?: string };
+  return sender === undefined ? { turn } : { turn, sender };
+};
+
+/** One client saying something into a chat, under the id it calls the turn. */
+const send = (
+  client: ReturnType<ReturnType<typeof createHost>['accept']>,
+  channel: string,
+  id: string,
+  text: string,
+  type = 'chat/turnStarted',
+) => client.handle({
+  method: 'dispatchAction',
+  params: { channel, action: { type, id, kind: 'queued', turnId: id, message: { text } } },
+});
+
 it('fires session_start with its provider, and session_end when it is disposed', async () => {
   const { seen, client } = watched();
   await hello(client);
@@ -187,6 +237,76 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
   expect(ended[0]).toMatchObject({ turn: 'turn-c', status: 'cancelled' });
+});
+
+it('names who sent each turn, and a queued message keeps its sender when it runs', async () => {
+  const { seen, host } = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory() });
+  const chat = 'ahp-chat:/shared';
+  const ana = host.accept(peer(), PEOPLE.ana);
+  await hello(ana);
+  await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/shared', provider: 'echo' } });
+  const bo = host.accept(peer(), PEOPLE.bo);
+  await hello(bo);
+
+  // One session, two people, and a question each of them asked in it: the
+  // session says whose work it is, and only the turn says which of them it was.
+  await send(ana, chat, 'turn-a', 'hello there');
+  await wait(100);
+  await send(bo, chat, 'turn-b', 'and again');
+  await wait(100);
+  await send(bo, chat, 'turn-c', 'last one');
+  // And one that waited its turn, which the backend reports under the queued
+  // message's id rather than under a turn id the host never chose.
+  await send(bo, chat, 'left-behind', 'and one more', 'chat/pendingMessageSet');
+  await wait(200);
+
+  const started = of(seen, 'turn_start').map(asked);
+  expect(started).toHaveLength(4);
+  expect(started.slice(0, 3)).toEqual([
+    { turn: 'turn-a', sender: 'user:ana' },
+    { turn: 'turn-b', sender: 'user:bo' },
+    { turn: 'turn-c', sender: 'user:bo' },
+  ]);
+  expect(started[3]).toEqual({ turn: expect.stringMatching(/[0-9a-f-]{36}/), sender: 'user:bo' });
+  // And the sender a usage record will want is on the end of the turn too.
+  expect(of(seen, 'turn_end').map(asked)).toEqual(started);
+});
+
+it('names the maker of an automation as the sender of the turn it started', async () => {
+  const store = memoryAutomations();
+  const { seen, host } = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), automations: store });
+  const ana = host.accept(peer(), PEOPLE.ana);
+  await hello(ana);
+  await ana.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: AUTOMATIONS,
+      action: {
+        type: 'automation/createRequested',
+        resource: 'ahp-automation:/nightly',
+        definition: {
+          title: 'Nightly',
+          enabled: true,
+          message: { text: 'review what changed today' },
+          session: { provider: 'echo', workingDirectories: [`file://${DIR}`] },
+          triggers: [],
+        },
+      },
+    },
+  });
+  expect(store.get('ahp-automation:/nightly')?.owner).toBe('user:ana');
+
+  // Somebody else presses Run, and there is nobody at the keyboard to send the
+  // turn it starts: it is sent by whoever wrote the automation down.
+  const bo = host.accept(peer(), PEOPLE.bo);
+  await hello(bo);
+  await bo.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: 'ahp-automation:/nightly', requestId: 'r1' },
+  });
+  await wait(200);
+
+  expect(of(seen, 'turn_start').map(asked))
+    .toEqual([{ turn: expect.stringMatching(/[0-9a-f-]{36}/), sender: 'user:ana' }]);
 });
 
 it('fires tool_call once, after a host tool answered', async () => {

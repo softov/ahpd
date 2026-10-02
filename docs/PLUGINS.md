@@ -266,8 +266,8 @@ does not stop the next handler or the action it observed.
 | --- | --- |
 | `session_start` | `session`, `provider` |
 | `session_end` | `session`, `reason` |
-| `turn_start` | `session`, `chat`, `turn` |
-| `turn_end` | `session`, `chat`, `turn`, `status` (`complete` or `cancelled`) |
+| `turn_start` | `session`, `chat`, `turn`, and `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it |
+| `turn_end` | `session`, `chat`, `turn`, `status` (`complete` or `cancelled`), and `sender` as on `turn_start` |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
 | `input_needed_set` | `session`, `chat`, `id`, `kind` |

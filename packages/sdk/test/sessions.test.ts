@@ -18,12 +18,15 @@ import { fileSessions, memorySessions } from '../src/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { SessionStore } from '../src/types/sessions.js';
+import type { Principal, Users } from '../src/types/users.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
 /** `Status.IsArchived`, which is what a client sets when it puts a row away. */
 const ARCHIVED = 64;
 const READ = 32;
+/** The name the daemon would pass from the machine's hostname. */
+const HOST = 'builder';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-store-')); });
@@ -33,10 +36,42 @@ const peer = (): Peer => ({
   send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
 });
 
-/** A host on this store, with one echo session open. */
-async function running(store: SessionStore) {
-  const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], sessions: store });
-  const client = host.accept(peer());
+const RECORD = {
+  resource: 'ahpd://users',
+  resource_name: 'ahpd users',
+  authorization_servers: ['https://example.test/users'],
+  required: false,
+};
+
+/** One person, and no teams: enough for a session to have somebody to belong to. */
+const ana: Principal = { id: 'ana', roles: [], can: () => true, teams: [{ id: 'backend' }] };
+
+const people = (): Users => ({
+  resource: RECORD,
+  verify: async (token) => (token === 'ana' ? ana : undefined),
+  list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
+  add: async () => {},
+  teams: async () => [{ id: 'backend' }],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
+  remove: async () => false,
+  mint: async () => 'nonsense',
+});
+
+/** A host on this store, with one echo session open, as whoever was asked for. */
+async function running(store: SessionStore, who?: { principal?: Principal; root?: boolean }) {
+  const host = createHost({
+    path: root,
+    agents: [echo({ path: root, pace: 0 })],
+    sessions: store,
+    ...(who === undefined ? {} : { users: people(), hostName: HOST }),
+  });
+  const client = host.accept(peer(), who?.principal, who?.root === true);
   await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
@@ -186,6 +221,76 @@ it('keeps a session\'s pull request baseline across a restart, empty included, a
   const after = fileSessions({ file });
   expect(after.pullRequests('a')).toBeUndefined();
   expect(after.pullRequests('b')).toEqual(none);
+});
+
+it('keeps whose work a session is across a restart, and forgets it with the session', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  store.setOwner('a', 'user:ana');
+  store.setOwner('b', 'root:builder');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([
+    { id: 'a', owner: 'user:ana' },
+    { id: 'b', owner: 'root:builder' },
+  ]);
+  // Read back by a second store on the same file, which is what a restart is.
+  const second = fileSessions({ file });
+  expect(second.owner('a')).toBe('user:ana');
+  expect(second.owner('b')).toBe('root:builder');
+  expect(second.owner('nobody')).toBeUndefined();
+  second.setOwner('a', undefined);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ file }).owner('a')).toBeUndefined();
+  second.forget('b');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([]);
+  expect(memorySessions().owner('a')).toBeUndefined();
+});
+
+it('reads a row that names no owner as one nobody owns', () => {
+  const file = join(root, 'sessions.json');
+  // What a version that did not record owners wrote, and a row whose owner is
+  // not a typed reference: both are ignored rather than guessed at.
+  writeFileSync(file, JSON.stringify({
+    version: 1,
+    sessions: [{ id: 'a', flags: READ }, { id: 'b', owner: 'ana' }, { id: 'c', owner: 'user:' }],
+  }));
+  const store = fileSessions({ file });
+  expect(store.flags('a')).toBe(READ);
+  expect(store.owner('a')).toBeUndefined();
+  expect(store.owner('b')).toBeUndefined();
+  expect(store.owner('c')).toBeUndefined();
+});
+
+it('records no owner on a host with no directory to name somebody in', async () => {
+  const store = memorySessions();
+  await running(store);
+  expect(store.owner('one')).toBeUndefined();
+});
+
+it('names the person who created a session, and the host itself for a root connection', async () => {
+  const signed = memorySessions();
+  await running(signed, { principal: ana });
+  expect(signed.owner('one')).toBe('user:ana');
+
+  // The deployment's own token is the host rather than somebody, and it is
+  // named after the daemon so the owner is one a reader can act on.
+  const root = memorySessions();
+  await running(root, { root: true });
+  expect(root.owner('one')).toBe('root:builder');
+});
+
+it('keeps the owner beside a session a later daemon resumes', async () => {
+  const file = join(root, 'sessions.json');
+  const store = fileSessions({ file });
+  await running(store, { principal: ana });
+  // The write is coalesced onto the next tick, so this is the restart happening
+  // after it rather than a test waiting for nothing.
+  await new Promise((tick) => { setTimeout(tick, 5); });
+
+  // A second host on the same file is a daemon that came back, and the session
+  // it was asked about still says who it belongs to.
+  expect(fileSessions({ file }).owner('one')).toBe('user:ana');
 });
 
 it('keeps the titles chats were given, and forgets them with the session', async () => {

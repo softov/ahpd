@@ -1,7 +1,7 @@
 ---
 title: A session and an automation say who owns them, and a turn says who sent it
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-01
 revalidated: 2026-10-01
@@ -61,9 +61,9 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session records its owner](task-01-session-owner.md) | todo | - |
-| [02 - A turn knows who sent it](task-02-turn-sender.md) | todo | - |
-| [03 - An automation records its creator, and a run carries it](task-03-automation-owner.md) | todo | - |
+| [01 - A session records its owner](task-01-session-owner.md) | done | - |
+| [02 - A turn knows who sent it](task-02-turn-sender.md) | done | - |
+| [03 - An automation records its creator, and a run carries it](task-03-automation-owner.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -73,12 +73,11 @@ connection.principal -> createSession -> session owner (persisted) ; sendMessage
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-01.
-- **Next action:** [task-01-session-owner.md](task-01-session-owner.md).
+- **Done so far:** built 2026-10-02; see [implemented.md](implemented.md).
+- **Next action:** the agent meter, which reads the owner and the turn's sender.
 - **Open questions:** none.
-- **Watch out for:** the owner is host-side only; the protocol's session state has no field for it.
 
 ## Final verification checklist
 
-- [ ] A session created by a signed-in person still names them as owner after a daemon restart.
-- [ ] `plans/index.md` updated.
+- [x] A session created by a signed-in person still names them as owner after a daemon restart.
+- [x] `plans/index.md` updated.

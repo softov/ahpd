@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Scope } from './scopes.js';
 import type { PullRequestBaseline, SessionStore } from './types/sessions.js';
+import type { Owner } from './types/usage.js';
 
 /**
  * What the file store needs beyond the port.
@@ -29,6 +30,7 @@ export function memorySessions(): SessionStore & HeldChatTitles {
   const flags = new Map<string, number>();
   const config = new Map<string, Record<string, unknown>>();
   const scope = new Map<string, Scope | null>();
+  const owners = new Map<string, Owner>();
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
@@ -39,6 +41,8 @@ export function memorySessions(): SessionStore & HeldChatTitles {
     setConfig: (id, values) => { config.set(id, values); },
     scope: (id) => scope.get(id),
     setScope: (id, value) => { if (value === undefined) scope.delete(id); else scope.set(id, value); },
+    owner: (id) => owners.get(id),
+    setOwner: (id, value) => { if (value === undefined) owners.delete(id); else owners.set(id, value); },
     artifacts: (id) => artifacts.get(id),
     setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
     pullRequests: (id) => pullRequests.get(id),
@@ -58,7 +62,7 @@ export function memorySessions(): SessionStore & HeldChatTitles {
       const held = chatTitles.get(id);
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
+    forget: (id) => { flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); },
   };
 }
 
@@ -76,6 +80,15 @@ export interface FileSessionOptions {
   onProblem?(message: string): void;
 }
 
+/**
+ * A typed reference as the file wrote it, or nothing when it is not one.
+ *
+ * The four kinds `Owner` names, and an id after the colon. Anything else is
+ * ignored rather than guessed at, the way every other field here is.
+ */
+const ownerOf = (value: unknown): Owner | undefined =>
+  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
+
 /** What is persisted. Versioned, so a later shape can be recognised rather than guessed at. */
 interface Saved {
   version: 1;
@@ -84,6 +97,7 @@ interface Saved {
     flags?: number;
     config?: Record<string, unknown>;
     scope?: Scope | null;
+    owner?: string;
     artifacts?: Record<string, unknown>[];
     pullRequests?: PullRequestBaseline;
     chatTitles?: Record<string, string>;
@@ -129,6 +143,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
         const flags = inner.flags(id);
         const config = inner.config(id);
         const scope = inner.scope(id);
+        const owner = inner.owner(id);
         const artifacts = inner.artifacts(id);
         const pullRequests = inner.pullRequests(id);
         const chatTitles = inner.chatTitlesOf(id);
@@ -137,6 +152,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           ...(flags === 0 ? {} : { flags }),
           ...(config === undefined ? {} : { config }),
           ...(scope === undefined ? {} : { scope }),
+          ...(owner === undefined ? {} : { owner }),
           ...(artifacts === undefined ? {} : { artifacts }),
           ...(pullRequests === undefined ? {} : { pullRequests }),
           ...(chatTitles === undefined || Object.keys(chatTitles).length === 0 ? {} : { chatTitles }),
@@ -144,7 +160,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       // A row with none of them is a session somebody looked at and left
       // alone, which is nothing to remember.
       }).filter((row) => row.flags !== undefined || row.config !== undefined || row.scope !== undefined
-        || row.artifacts !== undefined || row.pullRequests !== undefined || row.chatTitles !== undefined),
+        || row.owner !== undefined || row.artifacts !== undefined || row.pullRequests !== undefined
+        || row.chatTitles !== undefined),
     };
     try {
       mkdirSync(dirname(file), { recursive: true });
@@ -198,6 +215,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           ? { team: scope.team }
           : { team: scope.team, project: scope.project });
       }
+      const owner = ownerOf(row.owner);
+      if (owner !== undefined) inner.setOwner(row.id, owner);
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
       // Only an object with two arrays of strings is a baseline this version
       // understands; anything else is ignored rather than guessed at.
@@ -229,6 +248,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setConfig: (id, values) => { known.add(id); inner.setConfig(id, values); later(); },
     scope: (id) => inner.scope(id),
     setScope: (id, value) => { known.add(id); inner.setScope(id, value); later(); },
+    owner: (id) => inner.owner(id),
+    setOwner: (id, value) => { known.add(id); inner.setOwner(id, value); later(); },
     artifacts: (id) => inner.artifacts(id),
     setArtifacts: (id, values) => { known.add(id); inner.setArtifacts(id, values); later(); },
     pullRequests: (id) => inner.pullRequests(id),

@@ -71,6 +71,15 @@ export interface HostOptions {
    */
   path: string;
   /**
+   * What this host is called, for the work nobody started as themselves.
+   *
+   * A root connection is the host rather than a person, and the owner such a
+   * session records is `root:<hostName>` - which is only a name a reader can
+   * act on if the host part is one somebody knows this box by. The daemon
+   * passes the machine's hostname; left out, the owner reads `root:host`.
+   */
+  hostName?: string;
+  /**
    * The backends this host serves.
    *
    * At least one, and each with a `provider` no other has. The first is what

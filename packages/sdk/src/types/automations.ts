@@ -3,6 +3,7 @@
 import type { AutomationOperation, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
 import type { Bag } from './common.js';
+import type { Owner } from './usage.js';
 
 /**
  * One automation, as the catalogue channel carries it.
@@ -16,6 +17,15 @@ export interface Automation {
   resource: string;
   /** What the client asked for. Opaque here except for `enabled` and `title`. */
   definition: Bag;
+  /**
+   * Who made it - decision `work-is-owned-by-a-typed-reference`.
+   *
+   * Set once, by the connection that created it, and never patched: an
+   * automation somebody else may run or switch off is still their work. Absent
+   * where nobody was behind it, which is every automation written before this
+   * and every one made on a host with no users directory.
+   */
+  owner?: Owner;
   /** ISO 8601, when a schedule says it will fire next. Absent for one nothing will fire. */
   nextRunAt?: string;
   /** Newest first. A summary per run, not the runs themselves. */
@@ -34,6 +44,14 @@ export interface AutomationRun {
   resource: string;
   /** The automation it is a run of. */
   automation: string;
+  /**
+   * Whose work this run is, which is the automation's owner.
+   *
+   * Not whoever pressed the button: the protocol's manual origin carries no
+   * room for who asked, and a run pressed by a colleague is still the
+   * automation maker's work. Absent where the automation names no owner.
+   */
+  owner?: Owner;
   /** Why it started: somebody pressed it, or a trigger fired. */
   origin: Bag;
   /** `pending`, `running`, `completed`, `failed`, `cancelled`, and when each happened. */
@@ -56,6 +74,14 @@ export interface StartSession {
   model?: unknown;
   /** The first message, which is what the automation is *for*. */
   text: string;
+  /**
+   * Whose work this session is, which is the automation's owner.
+   *
+   * Carried on the way in rather than looked up, because the host is what
+   * opens a session and a store that fetched the owner to do it would be a
+   * second thing holding the clock. Absent for an automation that names none.
+   */
+  owner?: Owner;
   /**
    * The run this session will belong to.
    *
@@ -106,8 +132,15 @@ export interface AutomationStore {
    */
   triggers(options: { provider?: string; workingDirectories?: string[] }): Bag[];
 
-  /** Write one the client has just described. */
-  create(resource: string, definition: Bag): Automation;
+  /**
+   * Write one the client has just described.
+   *
+   * `owner` is whose it is, from the connection that asked for it. Only
+   * `create` takes it: an automation's owner is fixed by the person who made
+   * it, and `update` patches a definition rather than moving the work to
+   * whoever edited it last.
+   */
+  create(resource: string, definition: Bag, owner?: Owner): Automation;
   /** Patch one. Absent keys are left alone, which is what a patch means. */
   update(resource: string, changes: Bag): Automation | undefined;
   /** Forget one, and everything it ever did. */

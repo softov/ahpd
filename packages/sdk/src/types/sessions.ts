@@ -1,4 +1,5 @@
 import type { Scope } from '../scopes.js';
+import type { Owner } from './usage.js';
 
 /**
  * The pull requests a session's branch had when it started, and the ones it
@@ -69,6 +70,18 @@ export interface SessionStore {
    * who is not there.
    */
   setScope(id: string, value: Scope | null | undefined): void;
+  /**
+   * Whose work this is, as a typed reference - decision
+   * `work-is-owned-by-a-typed-reference`.
+   *
+   * `user:<id>` for the person who created it and `root:<host>` for a session
+   * a root connection started. Undefined where nobody owns it: a host with no
+   * users directory has no person to name, and neither has a session this host
+   * began before it recorded one.
+   */
+  owner(id: string): Owner | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setOwner(id: string, value: Owner | undefined): void;
   /**
    * What the agent recorded as worth coming back to, or nothing where it
    * recorded nothing.

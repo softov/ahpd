@@ -16,6 +16,7 @@
 import type { SessionInputRequestKind } from '@microsoft/agent-host-protocol';
 
 import type { PluginContext } from './plugin.js';
+import type { Owner } from './usage.js';
 
 /**
  * Every moment a plugin may subscribe to.
@@ -71,6 +72,12 @@ export interface TurnStartEvent {
   chat: string;
   /** The turn's id. */
   turn: string;
+  /**
+   * Who sent it, as a typed reference - decision
+   * `work-is-owned-by-a-typed-reference`. Absent where nobody sent it on this
+   * host: no users directory to name, or a turn the backend began by itself.
+   */
+  sender?: Owner;
 }
 
 /** A turn that ended, and how. */
@@ -84,6 +91,8 @@ export interface TurnEndEvent {
   turn: string;
   /** `complete` when the backend finished it, `cancelled` when somebody stopped it. */
   status: 'complete' | 'cancelled';
+  /** Who sent it, as `TurnStartEvent.sender` says: the same name or nothing. */
+  sender?: Owner;
 }
 
 /**

@@ -82,11 +82,12 @@ export function memoryAutomations(): AutomationStore {
      */
     triggers: () => [],
 
-    create: (resource, definition) => {
+    create: (resource, definition, owner) => {
       const at = now();
       const made: Automation = {
         resource,
         definition,
+        ...(owner === undefined ? {} : { owner }),
         runs: [],
         operations: [],
         createdAt: at,
@@ -135,6 +136,15 @@ export function memoryAutomations(): AutomationStore {
       const run: AutomationRun = {
         resource: `ahp-automation-run:/${randomUUID()}`,
         automation: resource,
+        /*
+         * Whose work this is, whatever started it.
+         *
+         * Copied off the automation rather than off the origin, because the
+         * manual origin is `{ kind: 'manual' }` and carries nobody - and a run
+         * a colleague pressed is still the maker's work, since the thing that
+         * runs at nine is the thing somebody wrote.
+         */
+        ...(found.owner === undefined ? {} : { owner: found.owner }),
         origin,
         lifecycle: { status: 'pending', createdAt: now() },
         sessions: [],
@@ -158,6 +168,7 @@ export function memoryAutomations(): AutomationStore {
         ...(template.model !== undefined ? { model: template.model } : {}),
         text: typeof message.text === 'string' ? message.text : String(found.definition.title ?? ''),
         origin: { kind: 'automation', automation: resource, run: run.resource },
+        ...(found.owner === undefined ? {} : { owner: found.owner }),
       };
 
       /*

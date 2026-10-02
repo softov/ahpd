@@ -189,6 +189,37 @@ describe('across a restart', () => {
     expect(store.get(ONE)?.nextRunAt).toBe('2026-09-01T09:00:00.000Z');
   });
 
+  it('keeps whose work it is, and whose it was before it had one', () => {
+    const first = clockwork();
+    const one = scheduledAutomations({ file, now: first.now, timer: first.timer });
+    one.create(ONE, nightly(), 'user:ana');
+    one.create('ahp-automation:/older', nightly());
+    one.close?.();
+
+    expect(JSON.parse(readFileSync(file, 'utf8')).automations).toEqual([
+      expect.objectContaining({ resource: ONE, owner: 'user:ana' }),
+      expect.not.objectContaining({ owner: expect.anything() }),
+    ]);
+
+    const second = clockwork();
+    store = scheduledAutomations({ file, now: second.now, timer: second.timer });
+    expect(store.get(ONE)?.owner).toBe('user:ana');
+    // An automation written before this carried no owner, and saying so is
+    // what it says rather than one that names nobody.
+    expect(store.get('ahp-automation:/older')?.owner).toBeUndefined();
+  });
+
+  it('reads a row whose owner is not a typed reference as one nobody owns', () => {
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      automations: [{ resource: ONE, definition: nightly(), owner: 'ana' }],
+    }));
+    const clock = clockwork();
+    store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+    expect(store.get(ONE)?.definition.title).toBe('Nightly review');
+    expect(store.get(ONE)?.owner).toBeUndefined();
+  });
+
   it('keeps when it was written, rather than when it was read', () => {
     const first = clockwork();
     const one = scheduledAutomations({ file, now: first.now, timer: first.timer });

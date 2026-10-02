@@ -6,6 +6,7 @@ import { memoryAutomations } from './automations.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationStore } from './types/automations.js';
 import type { Bag } from './types/common.js';
+import type { Owner } from './types/usage.js';
 
 /** How this store is built, and what a test replaces. */
 export interface ScheduledOptions {
@@ -37,12 +38,24 @@ interface Saved {
   automations: {
     resource: string;
     definition: Bag;
+    /** Whose work it is, as the decision's typed reference, when it has one. */
+    owner?: string;
     createdAt: string;
     modifiedAt: string;
     /** The occurrence this was waiting for when it was written. What catch-up reads. */
     nextRunAt?: string;
   }[];
 }
+
+/**
+ * A typed reference as the file wrote it, or nothing when it is not one.
+ *
+ * The four kinds `Owner` names, and an id after the colon, the same reading the
+ * session store gives its own field: a row that names no owner, or one that
+ * names something which is not one, is an automation nobody owns.
+ */
+const owned = (value: unknown): Owner | undefined =>
+  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
 
 /** `setTimeout` will not wait longer than this, so a longer wait is done in instalments. */
 const MAX_DELAY = 2_147_483_647;
@@ -172,6 +185,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
         return {
           resource: one.resource,
           definition: one.definition,
+          ...(one.owner === undefined ? {} : { owner: one.owner }),
           ...(stamps.get(one.resource) ?? { createdAt: one.createdAt, modifiedAt: one.modifiedAt }),
           ...(at ? { nextRunAt: at.toISOString() } : {}),
         };
@@ -276,7 +290,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     const back: { resource: string; nextRunAt?: string }[] = [];
     for (const one of held.automations) {
       if (typeof one.resource !== 'string') continue;
-      inner.create(one.resource, bag(one.definition));
+      inner.create(one.resource, bag(one.definition), owned(one.owner));
       stamps.set(one.resource, {
         createdAt: String(one.createdAt ?? now().toISOString()),
         modifiedAt: String(one.modifiedAt ?? now().toISOString()),
@@ -331,8 +345,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
      */
     triggers: () => [],
 
-    create: (resource, definition) => {
-      const made = inner.create(resource, definition);
+    create: (resource, definition, owner) => {
+      const made = inner.create(resource, definition, owner);
       stamps.set(resource, { createdAt: made.createdAt, modifiedAt: made.modifiedAt });
       // `onChanged` above has already rearmed and written; the stamp is set
       // before this returns so what it wrote carries the right one.

@@ -45,9 +45,19 @@ const ana: Principal = {
 /** Somebody with no memberships, which is a refusal rather than a default. */
 const bob: Principal = { id: 'bob', roles: [], can: () => true, teams: [{ id: 'backend' }] };
 
+/** Somebody who may name one scope and no other, so a session's owner is not a superset of theirs. */
+const dan: Principal = {
+  id: 'dan',
+  roles: [],
+  can: () => true,
+  memberships: ['frontend:controllr'],
+  projects: PROJECTS,
+  teams: [{ id: 'backend' }, { id: 'frontend' }],
+};
+
 const directory = (): Users => ({
   resource: RECORD,
-  verify: async (token) => (token === 'ana' ? ana : token === 'bob' ? bob : undefined),
+  verify: async (token) => (token === 'ana' ? ana : token === 'bob' ? bob : token === 'dan' ? dan : undefined),
   list: async () => [],
   grantsOfRoles: async () => [],
   grantsOfPerson: async () => undefined,
@@ -121,6 +131,20 @@ function serving(store: SessionStore, agent: Agent) {
     });
   })();
   return { host, client, wire };
+}
+
+/** Somebody else, on the host that is already running. */
+async function colleague(host: ReturnType<typeof createHost>, token: string) {
+  const wire = peer();
+  const client = host.accept(wire);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: token, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+  });
+  await client.handle({
+    method: 'authenticate', params: { channel: ROOT, resource: RECORD.resource, token },
+  });
+  return { client, wire };
 }
 
 const uri = 'ahp-session:/scoped';
@@ -367,6 +391,33 @@ it('takes a scope it could not resolve back, before the first turn', async () =>
   await change(client, { scope: 'backend:controllr' });
   await turn(client);
   await settle();
+  expect(began).toEqual(['go']);
+  expect(store.scope('scoped')).toEqual({ team: 'backend', project: 'controllr' });
+});
+
+it('resolves a scope somebody else sends against the session\'s owner', async () => {
+  const store = memorySessions();
+  const { agent, began } = backend();
+  const started = serving(store, agent);
+  await settle();
+  await started.client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', config: {} } });
+
+  // A second person at the same session, who may name one scope and no other.
+  const other = await colleague(started.host, 'dan');
+
+  // A refusal quotes the owner's choices rather than the sender's.
+  await change(other.client, { scope: 'backend:other' });
+  await turn(other.client);
+  await settle();
+  expect(began).toEqual([]);
+  expect(refusedIn(other.wire)).toEqual(['ana may name backend:ahpd, backend:controllr, frontend:controllr']);
+
+  // And a name dan may not name is still accepted, because the session's owner
+  // decides what its work may be charged to and not whoever has it open.
+  await change(other.client, { scope: 'backend:controllr' });
+  await turn(other.client);
+  await settle();
+
   expect(began).toEqual(['go']);
   expect(store.scope('scoped')).toEqual({ team: 'backend', project: 'controllr' });
 });

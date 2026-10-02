@@ -77,7 +77,7 @@ Reference: [00-host.md](host/00-host.md)
 | [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | planned 2026-09-30; tasks 01-04 todo | host 31 | - |
 | [33 - A session tool acts as the person it works for, within VS Code's limits, and can be switched off](host/33-a-session-tool-acts-as-the-person-it-works-for/plan.md) | high | planned 2026-09-30; task files to write, tasks 01-03 todo | host 30 | - |
 
-| [34 - A session and an automation say who owns them, and a turn says who sent it](host/34-work-says-who-owns-it/plan.md) | high | planned 2026-10-01; tasks 01-03 todo | - | usage meters; shares the turn sender with host 33 |
+| [34 - A session and an automation say who owns them, and a turn says who sent it](host/34-work-says-who-owns-it/plan.md) | high | built 2026-10-02 ([implemented.md](host/34-work-says-who-owns-it/implemented.md)) | - | usage meters; shares the turn sender with host 33 |
 
 | [35 - A person belongs to teams and projects, and work names which one it is for](host/35-a-person-belongs-to-teams-and-projects/plan.md) | high | built 2026-10-01 ([implemented.md](host/35-a-person-belongs-to-teams-and-projects/implemented.md)) | - | host 34's scope, the proxy listener, policy |
 | [36 - Users, teams, projects and roles are resources a client lists and edits](host/36-people-are-resources-a-client-manages/plan.md) | medium | planned 2026-10-01 | host 35 | the ahpapp people screen |

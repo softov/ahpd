@@ -263,6 +263,14 @@ export async function runForeground(options: Options): Promise<void> {
   const base: HostOptions = {
     path: options.paths[0] as string,
     /*
+     * The machine's name, which is what a root connection's work is charged to.
+     *
+     * A session started on the deployment's own token belongs to the host
+     * rather than to a person, and `root:<host>` says nothing at all unless the
+     * host part is the name somebody knows this box by.
+     */
+    hostName: hostname(),
+    /*
      * No backend of its own.
      *
      * Every agent this daemon serves is a plugin's, `@ahpd/agent-claude`
