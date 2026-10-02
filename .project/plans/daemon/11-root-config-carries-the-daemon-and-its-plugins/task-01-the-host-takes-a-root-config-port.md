@@ -1,6 +1,6 @@
 ---
 title: The host takes a root config port, shown to config:read
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -29,5 +29,3 @@ refs:
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

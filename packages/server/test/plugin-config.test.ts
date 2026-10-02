@@ -23,6 +23,8 @@ const SECRET = join(import.meta.dirname, 'fixtures', 'plugin-secret', 'index.ts'
 const AUTHORITY = '127.0.0.1:9350';
 /** A plugin that writes the file `AHPD_MARKER` names when it is imported. */
 const MARKER = join(import.meta.dirname, 'fixtures', 'plugin-marker', 'index.ts');
+/** The backend whose own search providers keep a key, nested under `tools`. */
+const COFOLD = join(import.meta.dirname, '../../agent-cofold/src/index.ts');
 
 let home: string;
 let config: string;
@@ -210,6 +212,87 @@ describe('plugin config, served', () => {
     expect(await off.json()).toEqual({ name: SECRET, enabled: false, restart: true });
     expect((await post('/plugin/enable', { name: SECRET })).status).toBe(200);
     expect(read().plugins).toEqual([{ name: SECRET, enabled: true }]);
+  });
+});
+
+describe('the same mask in the other served answers', () => {
+  /** One served GET, from a daemon whose own options are `options`. */
+  const served = (options: Options = {} as Options) => {
+    const facts: ServedFacts = {
+      options,
+      configFile: config,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+    return (path: string): Promise<Response> => handler(new Request(`http://${AUTHORITY}/api${path}`, {
+      headers: { host: AUTHORITY, authorization: 'Bearer root-secret' },
+    }));
+  };
+
+  it('answers a write-only value as set and any other as the file holds it, in the config', async () => {
+    put({ connectionToken: 'the-secret', plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    const answered = await served()('/config');
+    expect(answered.status).toBe(200);
+    const body = await answered.text();
+    expect(body).not.toContain('k-1');
+    expect(body).not.toContain('the-secret');
+    expect((JSON.parse(body) as { config: unknown }).config).toEqual({
+      connectionToken: '<set>',
+      plugins: [{ name: SECRET, options: { apiKey: '<set>', region: 'eu' } }],
+    });
+  });
+
+  it('answers the same in a served plugin list row', async () => {
+    const spec = { name: SECRET, options: { apiKey: 'k-1', region: 'eu' } };
+    put({ plugins: [spec] });
+    const answered = await served({ plugins: [spec] } as unknown as Options)('/plugin/list');
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject([{ spec: { options: { apiKey: '<set>', region: 'eu' } } }]);
+  });
+
+  it('answers a credential nested under an option as set, wherever it sits', async () => {
+    const spec = { name: COFOLD, options: { tools: { web: { search: { brave: { apiKey: 'bs-1' }, duckduckgo: true } } } } };
+    put({ plugins: [spec] });
+    const asked = served({ plugins: [spec] } as unknown as Options);
+    const config = await (await asked('/config')).text();
+    expect(config).not.toContain('bs-1');
+    expect(await (await asked('/plugin/list')).json()).toMatchObject([{
+      spec: { options: { tools: { web: { search: { brave: { apiKey: '<set>' }, duckduckgo: true } } } } },
+    }]);
+  });
+
+  it('never imports a plugin switched off to answer, and hides all of its values', async () => {
+    const marker = join(home, 'imported');
+    const had = process.env['AHPD_MARKER'];
+    process.env['AHPD_MARKER'] = marker;
+    try {
+      const spec = { name: MARKER, options: { level: 1 }, enabled: false };
+      put({ plugins: [spec] });
+      const asked = served({ plugins: [spec] } as unknown as Options);
+      expect((await (await asked('/config')).json() as { config: { plugins: { options: unknown }[] } }).config.plugins[0]?.options)
+        .toEqual({ level: '<set>' });
+      expect((await (await asked('/plugin/list')).json() as { spec: { options: unknown } }[])[0]?.spec.options)
+        .toEqual({ level: '<set>' });
+      expect(existsSync(marker)).toBe(false);
+    }
+    finally {
+      if (had === undefined) delete process.env['AHPD_MARKER']; else process.env['AHPD_MARKER'] = had;
+    }
+  });
+
+  it('prints the file as it is at the terminal', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    const shown = await run('daemon.config', {});
+    expect(shown.output?.data).toMatchObject({
+      config: { plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] },
+    });
   });
 });
 

@@ -53,6 +53,16 @@ export const optionsSchema = {
     presets: {
       type: 'object',
       description: 'Named sets of Claude options, by name. One is what every session runs on; two or more offer a session a choice, and the first is the default.',
+      // A preset is a bag of options by whatever name it is given, so what a
+      // preset holds is the declaration below rather than `properties`.
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          // The variables of a preset's `env` are credentials wherever the CLI
+          // keeps one, so each answers `<set>` rather than what it is.
+          env: { type: 'object', additionalProperties: { type: ['string', 'null'], writeOnly: true }, description: 'Environment the CLI is run with, by variable name.' },
+        },
+      },
     },
   },
 };

@@ -153,8 +153,10 @@ it('lays a signed-in credential over a preset env, and lets a preset unset a var
 });
 
 it('loads twice as two harnesses, each under its own provider and name', async () => {
+  // Both entries set a provider, which a repeated name has to: see
+  // a-repeated-plugin-is-keyed-by-its-provider.
   const { problems, options } = await loadPlugins([
-    { name: SOURCE },
+    { name: SOURCE, options: { provider: 'claude' } },
     { name: SOURCE, options: { provider: 'claude-openrouter', displayName: 'Claude Code (OpenRouter)' } },
   ], {
     base: { path: '/tmp/ahpd-preset', agents: [] },

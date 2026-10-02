@@ -12,26 +12,17 @@ import type { Command, CommandContext, JsonSchema, Output, Registry } from '@cof
 import { configDir, configPath } from '../config.js';
 import { running } from '../daemon.js';
 import {
-  NpmFailure, installPlugins, pluginEntry, removePlugins, run as runProgram, setPluginEnabled, setPluginOption, updatePlugins,
+  NpmFailure, installPlugins, oneAtATime, pluginEntry, removePlugins, run as runProgram, setPluginEnabled, setPluginOption, updatePlugins,
 } from '../install.js';
 import type { Moved } from '../install.js';
 import { describePlugin, optionsSchemaOf, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
-import { withoutSpecSecrets, withoutUserinfoIn } from './config.js';
+import { keyed, maskOption, schemasFor, withoutSpecSecrets, withoutUserinfoIn } from './config.js';
 import { optionsFrom, pluginWriteFields, flagFields, serverFields, servedPluginWriteFields, stop, typedValue } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /** What a change to the plugins says, since only a restart loads it. */
 const RESTART = 'Restart the daemon to load the change: ahpd restart';
-
-/** The options a schema marks `writeOnly`, whose values a served answer never carries. */
-const writeOnlyIn = (schema: Record<string, unknown> | undefined): Set<string> => {
-  const properties = schema?.['properties'];
-  if (typeof properties !== 'object' || properties === null) return new Set();
-  return new Set(Object.entries(properties as Record<string, unknown>)
-    .filter(([, one]) => typeof one === 'object' && one !== null && (one as Record<string, unknown>)['writeOnly'] === true)
-    .map(([key]) => key));
-};
 
 export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   const list = registry.action({
@@ -48,16 +39,18 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         : served.options;
       if (options.noPlugins) return output([], 'plugins: --no-plugins, so nothing is listed\n');
       if (options.plugins.length === 0) return output([], 'plugins: none named\n');
+      // Served, a row is read by anyone holding `config:read`, so every option
+      // the plugin's schema marks `writeOnly` is answered as `<set>` and every
+      // string that may quote a spec URL has that URL's userinfo replaced; the
+      // terminal's listing is the owner reading their own configuration.
+      const keys = keyed(options.plugins);
+      const schemas = served === undefined ? undefined : await schemasFor(options.plugins);
       const rows = [];
-      for (const spec of options.plugins) {
+      for (const { key, spec } of keys) {
         const row = await describePlugin(spec, { configDir: configDir(), cwd: process.cwd() });
-        // Served, a row is read by anyone holding `config:read`, so it says
-        // which options a plugin has and never their values, and every string
-        // that may quote a spec URL has that URL's userinfo replaced; the
-        // terminal's listing is the owner reading their own configuration.
         rows.push(served === undefined ? row : {
           ...row,
-          spec: withoutSpecSecrets(row.spec),
+          spec: withoutSpecSecrets(row.spec, schemas?.get(key)),
           ...(row.url === undefined ? {} : { url: withoutUserinfoIn(row.url) }),
           ...(row.path === undefined ? {} : { path: withoutUserinfoIn(row.path) }),
           ...(row.name === undefined ? {} : { name: withoutUserinfoIn(row.name) }),
@@ -68,19 +61,6 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       return output(rows, `${rows.map(pluginLine).join('\n')}\n`);
     },
   });
-
-  /*
-   * The writes, one at a time: an install, an update or a remove starts once
-   * the one before it has settled, failure or not, so two served requests never
-   * run npm in the same directory together or edit the configuration file
-   * between each other's steps.
-   */
-  let settled: Promise<unknown> = Promise.resolve();
-  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
-    const turn = settled.then(work);
-    settled = turn.catch(() => undefined);
-    return turn;
-  };
 
   /*
    * What a failed write says. At the terminal npm's error has already been
@@ -238,14 +218,15 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       }
     }
     /*
-     * What a served answer carries for a value: `<set>` for a write-only
-     * option, and for every option of a plugin whose schema was not read,
-     * because it could not be or because the plugin is switched off, since
-     * nothing says which of them is a credential.
+     * What a served answer carries for a value: `<set>` for anything the
+     * plugin's schema marks write-only, and for every value of a plugin whose
+     * schema was not read, because it could not be or because the plugin is
+     * switched off, since nothing says which of them is a credential. The
+     * terminal is the owner reading their own file and carries every value.
      */
-    const hidden = writeOnlyIn(schema);
+    const mask = disabled || unreadable !== undefined ? undefined : schema;
     const shown = (option: string, value: unknown): unknown =>
-      served !== undefined && (disabled || unreadable !== undefined || hidden.has(option)) ? '<set>' : value;
+      served === undefined ? value : maskOption(mask, option, value);
     const options = typeof entry === 'string' ? {} : entry.options ?? {};
 
     if (typed === undefined && !unset) {

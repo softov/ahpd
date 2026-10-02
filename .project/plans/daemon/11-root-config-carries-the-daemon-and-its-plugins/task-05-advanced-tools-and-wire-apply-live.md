@@ -1,6 +1,6 @@
 ---
 title: advancedTools and wire apply live
-status: todo
+status: done
 depends: [task-02-the-daemons-keys.md]
 layer: "sdk, server"
 refs:
@@ -27,5 +27,3 @@ A write of `advancedTools` changes the tools of every running session as `artifa
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

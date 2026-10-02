@@ -44,6 +44,7 @@ import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedI
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
+import { daemonRootConfig } from '../rootconfig.js';
 import { pty } from '../pty.js';
 import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
@@ -86,7 +87,7 @@ export function apiOrigins(host: string, resource: string | undefined, port: num
  * to answer "which sessions" before it could answer anything, and the protocol
  * has no place to ask.
  */
-export async function runForeground(options: Options): Promise<void> {
+export async function runForeground(options: Options, typed: Readonly<Record<string, unknown>> = {}): Promise<void> {
   const { token, from } = secret(options);
   /*
    * Whether `ahpd start` spawned this process, and so will record it. Taken out
@@ -296,6 +297,29 @@ export async function runForeground(options: Options): Promise<void> {
   apiBoundPort = apiListener?.port ?? 0;
 
   /*
+   * The wire, written down as it happens.
+   *
+   * One line per frame, appended synchronously so the file is whole at the
+   * moment anything else is read: a capture that lags the crash it is meant to
+   * explain is no capture. `wire.ts` builds the line, in the shape VS Code's
+   * agent host writes, and bounds the file it goes into.
+   *
+   * Held here rather than where the listener is built, because a root config
+   * write of `wire` starts the capture, moves it to another file or stops it
+   * while this daemon runs, and the listener is handed its tap once.
+   */
+  const transport = options.stdio ? 'stdio' : 'websocket';
+  const capture: { at: string | undefined; write: ReturnType<typeof writerFor> | undefined } = { at: undefined, write: undefined };
+  /** The file the capture is written to, none when there is none. */
+  const openWire = (at: string | undefined): void => {
+    if (at === capture.at) return;
+    capture.at = at;
+    capture.write = at === undefined ? undefined : writerFor(at);
+  };
+  openWire(options.wire);
+  const tap: Tap = (from, text, peer) => { capture.write?.(lineFor(from, text, peer, transport)); };
+
+  /*
    * The host the plugins are folded into.
    *
    * It is the literal this daemon is built from, named so a plugin's
@@ -381,6 +405,15 @@ export async function runForeground(options: Options): Promise<void> {
      */
     advancedTools: options.advancedTools,
     /*
+     * The daemon's own settings, as the keys root config carries.
+     *
+     * Handed over rather than left in `config.json`, so a client holding
+     * `config:read` can draw a form for them and a client holding
+     * `config:write` can send it back. The port knows the file and the flags;
+     * the host only shows what it is given and hands writes on.
+     */
+    rootConfig: daemonRootConfig(options, typed, openWire),
+    /*
      * What this host adds on top of a backend, kept between restarts.
      *
      * The bits every client shares and the settings a session runs under. A
@@ -446,7 +479,7 @@ export async function runForeground(options: Options): Promise<void> {
      */
     diagnostics: {
       version: version(),
-      logs: () => [daemonLog(), ...(options.wire === undefined ? [] : filesOf(options.wire))],
+      logs: () => [daemonLog(), ...(capture.at === undefined ? [] : filesOf(capture.at))],
       shutdown: () => { process.kill(process.pid, 'SIGTERM'); },
     },
   };
@@ -545,22 +578,6 @@ export async function runForeground(options: Options): Promise<void> {
   if (folded.usage !== undefined) metered = folded.usage;
 
   /*
-   * The wire, written down as it happens.
-   *
-   * One line per frame, appended synchronously so the file is whole at the
-   * moment anything else is read: a capture that lags the crash it is meant to
-   * explain is no capture. `wire.ts` builds the line, in the shape VS Code's
-   * agent host writes, and bounds the file it goes into. Nothing here can be
-   * trusted not to throw, so the tap keeps its contract and lets a frame it
-   * cannot parse through as text.
-   */
-  const tap = options.wire === undefined ? undefined : ((): Tap => {
-    const write = writerFor(options.wire as string);
-    const transport = options.stdio ? 'stdio' : 'websocket';
-    return (from, text, peer) => { write(lineFor(from, text, peer, transport)); };
-  })();
-
-  /*
    * The door, and which transport this host answers on.
    *
    * The deployment's own token is the host, and no other is. A person's token
@@ -579,7 +596,7 @@ export async function runForeground(options: Options): Promise<void> {
    */
   const listener = options.stdio
     ? await overStdio(
-      { ...(tap ? { tap } : {}) },
+      { tap },
       (peer, principal, root) => host.accept(peer, principal, root),
     )
     : await listen(
@@ -597,7 +614,7 @@ export async function runForeground(options: Options): Promise<void> {
             },
             root: true,
           }),
-        ...(tap ? { tap } : {}),
+        tap,
         // The plain requests beside the upgrade.
         ...plainRequests(daemonRequest),
       },
@@ -775,6 +792,6 @@ export const declareRun = (registry: Registry<object>): Command => registry.acti
   surfaces: { cli: { pattern: ['run'] } },
   input: flagFields,
   run: async (context) => {
-    await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>));
+    await runForeground(optionsFrom(context.input as Readonly<Record<string, unknown>>), context.input as Readonly<Record<string, unknown>>);
   },
 });

@@ -331,6 +331,18 @@ const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Record<strin
  */
 const PER_CONNECTION = new Set(['defaultShell']);
 
+/**
+ * Whether this connection is somebody who may read the daemon's own settings.
+ *
+ * The keys `HostOptions.rootConfig` carries are `config:read`'s and not
+ * `config:write`'s, because a write names a key and a read names a value - and
+ * one of those values may be a credential - decision
+ * `root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value`.
+ * A host with no people directory has nobody to ask, so nobody sees them.
+ */
+const seesConfig = (connection: Connection | undefined): boolean =>
+  connection?.principal?.can('config:read') === true;
+
 /** The kinds of channel a family of client action can belong on. */
 type Home = 'session' | 'terminal' | 'automations' | 'root' | 'watch';
 
@@ -1903,7 +1915,9 @@ export function createHost(options: HostOptions): Host {
    * carries `PER_CONNECTION` keys that belong to the client that sent them:
    * the sender gets its echo whole, and every other connection gets the same
    * envelope and `serverSeq` without those keys, with its own values in their
-   * place when the action replaces the config. `root/agentsChanged` carries
+   * place when the action replaces the config. It carries the daemon's own keys
+   * too, which are dropped for a connection without `config:read`.
+   * `root/agentsChanged` carries
    * the root agent list, whose sign-in resource says `required: true` for a
    * connection that must sign in and `false` for one the host already treats
    * as somebody. An action on a session, chat or annotations channel this
@@ -1930,14 +1944,28 @@ export function createHost(options: HostOptions): Host {
       return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
     }
     if (action.type !== 'root/configChanged') return envelope;
-    if (envelope.origin !== undefined && envelope.origin.clientId === connection.clientId) return envelope;
     const config = (typeof action.config === 'object' && action.config !== null ? action.config : {}) as Record<string, unknown>;
-    const theirs = Object.keys(config).filter((key) => PER_CONNECTION.has(key));
+    /*
+     * The daemon's own keys go to a connection holding `config:read` and to no
+     * other, the sender among them. A write is `config:write`'s and a value is
+     * `config:read`'s, so somebody who may change the listener but not read the
+     * settings is refused the answer rather than trusted with it - and the
+     * envelope is one per host, which is why this is here and not where the
+     * change is applied.
+     */
+    const shown = seesConfig(connection)
+      ? config
+      : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key)));
+    const echo = (config: Record<string, unknown>): E => ({ ...envelope, action: { ...action, config } });
+    if (envelope.origin !== undefined && envelope.origin.clientId === connection.clientId) {
+      return shown === config ? envelope : echo(shown);
+    }
+    const theirs = Object.keys(shown).filter((key) => PER_CONNECTION.has(key));
     const own = action.replace === true
       ? Object.fromEntries(Object.entries(connection.config ?? {}).filter(([key]) => PER_CONNECTION.has(key)))
       : {};
-    if (theirs.length === 0 && Object.keys(own).length === 0) return envelope;
-    const kept = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key)));
+    if (theirs.length === 0 && Object.keys(own).length === 0) return shown === config ? envelope : echo(shown);
+    const kept = Object.fromEntries(Object.entries(shown).filter(([key]) => !PER_CONNECTION.has(key)));
     return { ...envelope, action: { ...action, config: { ...kept, ...own } } };
   };
   /**
@@ -5559,8 +5587,17 @@ export function createHost(options: HostOptions): Host {
    * where the set is built, so `setTools` cannot put one back.
    */
   const permitted = (tools: readonly HostTool[]): HostTool[] =>
-    tools.filter((one) => options.advancedTools === true || one.advancedPermission !== true);
-  let contributing: HostTool[] = permitted(options.tools ?? []);
+    tools.filter((one) => advancedTools === true || one.advancedPermission !== true);
+  /**
+   * Whether the advanced tools are offered, held here rather than read off
+   * `options` because the daemon's `advancedTools` key is this host's option as
+   * much as the daemon's, and a write of it takes hold while the daemon runs -
+   * decision `a-configuration-change-applies-live-or-on-ahpd-restart`.
+   */
+  let advancedTools = options.advancedTools === true;
+  /** Every tool the host was given, before the permission was applied. */
+  let contributed: readonly HostTool[] = options.tools ?? [];
+  let contributing: HostTool[] = permitted(contributed);
   /** Whether the client asked for the compact wording. */
   const compactPrompts = (): boolean => rootConfig.artifactToolsCompactPrompts === true;
   /**
@@ -5899,6 +5936,35 @@ export function createHost(options: HostOptions): Host {
     },
   };
   /**
+   * The daemon's own root config keys, and where they came from.
+   *
+   * `HostOptions.rootConfig` is a port rather than a value, so its schema is
+   * read once and held: which keys it carries decides which half of a
+   * `root/configChanged` this host acts on and which half it keeps, and asking
+   * a daemon on every envelope of a channel everybody writes to would be a
+   * question asked about the host's own plumbing.
+   */
+  const daemonSchema = (): Record<string, unknown> => {
+    const schema = options.rootConfig?.schema();
+    return typeof schema === 'object' && schema !== null ? schema : {};
+  };
+  /** The properties the daemon's schema declares, or none when it declares none. */
+  const daemonProperties = (): Record<string, unknown> => {
+    const properties = daemonSchema()['properties'];
+    return typeof properties === 'object' && properties !== null ? properties as Record<string, unknown> : {};
+  };
+  /** Whether a key is the daemon's rather than this host's. */
+  const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
+  /**
+   * Whether a change to the daemon's keys needs the daemon to start again.
+   *
+   * Held rather than asked of, because there is nothing to clear it: the flag
+   * says a setting is not in force yet, and the thing that puts it in force is
+   * a restart, which is this process ending - decision
+   * `a-configuration-change-applies-live-or-on-ahpd-restart`.
+   */
+  let restartNeeded = false;
+  /**
    * What this host serves beside `file:`, as one map a client reads.
    *
    * The provider's own claim plus what the host can see for itself: the root
@@ -5923,42 +5989,68 @@ export function createHost(options: HostOptions): Host {
     }));
   };
 
-  const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection) => ({
-    // The host's list, rewritten for the one connection asking when it is
-    // already somebody: the sign-in resource is the one field that differs.
-    agents: connection === undefined ? descriptors() : agentsFor(connection, descriptors()),
-    // What this host is running, not what is on disk beside it.
-    activeSessions: sessions.size,
-    ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
+  const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection) => {
     /*
-     * Always present, and present even when empty.
+     * The daemon's own half, for a connection that may read it and nobody else.
      *
-     * A client's root reducer returns the state *unchanged* when there is no
-     * `config` on it, so a host that left this out made every
-     * `root/configChanged` a no-op on every client - including the one that
-     * had just pushed it.
+     * Its keys are not held here the way `rootConfig` holds the host's: the
+     * daemon's file is what they are, and a client that read them before a
+     * change and reads them after must see two different answers. So both are
+     * asked of the port per root state, and asked for nobody who does not hold
+     * `config:read`.
      */
-    /*
-     * The host's keys, then this connection's own preferences.
-     *
-     * A `PER_CONNECTION` key is dropped from the host's half rather than
-     * merged under: `rootConfig` still holds whatever was pushed last, because
-     * the echo and the replay buffer are one per host, but that copy belongs to
-     * nobody and showing it would tell a client that somebody else's shell was
-     * its own. So what a connection reads back here is what it pushed, or
-     * nothing.
-     */
-    config: {
-      schema: ROOT_CONFIG_SCHEMA,
-      values: {
-        ...Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !PER_CONNECTION.has(key))),
-        ...mine,
+    const theirs = seesConfig(connection) ? daemonProperties() : {};
+    const daemonValues = Object.keys(theirs).length === 0 || options.rootConfig === undefined
+      ? {}
+      : await options.rootConfig.values();
+    const schemes = advertisedSchemes();
+    const meta = {
+      ...(schemes === undefined ? {} : { 'ahpd.resourceProviders': schemes }),
+      ...(restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
+    };
+    return {
+      // The host's list, rewritten for the one connection asking when it is
+      // already somebody: the sign-in resource is the one field that differs.
+      agents: connection === undefined ? descriptors() : agentsFor(connection, descriptors()),
+      // What this host is running, not what is on disk beside it.
+      activeSessions: sessions.size,
+      ...(terminals.size > 0 ? { terminals: terminalInfo() } : {}),
+      /*
+       * Always present, and present even when empty.
+       *
+       * A client's root reducer returns the state *unchanged* when there is no
+       * `config` on it, so a host that left this out made every
+       * `root/configChanged` a no-op on every client - including the one that
+       * had just pushed it.
+       */
+      /*
+       * The host's keys, the daemon's beside them, then this connection's own
+       * preferences.
+       *
+       * A `PER_CONNECTION` key is dropped from the host's half rather than
+       * merged under: `rootConfig` still holds whatever was pushed last, because
+       * the echo and the replay buffer are one per host, but that copy belongs to
+       * nobody and showing it would tell a client that somebody else's shell was
+       * its own. So what a connection reads back here is what it pushed, or
+       * nothing.
+       */
+      config: {
+        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...theirs } },
+        values: {
+          ...Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !PER_CONNECTION.has(key))),
+          ...mine,
+          ...daemonValues,
+        },
       },
-    },
-    // The same statement as the handshake's, so a client that subscribes later
-    // reads what a client that connected earlier was told.
-    ...(advertisedSchemes() === undefined ? {} : { _meta: { 'ahpd.resourceProviders': advertisedSchemes() } }),
-  });
+      /*
+       * The same statement as the handshake's, so a client that subscribes later
+       * reads what a client that connected earlier was told. `restartNeeded` is
+       * for everybody: it names no key and no value, and a client that cannot
+       * read the settings is still owed to know that one of them is not in force.
+       */
+      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
+    };
+  };
   /**
    * A session that already happened, read from its transcript.
    *
@@ -6813,7 +6905,8 @@ export function createHost(options: HostOptions): Host {
      * moves immediately is what a client is told the session has.
      */
     setTools: (tools) => {
-      contributing = permitted(tools);
+      contributed = tools;
+      contributing = permitted(contributed);
       for (const uri of sessions.keys())
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
@@ -9493,61 +9586,141 @@ export function createHost(options: HostOptions): Host {
           const config = (typeof action.config === 'object' && action.config !== null
             ? action.config
             : {}) as Record<string, unknown>;
-          /*
-           * Kept twice, because the keys are two kinds.
+          /**
+           * What the daemon's half answers for the keys that were written, put
+           * in place of what the client sent.
            *
-           * Everything still lands in `rootConfig`, so the wire does not move:
-           * one echo, one replay entry, and `values` reads back what was pushed
-           * exactly as the conformance suite pins it.
-           *
-           * What changed is who *acts* on a key. `PER_CONNECTION` names the
-           * person's - `defaultShell` today - and those are also written to
-           * this connection, which is the only place anything reads them from
-           * now. `rootConfig`'s copy is display state and nothing opens a shell
-           * with it. So two people on one daemon each get their own, and the
-           * paths with no connection in hand take the daemon's own shell and
-           * nobody's preference at all.
+           * Empty until the write has said so, which is all it can be before:
+           * the client's copy of a daemon key is what the client holds, not what
+           * the daemon holds.
            */
-          const mine = Object.fromEntries(Object.entries(config).filter(([key]) => PER_CONNECTION.has(key)));
-          const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
-            for (const [key, value] of Object.entries(from)) {
-              // `undefined` is how a key is taken back, and JSON has no such
-              // value - so a client saying so sends the key with a null.
-              if (value === null || value === undefined) delete target[key];
-              else target[key] = value;
+          const said: Record<string, unknown> = {};
+          /**
+           * The host's own half, applied and echoed.
+           *
+           * Kept in `rootConfig` whatever the daemon's half does, so the wire
+           * does not move for it: one echo, one replay entry, and `values` reads
+           * back what was pushed exactly as the conformance suite pins it.
+           */
+          const apply = (): void => {
+            /*
+             * Kept twice, because the keys are two kinds.
+             *
+             * What changed is who *acts* on a key. `PER_CONNECTION` names the
+             * person's - `defaultShell` today - and those are also written to
+             * this connection, which is the only place anything reads them from
+             * now. `rootConfig`'s copy is display state and nothing opens a shell
+             * with it. So two people on one daemon each get their own, and the
+             * paths with no connection in hand take the daemon's own shell and
+             * nobody's preference at all.
+             */
+            const mine = Object.fromEntries(Object.entries(config).filter(([key]) => PER_CONNECTION.has(key)));
+            /*
+             * The host's half and the person's are kept; the daemon's are not.
+             * A daemon key is the port's, and `rootState` answers it by asking
+             * the port, so a copy kept here would be a second opinion - and
+             * `rootState` shows this map to every connection, which would hand a
+             * member a credential it has no schema for.
+             */
+            const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key)));
+            const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
+              for (const [key, value] of Object.entries(from)) {
+                // `undefined` is how a key is taken back, and JSON has no such
+                // value - so a client saying so sends the key with a null.
+                if (value === null || value === undefined) delete target[key];
+                else target[key] = value;
+              }
+            };
+            if (action.replace === true) {
+              for (const key of Object.keys(rootConfig)) delete rootConfig[key];
+              delete connection.config;
             }
+            into(rootConfig, ours);
+            if (Object.keys(mine).length > 0) into(connection.config ??= {}, mine);
+            // What the echo carries, which is what a log line about it says too:
+            // a value the daemon holds back is not a value the log may print.
+            const echoConfig = { ...config, ...said };
+            log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
+            /*
+             * The artifact wording is read where the tools are built, so a
+             * running session is told the new set now and handed it again when
+             * its chats are retooled. The definitions move even though the
+             * tools do not: what a client draws is the description.
+             */
+            if (Object.prototype.hasOwnProperty.call(config, 'artifactToolsCompactPrompts')) {
+              for (const uri of sessions.keys()) {
+                dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+                retool(uri);
+              }
+            }
+            /*
+             * Said back whole, like every other action a client originates:
+             * nothing in a client applies its own dispatch, and a second client
+             * watching the root learns of it only from here.
+             *
+             * One envelope and one `serverSeq` for everybody, because the
+             * sequence and the replay buffer are one per host. What each
+             * connection reads in it is `seenBy`'s: the sender's
+             * `PER_CONNECTION` keys reach only the sender, and the daemon's
+             * keys go out as the port answered them rather than as this client
+             * sent them, so a value the port holds back is not carried to the
+             * second admin by the echo.
+             */
+            dispatch(ROOT, { ...action, config: echoConfig });
           };
-          if (action.replace === true) {
-            for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-            delete connection.config;
-          }
-          into(rootConfig, config);
-          if (Object.keys(mine).length > 0) into(connection.config ??= {}, mine);
-          log(`root config: ${Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
           /*
-           * The artifact wording is read where the tools are built, so a
-           * running session is told the new set now and handed it again when
-           * its chats are retooled. The definitions move even though the
-           * tools do not: what a client draws is the description.
-           */
-          if (Object.prototype.hasOwnProperty.call(config, 'artifactToolsCompactPrompts')) {
-            for (const uri of sessions.keys()) {
-              dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
-              retool(uri);
-            }
-          }
-          /*
-           * Said back whole, like every other action a client originates:
-           * nothing in a client applies its own dispatch, and a second client
-           * watching the root learns of it only from here.
+           * The daemon's keys, which are not this host's to keep.
            *
-           * One envelope and one `serverSeq` for everybody, because the
-           * sequence and the replay buffer are one per host. What each
-           * connection reads in it is `seenBy`'s: the sender's
-           * `PER_CONNECTION` keys reach only the sender.
+           * They go to the port and nowhere else, and they are answered by
+           * reading it rather than out of `rootConfig`, so a value a client
+           * holds and a value the file holds are never two opinions. A key the
+           * schema does not name stays where it was - kept, acted on by nothing,
+           * which is what `values` reads back as a setting that did not revert.
+           *
+           * Asked first, because it is the only half that can be refused: a
+           * write is a file being read and written and a schema being held to,
+           * and a client whose change never happened is told so rather than
+           * echoed. `behind` turns the refusal into this one client's
+           * `rejectionReason`, and the echo goes out only once it has answered.
            */
-          dispatch(ROOT, action);
-          return;
+          const theirs = Object.fromEntries(Object.entries(config).filter(([key]) => daemonKey(key)));
+          if (Object.keys(theirs).length === 0 || options.rootConfig === undefined) {
+            apply();
+            return;
+          }
+          const port = options.rootConfig;
+          return Promise.resolve(port.write(theirs)).then(async (answer) => {
+            if (answer.restartNeeded === true) restartNeeded = true;
+            /*
+             * Read back so the echo is what the daemon holds. The client sent
+             * the credential in clear, and the echo is one envelope for every
+             * connection that may read the settings, so carrying the sent value
+             * out would undo the mask the port applies to everyone else - the
+             * sender included, which is a form posting back what it was shown.
+             */
+            const held = await port.values();
+            for (const key of Object.keys(theirs)) {
+              if (Object.hasOwn(held, key)) said[key] = held[key];
+            }
+            apply();
+            /*
+             * `advancedTools` is a key of the host's own option as much as of
+             * the daemon's, so the daemon's answer that it took hold is this
+             * host's answer too: the tools are rebuilt and every session is
+             * told and retooled now, the way the compact wording is. The answer
+             * that said a restart is needed is the daemon's to give, and this
+             * key is one it applies while it runs.
+             */
+            const asked = theirs['advancedTools'];
+            if (typeof asked === 'boolean' && asked !== advancedTools) {
+              advancedTools = asked;
+              contributing = permitted(contributed);
+              for (const uri of sessions.keys()) {
+                dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+                retool(uri);
+              }
+            }
+          });
         }
         if (type === 'changeset/filesReviewChanged') {
           const cut = channel.indexOf('/changeset/');

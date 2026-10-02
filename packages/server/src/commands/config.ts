@@ -10,7 +10,8 @@ import { existsSync } from 'node:fs';
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
-import { configPath, loadConfig, type Config } from '../config.js';
+import { configDir, configPath, loadConfig, type Config } from '../config.js';
+import { nameOf, optionsSchemaOf } from '../plugins.js';
 import { flagFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
@@ -24,8 +25,11 @@ import type { ServedFacts } from './served.js';
  */
 const USERINFO = /([a-zA-Z][\w+.-]*:\/\/)[^/@\s]+@/gu;
 
+/** What an answer says in place of a value it will not carry. */
+export const SET = '<set>';
+
 /** One sentence with every URL's userinfo replaced. */
-export const withoutUserinfoIn = (text: string): string => text.replace(USERINFO, '$1<set>@');
+export const withoutUserinfoIn = (text: string): string => text.replace(USERINFO, `$1${SET}@`);
 
 /** A plugin spec with the userinfo of its URL, string or `name`, replaced. */
 export const withoutUserinfo = (spec: PluginSpec): PluginSpec =>
@@ -33,43 +37,146 @@ export const withoutUserinfo = (spec: PluginSpec): PluginSpec =>
     ? withoutUserinfoIn(spec)
     : { ...spec, name: withoutUserinfoIn(spec.name) };
 
+/** A schema or a value that is one object, or `undefined` for anything else. */
+const object = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
 /**
- * A plugin entry as a served answer shows it: its option keys, each value `<set>`.
+ * What no schema said: every value answers `<set>`.
  *
- * A plugin's options are the secrets it was configured with, so a request that
- * may read the settings is told which are there and never what they are -
- * decision `served-answers-hide-plugin-option-values-and-url-credentials`. An
- * entry that is only a name, or has no options, is answered as it is.
+ * The whole of a plugin's options, for one whose schema was never read.
  */
-export const withoutOptionValues = (spec: PluginSpec): PluginSpec =>
+const NOTHING_MARKED = { additionalProperties: { writeOnly: true } };
+
+/** The schema one property of an object is held to, by name. */
+const schemaOf = (schema: Record<string, unknown>, key: string): Record<string, unknown> => {
+  const named = object(object(schema['properties'])?.[key]);
+  if (named !== undefined) return named;
+  for (const [pattern, one] of Object.entries(object(schema['patternProperties']) ?? {})) {
+    if (new RegExp(pattern, 'u').test(key)) return object(one) ?? {};
+  }
+  return object(schema['additionalProperties']) ?? {};
+};
+
+/** What one value answers, walked against the schema that describes it. */
+const walk = (schema: Record<string, unknown>, value: unknown): unknown => {
+  if (schema['writeOnly'] === true) return SET;
+  const items = object(schema['items']);
+  if (Array.isArray(value)) return items === undefined ? value : value.map((one) => walk(items, one));
+  const held = object(value);
+  if (held === undefined) return value;
+  return Object.fromEntries(Object.entries(held).map(([key, one]) => [key, walk(schemaOf(schema, key), one)]));
+};
+
+/**
+ * What one value answers, given the options schema the plugin declared.
+ *
+ * `writeOnly` is honoured wherever in that schema it says it, so a credential
+ * nested under an option of its own - a search provider's key under a web
+ * tool - answers `<set>` the same way one at the top does. A value the schema
+ * does not describe is carried as it is: only the plugin's own declarations say
+ * what of its options is a secret.
+ *
+ * `schema` is `undefined` for a plugin whose schema was never read, one that
+ * could not be imported or is switched off and so was never imported: nothing
+ * marks a value, so every one answers `<set>` - decision
+ * `root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value`.
+ *
+ * Every answer about a plugin's options goes through this one mask, so root
+ * state, `GET /api/config`, `GET /api/plugin/list` and `POST /api/plugin/config`
+ * say the same thing about the same value.
+ */
+export const maskValue = (schema: Record<string, unknown> | undefined, value: unknown): unknown =>
+  walk(schema ?? NOTHING_MARKED, value);
+
+/**
+ * What one option's value answers, given the schema of the options around it.
+ *
+ * No schema at all is not the same as a schema that does not name the option:
+ * one that does not name it says nothing, and one that was never read says
+ * every value is a credential.
+ */
+export const maskOption = (schema: Record<string, unknown> | undefined, option: string, value: unknown): unknown =>
+  schema === undefined ? SET : walk(schemaOf(schema, option), value);
+
+/**
+ * The key each entry of `plugins` is carried under in root config.
+ *
+ * One name is `plugins.<name>`, as it was. A name that repeats is one module
+ * loaded twice with different options, so each of its entries is keyed
+ * `plugins.<name>#<provider>` from its own `provider` option - decision
+ * `a-repeated-plugin-is-keyed-by-its-provider`.
+ */
+export const keyed = (specs: readonly PluginSpec[]): { key: string; spec: PluginSpec }[] => {
+  const repeats = new Map<string, number>();
+  for (const spec of specs) repeats.set(nameOf(spec), (repeats.get(nameOf(spec)) ?? 0) + 1);
+  return specs.map((spec) => {
+    const name = nameOf(spec);
+    const said = typeof spec === 'string' ? undefined : spec.options?.['provider'];
+    const provider = repeats.get(name) === 1 || typeof said !== 'string' || said === '' ? '' : `#${said}`;
+    return { key: `plugins.${name}${provider}`, spec };
+  });
+};
+
+/**
+ * The options schema to mask each of these plugin keys with.
+ *
+ * The schema is read from the module a load would import, the way `plugin
+ * config` reads it: a daemon answers from modules it has already imported, so
+ * this runs no code the daemon has not already run. A spec that is switched off,
+ * or whose module does not import, is answered `undefined` and so hides every
+ * value.
+ */
+export const schemasFor = async (specs: PluginSpec[]): Promise<Map<string, Record<string, unknown> | undefined>> => {
+  const schemas = new Map<string, Record<string, unknown> | undefined>();
+  for (const { key, spec } of keyed(specs)) {
+    if (schemas.has(key)) continue;
+    schemas.set(key, undefined);
+    if (typeof spec !== 'string' && spec.enabled === false) continue;
+    try {
+      schemas.set(key, await optionsSchemaOf(spec, { configDir: configDir(), cwd: process.cwd() }));
+    }
+    catch {
+      // Said by its effect: nothing marks a value, so every one answers `<set>`.
+    }
+  }
+  return schemas;
+};
+
+/**
+ * A plugin entry as an answer shows it: every value its schema marks `writeOnly`
+ * as `<set>`, and every other as the file holds it. An entry that is only a name,
+ * or has no options, is answered as it is.
+ */
+export const withoutOptionValues = (spec: PluginSpec, schema: Record<string, unknown> | undefined): PluginSpec =>
   typeof spec === 'object' && spec !== null && spec.options !== undefined
-    ? { ...spec, options: Object.fromEntries(Object.keys(spec.options).map((key) => [key, '<set>'])) }
+    ? { ...spec, options: maskValue(schema, spec.options) as Record<string, unknown> }
     : spec;
 
 /**
  * One plugin entry with both of its secrets replaced: the URL's userinfo, then
- * every option value. The order matters only in that the name is read before
- * the options object is rebuilt.
+ * every option value its schema marks. The order matters only in that the name
+ * is read before the options object is rebuilt.
  */
-export const withoutSpecSecrets = (spec: PluginSpec): PluginSpec =>
-  withoutOptionValues(withoutUserinfo(spec));
+export const withoutSpecSecrets = (spec: PluginSpec, schema: Record<string, unknown> | undefined): PluginSpec =>
+  withoutOptionValues(withoutUserinfo(spec), schema);
 
 /**
  * What a served answer says about the file.
  *
  * The connection token is the deployment's own root credential, and a plugin
- * entry holds two more places a secret is written: the options it was configured
- * with, and the userinfo of a URL it installs from. A request that may read the
- * settings is told they are there and never what they are - decision
- * `served-answers-hide-plugin-option-values-and-url-credentials`. Every plugin
- * entry keeps its keys and has each value replaced; an entry that is only a name
- * is answered as it is. The terminal's own `config` is the process owner reading
- * their own file and keeps printing it.
+ * entry holds one more place a secret is written: the userinfo of a URL it
+ * installs from. An option the plugin's own schema marks `writeOnly` is
+ * answered as `<set>` and any other as the file holds it - decision
+ * `root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value`.
+ * The terminal's own `config` is the process owner reading their own file and
+ * keeps printing it.
  */
-const withoutSecrets = (found: Config): Config => {
-  const at = 'connectionToken' in found ? { ...found, connectionToken: '<set>' } : found;
+const withoutSecrets = async (found: Config): Promise<Config> => {
+  const at = 'connectionToken' in found ? { ...found, connectionToken: SET } : found;
   if (!Array.isArray(at.plugins)) return at;
-  return { ...at, plugins: at.plugins.map(withoutSpecSecrets) };
+  const schemas = await schemasFor(at.plugins);
+  return { ...at, plugins: keyed(at.plugins).map(({ key, spec }) => withoutSpecSecrets(spec, schemas.get(key))) };
 };
 
 export const declareConfig = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({
@@ -80,7 +187,7 @@ export const declareConfig = (registry: Registry<object>, served?: ServedFacts):
   // Served, the file is the daemon's own, so no field could name another.
   ...(served === undefined ? { input: flagFields } : {}),
   scopes: ['config:write'],
-  run: (context) => {
+  run: async (context) => {
     /*
      * Served, the files are the daemon's own: a named one that is gone is a
      * daemon that never wrote it, and the path it would have read is still the
@@ -92,7 +199,7 @@ export const declareConfig = (registry: Registry<object>, served?: ServedFacts):
     const loaded = served !== undefined && asked !== undefined && !existsSync(asked)
       ? { values: {}, files: [], sourceOf: () => undefined }
       : loadConfig(asked);
-    const answer = served === undefined ? loaded.values : withoutSecrets(loaded.values);
+    const answer = served === undefined ? loaded.values : await withoutSecrets(loaded.values);
     const rows = Object.entries(answer);
     const sources = Object.fromEntries(rows.map(([key]) => [key, loaded.sourceOf(key) ?? at]));
     // Which file set a key is worth a column only when there is more than one.

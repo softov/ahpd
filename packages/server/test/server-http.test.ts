@@ -28,6 +28,8 @@ const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
 /** A plugin that contributes a backend, which is what lets a run get to its announcement. */
 const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
+/** A plugin whose `apiKey` is `writeOnly` and whose `region` is an ordinary option. */
+const SECRET = join(import.meta.dirname, 'fixtures', 'plugin-secret', 'index.ts');
 /** A directory holding an `npm` that can wait before it answers. */
 const FAKE_NPM = join(import.meta.dirname, 'fixtures', 'npm-fake');
 /** A registry nothing listens on, so an install's manifest check is left to the fake npm. */
@@ -720,27 +722,26 @@ describe('what a served command reads', () => {
     expect(body.config['port']).toBeUndefined();
   }, 30000);
 
-  it('masks every plugin option value', async () => {
+  it('answers a write-only option as set and any other as the file holds it', async () => {
     const one = await daemon(
-      { http: true, plugins: [{ name: BACKEND, options: { apiKey: 'k1', region: 'eu' } }] },
+      { http: true, plugins: [BACKEND, { name: SECRET, options: { apiKey: 'k1', region: 'eu' } }] },
       ['--connection-token', 'root-secret'],
     );
     const answered = await get(`http://127.0.0.1:${String(one.port)}/api/config`, 'root-secret');
     expect(answered.status).toBe(200);
     const body = await answered.text();
     expect(body).not.toContain('k1');
-    expect(body).not.toContain('eu');
     const parsed = JSON.parse(body) as { config: { plugins: { options: Record<string, unknown> }[] } };
-    expect(parsed.config.plugins[0]?.options).toEqual({ apiKey: '<set>', region: '<set>' });
+    expect(parsed.config.plugins[1]?.options).toEqual({ apiKey: '<set>', region: 'eu' });
   }, 30000);
 
-  it('masks every plugin option value in a served plugin list', async () => {
+  it('answers the same in a served plugin list', async () => {
     writeFileSync(usersFile, JSON.stringify({ roles: { reader: ['config:read'] }, users: [] }));
     const directory = fileUsers({ path: usersFile });
     await directory.add('rea', ['reader']);
     const reader = await directory.mint('rea');
     const one = await daemon(
-      { http: true, plugins: [{ name: BACKEND, options: { apiKey: 'SECRETKEY1' } }] },
+      { http: true, plugins: [BACKEND, { name: SECRET, options: { apiKey: 'SECRETKEY1', region: 'eu' } }] },
       ['--connection-token', 'root-secret', '--users', usersFile],
     );
     const answered = await get(`http://127.0.0.1:${String(one.port)}/api/plugin/list`, reader);
@@ -748,7 +749,7 @@ describe('what a served command reads', () => {
     const body = await answered.text();
     expect(body).not.toContain('SECRETKEY1');
     const rows = JSON.parse(body) as { spec: { options: Record<string, unknown> } }[];
-    expect(rows[0]?.spec.options).toEqual({ apiKey: '<set>' });
+    expect(rows[1]?.spec.options).toEqual({ apiKey: '<set>', region: 'eu' });
   }, 30000);
 
   it('masks the credentials in a plugin spec URL, in the file and in a served row', async () => {

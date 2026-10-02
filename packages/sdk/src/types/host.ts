@@ -285,6 +285,17 @@ export interface HostOptions {
    */
   advancedTools?: boolean;
   /**
+   * The daemon's own settings, as the keys root config carries beside the host's.
+   *
+   * The host has no business in a daemon's `config.json`: it does not read it,
+   * does not know where it is and does not know which of its keys can apply
+   * while the process runs. So a daemon that wants a client to edit them hands
+   * one over here instead, and the host only shows it and hands writes back.
+   *
+   * Left out, root config is the host's own three keys and nothing else.
+   */
+  rootConfig?: RootConfigPort;
+  /**
    * What this host says about itself when a window asks.
    *
    * The reference window has requests of its own for the host's version, its
@@ -305,6 +316,43 @@ export interface HostOptions {
    * event, and the two are raised from the same place.
    */
   events?: HostHandlers;
+}
+
+/**
+ * The daemon's settings, as the host shows them and hands changes back.
+ *
+ * The schema is `state.config.schema` in all but name: its `properties` are the
+ * keys a client draws a form from, and one key may say `writeOnly` on a property
+ * for a value that must never be answered. What `values` holds is the file as it
+ * is now, not the host's copy of what was last pushed.
+ */
+export interface RootConfigPort {
+  /** The keys this daemon carries, as a `ConfigSchema`'s `properties`. */
+  schema(): Record<string, unknown>;
+  /** What each key holds now. */
+  values(): Record<string, unknown> | Promise<Record<string, unknown>>;
+  /**
+   * Change the keys named, and say whether the daemon must restart for them.
+   *
+   * Only ever called with keys the schema above names. A value that is `null`
+   * is a key taken back, which is how JSON says it. Throws to refuse, and the
+   * message reaches the client that pushed the change as `rejectionReason`, so
+   * it names the key that was refused - decision
+   * `a-configuration-change-applies-live-or-on-ahpd-restart`.
+   */
+  write(values: Record<string, unknown>): RootConfigAnswer | Promise<RootConfigAnswer>;
+}
+
+/** What a write to the daemon's own keys came to. */
+export interface RootConfigAnswer {
+  /**
+   * Whether the change cannot apply while this process runs.
+   *
+   * True puts `_meta["ahpd.restartNeeded"]` on every root state until the
+   * daemon restarts, which is what a client reads to know a setting it just
+   * wrote is not in force yet.
+   */
+  restartNeeded?: boolean;
 }
 
 /** What a host knows about itself, for the window's diagnostics. */

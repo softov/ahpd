@@ -1,6 +1,6 @@
 ---
 title: Docs say what a client can configure, and who sees it
-status: todo
+status: done
 depends: [task-04-a-write-only-value-is-never-answered.md, task-05-advanced-tools-and-wire-apply-live.md]
 layer: "docs"
 refs:
@@ -23,5 +23,3 @@ refs:
 ## Validation
 
 - Read against the code of tasks 02 to 05.
-
-## Resume

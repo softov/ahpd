@@ -89,6 +89,37 @@ describe('loadPlugins', () => {
   });
 });
 
+describe('one plugin named twice', () => {
+  it('loads both entries when each names its own provider', async () => {
+    const { loaded, options, problems } = await load([
+      { name: './fixtures/plugin-provider', options: { provider: 'first' } },
+      { name: './fixtures/plugin-provider', options: { provider: 'second' } },
+    ]);
+
+    expect(problems).toEqual([]);
+    expect(loaded).toHaveLength(2);
+    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'first', 'second']);
+  });
+
+  it('refuses the entry that names none, and loads the one that does', async () => {
+    const { loaded, options, problems } = await load([
+      { name: './fixtures/plugin-provider', options: { provider: 'first' } },
+      { name: './fixtures/plugin-provider' },
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is named 2 times and sets no provider');
+    expect(loaded).toHaveLength(1);
+    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'first']);
+  });
+
+  it('loads the one entry that is not a repeat, with no provider of its own', async () => {
+    const { problems } = await load(['./fixtures/plugin-provider']);
+
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('loadPlugins log', () => {
   const logged = async (specs: PluginSpec[]) => {
     const lines: string[] = [];

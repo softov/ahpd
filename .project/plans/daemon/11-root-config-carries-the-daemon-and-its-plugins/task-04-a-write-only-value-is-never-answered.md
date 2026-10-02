@@ -1,6 +1,6 @@
 ---
 title: A write-only value is never answered
-status: todo
+status: done
 depends: [task-03-each-plugin-is-a-key.md]
 layer: "server"
 refs:
@@ -29,5 +29,3 @@ The served `plugin list` and `daemon.config` show the values that are not `write
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

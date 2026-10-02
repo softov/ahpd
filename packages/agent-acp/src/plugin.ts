@@ -37,7 +37,7 @@ export const optionsSchema = {
   properties: {
     command: { type: 'string', description: 'The program to spawn as the ACP server.' },
     args: { type: 'array', items: { type: 'string' }, description: 'The arguments to give it.' },
-    env: { type: 'object', description: 'Environment variables merged over process.env for the child.' },
+    env: { type: 'object', additionalProperties: { type: 'string', writeOnly: true }, description: 'Environment variables merged over process.env for the child. A variable is a credential wherever the server keeps one, so each answers <set>.' },
     cwd: { type: 'string', description: "The directory the server runs in; the session's working directory when absent." },
     provider: { type: 'string', description: 'The AHP provider id, default acp.' },
     displayName: { type: 'string', description: 'What a client reads instead of the id, default ACP.' },

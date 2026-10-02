@@ -61,6 +61,30 @@ export function apply(host: PluginHost, options: Record<string, unknown>): void 
 
 Options that fail the schema are reported and the plugin is skipped, like any other plugin failure: `{ "name": "@acme/agent-mine", "options": { "command": 3 } }` logs `plugin @acme/agent-mine skipped: plugins.@acme/agent-mine.options.command must be text`, and the daemon starts with its other plugins. An option key the schema does not name is logged as `plugin @acme/agent-mine: plugins.@acme/agent-mine.options.extra is not an option @acme/agent-mine knows; passed through` and still reaches `apply`. A plugin that exports no `optionsSchema` gets its options unchecked. The schema is plain data and needs no import: `@ahpd/sdk` types it as `Record<string, unknown>`.
 
+### Marking a credential
+
+An option the daemon would not print is one the schema marks `writeOnly`, and that is how a credential is declared. The value is checked as any other is, but no answer carries it:
+
+```ts
+export const optionsSchema = {
+  type: 'object',
+  properties: {
+    command: { type: 'string', description: 'The program to run.' },
+    apiKey: { type: 'string', writeOnly: true, description: 'The key this calls with.' },
+    // A map of variables holds one wherever the thing it configures keeps one,
+    // so the mark goes on the values rather than on the map.
+    env: { type: 'object', additionalProperties: { type: 'string', writeOnly: true }, description: 'Environment, by variable name.' },
+  },
+  required: ['command', 'apiKey'],
+};
+```
+
+The mark is read wherever the schema says it, so a credential under `env`, under a tool of your own, or at the end of a list is answered as `<set>` the same way one at the top of an option is. It is honoured through `properties`, `additionalProperties`, `patternProperties` and `items`, and a value the schema does not describe at all is shown as it is, because only the declarations above say what of your options is a secret.
+
+Root config, `GET /api/config`, `GET /api/plugin/list` and `POST /api/plugin/config` all answer such a value as `<set>`, so a client is told the key is there and is never told what it is. A client that sends `<set>` back has said the credential is left as it is, so a form sent in whole does not overwrite it with the word; another value replaces it and `null` takes it back, at either depth. What is not named is left as the file holds it, so sending one value back does not take the rest of the object with it. The terminal's `ahpd config` is the one answer that prints the file as it is.
+
+A plugin that marks nothing is one whose options are all shown to a client holding `config:read`, so a credential it does not mark is a credential that leaks. The other way round is a plugin the daemon could not import to read its schema, which is every option of one switched off with `enabled: false`: nothing is known of which of its options are credentials, so all of them are answered `<set>` until it loads and declares.
+
 ## What you can register
 
 The surface is `HostOptions` named back, so there is nothing new to learn. Every

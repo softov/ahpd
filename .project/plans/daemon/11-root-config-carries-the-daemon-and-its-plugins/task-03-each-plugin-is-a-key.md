@@ -1,6 +1,6 @@
 ---
 title: Each plugin is a key
-status: todo
+status: done
 depends: [task-02-the-daemons-keys.md]
 layer: "server"
 refs:
@@ -27,5 +27,3 @@ Each entry of `plugins` is a root config key `plugins.<name>` with `{ enabled, o
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

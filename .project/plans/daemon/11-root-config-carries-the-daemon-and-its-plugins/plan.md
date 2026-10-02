@@ -1,7 +1,7 @@
 ---
 title: Root config carries the daemon's settings and each plugin's options, and a client edits them
 domain: daemon
-status: planned
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -10,6 +10,7 @@ decisions:
   - decisions/plugin-configuration-travels-in-root-config.md
   - decisions/root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value.md
   - decisions/a-configuration-change-applies-live-or-on-ahpd-restart.md
+  - decisions/a-repeated-plugin-is-keyed-by-its-provider.md
 refs:
   - "[code://packages/sdk/src/host.ts#L4954-L5044](../../../../packages/sdk/src/host.ts#L4954-L5044) - `rootConfig`, `ROOT_CONFIG_SCHEMA` and `rootState`, in memory only"
   - "[code://packages/sdk/src/host.ts#L8086-L8145](../../../../packages/sdk/src/host.ts#L8086-L8145) - `root/configChanged`, and the retool that follows `artifactToolsCompactPrompts`"
@@ -53,6 +54,7 @@ root/configChanged { paths: [...] } -> dispatchNeeds: config:write -> rootConfig
 | [A plugin's configuration travels in root config, not in customizations](../../../decisions/plugin-configuration-travels-in-root-config.md) | 01, 03 |
 | [Daemon and plugin keys reach only connections with config:read, and a write-only value never leaves the host](../../../decisions/root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value.md) | 01, 04 |
 | [A configuration change applies live where the key can, and otherwise on `ahpd restart`](../../../decisions/a-configuration-change-applies-live-or-on-ahpd-restart.md) | 02, 05 |
+| [A plugin loaded more than once is keyed by its provider in root config](../../../decisions/a-repeated-plugin-is-keyed-by-its-provider.md) | 03, 04 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -62,7 +64,8 @@ root/configChanged { paths: [...] } -> dispatchNeeds: config:write -> rootConfig
 | A plugin that did not load shows `enabled` and its options with no schema | (defaulted: its `optionsSchema` is in a module that was not imported) | 03 |
 | Root config shows the file's value; a start flag that overrides it is said in the key's description | (defaulted: the file is what a form edits) | 02 |
 | A write is checked with `checkConfig` and the plugin's schema before `config.json` is touched, and a refusal names the key | (defaulted: a bad write must not stop the next start) | 02, 03 |
-| Our plugins mark their credentials `writeOnly` | the decision above | 04 |
+| Our plugins mark their credentials `writeOnly`, wherever in their options the credential sits | the decision above | 04 |
+| A plugin loaded once is `plugins.<name>`; a repeated name is keyed `plugins.<name>#<provider>`, and an entry of it with no provider is refused at start | [a-repeated-plugin-is-keyed-by-its-provider](../../../decisions/a-repeated-plugin-is-keyed-by-its-provider.md) | 03 |
 
 ## Proposed architecture
 
@@ -75,12 +78,12 @@ root/configChanged { paths: [...] } -> dispatchNeeds: config:write -> rootConfig
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host takes a root config port, shown to config:read](task-01-the-host-takes-a-root-config-port.md) | todo | - |
-| [02 - The daemon's keys in root config](task-02-the-daemons-keys.md) | todo | 01 |
-| [03 - Each plugin is a key](task-03-each-plugin-is-a-key.md) | todo | 02 |
-| [04 - A write-only value is never answered](task-04-a-write-only-value-is-never-answered.md) | todo | 03 |
-| [05 - advancedTools and wire apply live](task-05-advanced-tools-and-wire-apply-live.md) | todo | 02 |
-| [06 - Docs](task-06-docs.md) | todo | 04, 05 |
+| [01 - The host takes a root config port, shown to config:read](task-01-the-host-takes-a-root-config-port.md) | done | - |
+| [02 - The daemon's keys in root config](task-02-the-daemons-keys.md) | done | 01 |
+| [03 - Each plugin is a key](task-03-each-plugin-is-a-key.md) | done | 02 |
+| [04 - A write-only value is never answered](task-04-a-write-only-value-is-never-answered.md) | done | 03 |
+| [05 - advancedTools and wire apply live](task-05-advanced-tools-and-wire-apply-live.md) | done | 02 |
+| [06 - Docs](task-06-docs.md) | done | 04, 05 |
 
 ## Risks and tradeoffs
 
@@ -89,16 +92,13 @@ root/configChanged { paths: [...] } -> dispatchNeeds: config:write -> rootConfig
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-takes-a-root-config-port.md](task-01-the-host-takes-a-root-config-port.md).
-- **Open questions:** none.
-- **Watch out for:** the echo of a `root/configChanged` goes through `seenBy`; a connection without `config:read` must get neither the keys nor their echo.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md) and [deferred.md](deferred.md).
 
 ## Final verification checklist
 
 - [ ] ahpapp signed in as admin shows the daemon keys and each plugin; a member sees the three host keys only.
-- [ ] Setting `agent-claude`'s `workerStop` writes `config.json` and root state says `ahpd.restartNeeded`.
-- [ ] Turning `advancedTools` on changes the tools of running sessions without a restart.
-- [ ] `agent-cofold`'s `apiKey` reads `<set>` everywhere but the terminal's `ahpd config`.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] Setting `agent-claude`'s `workerStop` writes `config.json` and root state says `ahpd.restartNeeded`.
+- [x] Turning `advancedTools` on changes the tools of running sessions without a restart.
+- [x] `agent-cofold`'s `apiKey` reads `<set>` everywhere but the terminal's `ahpd config`.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

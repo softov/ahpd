@@ -134,7 +134,7 @@ export const packageOf = (name: string): string => {
 };
 
 /** The object a configuration file holds, refusing one that is not an object. */
-const readEntry = (path: string): Record<string, unknown> => {
+export const readEntry = (path: string): Record<string, unknown> => {
   if (!existsSync(path)) return {};
   let held: unknown;
   try {
@@ -156,8 +156,23 @@ const readEntry = (path: string): Record<string, unknown> => {
  * because this is a file that may hold a connection token and the daemon is
  * the one writing it now.
  */
-const writeEntry = (path: string, held: Record<string, unknown>): void => {
+export const writeEntry = (path: string, held: Record<string, unknown>): void => {
   writeFileSync(path, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
+};
+
+/*
+ * The writes, one at a time: an install, an update or a remove starts once the
+ * one before it has settled, failure or not, so two served requests never run
+ * npm in the same directory together or edit the configuration file between
+ * each other's steps. A client's edit of the same file goes here too, for the
+ * same reason - two writers each reading the file and then writing it back
+ * would lose whichever wrote first.
+ */
+let settled: Promise<unknown> = Promise.resolve();
+export const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+  const turn = settled.then(work);
+  settled = turn.catch(() => undefined);
+  return turn;
 };
 
 /** Every name `plugins` already holds, whether an entry is a string or an object. */

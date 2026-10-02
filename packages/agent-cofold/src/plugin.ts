@@ -31,8 +31,14 @@ export const name = '@ahpd/agent-cofold';
  */
 export const title = 'Cofold';
 
-/** A search provider that takes a key. */
-const keyed = { type: 'object', properties: { apiKey: { type: 'string' } }, required: ['apiKey'] };
+/**
+ * A search provider that takes a key.
+ *
+ * `writeOnly` as the daemon's own is, so a client is told the key is set and
+ * never what it is. The mask answers a plugin's own option keys, so this one is
+ * marked because it is a credential, not because the daemon hides it.
+ */
+const keyed = { type: 'object', properties: { apiKey: { type: 'string', writeOnly: true } }, required: ['apiKey'] };
 
 /**
  * The options `apply` receives, as a JSON Schema the daemon checks them against
@@ -71,7 +77,7 @@ export const optionsSchema = {
       },
       description: 'Which capabilities a session runs, and where web_search gets its providers.',
     },
-    apiKey: { type: 'string', description: "The daemon's own key." },
+    apiKey: { type: 'string', writeOnly: true, description: "The daemon's own key." },
     resource: { type: 'string', description: 'The protected resource a client authenticates against.' },
     adapter: { type: 'object', description: 'A cofold ModelAdapter used instead of the HTTP one.' },
     policy: { type: 'object', description: 'The run-level policy a pause comes from.' },

@@ -575,6 +575,24 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   return { loaded, contribution, problems };
 }
 
+/*
+ * What each plugin that loaded declares its options are, kept for the root
+ * config port.
+ *
+ * The only other copy of one is inside a module that has just been imported, and
+ * importing it again to ask would run a plugin's code a second time. Keyed by
+ * the name `plugins` holds it under, which is the name the key a client edits is
+ * spelled with. A plugin that did not load has no entry here, which is what
+ * leaves its options free rather than wrongly bounded.
+ */
+const schemas = new Map<string, Record<string, unknown>>();
+
+/**
+ * The options schema of a plugin this daemon loaded, under the name `plugins`
+ * holds it as, or `undefined` for one that did not load.
+ */
+export const optionsSchemaLoaded = (name: string): Record<string, unknown> | undefined => schemas.get(name);
+
 /** What `loadPlugins` is given besides the specs. */
 export interface LoadOptions {
   /** The options the daemon already built, which every contribution folds into. */
@@ -638,8 +656,26 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
    */
   let reached: HostOptions | undefined;
 
+  /*
+   * A name that repeats is one module loaded twice with different options,
+   * which only works when each of its entries says which agent provider it is,
+   * and which is what tells their root config keys apart - decision
+   * `a-repeated-plugin-is-keyed-by-its-provider`. An entry of a repeated name
+   * that says none is refused here, where its agents would clash anyway.
+   */
+  const repeats = new Map<string, number>();
+  for (const spec of specs) repeats.set(nameOf(spec), (repeats.get(nameOf(spec)) ?? 0) + 1);
+  const keyed = (spec: PluginSpec): boolean => {
+    const said = typeof spec === 'string' ? undefined : spec.options?.['provider'];
+    return repeats.get(nameOf(spec)) === 1 || (typeof said === 'string' && said !== '');
+  };
+
   for (const spec of specs) {
     if (typeof spec !== 'string' && spec.enabled === false) continue;
+    if (!keyed(spec)) {
+      problems.push(`plugin ${nameOf(spec)} is named ${repeats.get(nameOf(spec))} times and sets no provider, so its agents would clash with the others of the same plugin`);
+      continue;
+    }
     let resolved: Resolved;
     try {
       resolved = resolvePlugin(spec, { configDir: options.configDir, cwd: options.cwd });
@@ -660,7 +696,10 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       usage: () => reached?.usage,
     });
     problems.push(...one.problems);
-    if (one.loaded !== undefined) loaded.push(one.loaded);
+    if (one.loaded !== undefined) {
+      loaded.push(one.loaded);
+      if (one.loaded.plugin.optionsSchema !== undefined) schemas.set(nameOf(spec), one.loaded.plugin.optionsSchema);
+    }
     if (one.contribution !== undefined) {
       contributions.push(one.contribution);
       known.push(...one.contribution.agents);

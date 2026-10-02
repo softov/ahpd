@@ -1,6 +1,6 @@
 ---
 title: The daemon's keys in root config
-status: todo
+status: done
 depends: [task-01-the-host-takes-a-root-config-port.md]
 layer: "server"
 refs:
@@ -29,5 +29,3 @@ The daemon gives the host a `rootConfig` port whose schema is `paths`, `port`, `
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume
