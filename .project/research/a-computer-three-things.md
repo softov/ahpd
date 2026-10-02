@@ -17,7 +17,7 @@ refs:
   - "[code://.project/decisions/a-machine-is-made-by-a-host-tool.md](../../.project/decisions/a-machine-is-made-by-a-host-tool.md) - the tool route this note questions"
   - "[code://.project/decisions/a-scheme-provider-implements-less-than-a-resource-store.md](../../.project/decisions/a-scheme-provider-implements-less-than-a-resource-store.md) - a provider implements only what it serves, and the write half is optional"
   - "[code://.project/research/host-owned-uri-resources.md](../../.project/research/host-owned-uri-resources.md) - the proposal that named the tool, and said what it is not"
-  - "[code://.project/ideas/dev-container-sessions.md](../../.project/ideas/dev-container-sessions.md) - running a session inside a container, which the reference host does with a relay"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - running a session inside a container, which the reference host does with a relay"
 ---
 
 # A computer is three things
@@ -44,7 +44,7 @@ Written 2026-09-23 after the user's correction: "Agents are not suppose to creat
 
 So the three things are:
 
-1. **A place a session runs.** The machine the harness and its commands execute in. Nothing in the host or the plugin does this today. `Start` (`packages/sdk/src/types/agent.ts`) carries a working directory, the resource store, the terminal factory and the host tools, and no place to run. The reference host does it for Dev Containers with `devcontainer up`, a relay child process and a `vscode.devContainers` capability key, which is written up in `.project/ideas/dev-container-sessions.md`.
+1. **A place a session runs.** The machine the harness and its commands execute in. Nothing in the host or the plugin does this today. `Start` (`packages/sdk/src/types/agent.ts`) carries a working directory, the resource store, the terminal factory and the host tools, and no place to run. The reference host does it for Dev Containers with `devcontainer up`, a relay child process and a `vscode.devContainers` capability key, which is written up in `git://7552054:.project/ideas/dev-container-sessions.md`.
 2. **An object a person manages.** A catalogue you can list, create, describe and destroy. The catalogue exists read-only; create and destroy do not, except through the model tools.
 3. **A tool a model may ask for.** A nested machine for a task, which is what the three tools are. They only make sense once the model is running somewhere, and never as the way a session gets its own machine.
 
@@ -98,7 +98,7 @@ This is per backend, and the honest answer is that the host cannot do it generic
 | --- | --- |
 | `@ahpd/agent-acp` | It spawns one command (`packages/agent-acp/src/connection.ts`), so pointing that command at the computer is a wrapper, which is the smallest real step |
 | `@ahpd/agent-claude` | The Claude Agent SDK spawns the CLI itself, so this needs a spawn or executable seam in the backend, and the SDK's own tool execution (Bash, Read, Write) is what has to run inside the computer, not only the host's ports |
-| `@ahpd/agent-cofold` | It runs in this process. Moving it into a computer means running the daemon there, or the Dev Container relay from `.project/ideas/dev-container-sessions.md` |
+| `@ahpd/agent-cofold` | It runs in this process. Moving it into a computer means running the daemon there, or the Dev Container relay from `git://7552054:.project/ideas/dev-container-sessions.md` |
 
 A `Start` field naming the computer (or an execution port) is the seam; each backend decides whether it can honour it, and one that cannot should refuse rather than run on the host and stay quiet.
 

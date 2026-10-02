@@ -21,7 +21,7 @@ refs:
   - "[code://packages/agent-acp/src/agent.ts](../../../../packages/agent-acp/src/agent.ts) - where a session is opened and where `Start` arrives"
   - "[code://packages/sdk/src/types/agent.ts#L92-L141](../../../../packages/sdk/src/types/agent.ts#L92-L141) - `Start`, which carries the ports"
   - "[code://packages/sdk/src/types/plugin.ts#L101-L140](../../../../packages/sdk/src/types/plugin.ts#L101-L140) - `register*`, where `registerComputers` goes"
-  - "[code://.project/ideas/dev-container-sessions.md](../../../ideas/dev-container-sessions.md) - the reference host's own answer to a session in a container"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the reference host's own answer to a session in a container"
   - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - the operator's page"
 ---
 

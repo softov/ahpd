@@ -25,7 +25,7 @@ refs:
   - "[code://packages/agent-acp/src/session.ts#L447-L479](../../../../packages/agent-acp/src/session.ts#L447-L479) - `placed()`, a backend that starts its process through the port"
   - "[code://packages/computer/src/devcontainer.ts](../../../../packages/computer/src/devcontainer.ts) - the nested host started with `--stdio`"
   - npm://@microsoft/agent-host-protocol@0.9.0 - `AhpClient`, the client the proxy uses
-  - "[code://.project/ideas/an-image-that-carries-ahpd.md](../../../ideas/an-image-that-carries-ahpd.md) - where the image goes next: one that carries ahpd, with only the code shared in"
+  - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - where the image goes next: one that carries ahpd, with only the code shared in"
 ---
 
 ## Goal
@@ -104,7 +104,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 - The inner host's protocol version must be the outer's; the proxy refuses a mismatch at `initialize`.
 - Every frame takes one more hop.
 - A resume depends on the machine keeping the inner transcript; a disposable machine that has gone makes it a sentence.
-- The image carries ahpd and its plugins until [an image that carries ahpd](../../../ideas/an-image-that-carries-ahpd.md) exists.
+- The image carries ahpd and its plugins until an image that carries ahpd (`git://7552054:.project/ideas/an-image-that-carries-ahpd.md`) exists.
 
 ## Resume state
 

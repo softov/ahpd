@@ -23,7 +23,7 @@ refs:
   - "[code://packages/computer/src/runtime.ts#L272](../../../../packages/computer/src/runtime.ts#L272) - Docker, the runtime that turns needs into flags"
   - "[code://packages/agent-claude/src/claude.ts#L372-L395](../../../../packages/agent-claude/src/claude.ts#L372-L395) - where Claude's history lives, keyed by the working directory"
   - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - the profile example with the pinned `versions/2.1.267` path"
-  - "[code://.project/ideas/an-agent-says-what-a-machine-needs.md](../../../ideas/an-agent-says-what-a-machine-needs.md) - the idea, with what Softov settled"
+  - "git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md - the idea, with what Softov settled"
 ---
 
 ## Goal

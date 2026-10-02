@@ -18,7 +18,7 @@ decisions:
 refs:
   - "[code://packages/computer/src/plugin.ts#L297-L321](../../../../packages/computer/src/plugin.ts#L297-L321) - the picker a disposable row joins"
   - "[code://packages/sdk/src/types/computers.ts#L47-L49](../../../../packages/sdk/src/types/computers.ts#L47-L49) - the port a session-time create goes through"
-  - "[code://.project/ideas/an-agent-says-what-a-machine-needs.md](../../../ideas/an-agent-says-what-a-machine-needs.md) - \"Disposable machines\", as Softov settled them"
+  - "git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md - \"Disposable machines\", as Softov settled them"
 ---
 
 ## Goal

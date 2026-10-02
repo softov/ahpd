@@ -10,7 +10,7 @@ refs:
   - "[code://packages/agent-claude/src/claude.ts#L378-L390](../../packages/agent-claude/src/claude.ts#L378-L390) - `refuseComputer`, the line the hook would replace"
   - "[code://packages/agent-cofold/src/session.ts#L171](../../packages/agent-cofold/src/session.ts#L171) - cofold's working directory, which is this process's"
   - "[code://packages/agent-cofold/src/tools.ts#L32-L40](../../packages/agent-cofold/src/tools.ts#L32-L40) - the host's tools as cofold tools, run in this process"
-  - "[code://.project/ideas/dev-container-sessions.md](../../.project/ideas/dev-container-sessions.md) - the reference client's route: a whole agent host inside the container"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the reference client's route: a whole agent host inside the container"
 ---
 
 # The question
@@ -38,7 +38,7 @@ None of that is a protocol change, and none of it is Claude-specific plumbing in
 
 # Route two: put a whole agent host in the machine and relay
 
-The reference client does not move a backend. It runs an entire agent host inside the container and reaches it through the connection it already has (`dev-container-sessions.md`: `devcontainer up`, `devcontainer exec`, a relay child whose stdio is wrapped in a WebSocket, frames carried over the outer AHP connection as base64, gated on `initialize._meta['vscode.devContainers']`).
+The reference client does not move a backend. It runs an entire agent host inside the container and reaches it through the connection it already has (`git://7552054:.project/ideas/dev-container-sessions.md`: `devcontainer up`, `devcontainer exec`, a relay child whose stdio is wrapped in a WebSocket, frames carried over the outer AHP connection as base64, gated on `initialize._meta['vscode.devContainers']`).
 Every harness that host has then runs in the container, because the host is in the container, and so do its files, its shells and its `computer:` provider.
 
 This is the only route that covers cofold, and it covers Claude too, so it is the one to weigh rather than route one.

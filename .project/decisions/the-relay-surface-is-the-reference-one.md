@@ -7,7 +7,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L6080-L6260](../../packages/sdk/src/host.ts#L6080-L6260) - the `vscode/*` extension methods this host already serves"
   - "[code://packages/sdk/src/host.ts#L4825-L4845](../../packages/sdk/src/host.ts#L4825-L4845) - `initialize` and the `_meta` block the key joins"
   - "[code://packages/sdk/src/types/host.ts#L458-L500](../../packages/sdk/src/types/host.ts#L458-L500) - `Connection`, which is per socket and owns what a socket owns"
-  - "[code://.project/ideas/dev-container-sessions.md](../ideas/dev-container-sessions.md) - the relay surface as the reference client uses it"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the relay surface as the reference client uses it"
   - "[code://.project/research/a-backend-inside-a-machine.md](../research/a-backend-inside-a-machine.md) - why the nested host is the route that covers every backend"
 ---
 

@@ -6,7 +6,7 @@ refs:
   - "[code://packages/server/src/plugins.ts#L169-L176](../../packages/server/src/plugins.ts#L169-L176) - a bare plugin name resolves from the configuration directory and nowhere else"
   - "[code://docs/COMPUTER.md#L146-L149](../../docs/COMPUTER.md#L146-L149) - the image example, which installs the plugin with `npm i -g`"
   - "[code://docs/CONTAINERS.md#L83](../../docs/CONTAINERS.md#L83) - the dev container launcher, which already uses `plugin install --no-enable`"
-  - "[code://.project/ideas/an-image-that-carries-ahpd.md](../ideas/an-image-that-carries-ahpd.md) - where this goes next"
+  - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - where this goes next"
 ---
 
 ## Context
@@ -23,7 +23,7 @@ Source: Softov, 2026-09-26, asked "How the image gets ahpd: (a) an image built w
 
 The machine still has no install step at session start: the image carries the host and its plugins.
 Until `@ahpd/agent-cofold` is published, the image installs it from a packed tarball or a path.
-The ideal Softov named is an image made for this, into which only the code is shared: [an image that carries ahpd](../ideas/an-image-that-carries-ahpd.md).
+The ideal Softov named is an image made for this, into which only the code is shared: an image that carries ahpd (`git://7552054:.project/ideas/an-image-that-carries-ahpd.md`).
 
 ## Options
 

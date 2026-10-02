@@ -21,7 +21,7 @@ Source: Softov, 2026-09-26, asked "How should ahpd run cofold inside a machine?"
 ## Consequences
 
 No cofold change, and the route works for any backend a nested host can load.
-The machine has to hold what cofold needs: its config, the provider key and the plugin, which is the [machine-needs idea](../ideas/an-agent-says-what-a-machine-needs.md).
+The machine has to hold what cofold needs: its config, the provider key and the plugin, which is the machine-needs idea (`git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md`).
 The dev container relay carries frames for a client; this carries them for a session the outer host owns, which is new.
 
 ## Options

@@ -7,7 +7,7 @@ refs:
   - "[code://packages/sdk/src/rpc.ts#L163-L200](../../packages/sdk/src/rpc.ts#L163-L200) - `receive`, which takes one frame as a string"
   - "[code://packages/sdk/src/listen.ts#L195-L225](../../packages/sdk/src/listen.ts#L195-L225) - the socket transport, which is the same three calls over a WebSocket"
   - "[code://packages/sdk/src/listen.ts#L225-L300](../../packages/sdk/src/listen.ts#L225-L300) - the WebSocket server, and why a host that needs `ws` is a host that needs a package"
-  - "[code://.project/ideas/dev-container-sessions.md](../ideas/dev-container-sessions.md) - the reference's relay, which is a WebSocket over the exec's stdio"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the reference's relay, which is a WebSocket over the exec's stdio"
 ---
 
 ## Context

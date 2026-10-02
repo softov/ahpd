@@ -6,7 +6,7 @@ refs:
   - "[code://packages/sdk/src/computers.ts#L103-L130](../../packages/sdk/src/computers.ts#L103-L130) - `computersFor`, the wrapped port every session enters a machine through"
   - "[code://packages/computer/src/plugin.ts#L665](../../packages/computer/src/plugin.ts#L665) - the picker filter, today the only thing that keeps an alone machine to its session"
   - "[code://packages/computer/src/runtime.ts#L372-L373](../../packages/computer/src/runtime.ts#L372-L373) - `ahpd.disposable` and `ahpd.disposable.alone`, the labels a machine carries"
-  - "[code://.project/ideas/an-agent-says-what-a-machine-needs.md](../ideas/an-agent-says-what-a-machine-needs.md) - \"only the session that made it runs there\""
+  - "git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md - \"only the session that made it runs there\""
 ---
 
 ## Context

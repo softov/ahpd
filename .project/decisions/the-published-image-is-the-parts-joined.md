@@ -4,7 +4,7 @@ status: accepted
 date: 2026-09-26
 refs:
   - "[code://packages/computer/src/manifest.ts#L34-L99](../../packages/computer/src/manifest.ts#L34-L99) - `Profile`, whose `image` defaults to the host's"
-  - "[code://.project/ideas/an-image-that-carries-ahpd.md](../ideas/an-image-that-carries-ahpd.md) - the image made for this purpose that Softov asked for"
+  - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - the image made for this purpose that Softov asked for"
   - "[code://.project/decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md](a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md) - how the ahpd part installs its plugins"
 ---
 

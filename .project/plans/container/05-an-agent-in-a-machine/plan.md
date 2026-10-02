@@ -25,7 +25,7 @@ refs:
   - "[code://packages/agent-acp/src/plugin.ts#L61-L86](../../../../packages/agent-acp/src/plugin.ts#L61-L86) - an ACP spec is a command, args and env, and declares no needs"
   - "[code://packages/sdk/src/host.ts#L4093-L4117](../../../../packages/sdk/src/host.ts#L4093-L4117) - `placedIn`, which hands the session's folder, already its worktree, to the machine maker"
   - "[code://packages/sdk/src/nested.ts#L95-L120](../../../../packages/sdk/src/nested.ts#L95-L120) - the proxy that relays a host started inside a machine"
-  - "[code://.project/ideas/an-image-that-carries-ahpd.md](../../../ideas/an-image-that-carries-ahpd.md) - the image Softov asked for, which the parts answer"
+  - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - the image Softov asked for, which the parts answer"
   - "[code://.project/ideas/more-computer-runtimes.md](../../../ideas/more-computer-runtimes.md) - the ssh runtime and working without a mount"
 ---
 

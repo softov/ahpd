@@ -26,7 +26,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L4825-L4845](../../../../packages/sdk/src/host.ts#L4825-L4845) - the `initialize` `_meta` block the capability key joins"
   - "[code://packages/server/src/main.ts#L250-L290](../../../../packages/server/src/main.ts#L250-L290) - flag parsing, where a stdio mode is chosen"
   - "[code://packages/computer/src/plugin.ts#L100-L130](../../../../packages/computer/src/plugin.ts#L100-L130) - the plugin that owns Docker and registers the `computers` port"
-  - "[code://.project/ideas/dev-container-sessions.md](../../../ideas/dev-container-sessions.md) - the reference route, read in full"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the reference route, read in full"
   - "[code://.project/research/a-backend-inside-a-machine.md](../../../research/a-backend-inside-a-machine.md) - why a nested host is the route that covers every backend"
 ---
 

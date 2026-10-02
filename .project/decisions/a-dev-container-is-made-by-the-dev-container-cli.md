@@ -4,7 +4,7 @@ status: accepted
 date: 2026-09-24
 refs:
   - "[code://packages/computer/src/runtime.ts](../../packages/computer/src/runtime.ts) - the Docker runtime this host owns, which makes a machine from a manifest"
-  - "[code://.project/ideas/dev-container-sessions.md](../ideas/dev-container-sessions.md) - the reference route this plan builds"
+  - "git://7552054:.project/ideas/dev-container-sessions.md - the reference route this plan builds"
   - "[code://.project/research/a-backend-inside-a-machine.md](../research/a-backend-inside-a-machine.md) - the two routes into a machine, and why the relay is the one that covers every backend"
   - "[code://docs/COMPUTER.md](../../docs/COMPUTER.md) - the machine a person manages, which is the other mechanism and not this one"
 ---

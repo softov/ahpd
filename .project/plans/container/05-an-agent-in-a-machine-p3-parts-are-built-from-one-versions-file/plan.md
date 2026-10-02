@@ -18,7 +18,7 @@ refs:
   - "[code://packages/computer/package.json](../../../../packages/computer/package.json) - `files`, which must ship `images/`"
   - "[code://scripts/computer.mjs](../../../../scripts/computer.mjs) - the script a person already manages a machine with"
   - "[code://.github/workflows/ci.yml](../../../../.github/workflows/ci.yml) - the workflow style a scheduled job follows"
-  - "[code://.project/ideas/an-image-that-carries-ahpd.md](../../../ideas/an-image-that-carries-ahpd.md) - the ahpd part answers it"
+  - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - the ahpd part answers it"
   - https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json - the registry a bump diffs against
   - https://docs.docker.com/build/building/context/ - a build context piped on stdin
 ---

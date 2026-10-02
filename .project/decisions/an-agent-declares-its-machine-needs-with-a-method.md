@@ -5,7 +5,7 @@ date: 2026-09-26
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L281-L283](../../packages/sdk/src/types/agent.ts#L281-L283) - `schema()` and `defaults()`, the other methods that describe an agent to the host"
   - "[code://packages/sdk/src/types/plugin.ts#L134-L138](../../packages/sdk/src/types/plugin.ts#L134-L138) - `registerSessionConfig`, the shape of the rejected registration"
-  - "[code://.project/ideas/an-agent-says-what-a-machine-needs.md](../ideas/an-agent-says-what-a-machine-needs.md) - the idea this settles one part of"
+  - "git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md - the idea this settles one part of"
 ---
 
 ## Context

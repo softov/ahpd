@@ -5,7 +5,7 @@ date: 2026-09-26
 refs:
   - "[code://packages/sdk/src/types/computers.ts#L47-L49](../../packages/sdk/src/types/computers.ts#L47-L49) - `ComputerPort`, the port the needs travel through"
   - "[code://packages/sdk/src/types/completions.ts#L27](../../packages/sdk/src/types/completions.ts#L27) - the `computer` answerer is told the `provider`, so it can filter by it"
-  - "[code://.project/ideas/an-agent-says-what-a-machine-needs.md](../ideas/an-agent-says-what-a-machine-needs.md) - the open item this settles"
+  - "git://7552054:.project/ideas/an-agent-says-what-a-machine-needs.md - the open item this settles"
 ---
 
 ## Context
