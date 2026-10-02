@@ -823,7 +823,17 @@ export function piSession(
         // pi fixes its custom tools when it is built, so a change made since
         // means a rebuilt pi on the same file before this turn runs.
         if (stale) backend = await reopen(backend);
-        if (model !== undefined) await backend.choose(model.id, model.config);
+        if (model !== undefined) {
+          /*
+           * A turn that named a model pi does not have is not answered by
+           * whatever the session was on before: it asked for that model, and
+           * the model is left where it was for the next turn. The catch below
+           * turns this into the turn's error, before anything is prompted.
+           */
+          if (!await backend.choose(model.id, model.config)) {
+            throw new Error(`pi has no model ${model.id}`);
+          }
+        }
         await backend.prompt(text);
         /*
          * `prompt` settling is not the turn ending: pi raises `agent_settled`

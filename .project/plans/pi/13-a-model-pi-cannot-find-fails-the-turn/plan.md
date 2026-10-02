@@ -1,7 +1,7 @@
 ---
 title: A model pi cannot find fails the turn that asked for it
 domain: pi
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-02
@@ -30,16 +30,16 @@ A turn naming a model pi cannot resolve fails with an error naming the model, no
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn's pick is taken or refused](task-01-a-turns-pick-is-taken-or-refused.md) | todo | - |
+| [01 - A turn's pick is taken or refused](task-01-a-turns-pick-is-taken-or-refused.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** built 2026-10-02; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 
 ## Final verification checklist
 
-- [ ] A turn naming an unknown model ends in error naming it, nothing is prompted, and the next turn runs on the previous model.
-- [ ] The configured `model` and a rebuilt session's carried model behave as before.
-- [ ] `plans/index.md` updated.
+- [x] A turn naming an unknown model ends in error naming it, nothing is prompted, and the next turn runs on the previous model.
+- [x] The configured `model` and a rebuilt session's carried model behave as before.
+- [x] `plans/index.md` updated. Left to whoever merges: the plan says this worktree does not edit the index.

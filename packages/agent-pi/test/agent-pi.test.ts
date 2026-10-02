@@ -8,6 +8,7 @@ import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
 import { forget } from '../src/catalog.js';
 import { activityOf, mapEvent, resultText } from '../src/mapping.js';
+import type { PiModel } from '../src/models.js';
 import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
 import { loadPi } from '../src/pi.js';
 import { optionsOf } from '../src/plugin.js';
@@ -85,6 +86,10 @@ function fakePi() {
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const asked: Bag[] = [];
   const opens: BackendOptions[] = [];
+  const runtime: PiModel[] = [
+    { provider: 'anthropic', id: 'claude-opus-5', name: 'Opus 5', contextWindow: 200000, maxTokens: 64000 },
+    { provider: 'openai', id: 'gpt-5', name: 'GPT-5' },
+  ];
   let settle = true;
   let leaf = 'entry-1';
   let moves = true;
@@ -98,13 +103,17 @@ function fakePi() {
     },
     steer: async (text) => { asked.push({ kind: 'steer', text }); },
     abort: async () => { asked.push({ kind: 'abort' }); listener?.({ type: 'agent_settled' }); },
-    models: async () => [
-      { provider: 'anthropic', id: 'claude-opus-5', name: 'Opus 5', contextWindow: 200000, maxTokens: 64000 },
-      { provider: 'openai', id: 'gpt-5', name: 'GPT-5' },
-    ],
+    models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
     chosen: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
-    choose: async (id, config) => { asked.push({ kind: 'choose', id, ...(config ? { config } : {}) }); },
+    /*
+     * pi's own runtime is what resolves a pick, so a model it does not list is
+     * refused rather than taken. That is the whole of what a turn cannot do.
+     */
+    choose: async (id, config) => {
+      asked.push({ kind: 'choose', id, ...(config ? { config } : {}) });
+      return modelFor(runtime, id) !== undefined;
+    },
     rename: (title) => { asked.push({ kind: 'rename', title }); },
     rewind: async (entryId) => { asked.push({ kind: 'rewind', entryId }); return moves; },
     leaf: () => leaf,
@@ -1334,11 +1343,38 @@ it('has failed by the time it says a turn failed', async () => {
 });
 
 it('passes the chosen model and its thinking level through to pi', async () => {
-  const { session, pi } = opened();
+  const { session, pi, types } = opened();
   session.begin('t1', 'hello', { id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
   await settled();
   expect(pi.asked.find((one) => one.kind === 'choose'))
     .toEqual({ kind: 'choose', id: 'openai/gpt-5', config: { [THINKING_KEY]: 'off' } });
+  expect(types('chat')).not.toContain('chat/error');
+  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
+});
+
+it('fails a turn that names a model pi does not have', async () => {
+  const { session, pi, last, types } = opened();
+  session.begin('t1', 'hello', { id: 'openrouter/nobody' });
+  await settled();
+  expect(((last('chat/error')?.part as Bag).error as Bag).message)
+    .toBe('pi has no model openrouter/nobody');
+  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(false);
+  // The model is where it was, so the next turn runs on it rather than on the
+  // one this turn asked for.
+  session.begin('t2', 'again');
+  await settled();
+  expect((last('chat/turnStarted')?.message as Bag).model)
+    .toEqual({ id: 'anthropic/claude-opus-5' });
+  expect(types('chat')).toContain('chat/turnComplete');
+});
+
+it('opens a session on a configured model pi does not have', async () => {
+  const { session, pi, types } = opened({}, { model: 'openrouter/nobody' });
+  session.begin('t1', 'hello');
+  await settled();
+  expect(pi.asked.find((one) => one.kind === 'choose')).toEqual({ kind: 'choose', id: 'openrouter/nobody' });
+  expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
+  expect(types('chat')).not.toContain('chat/error');
 });
 
 it('runs a new session on the model the options name', async () => {
@@ -1364,20 +1400,20 @@ it('lets a turn choose over the configured model', async () => {
 });
 
 it('carries the model a turn runs on its message', async () => {
-  const { session, last } = opened({}, { model: 'openrouter/y' });
-  session.begin('t1', 'hello', { id: 'openrouter/x', config: { [THINKING_KEY]: 'high' } });
+  const { session, last } = opened({}, { model: 'openai/gpt-5' });
+  session.begin('t1', 'hello', { id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } });
   await settled();
-  const wanted = { id: 'openrouter/x', config: { [THINKING_KEY]: 'high' } };
+  const wanted = { id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } };
   expect((last('chat/turnStarted')?.message as Bag).model).toEqual(wanted);
   const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't1');
   expect((turn?.message as Bag).model).toEqual(wanted);
 });
 
 it('carries the configured model when the turn names none', async () => {
-  const { session, last } = opened({}, { model: 'openrouter/y' });
+  const { session, last } = opened({}, { model: 'openai/gpt-5' });
   session.begin('t1', 'hello');
   await settled();
-  expect(((last('chat/turnStarted')?.message as Bag).model as Bag).id).toBe('openrouter/y');
+  expect(((last('chat/turnStarted')?.message as Bag).model as Bag).id).toBe('openai/gpt-5');
 });
 
 it('leaves the model off a turn that has none', async () => {

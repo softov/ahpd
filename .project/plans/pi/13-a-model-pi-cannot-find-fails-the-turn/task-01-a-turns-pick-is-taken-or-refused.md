@@ -1,6 +1,6 @@
 ---
 title: A turn's pick is taken or refused
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:

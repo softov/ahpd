@@ -52,7 +52,7 @@ function fakePi() {
     leaf: () => 'entry-1',
     levels: () => ['off'],
     chosen: () => undefined,
-    choose: async () => {},
+    choose: async () => true,
     rename: () => {},
     rewind: async (entryId) => {
       asked.push({ kind: 'rewind', entryId });

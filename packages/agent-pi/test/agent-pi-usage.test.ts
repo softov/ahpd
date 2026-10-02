@@ -39,7 +39,7 @@ function fakePi() {
     leaf: () => 'entry-1',
     levels: () => ['off'],
     chosen: () => undefined,
-    choose: async () => {},
+    choose: async () => true,
     rename: async () => {},
     rewind: async () => true,
     close: () => {},

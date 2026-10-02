@@ -50,8 +50,14 @@ export interface PiBackend {
   levels(model: PiModel): string[];
   /** What a new message would run on right now. */
   chosen(): { id: string; config: Record<string, unknown> } | undefined;
-  /** Run the next turn on this model, and at this thinking level. */
-  choose(id: string, config?: Record<string, unknown>): Promise<void>;
+  /**
+   * Run the next turn on this model, and at this thinking level.
+   *
+   * Answers `false` for an id pi's runtime does not have, and the session stays
+   * on the model it was already on. What a caller does about that is its own:
+   * a turn fails the turn rather than run on another model.
+   */
+  choose(id: string, config?: Record<string, unknown>): Promise<boolean>;
   /** Give the conversation a name pi will keep. */
   rename(title: string): void;
   /**
@@ -256,12 +262,12 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       const current = session.model as PiModel | undefined;
       const wanted = modelFor(available, id, current);
       /*
-       * A pick this host cannot resolve runs on the model the session is
-       * already on. It is a stale list in a client that has been open since
-       * before a credential changed, and running the turn beats failing it
-       * over the name of a model nobody can reach anyway.
+       * A pick this host cannot resolve is reported rather than taken, and the
+       * session stays on the model it was already on. It is usually a stale
+       * list in a client open since before a credential changed, and what that
+       * costs is for the caller to decide.
        */
-      if (wanted === undefined) return;
+      if (wanted === undefined) return false;
       if (current === undefined || current.id !== wanted.id || current.provider !== wanted.provider) {
         await session.setModel(wanted as never);
       }
@@ -271,6 +277,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       if (typeof level === 'string' && session.getAvailableThinkingLevels().includes(level as never)) {
         session.setThinkingLevel(level as never);
       }
+      return true;
     },
     rename: (title) => { session.setSessionName(title); },
     rewind: async (entryId) => {
