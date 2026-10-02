@@ -855,7 +855,10 @@ The frames are written out as
 [`packages/sdk/test/fixtures/wire.jsonl`](../packages/sdk/test/fixtures/wire.jsonl): a capture of the
 commands and actions above, with timestamps and generated ids replaced by
 stable ones so it can be diffed when something moves. The same check runs over
-a recording taken off a real daemon:
+a recording taken off a real daemon, and over a capture in either shape:
+`ahpd --wire` writes its capture in the shape VS Code's agent host uses, the
+message with `_ahpLog` beside it, and a capture in the older line with the
+frame under `frame` is read as well.
 
 ```bash
 pnpm schema                            # after a protocol bump

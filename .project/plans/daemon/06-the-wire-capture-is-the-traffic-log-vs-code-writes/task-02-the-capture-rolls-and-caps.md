@@ -1,6 +1,6 @@
 ---
 title: The capture rolls at 75 MiB, keeps five files, and caps a line
-status: todo
+status: done
 depends: [task-01-a-capture-line-is-vs-codes-line.md]
 layer: "server"
 refs:
@@ -31,6 +31,3 @@ A capture never passes five files of 75 MiB, and no line passes 1 MiB.
 
 - `test/wire-writer.test.ts`: with a small cap, six rolls leave five files; an oversized line is cut, is valid JSON and carries `truncated`.
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-
-## Resume
-

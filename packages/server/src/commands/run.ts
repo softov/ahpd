@@ -8,7 +8,6 @@
  * itself, and the shutdown both signals reach.
  */
 
-import { appendFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
@@ -44,6 +43,7 @@ import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiL
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
 import { pty } from '../pty.js';
+import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
 import { conflict, optionsFrom, secret, flagFields, stop } from './options.js';
@@ -401,12 +401,13 @@ export async function runForeground(options: Options): Promise<void> {
      * What the window's diagnostics get from this daemon.
      *
      * The version out of the manifest, the log a detached daemon writes to and
-     * the wire capture when there is one, and a shutdown that is the same
+     * every file of the wire capture when there is one - a capture that stops
+     * at the last roll is missing its start - and a shutdown that is the same
      * signal handler `ahpd stop` reaches through `SIGTERM`.
      */
     diagnostics: {
       version: version(),
-      logs: () => [daemonLog(), ...(options.wire === undefined ? [] : [options.wire])],
+      logs: () => [daemonLog(), ...(options.wire === undefined ? [] : filesOf(options.wire))],
       shutdown: () => { process.kill(process.pid, 'SIGTERM'); },
     },
   };
@@ -509,18 +510,15 @@ export async function runForeground(options: Options): Promise<void> {
    *
    * One line per frame, appended synchronously so the file is whole at the
    * moment anything else is read: a capture that lags the crash it is meant to
-   * explain is no capture. `frame` is the message parsed, so `jq` reads the
-   * file; a frame that is not JSON is kept as the string it was, because a
-   * client that sent one is exactly what a capture is for.
+   * explain is no capture. `wire.ts` builds the line, in the shape VS Code's
+   * agent host writes, and bounds the file it goes into. Nothing here can be
+   * trusted not to throw, so the tap keeps its contract and lets a frame it
+   * cannot parse through as text.
    */
   const tap = options.wire === undefined ? undefined : ((): Tap => {
-    const at = options.wire as string;
-    writeFileSync(at, '');
-    return (from, text, peer) => {
-      let frame: unknown = text;
-      try { frame = JSON.parse(text); } catch { /* kept as text */ }
-      appendFileSync(at, `${JSON.stringify({ at: new Date().toISOString(), from, peer, frame })}\n`);
-    };
+    const write = writerFor(options.wire as string);
+    const transport = options.stdio ? 'stdio' : 'websocket';
+    return (from, text, peer) => { write(lineFor(from, text, peer, transport)); };
   })();
 
   /*

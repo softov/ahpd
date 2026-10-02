@@ -1,6 +1,6 @@
 ---
 title: A capture line is VS Code's line
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -33,6 +33,3 @@ Each line `--wire` writes is the JSON-RPC message with a root-level `_ahpLog` of
 - `test/wire.test.ts`: a request, its answer and an action land as three lines with the right `dir` and a `connectionId`; a non-JSON frame lands as `_raw`.
 - `pnpm wire -- test/fixtures/wire.jsonl` and `pnpm wire -- <a new capture>` both report no defects.
 - `pnpm test`, `pnpm typecheck` green.
-
-## Resume
-

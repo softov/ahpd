@@ -1,6 +1,6 @@
 ---
 title: The docs describe the capture as VS Code's traffic log
-status: todo
+status: done
 depends: [task-01-a-capture-line-is-vs-codes-line.md, task-02-the-capture-rolls-and-caps.md, task-03-the-capture-is-owner-only.md]
 layer: "docs"
 refs:
@@ -25,6 +25,3 @@ A reader of `docs/DAEMON.md` knows a capture is in VS Code's shape, rolls at 75 
 ## Validation
 
 - Read against the code by hand.
-
-## Resume
-

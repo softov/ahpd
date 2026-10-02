@@ -1,8 +1,9 @@
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { checker, collapse, SCHEMA } from '../../../tools/wire.mjs';
+import { checker, collapse, framesIn, SCHEMA } from '../../../tools/wire.mjs';
+import { lineFor } from '../../server/src/wire.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /*
@@ -315,4 +316,82 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // And enough of it was actually routed to a declaration to mean anything: a
   // capture nothing recognised would pass this test saying nothing.
   expect(check.checked()).toBeGreaterThan(60);
+});
+
+/*
+ * What `--wire` writes down, and what reads it back.
+ *
+ * The line is VS Code's: the message at the root and `_ahpLog` beside it, so
+ * whatever opens a capture taken off an agent host opens this one too. The
+ * reader has to keep up - `pnpm wire` takes both shapes, because a capture
+ * taken before the change is still a capture somebody has to check.
+ */
+describe('a capture line', () => {
+  /** The meta a line carries, with the two fields that move left steady. */
+  const meta = { dir: 'c2s' as const, connectionId: '3', transport: 'websocket', byteLength: 0 };
+  const line = (at: Record<string, unknown>): Record<string, unknown> => at._ahpLog as Record<string, unknown>;
+
+  it('holds the message at the root, the way it went, and the connection it crossed', () => {
+    const ask = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'authenticate', params: { token: 'sesame' } });
+    const answer = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '0.9.0' } });
+    const action = JSON.stringify({ jsonrpc: '2.0', method: 'action', params: { channel: 'ahp-root://', action: { type: 'root/agentsChanged', agents: [] } } });
+
+    // Three frames, one exchange: what a client sent, what came back, and the
+    // host pushing on its own.
+    const [sent, answered, pushed] = [
+      lineFor('client', ask, 3, 'websocket'),
+      lineFor('host', answer, 3, 'websocket'),
+      lineFor('host', action, 3, 'websocket'),
+    ];
+
+    expect([sent.method, answered.method, pushed.method]).toEqual(['authenticate', undefined, 'action']);
+    // `frame` is gone: the message is the line, and nesting it is the one thing
+    // that would stop a reader of VS Code's capture from finding it.
+    expect([sent, answered, pushed].some((one) => 'frame' in one)).toBe(false);
+    expect([sent, answered, pushed].map((one) => line(one).dir)).toEqual(['c2s', 's2c', 's2c']);
+    for (const [at, text] of [[sent, ask], [answered, answer], [pushed, action]] as const) {
+      expect(line(at).connectionId).toBe('3');
+      expect(line(at).transport).toBe('websocket');
+      // The frame as it went over, not the line it became.
+      expect(line(at).byteLength).toBe(Buffer.byteLength(text, 'utf8'));
+      expect(new Date(line(at).ts as string).toISOString()).toBe(line(at).ts);
+    }
+  });
+
+  it('keeps a frame that is not a message whole, under _raw', () => {
+    const text = 'not json at all';
+    const captured = lineFor('client', text, 1, 'stdio');
+    expect(captured._raw).toBe(text);
+    expect(line(captured).transport).toBe('stdio');
+    // A line has to stay a line of JSON, or the capture stops being one.
+    expect(JSON.parse(JSON.stringify(captured))).toEqual(captured);
+    // A JSON value that is not an object is no message either, and spreading
+    // one would leave a line holding nothing but its own meta.
+    for (const odd of ['[1,2]', '5', '"five"', 'null']) {
+      expect(lineFor('host', odd, 1, 'websocket')._raw).toBe(odd);
+    }
+  });
+
+  it('reads a capture of the old shape as well as the new one', () => {
+    const message = { jsonrpc: '2.0', id: 1, result: { protocolVersion: '0.9.0' } };
+    const old = { at: '2020-01-01T00:00:00.000Z', from: 'host', peer: 3, frame: message };
+    expect([...framesIn(`${JSON.stringify(old)}\n`)]).toEqual([message]);
+    // The new shape comes back as itself, `_ahpLog` and all: a capture is
+    // still a capture, and a reader that wants the direction still has it.
+    const captured = lineFor('host', JSON.stringify(message), 3, 'websocket');
+    expect([...framesIn(`${JSON.stringify(captured)}\n`)]).toEqual([captured]);
+  });
+
+  it('is not a defect, where an undeclared key on the message still is', () => {
+    const check = checker();
+    const frame = { method: 'action', params: { channel: 'ahp-root://', action: { type: 'root/agentsChanged', agents: [] }, serverSeq: 1 } };
+    const { ts, ...rest } = { ...meta, ts: '2020-01-01T00:00:00.000Z' };
+
+    expect(check.frame({ ...frame, _ahpLog: { ...rest, byteLength: 40 } })).toEqual(check.frame(frame));
+    // The frame itself is clean, and a real undeclared key is still caught, so
+    // the line above is not passing because nothing was checked.
+    expect(check.frame(frame)).toEqual([]);
+    expect(check.frame({ ...frame, params: { ...frame.params, invented: true } }).map((one) => one.what))
+      .toEqual(['undeclared key `invented`']);
+  });
 });

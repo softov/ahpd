@@ -1,6 +1,6 @@
 ---
 title: The capture is readable only by its owner
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -25,6 +25,3 @@ Every file of a capture is created `0600`, because it holds each token a client 
 
 - `test/wire.test.ts`: on POSIX, the capture's mode is `0600` both when it is new and when it existed with `0644`.
 - `pnpm test` green.
-
-## Resume
-

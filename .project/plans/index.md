@@ -20,7 +20,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [03 - ahpd plugin install and remove](daemon/03-ahpd-plugin-install/plan.md) | high | built 2026-09-26 ([implemented.md](daemon/03-ahpd-plugin-install/implemented.md)) | plugin 01 | - |
 | [04 - ahpd's commands are declared once, and the CLI is rendered from them](daemon/04-commands-declared-once/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/04-commands-declared-once/implemented.md)) | daemon 03 | daemon 05 |
 | [05 - An HTTP API for the daemon, from the same commands, under the same grants](daemon/05-an-http-api/plan.md) | medium | built 2026-09-28 ([implemented.md](daemon/05-an-http-api/implemented.md)) | daemon 04 | - |
-| [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | planned 2026-09-26 | - | - |
+| [06 - The wire capture is the traffic log VS Code writes](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/plan.md) | medium | built 2026-10-02 ([implemented.md](daemon/06-the-wire-capture-is-the-traffic-log-vs-code-writes/implemented.md)) | - | - |
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
@@ -30,7 +30,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | planned 2026-09-29; tasks 01-06 todo | - | - |
 | [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |
 | [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented | - | - |
-| [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | planned 2026-09-30; task 01 todo | - | - |
+| [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | built 2026-10-02 ([implemented.md](daemon/14-the-daemon-log-rotates-at-start/implemented.md)) | - | - |
 
 Next free number in `daemon`: `15`.
 

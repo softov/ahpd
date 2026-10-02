@@ -1,6 +1,6 @@
 ---
 title: The log rotates at start
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -25,5 +25,3 @@ Before `daemon.log` is opened, a file over 5 MB is renamed `daemon.log.1`, repla
 
 - The new cases fail first and pass after.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-
-## Resume

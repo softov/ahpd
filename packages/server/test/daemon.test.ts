@@ -7,12 +7,12 @@
  * `connectUrl` for the person copying it out of the 0600 file.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { announcementOf, claim, forget, readyUrl, recordOf, running, start, statusLine, stop } from '../src/daemon.js';
+import { announcementOf, claim, forget, logSince, readyUrl, recordOf, running, start, statusLine, stop } from '../src/daemon.js';
 import { isIdentifier, namedIssuer, personalUrl, signInIdentifier } from '../src/config.js';
 import type { Running } from '../src/daemon.js';
 
@@ -242,6 +242,45 @@ describe('the record on disk', () => {
       forget([process.ppid]);
     }
   });
+
+  /** A child that says where it is and stays up, which is what a daemon does. */
+  const announcer = (): string => {
+    const child = join(home, 'announce.mjs');
+    writeFileSync(child, "process.stdout.write(`ahpd on ws://127.0.0.1:1 (node), sessions in /x\\npid ${process.pid}\\n`); setInterval(() => {}, 1000);\n");
+    return child;
+  };
+  const logAt = (name: string): string => join(home, 'ahpd', name);
+
+  it('moves a log over 5 MB aside, and starts a new one holding this start', async () => {
+    writeFileSync(logAt('daemon.log'), Buffer.alloc(6 * 1024 * 1024, 'x'));
+    const record = await start([], announcer());
+    try {
+      expect(statSync(logAt('daemon.log.1')).size).toBe(6 * 1024 * 1024);
+      // The new log holds this start and no byte of the last one.
+      expect(logSince(0)).toBe(`ahpd on ws://127.0.0.1:1 (node), sessions in /x\npid ${String(record.pid)}\n`);
+    }
+    finally { stop(); }
+  }, 15000);
+
+  it('appends to a log under the limit, and leaves no .1', async () => {
+    writeFileSync(logAt('daemon.log'), 'a line from the last daemon\n');
+    const record = await start([], announcer());
+    try {
+      expect(existsSync(logAt('daemon.log.1'))).toBe(false);
+      expect(readFileSync(logAt('daemon.log'), 'utf8')).toBe(`a line from the last daemon\nahpd on ws://127.0.0.1:1 (node), sessions in /x\npid ${String(record.pid)}\n`);
+    }
+    finally { stop(); }
+  }, 15000);
+
+  it('replaces the .1 that a previous rotation left', async () => {
+    writeFileSync(logAt('daemon.log'), Buffer.alloc(6 * 1024 * 1024, 'x'));
+    writeFileSync(logAt('daemon.log.1'), 'the one before that\n');
+    await start([], announcer());
+    try {
+      expect(statSync(logAt('daemon.log.1')).size).toBe(6 * 1024 * 1024);
+    }
+    finally { stop(); }
+  }, 15000);
 
   it('stops the child it started when its record cannot be written', async () => {
     const child = join(home, 'announce.mjs');

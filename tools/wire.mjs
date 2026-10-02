@@ -167,11 +167,18 @@ export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
     frame(value) {
       const found = [];
       if (typeof value !== 'object' || value === null) return found;
+      /*
+       * A capture from `--wire` carries `_ahpLog` beside the message: the
+       * log's own meta, which no declaration has and the closed objects here
+       * would report as undeclared. It is the recorder's, not the protocol's,
+       * so it comes off before anything is checked.
+       */
+      const { _ahpLog, ...message } = value;
       // A subscribe answer: the snapshot names its own channel.
-      const snapshot = value.result?.snapshot;
+      const snapshot = message.result?.snapshot;
       if (snapshot?.state !== undefined) against(stateFor(snapshot.resource), snapshot.state, snapshot.resource, found);
       // A reconnect answer carries several at once.
-      for (const one of value.result?.snapshots ?? []) {
+      for (const one of message.result?.snapshots ?? []) {
         if (one?.state !== undefined) against(stateFor(one.resource), one.state, one.resource, found);
       }
       /*
@@ -183,16 +190,16 @@ export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
        * type reported `sessionMutable` as undeclared - it is declared, on the
        * *session* config schema, which is not the generic one.
        */
-      if (value.result?.schema !== undefined && snapshot === undefined) {
-        against('ResolveSessionConfigResult', value.result, 'resolveSessionConfig', found);
+      if (message.result?.schema !== undefined && snapshot === undefined) {
+        against('ResolveSessionConfigResult', message.result, 'resolveSessionConfig', found);
       }
       // An action, envelope and payload both. The payload's declaration is
       // named after its action type, which the package spells in PascalCase
       // with the channel prefix - `chat/delta` is `ChatDeltaAction`.
-      if (value.method === 'action' && value.params) {
-        against('ActionEnvelope', value.params, value.params.channel, found);
-        const type = value.params.action?.type;
-        if (typeof type === 'string') against(actionDef(type), value.params.action, type, found);
+      if (message.method === 'action' && message.params) {
+        against('ActionEnvelope', message.params, message.params.channel, found);
+        const type = message.params.action?.type;
+        if (typeof type === 'string') against(actionDef(type), message.params.action, type, found);
       }
       return found;
     },
@@ -214,9 +221,11 @@ export function collapse(defects) {
 /**
  * Frames out of a capture.
  *
- * JSON lines. Each line is either a protocol frame or an object with the
- * frame under `frame`, as a string or an object - which is what the recorders
- * on both sides of this protocol happen to write.
+ * JSON lines. Each line is either a protocol frame - which is what `--wire`
+ * writes, the message with `_ahpLog` beside it - or an object with the frame
+ * under `frame`, as a string or an object, which is what the recorders on both
+ * sides of this protocol happened to write. Both are read, so a capture taken
+ * before the shape changed still checks.
  */
 export function* framesIn(text) {
   for (const line of text.split('\n')) {

@@ -219,7 +219,7 @@ anything has been let go of.
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `memory` is why a restart forgets the last two |
-| `--wire <file>` | Append every frame, both directions, to this file as JSON lines. `pnpm wire -- <file>` checks it against the schema |
+| `--wire <file>` | Append every frame, both directions, to this file as JSON lines, one message per line with an `_ahpLog` beside it - the shape VS Code's agent host writes its traffic log in, so a capture opens in whatever reads that. A line over 1 MiB is written again with its strings cut and `_ahpLog.truncated` set; a file over 75 MiB rolls to `<file>.1` and five files are kept. The capture holds every token a client sent in `authenticate`, so each of its files is `0600`. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
 | `--no-plugins` | Load none, whatever the configuration file says |
 | `--plugin-option <plugin>.<key>=<value>` | Set one option of a loaded plugin for this run. Repeatable. See below |

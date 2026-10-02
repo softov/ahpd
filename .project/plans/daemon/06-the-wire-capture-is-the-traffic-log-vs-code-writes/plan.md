@@ -1,7 +1,7 @@
 ---
 title: The wire capture is the traffic log VS Code writes
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-09-26
@@ -79,10 +79,10 @@ pnpm wire -- <file> -> framesIn -> the checker, which [changes] ignores _ahpLog
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A capture line is VS Code's line](task-01-a-capture-line-is-vs-codes-line.md) | todo | - |
-| [02 - The capture rolls at 75 MiB, keeps five files, and caps a line](task-02-the-capture-rolls-and-caps.md) | todo | 01 |
-| [03 - The capture is readable only by its owner](task-03-the-capture-is-owner-only.md) | todo | - |
-| [04 - Docs](task-04-docs.md) | todo | 01, 02, 03 |
+| [01 - A capture line is VS Code's line](task-01-a-capture-line-is-vs-codes-line.md) | done | - |
+| [02 - The capture rolls at 75 MiB, keeps five files, and caps a line](task-02-the-capture-rolls-and-caps.md) | done | 01 |
+| [03 - The capture is readable only by its owner](task-03-the-capture-is-owner-only.md) | done | - |
+| [04 - Docs](task-04-docs.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -91,15 +91,12 @@ pnpm wire -- <file> -> framesIn -> the checker, which [changes] ignores _ahpLog
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-capture-line-is-vs-codes-line.md](task-01-a-capture-line-is-vs-codes-line.md); task 03 does not depend on it.
-- **Open questions:** none.
-- **Watch out for:** `_ahpLog` is not a protocol field, so the checker in `tools/wire.mjs` must skip it before it closes the object, or every line is a defect.
+- **Done so far:** built 2026-10-02, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A capture from `ahpd --wire <file>` has one message per line with `_ahpLog` carrying `ts`, `dir`, `connectionId`, `transport` and `byteLength`.
-- [ ] `pnpm wire -- <file>` passes on a new capture and on `test/fixtures/wire.jsonl`.
-- [ ] A capture past the cap rolls, and a sixth file is never kept.
-- [ ] The capture file is `0600`.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/DAEMON.md`, `plans/index.md` updated.
+- [x] A capture from `ahpd --wire <file>` has one message per line with `_ahpLog` carrying `ts`, `dir`, `connectionId`, `transport` and `byteLength`.
+- [x] `pnpm wire -- <file>` passes on a new capture and on `test/fixtures/wire.jsonl`.
+- [x] A capture past the cap rolls, and a sixth file is never kept.
+- [x] The capture file is `0600`.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/DAEMON.md`, `plans/index.md` updated.

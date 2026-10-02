@@ -228,6 +228,29 @@ export function statusLine(record: Pick<Running, 'url' | 'pid' | 'startedAt'>): 
 }
 
 /**
+ * The size `daemon.log` may reach before a start moves it aside: over this, and
+ * the start that finds it renames it and opens a new one in its place.
+ */
+const LOG_LIMIT = 5 * 1024 * 1024;
+
+/**
+ * Move a log that has outgrown the limit aside, before a start appends to it.
+ *
+ * At the start and not on a timer, so nothing has to be running to watch the
+ * file: the daemon whose log grew unchecked is the one nobody has been near.
+ * One previous log is kept and this one replaces it, which is as much of a log
+ * nobody has read in a while as is worth keeping.
+ */
+const rotateLog = (): void => {
+  let size: number;
+  try { size = statSync(daemonLog()).size; }
+  catch { return; }
+  if (size <= LOG_LIMIT) return;
+  try { renameSync(daemonLog(), `${daemonLog()}.1`); }
+  catch { /* another start got there first, and the log is its own to keep */ }
+};
+
+/**
  * Start one in the background, and wait until it says where it is.
  *
  * Detached and with its streams let go, so it outlives the shell that started
@@ -242,6 +265,7 @@ export async function start(argv: string[], self: string, token?: string, replac
   if (already && already.pid !== replacing) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
 
   ensureConfigDir();
+  rotateLog();
   /*
    * Where this run's output will start.
    *
