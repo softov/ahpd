@@ -1,6 +1,6 @@
 ---
 title: ahpd vault sets, deletes and lists
-status: todo
+status: done
 depends: [task-08-the-daemon-holds-its-vault.md]
 layer: "server"
 refs:

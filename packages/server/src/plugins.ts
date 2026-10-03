@@ -27,8 +27,8 @@ import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
-import { foldHostOptions, pluginHost, runtime, sdkVersion } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Usage } from '@ahpd/sdk';
+import { foldHostOptions, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -368,6 +368,14 @@ export interface LoadOneOptions {
    * is not complete while any one plugin is applying.
    */
   usage?: () => Usage | undefined;
+  /**
+   * Where a plugin's secrets are, read when one is resolved.
+   *
+   * A function for the reason `agents` is one: a plugin that registers a vault
+   * is listed before the plugins whose options are read against it, and one
+   * listed after them has not been folded in yet.
+   */
+  vault?: () => Vault | undefined;
 }
 
 /** What one `loadOne` managed: a plugin, or the reasons it is not one. */
@@ -469,6 +477,125 @@ export async function optionsSchemaOf(
 }
 
 /**
+ * The schema one property of an object is held to, by name.
+ *
+ * `properties` first, then `patternProperties`, then `additionalProperties`, so
+ * the loader and the mask find the same node for a key whichever of the three
+ * declares it: which option is a `secretAtUse` one and which is a `writeOnly` one
+ * are two questions about one declaration.
+ */
+export const schemaOf = (schema: Record<string, unknown>, key: string): Record<string, unknown> => {
+  const properties = isRecord(schema['properties']) ? schema['properties'] : {};
+  if (isRecord(properties[key])) return properties[key] as Record<string, unknown>;
+  const patterns = isRecord(schema['patternProperties']) ? schema['patternProperties'] : {};
+  for (const [pattern, one] of Object.entries(patterns)) {
+    if (new RegExp(pattern, 'u').test(key)) return isRecord(one) ? one : {};
+  }
+  return isRecord(schema['additionalProperties']) ? schema['additionalProperties'] : {};
+};
+
+/**
+ * What one value carries, and what it is checked against.
+ *
+ * The two are one value everywhere except where a schema node says
+ * `secretAtUse`: there the plugin is handed what was written, references and all,
+ * and the check is run against the names they hold, so an option declared
+ * `type: string` still passes without the plugin having to declare a type it
+ * never sees.
+ */
+interface Unwrapped {
+  forApply: unknown;
+  forCheck: unknown;
+  /** Whether any reference was found, which is what makes a vault plugin's own options a refusal. */
+  named: boolean;
+}
+
+/**
+ * What a `secretAtUse` node's references say to the schema check: their names.
+ *
+ * Nothing is read here, because a node marked `secretAtUse` is one the plugin
+ * reads later and itself. Each `{ "$secret": "<name>" }` beneath it becomes the
+ * name, so an option declared `type: string` or `items: { type: 'string' }` is
+ * checked against something of the shape it declared.
+ */
+const asNames = (value: unknown): { forCheck: unknown; named: boolean } => {
+  const ref = secretRef(value);
+  if (ref !== undefined) return { forCheck: ref, named: true };
+  if (Array.isArray(value)) {
+    const each = value.map(asNames);
+    return { forCheck: each.map((one) => one.forCheck), named: each.some((one) => one.named) };
+  }
+  if (!isRecord(value)) return { forCheck: value, named: false };
+  const forCheck: Record<string, unknown> = {};
+  let named = false;
+  for (const [key, one] of Object.entries(value)) {
+    const inner = asNames(one);
+    forCheck[key] = inner.forCheck;
+    named = named || inner.named;
+  }
+  return { forCheck, named };
+};
+
+/**
+ * Every `{ "$secret": "<name>" }` in one value, read and replaced.
+ *
+ * Nothing owns a plugin's load, so a reference resolved here may only name a
+ * `host:` secret: a `team:` or `user:` name is refused by `readSecret` as out of
+ * scope, which is the rule decision
+ * `a-secret-is-named-in-a-host-team-or-user-scope` settled rather than a second
+ * check here.
+ */
+const resolveSecrets = async (
+  schema: Record<string, unknown>,
+  value: unknown,
+  vault: Vault | undefined,
+  path: string,
+  label: string,
+): Promise<Unwrapped> => {
+  const ref = secretRef(value);
+  // A node the schema marked is left whole, whatever shape it is: what is under
+  // it is the plugin's to read, at the moment it asks rather than at load.
+  if (schema['secretAtUse'] === true) {
+    const inner = ref === undefined ? asNames(value) : { forCheck: ref, named: true };
+    return { forApply: value, forCheck: inner.forCheck, named: inner.named };
+  }
+  if (ref !== undefined) {
+    if (vault === undefined) throw new Error(`${label}.${path} names ${ref}: ${ref} cannot be read: this host has no vault`);
+    let secret: string;
+    try {
+      secret = await readSecret(vault, ref, {});
+    }
+    catch (error) {
+      throw new Error(`${label}.${path} names ${ref}: ${messageOf(error)}`);
+    }
+    // What is checked is what the plugin is given, so a value the schema
+    // refuses is refused here rather than reaching `apply`.
+    return { forApply: secret, forCheck: secret, named: true };
+  }
+  const items = isRecord(schema['items']) ? schema['items'] : {};
+  if (Array.isArray(value)) {
+    const each = await Promise.all(value.map(async (one, at) =>
+      resolveSecrets(items, one, vault, `${path}[${String(at)}]`, label)));
+    return {
+      forApply: each.map((one) => one.forApply),
+      forCheck: each.map((one) => one.forCheck),
+      named: each.some((one) => one.named),
+    };
+  }
+  if (!isRecord(value)) return { forApply: value, forCheck: value, named: false };
+  const forApply: Record<string, unknown> = {};
+  const forCheck: Record<string, unknown> = {};
+  let named = false;
+  for (const [key, one] of Object.entries(value)) {
+    const resolved = await resolveSecrets(schemaOf(schema, key), one, vault, path === '' ? key : `${path}.${key}`, label);
+    forApply[key] = resolved.forApply;
+    forCheck[key] = resolved.forCheck;
+    named = named || resolved.named;
+  }
+  return { forApply, forCheck, named };
+};
+
+/**
  * Resolve, validate, import and apply one plugin.
  *
  * The order is the point: the manifest is read and the range checked before
@@ -513,15 +640,30 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ? held.defaults as Record<string, unknown>
     : undefined;
   const named = typeof spec === 'object' && spec !== null ? spec.options : undefined;
-  const values: Record<string, unknown> = { ...(defaults ?? {}), ...(named ?? {}) };
+  const written: Record<string, unknown> = { ...(defaults ?? {}), ...(named ?? {}) };
   const optionsSchema = isRecord(held.optionsSchema) ? held.optionsSchema : undefined;
   if (held.optionsSchema !== undefined && optionsSchema === undefined) {
     return { problems: [...problems, `plugin ${name} skipped: its optionsSchema is not an object`] };
   }
+  /*
+   * Every `{ "$secret": "<name>" }` in the options is read here, before the
+   * schema is asked whether the values are of the declared types: a secret is a
+   * string once read and an object while written, so the two orders cannot both
+   * be right and this is the one that lets an option declared `type: string` be
+   * written as a reference.
+   */
+  const label = `plugins.${name}.options`;
+  let unwrapped: Unwrapped;
+  try {
+    unwrapped = await resolveSecrets(optionsSchema ?? {}, written, options.vault?.(), '', label);
+  }
+  catch (error) {
+    return { problems: [...problems, `plugin ${name} skipped: ${messageOf(error)}`] };
+  }
+  const values = unwrapped.forApply as Record<string, unknown>;
   if (optionsSchema !== undefined) {
-    const label = `plugins.${name}.options`;
     try {
-      check(values, optionsSchema as JsonSchema, label);
+      check(unwrapped.forCheck, optionsSchema as JsonSchema, label);
     }
     catch (error) {
       return { problems: [...problems, `plugin ${name} skipped: ${messageOf(error)}`] };
@@ -550,6 +692,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   }, {
     ...(options.agents === undefined ? {} : { agents: options.agents }),
     ...(options.usage === undefined ? {} : { usage: options.usage }),
+    ...(options.vault === undefined ? {} : { vault: options.vault }),
   });
   try {
     await apply.call(plugin, host, values);
@@ -558,6 +701,14 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     // One failure path: whatever the registration check or the plugin itself
     // threw, the whole contribution is discarded and the plugin costs a line.
     return { problems: [...problems, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
+  }
+  /*
+   * A vault that read a secret out of its own options is a vault that decided
+   * where its own secrets come from, which is the one thing it cannot be asked
+   * to answer: it would be reading the store it is, or the one it took over.
+   */
+  if (unwrapped.named && contribution.ports.vault !== undefined) {
+    return { problems: [...problems, `plugin ${name} skipped: a vault plugin's own options cannot name a secret`] };
   }
 
   // The absolute path is logged, so what ran is in the log even when a spec
@@ -657,6 +808,20 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   let reached: HostOptions | undefined;
 
   /*
+   * The vault a load resolves against: the daemon's own, unless a plugin listed
+   * earlier has taken the port over.
+   *
+   * Read from the contributions rather than from the fold, because the fold has
+   * not run yet and a plugin that registered a vault is meant to be serving the
+   * plugins that come after it. `owner` is the fold's own rule, seeded from the
+   * base: a port is set once, and a second plugin that did not ask to take it
+   * over is told rather than served from its own store.
+   */
+  let standing: Vault | undefined;
+  let owner: string | undefined = options.base.vault === undefined ? undefined : 'the daemon';
+  const vaultInForce = (): Vault | undefined => standing ?? options.base.vault;
+
+  /*
    * A name that repeats is one module configured twice, which decision
    * `a-plugin-loads-once-and-each-preset-is-a-variant` refuses: a plugin is
    * loaded once and its options are what make its variants, so the second and
@@ -693,6 +858,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       agents: () => known,
       ...(options.base.hostName === undefined ? {} : { hostName: options.base.hostName }),
       usage: () => reached?.usage,
+      vault: vaultInForce,
     });
     problems.push(...one.problems);
     if (one.loaded !== undefined) {
@@ -702,6 +868,11 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
     if (one.contribution !== undefined) {
       contributions.push(one.contribution);
       known.push(...one.contribution.agents);
+      const entry = one.contribution.ports.vault;
+      if (entry !== undefined && (owner === undefined || entry.replace)) {
+        standing = entry.value as Vault;
+        owner = one.contribution.by;
+      }
     }
   }
 

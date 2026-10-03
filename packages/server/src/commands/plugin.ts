@@ -9,6 +9,7 @@
 
 import { check, output } from '@cofold/commands';
 import type { Command, CommandContext, JsonSchema, Output, Registry } from '@cofold/commands';
+import { scopeOf, secretRef } from '@ahpd/sdk';
 import { configDir, configPath } from '../config.js';
 import { running } from '../daemon.js';
 import {
@@ -258,7 +259,12 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       else if (unreadable !== undefined) say(`Could not import ${name} to check it (${unreadable}); it is checked at the next start.`);
       else if (known !== undefined && Object.hasOwn(known, option)) {
         try {
-          check(value, known[option] as JsonSchema, `plugins.${name}.options.${option}`);
+          // A reference is held to the name rule rather than to the option's
+          // schema: what it will resolve to is the plugin's business, read
+          // through `host.secret` once it loads.
+          const ref = secretRef(value);
+          if (ref === undefined) check(value, known[option] as JsonSchema, `plugins.${name}.options.${option}`);
+          else scopeOf(ref);
         }
         catch (error) {
           stop(error instanceof Error ? error.message : String(error));

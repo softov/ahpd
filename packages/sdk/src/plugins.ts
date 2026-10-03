@@ -17,6 +17,8 @@ import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, Ho
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
 import type { Usage } from './types/usage.js';
+import type { Vault } from './types/vault.js';
+import { readSecret } from './vault.js';
 import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
 
 /**
@@ -29,7 +31,7 @@ import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, m
  */
 const PORT_KEYS = [
   'resources', 'terminals', 'changes', 'directories', 'worktrees',
-  'github', 'automations', 'sessions', 'diagnostics', 'computers', 'containers', 'usage', 'policies',
+  'github', 'automations', 'sessions', 'diagnostics', 'computers', 'containers', 'usage', 'policies', 'vault',
 ] as const satisfies readonly PortKey[];
 
 /*
@@ -270,6 +272,14 @@ export interface HostRecordingOptions {
    * none at all.
    */
   usage?: () => Usage | undefined;
+  /**
+   * Where a plugin's secrets are, read when `secret` is called.
+   *
+   * A function, and `undefined` for the store, for the same reason `usage` is:
+   * the port belongs to the host and not to this plugin, so a plugin that
+   * registers a vault may load after this one, and a host may have none.
+   */
+  vault?: () => Vault | undefined;
 }
 
 /**
@@ -337,6 +347,17 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       if (usage === undefined) return;
       await usage.record(entry);
     },
+    /*
+     * Thrown rather than dropped when there is no vault, the other way round
+     * from `recordUsage`: a plugin asking for a credential is asking for a value
+     * it cannot do without, so a host nobody gave one to is a host that cannot
+     * run it.
+     */
+    secret: async (name, work) => {
+      const vault = options.vault?.();
+      if (vault === undefined) throw new Error(`${name} cannot be read: this host has no vault`);
+      return readSecret(vault, name, work);
+    },
     registerAgent(agent) {
       checkAgent(agent, by);
       if (providers.has(agent.provider)) {
@@ -394,6 +415,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     registerContainers: (containers, when) => { setPort('containers', 'registerContainers', containers, when); },
     registerUsage: (usage, when) => { setPort('usage', 'registerUsage', usage, when); },
     registerPolicies: (policies, when) => { setPort('policies', 'registerPolicies', policies, when); },
+    registerVault: (vault, when) => { setPort('vault', 'registerVault', vault, when); },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the
       // same read-only one `apply` was handed, and the host does not otherwise

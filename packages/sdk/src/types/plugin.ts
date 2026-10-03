@@ -19,6 +19,7 @@ import type { HostOptions, HostTool } from './host.js';
 import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
 import type { UsageEntry } from './usage.js';
+import type { SecretWork } from './vault.js';
 
 /**
  * The `HostOptions` keys that hold one value, one plugin at a time.
@@ -41,7 +42,8 @@ export type PortKey =
   | 'computers'
   | 'containers'
   | 'usage'
-  | 'policies';
+  | 'policies'
+  | 'vault';
 
 /**
  * What one port key holds.
@@ -166,6 +168,16 @@ export interface PluginHost extends PluginContext {
    * host nobody has asked to keep usage rather than a plugin that got it wrong.
    */
   recordUsage(entry: UsageEntry): Promise<void>;
+  /**
+   * The value of one secret, under the scope rule of its name.
+   *
+   * `host:<name>` is read for anything, `team:<team>/<name>` only for work
+   * charged to that team and `user:<id>/<name>` only for that person's own work
+   * - decision `a-secret-is-named-in-a-host-team-or-user-scope`. The value is
+   * read when it is asked for rather than at load, and a host with no `vault`
+   * port refuses the name rather than answering it with nothing.
+   */
+  secret(name: string, work?: SecretWork): Promise<string>;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */
@@ -246,6 +258,15 @@ export interface PluginHost extends PluginContext {
    * same shape `registerUsage` is offered.
    */
   registerPolicies(policies: PortOf<'policies'>, when?: 'replace'): void;
+  /**
+   * Set `HostOptions.vault`, or take the daemon's over with `'replace'`.
+   *
+   * The store a plugin option's `{ "$secret": "<name>" }` is read through, and
+   * what a secret manager or a database several daemons share takes over -
+   * decision `the-local-vault-is-a-plain-file-until-it-is-encrypted`, whose own
+   * vault is a plain file beside the configuration.
+   */
+  registerVault(vault: PortOf<'vault'>, when?: 'replace'): void;
   /**
    * Subscribe to one of the host's own moments.
    *

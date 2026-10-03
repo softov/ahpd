@@ -91,6 +91,21 @@ describe('plugin config at the terminal', () => {
     expect(read().plugins).toEqual([SECRET]);
   });
 
+  it('writes a reference for a string option, and refuses a name that is not one', async () => {
+    put({ plugins: [SECRET] });
+    // `{"$secret": "host:orders"}` parses as JSON, so the value is a reference
+    // rather than a string: it is held to the name rule, not to `type: string`.
+    await run('plugin.config.set', { name: SECRET, key: 'apiKey', value: '{"$secret": "host:orders"}' });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } }]);
+    // And it is answered as written, so the name stays visible.
+    expect((await run('plugin.config', { name: SECRET, key: 'apiKey' })).output?.data)
+      .toEqual({ name: SECRET, key: 'apiKey', value: { $secret: 'host:orders' } });
+
+    await expect(run('plugin.config.set', { name: SECRET, key: 'apiKey', value: '{"$secret": "x"}' }))
+      .rejects.toThrow('x is not a secret name');
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } }]);
+  });
+
   it('writes a value for a plugin it cannot import, and says it is checked at the next start', async () => {
     put({ plugins: ['not-installed-anywhere'] });
     const set = await run('plugin.config.set', { name: 'not-installed-anywhere', key: 'mode', value: 'fast' });
@@ -196,6 +211,22 @@ describe('plugin config, served', () => {
     expect(set.status).toBe(200);
     expect(await set.json()).toEqual({ name: SECRET, key: 'apiKey', value: '<set>', restart: true });
     expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: 'k-2' } }]);
+  });
+
+  it('answers a reference as it is written, and writes one without answering its name', async () => {
+    put({ plugins: [SECRET] });
+    const set = await post('/plugin/config/set', { name: SECRET, key: 'apiKey', value: { $secret: 'host:orders' } });
+    expect(set.status).toBe(200);
+    // The option is `writeOnly`, and a reference is a name and not a value, so
+    // what is answered is the reference rather than a mask.
+    expect(await set.json()).toEqual({ name: SECRET, key: 'apiKey', value: { $secret: 'host:orders' }, restart: true });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } }]);
+    expect(await (await post('/plugin/config', { name: SECRET })).json())
+      .toEqual({ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } });
+
+    const refused = await post('/plugin/config/set', { name: SECRET, key: 'apiKey', value: { $secret: 'x' } });
+    expect(refused.status).toBe(400);
+    expect((await refused.json() as { message: string }).message).toContain('x is not a secret name');
   });
 
   it('refuses a refused value with 400', async () => {

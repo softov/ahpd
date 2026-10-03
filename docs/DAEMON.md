@@ -178,6 +178,11 @@ ahpd user add <id>          add a person, with --role and --issuer
 ahpd user token <id>        mint their credential, shown once; --url prints
                             the whole ws:// URL a client can be given
 ahpd user rm <id>           take a person out of it
+ahpd vault set <name>       keep a value under a name, read from standard
+                            input: cat secret.txt | ahpd vault set host:x
+ahpd vault delete <name>    take a name out of the vault
+ahpd vault list             every name this host keeps a secret under, and
+                            whether each is set. No value is ever printed
 ahpd completion <shell>     print the completion script: bash, zsh or fish
 ```
 
@@ -572,6 +577,47 @@ The keys of this section are in root config as well, so a client holding `config
 
 A key shows what the file holds rather than what this run is using, and when a start flag overrode it the key's description says so. A credential is never sent back: every value the plugin's own `optionsSchema` marks `writeOnly`, however deep in its options the mark sits, is answered as `<set>`, here and over the API alike, and a client that sends that back has said the credential is left as it is. The terminal's own `ahpd config` is the one answer that prints the file as it is, because whoever runs it can read the file.
 
+## The vault
+
+A plugin that needs a credential is handed it by name rather than by value, and the value lives in one file: `$XDG_CONFIG_HOME/ahpd/vault.json`, or `~/.config/ahpd/vault.json`. The startup block says `vault /home/you/.config/ahpd/vault.json` where it read it, and `vault from a plugin` where a plugin registered the vault instead of the file.
+
+```bash
+printenv STRIPE_KEY | ahpd vault set host:stripe
+printenv ORDERS_KEY | ahpd vault set team:backend/orders
+ahpd vault list
+ahpd vault delete host:stripe
+```
+
+The file is plain JSON, mode 0600, and it is not encrypted. Anything running as the user the daemon runs as can read it, and so can any backup of the configuration directory, so it is kept like any other file that holds a credential: out of a repository, out of a synced folder, out of a container image that is pushed anywhere. It is read again on every call, so a set at the terminal lands in a running daemon at its next read.
+
+A value never goes on the command line. `ahpd vault set` reads standard input to its end and drops one trailing newline, and a terminal there is refused with `pipe the value on standard input`, because argv is in `ps` and in the shell's history and there is no question this program can ask for one without echoing the answer back.
+
+A name says whose secret it is, and who may write it follows from that, with no grant of its own:
+
+| name | who may write it | who may list it |
+| --- | --- | --- |
+| `host:<name>` | `config:write` | `config:read` |
+| `team:<team>/<name>` | `team:write`, and a membership in that team | the same |
+| `user:<id>/<name>` | that person | that person |
+
+The deployment's connection token is root and may write and list any of the three. A name that is none of those three forms is refused where it is written, with the forms spelled out.
+
+A plugin's option names one rather than holding it:
+
+```json
+{
+  "plugins": [{ "name": "@ahpd/plugin-orders", "options": { "apiKey": { "$secret": "host:stripe" } } }]
+}
+```
+
+The daemon reads the value when it loads the plugin and hands `apply` the value, so the option is held to its own schema as the string it finally is. A name the vault does not hold, or one out of scope at load, skips the plugin with one line saying which name it could not read and why, as a schema failure does. A reference is answered as written everywhere a plugin's options are shown, root config and `ahpd config` and `ahpd plugin list` alike, so the name stays visible; a plain-text credential marked `writeOnly` still answers `<set>`.
+
+An option whose schema says `"secretAtUse": true` keeps its reference instead, for a plugin that reads the value later and per call, through `host.secret(name)`. See [PLUGINS.md](PLUGINS.md).
+
+Claude's own `fromEnv` is untouched: a backend that reads its key from the environment still declares `"fromEnv": true` and still receives it as a value. The two are for different things, and a plugin may use either.
+
+Nothing here answers a value. `ahpd vault list` and `GET /api/vault/list` say a name and whether it is set, and list a name the configuration references and the vault does not hold as not set, with the path that named it, so a plugin waiting for a secret says so rather than staying silent.
+
 ## Who may connect
 
 Loopback with no token needs no secret: anything reaching `127.0.0.1` is already
@@ -654,6 +700,8 @@ the grants their roles resolve to:
 | `project list` | `project:read` |
 | `project add`, `project rm` | `project:write` |
 | `usage` | their own pools; every pool with `usage:read` |
+| `vault list` | `config:read` for `host:` names; a team's own with `team:write`; a person's own |
+| `vault set`, `vault delete` | `config:write` for `host:` names; a team's own with `team:write`; a person's own |
 | `plugin install`, `plugin remove` | the deployment's token only |
 | `plugin update` | the deployment's token only |
 | `plugin config`, `plugin enable`, `plugin disable` | the deployment's token only |
@@ -685,6 +733,8 @@ secrets.
 quote its spec the same way.
 `POST /api/plugin/config` with `{ "name": ..., "key": ... }` answers a plugin's options, and `POST /api/plugin/config/set` with a `value` sets one; an option its schema marks `writeOnly` is answered as `<set>`, and every option is when the plugin cannot be imported to read its schema.
 `POST /api/plugin/enable` and `/api/plugin/disable` take `{ "name": ... }`.
+
+The vault is served the same way, at `POST /api/vault/set/<name>`, `POST /api/vault/delete/<name>` and `GET /api/vault/list`. A name holds colons and a slash, so it is one encoded path segment - `team%3Abackend%2Forders` is `team:backend/orders` - and only the HTTP body carries a value, `{ "value": "..." }`, for the same reason the terminal reads standard input: nowhere else is a value echoed into a log. `GET /api/vault/set/<name>` is not a route, so it is answered 404 like any other path the API does not have: a value can be set and can never be read back.
 
 A refusal carries the same sentence the WebSocket gives, so a script reads the
 reason:

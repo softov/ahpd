@@ -46,3 +46,4 @@ export type {
   LimitPool, Measure, Period, Policies, Policy, PolicyEffect, PolicyKind, PolicyLimit, PolicyMatch, PolicyScope,
   PolicyValueType,
 } from './policies.js';
+export type { SecretRef, SecretWork, Vault } from './vault.js';

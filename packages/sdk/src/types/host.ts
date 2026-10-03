@@ -16,6 +16,7 @@ import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
 import type { Usage } from './usage.js';
 import type { Policies } from './policies.js';
+import type { Vault } from './vault.js';
 import type { Peer, Request } from './rpc.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -232,6 +233,15 @@ export interface HostOptions {
    * `filePolicies()` ships with this package and the daemon uses it.
    */
   policies?: Policies;
+  /**
+   * Where this host keeps the secrets its work needs, by scoped name.
+   *
+   * Left out, a plugin that reads a secret is told the host has no vault rather
+   * than handed nothing - decision
+   * `the-local-vault-is-a-plain-file-until-it-is-encrypted`, whose own vault is
+   * one plain JSON file in the configuration directory.
+   */
+  vault?: Vault;
   /**
    * Whether what the policies say is enforced.
    *

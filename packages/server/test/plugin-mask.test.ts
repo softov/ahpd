@@ -44,6 +44,18 @@ describe('a value walked against the schema around it', () => {
   it('answers every value as set when no schema was read', () => {
     expect(maskValue(undefined, { apiKey: 'k-1', region: 'eu' })).toEqual({ apiKey: SET, region: SET });
   });
+
+  it('answers a reference as it is written, marked or not', () => {
+    // A reference is a name and not a value, so marking the option it is written
+    // for says nothing about it: what has to stay readable is where the value
+    // comes from, and `<set>` would say only that there is one.
+    const schema = { properties: { apiKey: SECRET, later: SECRET } };
+    expect(maskValue(schema, { apiKey: { $secret: 'host:orders' }, later: { $secret: 'team:backend/reports' } }))
+      .toEqual({ apiKey: { $secret: 'host:orders' }, later: { $secret: 'team:backend/reports' } });
+    expect(maskValue(undefined, { apiKey: { $secret: 'host:orders' } })).toEqual({ apiKey: { $secret: 'host:orders' } });
+    // An object beside the reference is a value of its own, and is masked as one.
+    expect(maskValue(schema, { apiKey: { $secret: 'host:orders', note: 'k-1' } })).toEqual({ apiKey: SET });
+  });
 });
 
 describe('one option of a plugin', () => {
@@ -57,5 +69,10 @@ describe('one option of a plugin', () => {
   it('is the whole value as set when no schema was read', () => {
     expect(maskOption(undefined, 'region', 'eu')).toBe(SET);
     expect(maskOption(undefined, 'tools', { shell: true })).toBe(SET);
+  });
+
+  it('answers a reference as it is written, with a schema and without one', () => {
+    expect(maskOption(schema, 'apiKey', { $secret: 'host:orders' })).toEqual({ $secret: 'host:orders' });
+    expect(maskOption(undefined, 'region', { $secret: 'host:orders' })).toEqual({ $secret: 'host:orders' });
   });
 });

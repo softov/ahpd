@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: done
 depends: [task-04-a-plugin-option-names-a-secret.md, task-05-ahpd-vault-sets-deletes-and-lists.md, task-06-a-reference-is-shown-as-written.md, task-08-the-daemon-holds-its-vault.md]
 layer: "docs"
 refs:

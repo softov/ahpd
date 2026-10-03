@@ -159,6 +159,22 @@ describe('each configured plugin as a key', () => {
     expect(held().plugins).toEqual([{ name: SCHEMA, options: { command: 'run', greeting: 'hi' } }]);
   });
 
+  it('keeps a reference written for a string option, and refuses a name that is not one', async () => {
+    // The reference is a name and not a value, so it is held to the name rule
+    // rather than to the option's schema: what it resolves to is read when the
+    // plugin loads, and not here.
+    const root = await withPlugins([{ name: SECRET, options: { region: 'eu' } }]);
+    await root.write({ [`plugins.${SECRET}`]: { options: { apiKey: { $secret: 'host:orders' } } } });
+    expect(held().plugins).toEqual([{ name: SECRET, options: { region: 'eu', apiKey: { $secret: 'host:orders' } } }]);
+    // And it answers as written, so a client editing the entry can see the name
+    // it is pointing at rather than a mask.
+    expect((await root.values())[`plugins.${SECRET}`]).toMatchObject({ options: { apiKey: { $secret: 'host:orders' } } });
+
+    await expect(root.write({ [`plugins.${SECRET}`]: { options: { apiKey: { $secret: 'x' } } } }))
+      .rejects.toThrow('x is not a secret name');
+    expect(held().plugins).toEqual([{ name: SECRET, options: { region: 'eu', apiKey: { $secret: 'host:orders' } } }]);
+  });
+
   it('refuses a write for a plugin the file does not name', async () => {
     const root = await withPlugins([SCHEMA], [{ name: SCHEMA, options: { command: 'run', greeting: 'hi' } }]);
     await expect(root.write({ 'plugins./fixtures/plugin-hello': { enabled: false } })).rejects.toThrow('not in plugins');

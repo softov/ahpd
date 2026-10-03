@@ -1,6 +1,6 @@
 ---
 title: A reference is shown as written
-status: todo
+status: done
 depends: [task-01-the-vault-port-and-the-scope-rule.md]
 layer: "server"
 refs:

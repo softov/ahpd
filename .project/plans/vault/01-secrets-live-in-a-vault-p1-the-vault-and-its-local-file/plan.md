@@ -1,7 +1,7 @@
 ---
 title: The vault port and the daemon's plain file
 domain: vault
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-03
@@ -108,14 +108,14 @@ GET /api/config -> walk: a { "$secret" } value is answered as written
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The vault port and the scope rule](task-01-the-vault-port-and-the-scope-rule.md) | todo | - |
-| [02 - The daemon's vault is one file](task-02-the-daemons-vault-is-one-encrypted-file.md) | todo | 01 |
+| [01 - The vault port and the scope rule](task-01-the-vault-port-and-the-scope-rule.md) | done | - |
+| [02 - The daemon's vault is one file](task-02-the-daemons-vault-is-one-encrypted-file.md) | done | 01 |
 | [03 - The vault is unlocked at start](task-03-the-vault-is-unlocked-at-start.md) | dropped | - |
-| [04 - A plugin option names a secret](task-04-a-plugin-option-names-a-secret.md) | todo | 08 |
-| [05 - ahpd vault sets, deletes and lists](task-05-ahpd-vault-sets-deletes-and-lists.md) | todo | 08 |
-| [06 - A reference is shown as written](task-06-a-reference-is-shown-as-written.md) | todo | 01 |
-| [07 - Docs](task-07-docs.md) | todo | 04, 05, 06, 08 |
-| [08 - The daemon holds its vault](task-08-the-daemon-holds-its-vault.md) | todo | 02 |
+| [04 - A plugin option names a secret](task-04-a-plugin-option-names-a-secret.md) | done | 08 |
+| [05 - ahpd vault sets, deletes and lists](task-05-ahpd-vault-sets-deletes-and-lists.md) | done | 08 |
+| [06 - A reference is shown as written](task-06-a-reference-is-shown-as-written.md) | done | 01 |
+| [07 - Docs](task-07-docs.md) | done | 04, 05, 06, 08 |
+| [08 - The daemon holds its vault](task-08-the-daemon-holds-its-vault.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -126,18 +126,15 @@ GET /api/config -> walk: a { "$secret" } value is answered as written
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-02, reworked 2026-10-03 for a plain file (task 03 dropped, task 08 added).
-- **Next action:** [task-01-the-vault-port-and-the-scope-rule.md](task-01-the-vault-port-and-the-scope-rule.md).
-- **Open questions:** none.
-- **Watch out for:** the task 02 file name still says `encrypted`; a path is an identity, so the name stays and the title is what it builds.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A daemon says `vault <path>` at start, and `vault.json` is mode 0600 after a set.
-- [ ] A plugin option `{ "$secret": "host:x" }` reaches `apply` as the value; a name the vault does not hold skips the plugin and the line says so.
-- [ ] A `"secretAtUse": true` option reaches `apply` as the reference.
-- [ ] With a vault plugin listed first, a later plugin's reference resolves against it; the vault plugin's own `$secret` option is refused.
-- [ ] `ahpd vault list` and `GET /api/vault/list` show names and whether set, and no response carries a value.
-- [ ] Root config answers a `$secret` reference as written.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/DAEMON.md`, `docs/PLUGINS.md` and `plans/index.md` updated.
+- [x] A daemon says `vault <path>` at start, and `vault.json` is mode 0600 after a set.
+- [x] A plugin option `{ "$secret": "host:x" }` reaches `apply` as the value; a name the vault does not hold skips the plugin and the line says so.
+- [x] A `"secretAtUse": true` option reaches `apply` as the reference.
+- [x] With a vault plugin listed first, a later plugin's reference resolves against it; the vault plugin's own `$secret` option is refused.
+- [x] `ahpd vault list` and `GET /api/vault/list` show names and whether set, and no response carries a value.
+- [x] Root config answers a `$secret` reference as written.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `docs/DAEMON.md`, `docs/PLUGINS.md` and `plans/index.md` updated.

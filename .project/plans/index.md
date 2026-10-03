@@ -283,8 +283,8 @@ Reference: [00-vault.md](vault/00-vault.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - Secrets live in a vault, and a plugin option or a machine need names one](vault/01-secrets-live-in-a-vault/plan.md) | high | planned 2026-10-02, a parent of two child plans | - | - |
-| [01 p1 - The vault port and the daemon's plain file](vault/01-secrets-live-in-a-vault-p1-the-vault-and-its-local-file/plan.md) | high | planned 2026-10-03; tasks 01, 02, 04-08 todo; 03 dropped | - | 01 p2 |
+| [01 - Secrets live in a vault, and a plugin option or a machine need names one](vault/01-secrets-live-in-a-vault/plan.md) | high | active 2026-10-03, p1 built | - | - |
+| [01 p1 - The vault port and the daemon's plain file](vault/01-secrets-live-in-a-vault-p1-the-vault-and-its-local-file/plan.md) | high | built 2026-10-03 ([implemented.md](vault/01-secrets-live-in-a-vault-p1-the-vault-and-its-local-file/implemented.md)) | - | 01 p2 |
 | [01 p2 - A machine need names a secret, read when the machine is made](vault/01-secrets-live-in-a-vault-p2-a-machine-need-names-a-secret/plan.md) | high | planned 2026-10-02; tasks 01-02 todo | vault 01 p1 | - |
 
 Next free number in `vault`: `02`.

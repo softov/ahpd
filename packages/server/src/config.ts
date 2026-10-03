@@ -274,6 +274,17 @@ export const sessionsPath = (): string => join(configDir(), 'sessions.json');
 export const policiesPath = (): string => join(configDir(), 'policies.json');
 
 /**
+ * Where the secrets this host's work needs are kept.
+ *
+ * Beside the configuration for the same reason as the policies: one small file
+ * a person knows the path of, holding what `config.json` names and no longer
+ * carries - decision `the-local-vault-is-a-plain-file-until-it-is-encrypted`.
+ * It is plain JSON and nothing reads it as a secret, so it is kept like any
+ * other file holding a credential.
+ */
+export const vaultPath = (): string => join(configDir(), 'vault.json');
+
+/**
  * Where what this host adds on top of a backend is kept, one file per session.
  *
  * A folder rather than the single file beside it, and the same reasoning: what

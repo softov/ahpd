@@ -12,7 +12,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import type { HostOptions, SessionStore, Tap, Usage } from '@ahpd/sdk';
+import type { HostOptions, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
   AGENT_CLASH,
   createHost,
@@ -44,10 +44,11 @@ import {
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost } from '../config.js';
+import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
+import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
 import { pty } from '../pty.js';
 import { filesOf, lineFor, writerFor } from '../wire.js';
@@ -228,10 +229,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * What this host's work cost: a folder of monthly JSONL files beside the
    * sessions and the automations.
    *
-   * Built here rather than in the `HostOptions` literal below, because three
-   * things ask for it: the host, the `usage:` scheme it serves, and the
-   * `ahpd usage` this daemon serves. One store, or the command and the scheme
-   * answer from two.
+   * One store, because three things ask for it: the host, the `usage:` scheme it
+   * serves, and the `ahpd usage` this daemon serves. Two would have the command
+   * and the scheme answer from different records.
    */
   const store = fileUsage({
     folder: join(configDir(), 'usage'),
@@ -240,6 +240,19 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // This daemon's own once a plugin has folded in a store of its own; before
   // the host is built, a request finds the daemon's.
   let metered: Usage = store;
+  /*
+   * The secrets this host's work needs, one plain file beside the
+   * configuration.
+   *
+   * One vault, because two things ask for it as well: a plugin's options are
+   * resolved against it as it loads, and `ahpd vault` answers from it once a
+   * daemon is serving. It is read on every call rather than at construction,
+   * which is when a daemon reads no file here but the ones it needs to answer
+   * at once.
+   */
+  const vault = fileVault({ file: vaultPath() });
+  // This daemon's own once a plugin has folded in a vault of its own.
+  let held: Vault = vault;
   /*
    * The policies saying who may use which agent, model and computer.
    *
@@ -291,6 +304,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     }),
     turning: () => turning(),
     usage: () => metered,
+    vault: () => held,
     restart: (argv, force) => restart(argv, force),
   };
   /*
@@ -500,6 +514,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // What this host's work cost, built above so the scheme and the command
     // read the same records this host charges to.
     usage: store,
+    // The secrets a plugin's options are resolved against, and what
+    // `host.secret` reads. The file above, read on every call.
+    vault,
     // Whether that is one record per turn or one per report, which `usage.per`
     // in the configuration file chose.
     usagePer: options.usagePer,
@@ -535,10 +552,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   /*
    * Usage, as a resource scheme.
    *
-   * The store is the one the literal above hands the host, so the two are
-   * registered here rather than in the literal - and only where there is a
-   * store: a host with no `usage` port serves no `usage:` scheme and leaves the
-   * key out of the advertisement rather than answering one that is not there.
+   * One store, because three things ask for it: the host, the `usage:` scheme
+   * it serves, and the `ahpd usage` this daemon serves. Two would have the
+   * command and the scheme answer from different records. It is registered only
+   * where there is a store: a host with no `usage` port serves no `usage:` scheme
+   * and leaves the key out of the advertisement rather than answering one that is
+   * not there.
    *
    * The zone is `usage.timezone`, and a week cut on the system's Monday day is
    * what it is for. An unresolvable one is said here, where the provider is
@@ -624,6 +643,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // were written to, and a command answering from the daemon's folder beside it
   // would report a total nothing was charged to.
   if (folded.usage !== undefined) metered = folded.usage;
+  if (folded.vault !== undefined) held = folded.vault;
 
   /*
    * The door, and which transport this host answers on.
@@ -727,6 +747,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     + `plugins ${loaded.length === 0 ? 'none' : loaded.map((one) => one.name).join(', ')}\n`
     // Every configuration file read, in the order they were merged.
     + `config ${options.configFiles.length === 0 ? 'none' : options.configFiles.join(', ')}\n`
+    // Where the secrets are, or that a plugin took the vault over. Its own
+    // line, for the reason the two above are their own lines: where a value
+    // lives is the first thing asked of a host nobody trusts yet.
+    + `vault ${held === vault ? vaultPath() : 'from a plugin'}\n`
     // Where the secret came from, never the secret: stdout is a log, and a log
     // is the one place a credential should not end up.
     + `${from}\n`

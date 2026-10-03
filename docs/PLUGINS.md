@@ -85,6 +85,32 @@ Root config, `GET /api/config`, `GET /api/plugin/list` and `POST /api/plugin/con
 
 A plugin that marks nothing is one whose options are all shown to a client holding `config:read`, so a credential it does not mark is a credential that leaks. The other way round is a plugin the daemon could not import to read its schema, which is every option of one switched off with `enabled: false`: nothing is known of which of its options are credentials, so all of them are answered `<set>` until it loads and declares.
 
+### Naming a secret instead of holding one
+
+An option can name a secret in the host's vault rather than carry its value, and then the value never sits in `config.json`:
+
+```json
+{ "name": "@acme/plugin-orders", "options": { "apiKey": { "$secret": "host:stripe" } } }
+```
+
+A name is `host:<name>`, `team:<team>/<name>` or `user:<id>/<name>`, and anything else is refused where it is written. The daemon reads the value while it loads you and hands `apply` the value, so your option is held to your own schema as the string it finally is - you write `{ $secret: ... }` and you receive a `string`, and there is no `$secret` in your code.
+
+At load the name is read against the host's own scope rule: a `team:` or `user:` name is refused there, because a plugin load belongs to no team and to no person. So an option named at load is a `host:` one, and a plugin whose options cannot all be read is skipped with one line naming the option, the name and why, exactly as a schema failure is:
+
+```
+plugin @acme/plugin-orders skipped: plugins.@acme/plugin-orders.options.apiKey names host:stripe: the vault holds no host:stripe
+```
+
+A reference is answered as written wherever your options are shown - root config, `ahpd config`, `ahpd plugin list` - even when the option also says `writeOnly`, because a name is not a secret and `<set>` would say only that there is one. A plain text value under the same option is still answered `<set>`. The two together are what you want on an option: the name visible, the value never.
+
+For a value you read later rather than at load, mark the option:
+
+```ts
+apiKey: { type: 'string', secretAtUse: true, description: 'The key this calls with, read from the vault when it is needed.' },
+```
+
+A node saying `secretAtUse: true` is handed to `apply` as written, references and all, so your option is a `SecretRef` rather than a `string`, and you read it yourself with `host.secret(name)`. It is the schema keyword this uses where Claude's `fromEnv: true` uses the environment, and the two answer to different needs: `fromEnv` hands you a value out of the process's environment, `secretAtUse` hands you a name out of the host's vault. See [Reading a secret](#reading-a-secret).
+
 ## What you can register
 
 The surface is `HostOptions` named back, so there is nothing new to learn. Every
@@ -110,6 +136,7 @@ against its contract before it is recorded.
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
 | `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
+| `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 
 ### A backend's worker chats
 
@@ -272,6 +299,23 @@ nothing behaves exactly as it did before the field existed.
 The entry names `pools` - the keys it is charged to - and the reader charges nothing else. Build them as the decision `agent-usage-is-charged-to-owner-team-and-project-pools` says: the owner as written (`user:<id>`, `root:<host>`), `team:<team>` and `project:<team>:<project>`, each only when the record has it.
 
 Two hosts behave differently on purpose. One whose daemon carries a `usage` store keeps the record. One with no store records nothing and does not fail, because there is nowhere to write rather than a plugin that got it wrong. A store that *is* there and refuses the write throws at the caller, so say what to do with that inside your own plugin.
+
+### Reading a secret
+
+`host.secret(name)` answers the value behind a name in the host's vault, and is how a plugin reads one at the moment it needs it rather than at load. The second argument says whose work is reading it:
+
+```ts
+const value = await host.secret('host:stripe');
+const theirs = await host.secret('team:backend/orders', { team: 'backend' });
+```
+
+A name is `host:<name>`, `team:<team>/<name>` or `user:<id>/<name>`; anything else is refused with the three forms spelled out. The scope is checked before the vault is asked, so a name out of scope never reaches the store: a `host:` name is any work's, a `team:` name is that team's, and a `user:` name is that person's, named through the second argument's `team` or `owner`. A name in scope the vault does not hold is refused too, with `the vault holds no <name>`, because a configuration file may name a secret nobody has set yet.
+
+The scope is checked against the `work` your own call passes, so a plugin is trusted code here in a way it is nowhere else: the host decides what a name means, not whether the caller told the truth about whose work it is. Never pass a `team` or an `owner` you did not get from the work in hand.
+
+Nobody but your own plugin ever sees the value: it comes from the vault at the call, it is not written to the configuration, and no answer this host serves carries it. A host built with no vault - a client running the contract in a test - refuses with `<name> cannot be read: this host has no vault`.
+
+`registerVault(vault, 'replace')` takes the port over, for a store of your own: a keychain, a secrets manager, an encrypted file. The host's own is `vault.json` in the config folder, plain JSON at mode 0600, and `ahpd vault set|delete|list` is how a person fills it. A plugin listed first can take it over with `'replace'`; one that does not is refused, and one listed after the plugins that already named a secret never gets to be the vault they resolved against, so list a vault plugin first. Its own options cannot name a secret: a vault that had to read itself to build is a vault nothing can check.
 
 ### What a policies store has to answer
 

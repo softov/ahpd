@@ -35,6 +35,7 @@ import { declareStatus } from './status.js';
 import { declareStop } from './stop.js';
 import { declareTeams } from './teams.js';
 import { declareUsage } from './usage.js';
+import { declareVault } from './vault.js';
 import { declareRestart } from './restart.js';
 import { declareUser } from './user.js';
 import { checkScopes } from './scopes.js';
@@ -63,6 +64,7 @@ export const cliRegistry = (): Registry<object> => {
   declarePlugin(registry);
   declareProxy(registry);
   declareUsage(registry);
+  declareVault(registry);
   return registry;
 };
 

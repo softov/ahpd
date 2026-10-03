@@ -1,6 +1,6 @@
 ---
 title: The vault port and the scope rule
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

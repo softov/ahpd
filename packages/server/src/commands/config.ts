@@ -10,8 +10,9 @@ import { existsSync } from 'node:fs';
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { PluginSpec } from '@ahpd/sdk';
+import { secretRef } from '@ahpd/sdk';
 import { configDir, configPath, loadConfig, type Config } from '../config.js';
-import { nameOf, optionsSchemaOf } from '../plugins.js';
+import { nameOf, optionsSchemaOf, schemaOf } from '../plugins.js';
 import { flagFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
@@ -48,18 +49,12 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
  */
 const NOTHING_MARKED = { additionalProperties: { writeOnly: true } };
 
-/** The schema one property of an object is held to, by name. */
-const schemaOf = (schema: Record<string, unknown>, key: string): Record<string, unknown> => {
-  const named = object(object(schema['properties'])?.[key]);
-  if (named !== undefined) return named;
-  for (const [pattern, one] of Object.entries(object(schema['patternProperties']) ?? {})) {
-    if (new RegExp(pattern, 'u').test(key)) return object(one) ?? {};
-  }
-  return object(schema['additionalProperties']) ?? {};
-};
-
 /** What one value answers, walked against the schema that describes it. */
 const walk = (schema: Record<string, unknown>, value: unknown): unknown => {
+  // A reference is a name and not a value, so it answers as written whatever the
+  // schema says about the option it is written for: hiding it would hide only
+  // where the value comes from.
+  if (secretRef(value) !== undefined) return value;
   if (schema['writeOnly'] === true) return SET;
   const items = object(schema['items']);
   if (Array.isArray(value)) return items === undefined ? value : value.map((one) => walk(items, one));
@@ -97,7 +92,7 @@ export const maskValue = (schema: Record<string, unknown> | undefined, value: un
  * every value is a credential.
  */
 export const maskOption = (schema: Record<string, unknown> | undefined, option: string, value: unknown): unknown =>
-  schema === undefined ? SET : walk(schemaOf(schema, option), value);
+  schema === undefined ? (secretRef(value) === undefined ? SET : value) : walk(schemaOf(schema, option), value);
 
 /**
  * The key each entry of `plugins` is carried under in root config.

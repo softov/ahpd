@@ -15,6 +15,7 @@
 import type { Field, JsonSchema } from '@cofold/commands';
 import { check } from '@cofold/commands';
 import type { PluginSpec, RootConfigPort } from '@ahpd/sdk';
+import { scopeOf, secretRef } from '@ahpd/sdk';
 import { asSpec, configPath } from './config.js';
 import { SET, keyed, maskValue } from './commands/config.js';
 import { checkConfig, configSchema, mcpServerSchema, mcpServers, serverFields, type ConfigKey, type Options } from './commands/options.js';
@@ -262,6 +263,14 @@ export function daemonRootConfig(
           // A null takes the option back, as it does everywhere else here, and
           // there is nothing left of it to check.
           if (one === null) continue;
+          // A reference is held to the name rule rather than to the option's
+          // schema: what it will resolve to is the plugin's business, read
+          // through `host.secret` once it loads.
+          const ref = secretRef(one);
+          if (ref !== undefined) {
+            scopeOf(ref);
+            continue;
+          }
           // Only an option the schema names is checked: the defaults a plugin
           // merges under its own are not in the file, so holding the whole
           // object to `required` would refuse what the plugin itself accepts.

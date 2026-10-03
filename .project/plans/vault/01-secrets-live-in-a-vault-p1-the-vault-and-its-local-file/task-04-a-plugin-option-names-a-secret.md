@@ -1,6 +1,6 @@
 ---
 title: A plugin option names a secret
-status: todo
+status: done
 depends: [task-08-the-daemon-holds-its-vault.md]
 layer: "server"
 refs:

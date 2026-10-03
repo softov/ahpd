@@ -1,6 +1,6 @@
 ---
 title: The daemon holds its vault
-status: todo
+status: done
 depends: [task-02-the-daemons-vault-is-one-encrypted-file.md]
 layer: "server"
 refs:

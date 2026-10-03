@@ -10,6 +10,7 @@ import type { ResourceStore } from '../src/types/resources.js';
 import type { AutomationStore } from '../src/types/automations.js';
 import type { Usage } from '../src/types/usage.js';
 import type { Policies } from '../src/types/policies.js';
+import type { Vault } from '../src/types/vault.js';
 import type { Contribution, PortContribution, PortKey } from '../src/types/plugin.js';
 
 /*
@@ -237,6 +238,31 @@ describe('foldHostOptions', () => {
     const over = foldHostOptions(options, [contribution('alpha', { ports: { policies: port(mine, true) } })]);
     expect(over.problems).toEqual([]);
     expect(over.options.policies).toBe(mine);
+  });
+
+  it('sets a plugin\'s vault like any other port, and reports the daemon\'s', () => {
+    const vault = (owner: string): Vault => ({
+      get: async (name) => (name === 'host:x' ? `${owner}-value` : undefined),
+      set: async () => {},
+      delete: async () => false,
+      list: async () => [],
+    });
+    const options = { ...base(), vault: vault('the daemon') };
+
+    const mine = vault('alpha');
+    const taken = foldHostOptions(base(), [contribution('alpha', { ports: { vault: port(mine) } })]);
+    expect(taken.problems).toEqual([]);
+    expect(taken.options.vault).toBe(mine);
+
+    const held = foldHostOptions(options, [contribution('alpha', { ports: { vault: port(vault('alpha')) } })]);
+    expect(held.problems).toHaveLength(1);
+    expect(held.problems[0]).toContain('vault');
+    expect(held.problems[0]).toContain('the daemon');
+    expect(held.options.vault).toBe(options.vault);
+
+    const over = foldHostOptions(options, [contribution('alpha', { ports: { vault: port(mine, true) } })]);
+    expect(over.problems).toEqual([]);
+    expect(over.options.vault).toBe(mine);
   });
 });
 
