@@ -87,4 +87,4 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
   2. [20 - A plugin is a client of its own host, as a principal of its own](20-a-plugin-is-a-client-of-its-own-host/plan.md) lets a plugin start sessions, send turns and run automations as `plugin:<name>`.
   3. [21 - A plugin serves an HTTP route on the daemon's listener](21-a-plugin-serves-an-http-route/plan.md) adds `registerRoute`, after daemon 05 tasks 15 and 16.
   4. [18 - The ACP bridge resumes, forks and asks](18-the-acp-bridge-resumes-forks-and-asks/plan.md) adds `session/resume`, `session/fork` and `elicitation/create`; ACP v2 waits in its [deferred.md](18-the-acp-bridge-resumes-forks-and-asks/deferred.md).
-  5. [19 - A docker machine may run under gVisor](19-a-docker-machine-may-run-under-gvisor/plan.md) adds `ociRuntime`; every other runtime is an [idea](../../ideas/more-computer-runtimes.md).
+  5. [19 - A docker machine may run under gVisor](19-a-docker-machine-may-run-under-gvisor/plan.md) adds `ociRuntime`; `ssh`, `libvirt` and `proxmox` are container 05 p9 to p11, and the rest is an [idea](../../ideas/more-computer-runtimes.md).

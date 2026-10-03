@@ -4,7 +4,7 @@ status: implemented
 depends: [task-01-a-computer-starts-a-nested-host.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/rpc.ts#L74-L100](../../../../packages/sdk/src/rpc.ts#L74-L100) - a `Wire` over the spawn's stdio"
+  - "[code://packages/sdk/src/rpc.ts#L88](../../../../packages/sdk/src/rpc.ts#L88) - a `Wire` over the spawn's stdio"
   - npm://@microsoft/agent-host-protocol@0.9.0 - `AhpClient`
 ---
 
@@ -24,7 +24,7 @@ refs:
 
 ## Validation
 
-- `test/nested-proxy.test.ts`: an inner `createHost` with the echo agent over an in-memory pipe; a turn goes in and its actions come out unchanged.
+- `packages/sdk/test/nested-proxy.test.ts`: an inner `createHost` with the echo agent over an in-memory pipe; a turn goes in and its actions come out unchanged.
 
 ## Resume
 
@@ -35,4 +35,4 @@ A line framer over the spawn's stdout is an `AhpTransport`, and `AhpClient` does
 Turns sent before the inner session exists wait behind a gate in order; a chat action is forwarded to the outer chat channel and a session action to the outer session channel, with the turn ids untouched.
 The inner state is reduced with `sessionReducer`/`chatReducer` beside the forwarding, so `sessionState()`/`chatState()` answer a late subscriber.
 A departure from the task's step 1: `createPeer` is not used inside the proxy - `AhpClient` owns both directions over the transport, and `createPeer`/`receive` are what the test's inner `createHost` answers on the other end of the pipe.
-Validated by `test/nested-proxy.test.ts`: a turn goes in and its actions come out unchanged.
+Validated by `packages/sdk/test/nested-proxy.test.ts`: a turn goes in and its actions come out unchanged.

@@ -10,7 +10,7 @@ refs:
 
 ## Objective
 
-A person reading `docs/CONTAINERS.md` knows that VS Code offers a dev container only on a host connected through a Dev Tunnel (or SSH or WSL), which two settings turn it on, and that Docker is needed on the ahpd host, not on the machine running VS Code.
+A person reading `docs/CONTAINERS.md` knows that VS Code offers a dev container only on a host connected through a Dev Tunnel (or SSH or WSL), that it needs the tunnel made under the same provider and account VS Code signs in with, that `chat.remoteAgentHostsEnabled` and `chat.agentHost.devContainer.enabled` are on by default and turning either off hides it, and that Docker is needed on the ahpd host, not on the machine running VS Code.
 
 ## Files
 
@@ -19,7 +19,7 @@ A person reading `docs/CONTAINERS.md` knows that VS Code offers a dev container 
 
 ## Steps
 
-1. Write the section from task 01's result: the settings, the connect command, where the option appears, and that it is made at the first send.
+1. Write the section from task 01's result: the sign-in, the connect command, where the option appears, and that it is made at the first send.
 2. Say that a host added by URL is never offered the flow, and that a local folder is launched by VS Code with the local Docker.
 
 ## Validation

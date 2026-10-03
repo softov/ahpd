@@ -5,7 +5,7 @@ depends: [task-02-a-machine-gets-its-state-volumes.md]
 layer: "computer"
 refs:
   - https://docs.docker.com/reference/cli/docker/container/cp/ - copying into a created container
-  - "[code://packages/computer/src/runtime.ts#L638-L660](../../../../packages/computer/src/runtime.ts#L638-L660) - the copy-in pattern this replaces for state"
+  - "[code://packages/computer/src/runtime.ts#L736-L744](../../../../packages/computer/src/runtime.ts#L736-L744) - the copy-in pattern this replaces for state"
 ---
 
 ## Objective

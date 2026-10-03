@@ -10,7 +10,7 @@ What sqlite cannot give is the reason for it: one place for usage totals, people
 
 - **Usage.** A limit checked on one daemon has to see what another spent. Whether checks read the shared totals or keep local totals that sync is a daemon setting the usage rules already expect.
 - **People.** Users, teams, projects and roles edited on one host apply on all of them, which is what lets a person sign in anywhere with one record.
-- **Secrets.** A vault several hosts read needs its secrets encrypted with a key none of them stores in the database.
+- **Secrets.** A vault several hosts read needs its secrets encrypted with a key none of them stores in the database; the host's own vault is a plain file until [it is encrypted](the-local-vault-is-encrypted.md), and the same key questions apply here.
 - **Sessions and automations.** A session belongs to the daemon running it; a shared store must key it by host, and an automation must fire on one daemon, not on each.
 
 ## Questions it leaves

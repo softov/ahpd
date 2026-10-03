@@ -5,7 +5,7 @@ created: 2026-10-02
 
 Every store the daemon keeps is a file today, each behind a port a plugin can replace.
 A sqlite plugin would take them over together, so one daemon's state is one database file, written in transactions rather than whole-file rewrites.
-It is the first replacement the [vault](a-secret-store.md) and the usage store were written for, and the reference a [postgresql store](a-postgresql-store.md) mirrors.
+It is the first replacement the [vault](../plans/vault/01-secrets-live-in-a-vault/plan.md) and the usage store were written for, and the reference a [postgresql store](a-postgresql-store.md) mirrors.
 
 ## What it would register
 

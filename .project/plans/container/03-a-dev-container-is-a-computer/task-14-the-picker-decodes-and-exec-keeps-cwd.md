@@ -1,26 +1,33 @@
 ---
-title: The picker decodes the session folder, and exec keeps the working directory
+title: The picker decodes the session folder, and a dev container keeps the working directory asked for
 status: todo
-depends: []
+depends: [task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/plugin.ts#L685](../../../../packages/computer/src/plugin.ts#L685) - the picker's `workingDirectory`, not URI-decoded"
-  - "[code://packages/computer/src/runtime.ts#L683-L692](../../../../packages/computer/src/runtime.ts#L683-L692) - `exec`, which drops `asked.cwd`"
+  - "[code://packages/computer/src/plugin.ts#L942](../../../../packages/computer/src/plugin.ts#L942) - the picker's `workingDirectory`, a `file://` prefix strip rather than a decode"
+  - "[code://packages/computer/src/plugin.ts#L576-L593](../../../../packages/computer/src/plugin.ts#L576-L593) - `reach` for a dev container, which drops `asked.cwd`"
+  - "[code://packages/computer/src/plugin.ts#L594-L612](../../../../packages/computer/src/plugin.ts#L594-L612) - `reach` for a `docker` machine, which maps `asked.cwd` through `within` into `-w`"
+  - "[code://packages/computer/src/plugin.ts#L210-L224](../../../../packages/computer/src/plugin.ts#L210-L224) - `within`"
 ---
 
 ## Objective
 
-A session folder with a space in it gets its `devcontainer://` row, and a command run through `exec` runs in the directory it asked for.
+A session folder with a space in it gets its `devcontainer://` row, and a backend reached in a dev container starts in the directory its `cwd` names, as it does in a `docker` machine.
 
 ## Files
 
-- `UPDATE: packages/computer/src/plugin.ts:685` - the folder is `fileURLToPath` of the URI, not a prefix strip.
-- `UPDATE: packages/computer/src/runtime.ts` - `exec` with a `cwd` runs `sh -c 'cd "$1" && shift && exec "$@"' sh <cwd> <command...>`, since the CLI has no working-directory flag.
-- `UPDATE: test/computer-devcontainer.test.ts` - the cases below.
+- `UPDATE: packages/computer/src/plugin.ts:942` - the folder is `fileURLToPath` of the URI, not a prefix strip.
+- `UPDATE: packages/computer/src/plugin.ts:562-620` - after task 18 a dev container takes the `docker exec` branch; its `-w` is `within(held, asked.cwd)` when a mount covers it, and the workspace folder inside otherwise, the same rule a `docker` machine follows with its own working directory.
+- `UPDATE: packages/computer/test/computer-devcontainer.test.ts` - the cases below.
+
+## Steps
+
+1. `within` stays the one mapping, and no `sh -c cd` wrapper is added.
 
 ## Validation
 
 - A folder `/w/my app` with a definition is offered; today no row appears.
-- `exec` with `cwd: /workspaces/x` runs `pwd` there; today it runs in the container's default.
+- `how()` for a dev container with `cwd: <folder>/sub` answers `-w <folder inside>/sub`; today the `cwd` is dropped.
+- `how()` with a `cwd` no mount covers answers the workspace folder inside.
 
 ## Resume

@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-the-tunnel-route-tried-by-hand.md]
 layer: "sdk | tunnel-devtunnel"
 refs:
-  - "[code://packages/sdk/src/host.ts#L5140-L5149](../../../../packages/sdk/src/host.ts#L5140-L5149) - the `initialize` `_meta` block"
+  - "[code://packages/sdk/src/host.ts#L7526](../../../../packages/sdk/src/host.ts#L7526) - the `vscode.devContainers` key in the `initialize` `_meta` block"
   - "[code://packages/tunnel-devtunnel/src/plugin.ts](../../../../packages/tunnel-devtunnel/src/plugin.ts) - the tunnel plugin"
 ---
 

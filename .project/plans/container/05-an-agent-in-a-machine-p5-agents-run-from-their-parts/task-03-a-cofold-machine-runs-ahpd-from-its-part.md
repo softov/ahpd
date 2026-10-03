@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/src/agent.ts#L542-L560](../../../../packages/agent-cofold/src/agent.ts#L542-L560) - the needs"
-  - "[code://packages/computer/src/plugin.ts#L40](../../../../packages/computer/src/plugin.ts#L40) - the default `host`"
+  - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - the needs"
+  - "[code://packages/computer/src/plugin.ts#L43](../../../../packages/computer/src/plugin.ts#L43) - the default `host`"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ Cofold's `machine()` adds `ahpdPart: { part: 'ahpd' }`, and the default `host` c
 
 ## Files
 
-- `UPDATE: packages/agent-cofold/src/agent.ts:542-560` - the need.
-- `UPDATE: packages/agent-cofold/test/` the machine test.
+- `UPDATE: packages/agent-cofold/src/agent.ts:561-572` - the need.
+- `UPDATE: packages/agent-cofold/test/agent-cofold.test.ts` - the need is there.
 
 ## Steps
 

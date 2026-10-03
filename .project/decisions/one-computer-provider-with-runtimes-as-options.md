@@ -1,6 +1,7 @@
 ---
 title: "One computer: provider, one package, the runtime chosen by option"
-status: accepted
+status: superseded
+superseded-by: decisions/a-machine-runtime-is-named-for-its-maker.md
 date: 2026-09-22
 refs:
   - code://packages/sdk/src/plugins.ts#L52-L62 - `reservedScheme` and the per-plugin duplicate check

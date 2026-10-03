@@ -1,7 +1,7 @@
 ---
 title: The docs say where an agent's configuration lives
 status: todo
-depends: [task-03-a-state-volume-is-seeded.md]
+depends: [task-03-a-state-volume-is-seeded.md, task-05-identical-needs-collapse-to-one.md]
 layer: "docs"
 refs:
   - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - Profiles, and the copy-in warning"
@@ -18,6 +18,7 @@ refs:
 ## Steps
 
 1. Replace the copy-in warning with the state volume, keeping the warning for hand-written copies.
+2. Say that variants of one plugin share its state volume, and that two agents asking for the same thing at one target get it once.
 
 ## Validation
 

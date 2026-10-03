@@ -4,8 +4,9 @@ status: todo
 depends: [task-01-the-host-hands-on-the-git-directory.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/runtime.ts#L634](../../../../packages/computer/src/runtime.ts#L634) - the folder mount"
-  - "[code://packages/computer/src/plugin.ts#L516-L523](../../../../packages/computer/src/plugin.ts#L516-L523) - where the folder is written into a disposable profile"
+  - "[code://packages/computer/src/runtime.ts#L730](../../../../packages/computer/src/runtime.ts#L730) - the folder mount"
+  - "[code://packages/computer/src/runtime.ts#L152-L159](../../../../packages/computer/src/runtime.ts#L152-L159) - `MachineSpec.folder`"
+  - "[code://packages/computer/src/plugin.ts#L734-L740](../../../../packages/computer/src/plugin.ts#L734-L740) - where the folder is written into a disposable profile"
 ---
 
 ## Objective

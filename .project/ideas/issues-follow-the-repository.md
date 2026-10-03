@@ -23,7 +23,7 @@ Everything goes through AHP, so the CLI, the HTTP API and the apps get it at onc
 Tasker (`/brb_main/src/service_tasker`) solves the same problem for its CLI and MCP server. Its code is copied into ahpd, not depended on or called:
 
 - One tracker-neutral interface (tasker's `Store`, `packages/core/src/store.ts`): `me`, `search`, `get`, `create`, `update`, `addNote` and `vocabulary`, with a GitLab and a Redmine implementation, no dependency beyond its own core. In ahpd it would be named for what it is, an issue tracker (`IssueTracker`, one per forge or instance), not a store.
-- The project chosen from the working directory (`.tasker.json`, hierarchical), with credentials per person and outside the repository, which is the same split this host wants with the [vault](a-secret-store.md).
+- The project chosen from the working directory (`.tasker.json`, hierarchical), with credentials per person and outside the repository, which is the same split this host wants with the [vault](../plans/vault/01-secrets-live-in-a-vault/plan.md).
 - A tracker's vocabulary read at runtime (types, statuses, priorities, labels, milestones), so the tools offer what the instance defines rather than a fixed list.
 - Allow and deny filters on which projects an agent may see.
 

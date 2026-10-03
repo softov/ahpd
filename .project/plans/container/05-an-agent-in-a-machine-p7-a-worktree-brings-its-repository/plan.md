@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-02
 requires:
   - plans/plugin/16-a-disposable-machine/plan.md
 changes: []
@@ -12,12 +12,13 @@ creates: []
 decisions:
   - decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L4093-L4117](../../../../packages/sdk/src/host.ts#L4093-L4117) - `placedIn`, which hands the folder, already the worktree, to the machine maker"
-  - "[code://packages/sdk/src/host.ts#L4031](../../../../packages/sdk/src/host.ts#L4031) - `isolated`, which makes the worktree"
-  - "[code://packages/sdk/src/worktrees.ts#L47-L60](../../../../packages/sdk/src/worktrees.ts#L47-L60) - `gitWorktrees`, which already asks git with `rev-parse`"
-  - "[code://packages/sdk/src/types/worktrees.ts#L54](../../../../packages/sdk/src/types/worktrees.ts#L54) - the `Worktrees` port"
-  - "[code://packages/sdk/src/types/computers.ts#L83-L84](../../../../packages/sdk/src/types/computers.ts#L83-L84) - `folder` on what a machine maker is asked"
-  - "[code://packages/computer/src/runtime.ts#L634](../../../../packages/computer/src/runtime.ts#L634) - the folder mounted at the same path"
+  - "[code://packages/sdk/src/host.ts#L5304-L5334](../../../../packages/sdk/src/host.ts#L5304-L5334) - `placedIn`, which hands the folder, already the worktree, to the machine maker beside the owner, team and project"
+  - "[code://packages/sdk/src/host.ts#L5223](../../../../packages/sdk/src/host.ts#L5223) - `isolated`, which makes the worktree"
+  - "[code://packages/sdk/src/worktrees.ts#L58-L64](../../../../packages/sdk/src/worktrees.ts#L58-L64) - `gitWorktrees`, whose `repository` already asks git with `rev-parse` under a five-second limit"
+  - "[code://packages/sdk/src/types/worktrees.ts#L73-L112](../../../../packages/sdk/src/types/worktrees.ts#L73-L112) - the `Worktrees` port"
+  - "[code://packages/sdk/src/changes.ts#L1196-L1200](../../../../packages/sdk/src/changes.ts#L1196-L1200) - the same `rev-parse --path-format=absolute --git-common-dir` call, already made to watch a worktree's refs"
+  - "[code://packages/sdk/src/types/computers.ts#L84-L85](../../../../packages/sdk/src/types/computers.ts#L84-L85) - `folder` on what a machine maker is asked"
+  - "[code://packages/computer/src/runtime.ts#L730](../../../../packages/computer/src/runtime.ts#L730) - the folder mounted at the same path"
   - https://git-scm.com/docs/git-worktree - a linked worktree's `.git` is a file naming the main repository's `.git/worktrees/<name>` by absolute path
 ---
 
@@ -26,6 +27,13 @@ refs:
 A session whose folder is a worktree, or a folder below a repository's root, can run git inside its machine: the repository's git directory is mounted at its own path beside the folder.
 
 ## Reconnaissance
+
+The files read and the patterns to reuse are the `refs` above, each with its note.
+
+### Searches performed
+
+- `rg "gitDir" packages/sdk/src packages/computer/src` - only a local variable in `changes.ts`; no port method, no field on `MachineSource`, no mount.
+- `rg "placedIn" packages/sdk/src/host.ts` - one maker call, `host.ts:5323-5331`, which passes `owner`, `team`, `project`, `folder` and `needs`; `gitDir` goes beside `folder`.
 
 ### Runtime path
 
@@ -44,7 +52,7 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 | Decision | Task |
 | --- | --- |
-| [A session folder reaches a machine only where its profile allows](../../../decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md) | 02 |
+| [A session's folder reaches a machine only where its profile allows it](../../../decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md) | 02 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -75,10 +83,12 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 ## Resume state
 
-- **Done so far:** nothing.
+- **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-01-the-host-hands-on-the-git-directory.md](task-01-the-host-hands-on-the-git-directory.md).
 - **Open questions:** none.
-- **Watch out for:** plugin 16 task 10 gates the folder by the profile; the git directory must go through the same gate.
+- **Watch out for:**
+  - plugin 16 task 10, not yet built, gates the folder by the profile; the git directory must go through the same gate.
+  - This plan is for a machine on this host; a machine on another box gets the session's code by a clone, which is p8 to p10's.
 
 ## Final verification checklist
 

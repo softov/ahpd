@@ -25,7 +25,7 @@ No action or snapshot the proxy emits names an inner chat URI.
 
 ## Validation
 
-- `test/nested-process.test.ts`: a turn through a real inner host, driven by an outer `createHost`, yields `session/chatUpdated` actions that all name the outer chat URI; today 5 of 11 name `ahp-chat://default/<base64 of the inner session>`.
-- `node_modules/.bin/vitest run test/nested-process.test.ts` passes.
+- `packages/sdk/test/nested-process.test.ts`: a turn through a real inner host, driven by an outer `createHost`, yields `session/chatUpdated` actions that all name the outer chat URI; today 5 of 11 name `ahp-chat://default/<base64 of the inner session>`.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume

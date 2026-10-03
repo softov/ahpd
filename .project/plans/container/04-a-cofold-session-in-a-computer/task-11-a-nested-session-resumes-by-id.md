@@ -6,7 +6,7 @@ layer: "sdk"
 refs:
   - "[code://packages/sdk/src/nested.ts#L232](../../../../packages/sdk/src/nested.ts#L232) - `innerSession`, a random URI"
   - "[code://packages/sdk/src/nested.ts#L376-L381](../../../../packages/sdk/src/nested.ts#L376-L381) - the inner `createSession`"
-  - "[code://packages/sdk/src/host.ts#L7995-L8030](../../../../packages/sdk/src/host.ts#L7995-L8030) - how a host resumes a session it is not running: a turn on its channel"
+  - "[code://packages/sdk/src/host.ts#L10086-L10160](../../../../packages/sdk/src/host.ts#L10086-L10160) - how a host resumes a session it is not running: a turn on its channel"
 ---
 
 ## Objective
@@ -28,8 +28,8 @@ A nested session resumed by the outer host continues the conversation the inner 
 
 ## Validation
 
-- `test/nested-process.test.ts`: one inner host serves a turn, the proxy is closed, a second proxy is created with `resume` set to that id against the same inner store, and its first turn sees the earlier turn in the inner session's snapshot; today it is a blank session.
+- `packages/sdk/test/nested-process.test.ts`: one inner host serves a turn, the proxy is closed, a second proxy is created with `resume` set to that id against the same inner store, and its first turn sees the earlier turn in the inner session's snapshot; today it is a blank session.
 - A resume against an inner host without the id ends with a sentence naming it.
-- `node_modules/.bin/vitest run test/nested-process.test.ts` passes.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume

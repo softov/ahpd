@@ -4,7 +4,8 @@ status: implemented
 depends: [task-02-made-at-session-start.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/plugin.ts](../../../../packages/computer/src/plugin.ts) - the plugin that owns the machines"
+  - "[code://packages/computer/src/plugin.ts#L464-L536](../../../../packages/computer/src/plugin.ts#L464-L536) - `disposables`, `arm`, `watch` and the startup listing"
+  - "[code://packages/computer/src/plugin.ts#L780-L801](../../../../packages/computer/src/plugin.ts#L780-L801) - `enter` and `leave`"
 ---
 
 ## Objective
@@ -25,5 +26,5 @@ The plugin counts sessions per disposable machine, starts the delay when the cou
 
 ## Resume
 
-Done 2026-09-26. `packages/computer/src/plugin.ts` keeps `disposables`, counts sessions through the port's `enter`/`leave` (which the host calls at `openSession` and `removeSession`, never on a pre-turn restart), arms the profile's delay on the last leave, cancels it on the next enter and removes through the runtime when it fires. `disposableAlone` machines are filtered out of the answerer, and a labelled machine found by a startup `list()` is given the delay again. `packages/computer/src/runtime.ts` carries the profile and alone flag as `ahpd.disposable` and `ahpd.disposable.alone` labels and reads them back from `list` and `inspect`; `test/fixtures/docker.mjs` records them and now writes its state atomically. `test/computer-disposable.test.ts` covers removal, the cancel, alone, the leftover and the pre-turn restart under fake timers.
+Done 2026-09-26. `packages/computer/src/plugin.ts` keeps `disposables`, counts sessions through the port's `enter`/`leave` (which the host calls at `openSession` and `removeSession`, never on a pre-turn restart), arms the profile's delay on the last leave, cancels it on the next enter and removes through the runtime when it fires. `disposableAlone` machines are filtered out of the answerer, and a labelled machine found by a startup `list()` is given the delay again. `packages/computer/src/runtime.ts` carries the profile and alone flag as `ahpd.disposable` and `ahpd.disposable.alone` labels and reads them back from `list` and `inspect`; `packages/computer/test/fixtures/docker.mjs` records them and now writes its state atomically. `packages/computer/test/computer-disposable.test.ts` covers removal, the cancel, alone, the leftover and the pre-turn restart under fake timers.
 

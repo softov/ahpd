@@ -45,7 +45,7 @@ config.json proxy.providers + proxy.models -> checked at start -> ahpd proxy lis
 | Providers are built in, and the user can add more: an endpoint and what it accepts | Softov, 2026-10-01: "Some preregistered.. but user could add one. Like the endpoint and what is accepts." | 01 |
 | What a provider accepts is an API dialect (`anthropic-messages`, `openai-chat`); calls pass through in that dialect, no translation yet | Softov, 2026-10-01, asked which client APIs: "passthought now.. space for translation in a future" | 01 |
 | A model name lists the providers that serve it, each with that provider's own model id and an optional price | Softov, 2026-10-01: "saying that model. servers as that name... when calling that name call that provider with those keys" | 01 |
-| A key is referenced by environment variable name, never stored in config | (defaulted: keeps secrets out of the config file until [a secret store](../../../ideas/a-secret-store.md) exists) | 01 |
+| A key is referenced by environment variable name, never stored in config | (defaulted: keeps secrets out of the config file until [the vault](../../vault/01-secrets-live-in-a-vault/plan.md) exists) | 01 |
 | A listing never shows a key, only whether it is set | (defaulted) | 02 |
 
 ## Proposed architecture

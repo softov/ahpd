@@ -4,7 +4,7 @@ status: implemented
 depends: [task-02-reached-through-devcontainer-exec.md]
 layer: "computer | sdk"
 refs:
-  - "[code://packages/computer/src/plugin.ts#L297-L321](../../../../packages/computer/src/plugin.ts#L297-L321) - the answerer"
+  - "[code://packages/computer/src/plugin.ts#L903-L975](../../../../packages/computer/src/plugin.ts#L903-L975) - the answerer"
   - "[code://packages/sdk/src/computers.ts](../../../../packages/sdk/src/computers.ts) - where a session opens its computer"
 ---
 

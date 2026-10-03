@@ -30,10 +30,10 @@ The session's models are the inner host's for this provider, an inner `auth/requ
 
 ## Validation
 
-- `test/nested-proxy.test.ts` with the in-memory inner `createHost`:
+- `packages/sdk/test/nested-proxy.test.ts` with the in-memory inner `createHost`:
   - an inner backend with two models makes `session.models()` answer both; today `[]`;
   - an inner `auth/required` for the session makes `awaiting()` answer its resource, and `authenticated` reaches the inner host; today `[]` and absent;
   - a scripted inner host that sends `resourceRead` gets an error whose message says the proxy publishes no resources; today `no handler for server method`.
-- `node_modules/.bin/vitest run test/nested-proxy.test.ts` passes.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume

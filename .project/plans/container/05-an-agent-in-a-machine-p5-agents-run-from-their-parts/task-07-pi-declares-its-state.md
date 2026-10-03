@@ -4,7 +4,7 @@ status: todo
 depends: [task-06-pi-runs-nested.md]
 layer: "agent-pi"
 refs:
-  - "[code://packages/agent-pi/src/agent.ts#L70-L100](../../../../packages/agent-pi/src/agent.ts#L70-L100) - the agent object"
+  - "[code://packages/agent-pi/src/agent.ts#L90-L155](../../../../packages/agent-pi/src/agent.ts#L90-L155) - the agent object"
   - npm://@earendil-works/pi-coding-agent - `PI_CODING_AGENT_DIR`, default `~/.pi/agent`, holding `settings.json`, `models.json`, `auth.json` and `sessions/`
 ---
 
@@ -14,14 +14,15 @@ pi's `machine()` adds a state need at `/ahpd/pi`, with `PI_CODING_AGENT_DIR=/ahp
 
 ## Files
 
-- `UPDATE: packages/agent-pi/src/agent.ts` - the needs.
-- `UPDATE: packages/agent-pi/test/agent-pi.test.ts`.
+- `UPDATE: packages/agent-pi/src/agent.ts:90-155` - the needs.
+- `UPDATE: packages/agent-pi/test/agent-pi.test.ts` - the cases below.
 
 ## Steps
 
 1. The host dir is `PI_CODING_AGENT_DIR` when the daemon has it, else `~/.pi/agent`.
 2. The secrets are the provider key variables pi reads; name them from pi's provider list, and stop and ask if pi's settings can name a variable of their own.
-3. In mode `host`, mount the host dir read-write at the same target, marked `when: 'host'`; pi locks `auth.json` across processes, so that route is safe on one filesystem.
+3. A secret need has no default of the daemon's: its value is the profile's or the plugin's need value, which the vault resolves when it is written as a `{ "$secret" }`.
+4. In mode `host`, mount the host dir read-write at the same target, marked `when: 'host'`; pi locks `auth.json` across processes, so that route is safe on one filesystem.
 
 ## Validation
 

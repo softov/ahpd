@@ -4,6 +4,59 @@ What VS Code's agent host changed since this host was last read against it, and 
 
 How a pass is made is in [REFERENCE.md](REFERENCE.md). The short of it: `git -C /github/externals/vscode fetch --depth=200 origin main && git merge --ff-only origin/main`, then `git log <last>..HEAD -- src/vs/platform/agentHost`, reading `common/state/protocol/` first because that is the wire, then `node/claude/`, `node/protocolServerHandler.ts`, and the workbench client under `src/vs/workbench/contrib/chat/browser/agentSessions/agentHost`, which is what VS Code *sends* to a host. The `.md` files were reflowed to one-line paragraphs upstream, so read them with `--word-diff`.
 
+## Pass 5 - 2026-10-02, VS Code 1.140
+
+VS Code `832cf23c5` (2026-09-19) to `7516b04bc94` (2026-10-02): 337 agentHost commits, 409 under `src/vs/sessions`, 108 in the workbench agentHost client. **The wire moved**: `.ahp-version` `fd0471d4` to `9f940395`, and the protocol repository `8549827` to `9f94039` (64 commits). `PROTOCOL_VERSION` is still `0.9.0` with no new tag, so the new actions are registered as `0.9.0` but are not in the published `@microsoft/agent-host-protocol@0.9.0`. The [release notes](https://code.visualstudio.com/updates/v1_140) name five features; each group below is one, except the last two.
+
+### Multi-folder sessions
+
+The working-directory actions date from 0.7/0.8 and are handled here (`host.ts`). What is new is host behaviour and the `_meta` the client reads.
+
+- [ ] **`create_session` has two schemas, picked by `multipleWorkingDirectories`.** With it, `relationship` is optional (default `currentSession`), `workspace`/`worktree` are valid for `currentSession`, the folder joins the session and the new checkout goes only to the new chat; an omitted `worktree` reuses a checkout of that repository already in the session. Upstream `9b091281057`, `3722d65df29` (`node/shared/sessionServerTools.ts`). Claude advertises the capability (`packages/agent-claude/src/claude.ts`) but `packages/sdk/src/sessiontools.ts` offers only the shared-workspace schema.
+- [ ] **`create_session` `independent` without a `workspace` is a session with no folder.** Upstream `d0f50833ebf`. `packages/sdk/src/sessiontools.ts` requires `workspace`.
+- [x] **GitHub and git state are published per folder, and `_meta.github` on a live summary is no longer read.** The client reads `githubData` through `workingDirectoryKeys`, and `gitData` through `workingDirectoryScopeIds` (a scope id is the SHA-1 of the sorted folder keys); `_meta.git` is still read for the session folder. Upstream `18d64b8c226`, `a41ff3b2808`, `97182611fa2` (`common/state/sessionState.ts`, `sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts`). This undoes Pass 3's `_meta.github` box: the pull request pill falls back to recorded artifacts. `packages/sdk/src/host.ts` `metaOf`. Built in `host/39`.
+- [ ] **Changesets and change summaries are per chat**: `ChatState.changesets`, `chat/changesetsChanged`, `changes` on `ChatState` and `SessionChatSummary`. Upstream `a8c1541df5a`, `5470377e71f`, `d17cacb01b3`; protocol `ba231a0`, `c02ad7e`. `packages/sdk/src/changes.ts`, `host.ts`; needs the next protocol package or local types.
+- [ ] **`_meta.multiRoot` `{ workspaceFile }` from `createSession` config is echoed on the summary.** `host.ts` createSession.
+
+### Remote delegation
+
+The four tools (`list_agent_hosts`, `create_remote_session`, `get_remote_session`, `send_remote_message`) are client tools of the Agents window (`src/vs/sessions/contrib/remoteSessions/`, upstream `3bc56b58fe7`); `SESSIONS.md` says hosts do not discover or authenticate to one another. A host is picked as a target by its root `_meta`.
+
+- [ ] **Root `_meta['vscode.remoteSessions']: true`.** Without it the window refuses the host. `common/meta/vscode/agentRemoteSessionMeta.ts`. `host.ts` `rootState`.
+- [ ] **Root `_meta['vscode.agentHost.resources']` `{ platform, architecture, cpuCount, memoryBytes }`**, which `create_remote_session` filters on. `common/meta/vscode/agentHostResources.ts`. `host.ts` `rootState`.
+- [ ] **Keep `_meta['vscode.remoteSession.origin']` `{ session, chat, depth }` from `createSession`**, persisted and put back on the summary; its `depth` counts toward the spawn depth. `host.ts`, the session store, host/33 task 02.
+- [ ] **The `<remote_session_origin>` instruction when an active client offers `send_remote_message`.** `node/chatContributions/remoteSessionOrigin/remoteSessionOriginContribution.ts`. The turn instructions in `host.ts`.
+
+container/05 p10 (a hub that relays a node's sessions) is host to host; VS Code made the window the hub, which its open question should cite.
+
+### Shared worktree folders
+
+- [x] **Session config key `worktreeSymlinkFolders`**, a `string[]` of `.gitignore` patterns, read-only, not session-mutable. On worktree creation the host symlinks matching git-ignored folders from the source checkout before copying the include files, and never fails the session over one. Upstream `b5d1894c729` (`node/worktreeSymlink.ts`, `node/agentHostGitService.ts`, `node/shared/worktreeIsolation.ts`). `packages/sdk/src/host.ts`, `packages/sdk/src/worktrees.ts`, `packages/sdk/src/types/worktrees.ts`. Built in `host/39`.
+- [x] **`worktreeIncludeFiles` is an array.** The Sessions window sends `string[]`, and `host.ts` reads only a string, so `git.worktreeIncludeFiles` is dropped today. Declare an array, keep the string for older input. Built in `host/39`.
+
+### HydraFusion
+
+Not a host feature: a Copilot SDK synthetic model (`node/copilot/`). Its tool-call `_meta.fusionPhase` and `fusionProgress` notification shapes (`common/meta/vscode/agentToolCallMeta.ts`, `agentSystemNotificationMeta.ts`) are reusable if cofold runs several models.
+
+### Enterprise controls
+
+Not a host feature: policy minimum versions, the `autoTier` setting and identity telemetry are enforced in the window or the Copilot runtime. `getManagedSettingsDiagnostics: []` in `host.ts` stays correct.
+
+### Session tools
+
+- [ ] **Root config `agentOrchestrationLimits: 'on' | 'off'`**, default `on`, switches the spawn depth and count limits off. Upstream `bbf8dd79218` (`common/agentHostSchema.ts`). host/33 tasks 02 and 03 should use this name. `packages/sdk/src/sessiontools.ts`, `host.ts`.
+
+### The wire, beside the features
+
+Each needs the next protocol package or local types.
+
+- [ ] `moveChat` with `MoveChatParams`, `session/chatsReordered`, `chat/movableChanged` (protocol `2265e2e`, upstream `14b9d22f9a9`).
+- [ ] `ChatState.backgroundWork`, `chat/backgroundWorkSet|Removed` (protocol #482, upstream `c4db793967f`).
+- [ ] `chat/isArchivedChanged`, `SessionChatSummary.archived` (protocol `458cc41`, upstream `0af7cd09bb5`).
+- [ ] `session/mcpServerBackgroundRequested` (protocol `edef8d8`).
+- [ ] `ConfigPropertySchema.minItems/maxItems`; `FileEditSide`/`FileEditCollection` (types only).
+- [ ] `AutomationCapabilities.customizations`, `AutomationSessionTemplate.customizations` (protocol `9f94039`).
+
 ## Pass 4 - 2026-09-19, the first pass with the client in the clone
 
 VS Code `8e35945b` (2026-09-12) to `832cf23c5` (2026-09-19): 72 agentHost commits and 230 files under `src/vs/sessions`. **The wire did not move** - `common/state/protocol/` is unchanged and `.ahp-version` is still `fd0471d4` - and the protocol repository moved one commit, `a21274d` to `8549827`, which adds a `CODEOWNERS` file. The full record, with every reference and the local file each item would change, is [`.project/review/2026-09-19-upstream-pass-4.md`](.project/review/2026-09-19-upstream-pass-4.md).

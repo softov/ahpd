@@ -4,7 +4,7 @@ status: implemented
 depends: [task-02-reached-through-devcontainer-exec.md]
 layer: "sdk | computer"
 refs:
-  - "[code://packages/sdk/src/host.ts#L6645](../../../../packages/sdk/src/host.ts#L6645) - the `vscode/devContainers/connect` handler"
+  - "[code://packages/sdk/src/host.ts#L9156](../../../../packages/sdk/src/host.ts#L9156) - the `vscode/devContainers/connect` handler"
 ---
 
 ## Objective

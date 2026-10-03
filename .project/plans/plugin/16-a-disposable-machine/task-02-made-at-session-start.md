@@ -4,7 +4,9 @@ status: implemented
 depends: [task-01-offered-in-the-picker.md]
 layer: "sdk | computer"
 refs:
-  - "[code://packages/sdk/src/computers.ts](../../../../packages/sdk/src/computers.ts) - where a session opens its computer"
+  - "[code://packages/sdk/src/computers.ts#L69-L84](../../../../packages/sdk/src/computers.ts#L69-L84) - `openComputer`"
+  - "[code://packages/sdk/src/host.ts#L5304-L5334](../../../../packages/sdk/src/host.ts#L5304-L5334) - `placedIn`"
+  - "[code://packages/computer/src/plugin.ts#L672-L783](../../../../packages/computer/src/plugin.ts#L672-L783) - the port's `create`"
 ---
 
 ## Objective
@@ -28,5 +30,5 @@ A session whose `computer` is `disposable:<profile>` makes a machine at start th
 
 ## Resume
 
-Done 2026-09-26. The port gains `create(asked: MachineSource)`, `enter` and `leave` in `packages/sdk/src/types/computers.ts`; `packages/sdk/src/computers.ts` gains `computerSource`, `computerId` and the one session-time `openComputer`, which is shared with `container/03`. The host's `placedIn` runs it before `openSession` in `createSession` and `startForAutomation`, rewrites the setting to the `computer://<id>` and keeps `sessionMachines` so a re-sent source is the machine already made rather than a fixed key that moved. The plugin's `create` builds through `manifestOf` with `for: <session provider>` and the session folder, and lets the runtime's sentence through. `test/computer-disposable.test.ts` covers the needs, the folder, the labels, the pre-turn restart and a refused create.
+Done 2026-09-26. The port gains `create(asked: MachineSource)`, `enter` and `leave` in `packages/sdk/src/types/computers.ts`; `packages/sdk/src/computers.ts` gains `computerSource`, `computerId` and the one session-time `openComputer`, which is shared with `container/03`. The host's `placedIn` runs it before `openSession` in `createSession` and `startForAutomation`, rewrites the setting to the `computer://<id>` and keeps `sessionMachines` so a re-sent source is the machine already made rather than a fixed key that moved. The plugin's `create` builds through `manifestOf` with `for: <session provider>` and the session folder, and lets the runtime's sentence through. `packages/computer/test/computer-disposable.test.ts` covers the needs, the folder, the labels, the pre-turn restart and a refused create.
 

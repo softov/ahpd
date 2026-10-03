@@ -1,6 +1,7 @@
 ---
 title: A dev container is made by the Dev Container CLI, not by Docker alone
-status: accepted
+status: superseded
+superseded-by: decisions/a-dev-container-is-reached-by-docker-exec.md
 date: 2026-09-24
 refs:
   - "[code://packages/computer/src/runtime.ts](../../packages/computer/src/runtime.ts) - the Docker runtime this host owns, which makes a machine from a manifest"

@@ -4,7 +4,7 @@ status: todo
 depends: [task-02-a-part-image-per-kind.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/runtime.ts#L484](../../../../packages/computer/src/runtime.ts#L484) - `must`"
+  - "[code://packages/computer/src/runtime.ts#L570-L577](../../../../packages/computer/src/runtime.ts#L570-L577) - `must`"
   - "[code://packages/computer/test/fixtures/docker.mjs](../../../../packages/computer/test/fixtures/docker.mjs) - learns `image inspect` and `build -`"
 ---
 

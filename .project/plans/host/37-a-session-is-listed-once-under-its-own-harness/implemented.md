@@ -27,4 +27,4 @@ The host records which harness each session runs on, and the catalogue lists a s
 
 ## Left for later
 
-- Presets as harnesses: [presets-are-harnesses](../../../ideas/presets-are-harnesses.md).
+- Presets as harnesses: [claude/15](../../claude/15-one-load-and-each-preset-is-a-variant/plan.md).

@@ -5,8 +5,8 @@ depends: []
 layer: "computer"
 refs:
   - "[code://packages/computer/src/devcontainer.ts](../../../../packages/computer/src/devcontainer.ts) - the CLI runner to reuse"
-  - "[code://packages/computer/src/runtime.ts#L272](../../../../packages/computer/src/runtime.ts#L272) - create and list"
-  - "[code://test/fixtures/devcontainer.mjs](../../../../test/fixtures/devcontainer.mjs) - the fake CLI"
+  - "[code://packages/computer/src/runtime.ts#L602](../../../../packages/computer/src/runtime.ts#L602) - create and list"
+  - "[code://packages/computer/test/fixtures/devcontainer.mjs](../../../../packages/computer/test/fixtures/devcontainer.mjs) - the fake CLI"
 ---
 
 ## Objective
@@ -25,7 +25,7 @@ A computer manifest with `devcontainer: { folder }` in place of an image is made
 
 ## Validation
 
-- `test/computer-devcontainer.test.ts` against the fake CLI: the exact `up` arguments, the listing, both refusals.
+- `packages/computer/test/computer-devcontainer.test.ts` against the fake CLI: the exact `up` arguments, the listing, both refusals.
 
 ## Resume
 

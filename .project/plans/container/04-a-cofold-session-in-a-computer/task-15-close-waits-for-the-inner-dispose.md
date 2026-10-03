@@ -22,8 +22,8 @@ Closing a nested session disposes the inner session before the inner host is sto
 
 ## Validation
 
-- `test/nested-proxy.test.ts`: the inner `createHost`'s backend `close` is called before the fake's `kill`; today `kill` comes first in the same tick.
-- `test/nested-process.test.ts`: a real inner host that ignores SIGTERM (a fixture option) is gone within the bound.
-- `node_modules/.bin/vitest run test/nested-proxy.test.ts test/nested-process.test.ts` passes.
+- `packages/sdk/test/nested-proxy.test.ts`: the inner `createHost`'s backend `close` is called before the fake's `kill`; today `kill` comes first in the same tick.
+- `packages/sdk/test/nested-process.test.ts`: a real inner host that ignores SIGTERM (a fixture option) is gone within the bound.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume

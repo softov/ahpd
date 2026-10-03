@@ -4,7 +4,7 @@ status: todo
 depends: [task-10-the-name-given-is-a-label.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/devcontainer.ts#L350-L375](../../../../packages/computer/src/devcontainer.ts#L350-L375) - `connect`, which passes `--id-label` on every `up`"
+  - "[code://packages/computer/src/devcontainer.ts#L369-L388](../../../../packages/computer/src/devcontainer.ts#L369-L388) - `connect`, which passes `--id-label` on every `up`"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ A container made by container/01's `connect`, labelled only with the CLI's `devc
 
 ## Files
 
-- `UPDATE: packages/computer/src/devcontainer.ts`, `packages/computer/src/runtime.ts` - when no container carries ahpd's labels for a folder, look for `devcontainer.local_folder=<folder>`, and adopt it.
-- `UPDATE: test/fixtures/devcontainer.mjs`, `test/devcontainer.test.ts` - the case below.
+- `UPDATE: packages/computer/src/devcontainer.ts`, `packages/computer/src/runtime.ts` - when no container carries ahpd's labels for a folder, look for `devcontainer.local_folder=<folder>`, and adopt it; an adopted container is probed once like any other (task 18).
+- `UPDATE: packages/computer/test/fixtures/devcontainer.mjs`, `packages/computer/test/devcontainer.test.ts` - the case below.
 
 ## Steps
 

@@ -4,7 +4,7 @@ status: implemented
 depends: [task-04-agents-kept-to-their-machines.md, task-05-claude-declares.md, task-06-cofold-declares.md]
 layer: "docs"
 refs:
-  - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - the profile example"
+  - "[code://docs/COMPUTER.md#L171-L224](../../../../docs/COMPUTER.md#L171-L224) - Claude in a machine and profiles"
 ---
 
 ## Objective

@@ -4,39 +4,59 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-03
 requires:
   - plans/container/05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md
   - plans/container/05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md
   - plans/container/05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/plan.md
-  - plans/acp/05-presets/plan.md
+  - plans/claude/15-one-load-and-each-preset-is-a-variant/plan.md
+  - plans/plugin/15-an-agent-says-what-a-machine-needs/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent.md
   - decisions/a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback.md
+  - decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md
+  - decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md
 refs:
-  - "[code://packages/agent-claude/src/claude.ts#L382-L406](../../../../packages/agent-claude/src/claude.ts#L382-L406) - Claude's needs: config dir, `.claude.json`, and the host's binary"
-  - "[code://packages/agent-claude/src/claude.ts#L20-L28](../../../../packages/agent-claude/src/claude.ts#L20-L28) - `claudeExecutablePath`, the host binary"
-  - "[code://packages/agent-cofold/src/agent.ts#L542-L560](../../../../packages/agent-cofold/src/agent.ts#L542-L560) - cofold's needs"
-  - "[code://packages/agent-pi/src/agent.ts#L70-L100](../../../../packages/agent-pi/src/agent.ts#L70-L100) - pi's agent: no `runsNested`, no `machine()`, so a pi session on a computer is refused today"
-  - "[code://packages/computer/src/plugin.ts#L40](../../../../packages/computer/src/plugin.ts#L40) - `host: ['ahpd']`, found on the machine's `PATH`"
-  - "[code://packages/computer/src/manifest.ts#L66-L73](../../../../packages/computer/src/manifest.ts#L66-L73) - a profile's `host`"
+  - "[code://packages/agent-claude/src/claude.ts#L373-L398](../../../../packages/agent-claude/src/claude.ts#L373-L398) - Claude's needs: config dir, `.claude.json`, and the host's binary"
+  - "[code://packages/agent-claude/src/claude.ts#L390-L396](../../../../packages/agent-claude/src/claude.ts#L390-L396) - the host binary mount, made whatever the options say"
+  - "[code://packages/agent-claude/src/claude.ts#L78-L96](../../../../packages/agent-claude/src/claude.ts#L78-L96) - `computerExecutable`, the CLI's path inside a machine, and `computerConfigDir`"
+  - "[code://packages/agent-claude/src/claude.ts#L129-L130](../../../../packages/agent-claude/src/claude.ts#L129-L130) - both read, `claude` and `/ahpd/claude` by default"
+  - "[code://packages/agent-claude/src/claude.ts#L15-L29](../../../../packages/agent-claude/src/claude.ts#L15-L29) - `claudeExecutablePath`, the host binary"
+  - "[code://packages/agent-claude/src/plugin.ts#L136-L152](../../../../packages/agent-claude/src/plugin.ts#L136-L152) - the options every variant of one load shares, `computerExecutable` and `computerConfigDir` among them"
+  - "[code://packages/agent-claude/src/session.ts#L2201-L2207](../../../../packages/agent-claude/src/session.ts#L2201-L2207) - the env a CLI in a machine gets: the daemon's `CLAUDE_*` and `ANTHROPIC_*`"
+  - "[code://packages/agent-claude/src/session.ts#L2252-L2253](../../../../packages/agent-claude/src/session.ts#L2252-L2253) - a variant's `env` laid after it, which replaces that filtered env with the daemon's whole one"
+  - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - cofold's needs: its config file at the host's own path"
+  - "[code://packages/agent-cofold/src/agent.ts#L640-L646](../../../../packages/agent-cofold/src/agent.ts#L640-L646) - cofold's `runsNested`"
+  - "[code://packages/agent-pi/src/agent.ts#L39-L156](../../../../packages/agent-pi/src/agent.ts#L39-L156) - `piAgent`: no `runsNested`, no `machine()`, so a pi session on a computer is refused today"
+  - "[code://packages/sdk/src/host.ts#L5321-L5330](../../../../packages/sdk/src/host.ts#L5321-L5330) - the host asks the session's own provider for `machine()`, so each variant answers for itself"
+  - "[code://packages/computer/src/plugin.ts#L43](../../../../packages/computer/src/plugin.ts#L43) - `host: ['ahpd']`, found on the machine's `PATH`"
+  - "[code://packages/computer/src/manifest.ts#L64-L73](../../../../packages/computer/src/manifest.ts#L64-L73) - a profile's `host`"
 ---
 
 ## Goal
 
-Claude, every ACP preset, and the nested hosts that cofold and pi run in, run from their parts, so a machine made from any glibc image runs them with nothing installed and nothing of the host's binaries mounted.
+Claude, each ACP agent with a preset, and the nested hosts that cofold and pi run in, run from their parts, so a machine made from any glibc image runs them with nothing installed and nothing of the host's binaries mounted.
 Each of them keeps its configuration in a state volume seeded from a few host files, and signs in with a secret that does not refresh.
 Mounting the host's `claude` and the host's `~/.claude` stay, as options a person turns on.
+Each preset is a variant registered as its own agent, so each answers its own `machine()`, and a Claude variant pointed at another endpoint gets its own environment in its machine and not the daemon's.
 
 ## Reconnaissance
+
+The files read and the patterns to reuse are the `refs` above, each with its note.
+
+### Searches performed
+
+- `rg "computerExecutable" packages/agent-claude/src` - it is the CLI's path inside a machine (`claude.ts:86`, read at `claude.ts:129`), so a value `"host"` would be read as a program called `host`.
+- `rg "runsNested|machine" packages/agent-pi/src` - nothing.
+- `rg "harnessConfigPath" packages/agent-cofold/src` - cofold mounts its configuration at the host's own path; the fixed target is plugin/15 task 06, not yet built.
 
 ### Runtime path
 
 ```
-claude.machine() -> [changes] claudePart { part: 'claude' } instead of claudeExecutable
-acp preset.machine -> [new] { part: '<preset>' }
+claude.machine() -> [changes] claudePart { part: 'claude' } instead of claudeExecutable, unless the host binary is asked for
+ACP preset.machine -> [new] { part: '<agent>' }
 cofold.machine() -> [new] ahpdPart { part: 'ahpd' } -> nested() runs `ahpd` from /opt/ahpd/ahpd/bin on PATH
 pi -> [new] runsNested + ahpdPart, and @ahpd/agent-pi installed in the ahpd part
 claude / presets / cofold / pi -> [new] a state need with seeds, host mounts marked when: 'host', secrets as env needs
@@ -44,59 +64,79 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 
 ### Gaps
 
-- Claude's binary is the host's.
+- Claude's binary is the host's, mounted on every machine whatever the options say.
 - A cofold machine's image must carry ahpd and its plugins.
 - Claude's machine mounts the host's `~/.claude`, sign-in included.
 - `@ahpd/agent-pi` cannot enter a machine at all.
+- A Claude variant with an `env`, or a session with a pushed credential, hands the daemon's whole environment, `HOME` and `PATH` included, to the CLI in a machine, because what is laid after the filtered env replaces it.
+- agent-acp has no presets yet; the ACP presets plan, not yet written, gives it them.
 
 ## Decisions locked in
 
 | Decision | Task |
 | --- | --- |
-| [A nested host is used only for a backend that runs nested and for a machine on another host](../../../decisions/a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent.md) | 03 |
+| [A nested host is used only for a backend that runs nested and for a machine on another host](../../../decisions/a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent.md) | 03, 06 |
 | [A part is mounted from its own image, and a volume filled from that image is the fallback](../../../decisions/a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback.md) | 01, 02, 03 |
+| [A plugin is loaded once, and each of its presets is a variant registered as an agent of its own](../../../decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md) | 02, 04, 09 |
+| [Cofold's configuration reaches a machine at a fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) | 05 |
 
 | What | Source | Task |
 | --- | --- | --- |
-| The host binary mount stays as `computerExecutable: "host"` on `@ahpd/agent-claude` | the proposal Softov asked to plan, 2026-09-26: the host mount becomes an opt-in | 01 |
+| The host binary mount stays as an opt-in on `@ahpd/agent-claude`, and the part is the default | the proposal Softov asked to plan, 2026-09-26: the host mount becomes an opt-in | 01 |
 | The `computerConfigDir: false` route, which mounts only the executable, mounts only the part | follows from the option's meaning | 01 |
 | Claude seeds `settings.json`, `CLAUDE.md`, `skills/`, `agents/`, `commands/`, and `.claude.json` with `mcpServers` alone; never `.credentials.json` | the proposal Softov asked to plan, 2026-09-26 | 04 |
 | `@ahpd/agent-pi` gets into a machine the way cofold does, in this plan | Softov, 2026-09-26, asked "How should @ahpd/agent-pi get into a machine?", answered "Add tasks to p5" | 06, 07 |
 | Claude in a state volume signs in with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` as secret env needs | the proposal: a token from `claude setup-token` does not refresh | 04 |
+| A secret comes from the vault as `{ "$secret": "<scope:name>" }`, or from the daemon's environment as `{ "fromEnv": "NAME" }` in a plugin option; a login file is never seeded | Softov, 2026-10-02, asked "What does the vault unlock first?": "Options and machines" | 04, 05, 07 |
+| Inside a machine a Claude variant's env is the filtered daemon env with the variant's own keys over it | the filter's own reason at `session.ts:2192-2199`: the host's `HOME` and `PATH` send the CLI looking for a home the machine does not have | 09 |
+| For now a new plugin-wide option `computerCli: "part" \| "host"`, `"part"` by default and shared by every variant like `computerExecutable`, turns the host binary mount on | Softov, 2026-10-03, asked "what turns the host binary mount on?": "a new plugin-wide option `computerCli: "part" \| "host"`, part default" | 01 |
+| For now the secret env needs are per variant, and a variant whose `env` names `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` declares none; one function on the variant decides, so the rule can change | Softov, 2026-10-03, asked "does a Claude variant on another endpoint still get the two secret env needs?": "per variant; a variant whose env names either declares none" | 04 |
+| For now every Claude variant of one load shares one state at `computerConfigDir` (`/ahpd/claude`), and identical needs collapse to one at create | Softov, 2026-10-03, asked in `container/05-p6` "where does each variant's state go?": "Share; dedupe identical needs" | 04 |
+| For now the ACP presets plan, not yet written, ships presets for the known agents, so a part's name and config dir are written once; task 02 fills a `machine` block per shipped preset | Softov, 2026-10-03, asked "does the ACP presets plan ship presets for the known agents, or document examples?": "shipped presets" | 02 |
 
 ## Proposed architecture
 
-- **Layer responsibilities** - `@ahpd/agent-claude`: its part, its state and the two options · `@ahpd/agent-acp`: presets name parts and state · `@ahpd/agent-cofold` and `@ahpd/agent-pi`: running nested, the ahpd part and their state.
+- **Layer responsibilities** - `@ahpd/agent-claude`: its part, its state, the host-binary opt-in and the variant's env in a machine · `@ahpd/agent-acp`: presets name parts and state · `@ahpd/agent-cofold` and `@ahpd/agent-pi`: running nested, the ahpd part and their state.
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - Claude runs from its part](task-01-claude-runs-from-its-part.md) | todo | - |
-| [02 - ACP presets carry their machine](task-02-acp-presets-name-their-parts.md) | todo | - |
+| [02 - ACP presets carry their machine](task-02-acp-presets-name-their-parts.md) | todo | the ACP presets plan |
 | [03 - A cofold machine runs ahpd from its part](task-03-a-cofold-machine-runs-ahpd-from-its-part.md) | todo | - |
-| [04 - Claude keeps its state in a volume](task-04-claude-keeps-its-state-in-a-volume.md) | todo | 01 |
+| [04 - Claude keeps its state in a volume](task-04-claude-keeps-its-state-in-a-volume.md) | todo | 01, container/05-p6 task 05 |
 | [05 - ACP presets and cofold declare their state](task-05-acp-and-cofold-declare-their-state.md) | todo | 02, 03 |
 | [06 - pi runs nested from the ahpd part](task-06-pi-runs-nested.md) | todo | 03 |
 | [07 - pi declares its state](task-07-pi-declares-its-state.md) | todo | 06 |
-| [08 - Docs](task-08-docs.md) | todo | 04, 05, 07 |
+| [08 - Docs](task-08-docs.md) | todo | 04, 05, 07, 09 |
+| [09 - A Claude variant's env reaches its machine without the daemon's](task-09-a-claude-variants-env-reaches-its-machine.md) | todo | - |
 
 ## Risks and tradeoffs
 
-- A Claude session in a machine now runs the pinned version, not the host's - the docs say so, and `computerExecutable: "host"` gives the old behaviour.
+- A Claude session in a machine now runs the pinned version, not the host's - the docs say so, and the host-binary opt-in gives the old behaviour.
 - A Claude profile made before this now needs a token - a profile with `state: "host"` keeps working unchanged, and the refusal names both routes.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** any of tasks 01 to 03, then 04 to 07.
+- **Done so far:** nothing; revalidated against main 2026-10-02, after claude/15 landed.
+- **Next action:** task 09, which needs nothing else; then any of 01 and 03, then 04, 06 and 07; 02 and 05 wait for the ACP presets plan.
 - **Open questions:** none.
-- **Watch out for:** container 04's fix tasks change the nested start; land them first. The pi plans (`pi/01` to `pi/09`) change `@ahpd/agent-pi` too; tasks 06 and 07 touch only its agent object and its plugin list. A resumed pi session in a machine reads its transcript through the inner host, so the open problem that a pi transcript opens empty for a session its process did not watch applies there.
+- **Watch out for:**
+  - container 04's fix tasks change the nested start; land them first.
+  - Two Claude variants on one profile share one state volume, which works only once `container/05-p6` task 05 collapses identical needs; until then create refuses the pair.
+  - plugin/15 task 06 moves cofold's configuration to its fixed target; task 05 builds on it.
+  - The pi plans (`pi/01` to `pi/09`) change `@ahpd/agent-pi` too; tasks 06 and 07 touch only its agent object and its plugin list.
+  - A resumed pi session in a machine reads its transcript through the inner host, so the open problem that a pi transcript opens empty for a session its process did not watch applies there.
+  - acp/04, 05, 06, 08, 09 and 11 are not on main; do not build on their code until they land, and acp/05's one-preset-per-load shape is not the one task 02 fills.
 
 ## Final verification checklist
 
 - [ ] A disposable Claude session in `debian:bookworm-slim` answers a turn with no host binary and no host home mounted, signed in by `CLAUDE_CODE_OAUTH_TOKEN`.
-- [ ] `{ preset: "codex" }` in a disposable machine answers a turn.
+- [ ] A Claude variant with its own endpoint answers a turn in a machine, and `env` inside shows its keys and not the host's `HOME`.
+- [ ] A profile naming the built-in Claude and a variant makes one machine with one state volume at `/ahpd/claude`.
+- [ ] `computerCli: "host"` makes today's machine with the host binary mounted.
+- [ ] A Codex preset in a disposable machine answers a turn.
 - [ ] A cofold session in a machine made from `debian:bookworm-slim` answers a turn.
 - [ ] A pi session in a machine made from `debian:bookworm-slim` answers a turn, with its settings from the state volume and its key by name.
 - [ ] `pnpm test`, `pnpm typecheck` green.

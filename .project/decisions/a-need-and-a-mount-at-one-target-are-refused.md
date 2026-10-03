@@ -1,6 +1,7 @@
 ---
 title: A need and a mount at one target are refused at create
-status: accepted
+status: superseded
+superseded-by: decisions/a-shared-target-is-refused-only-when-the-mounts-differ.md
 date: 2026-09-26
 refs:
   - "[code://packages/computer/src/manifest.ts#L578-L600](../../packages/computer/src/manifest.ts#L578-L600) - the target check among needs, and the mount list the needs are appended to"

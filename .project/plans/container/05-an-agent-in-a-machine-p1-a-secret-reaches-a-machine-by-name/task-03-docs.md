@@ -1,7 +1,7 @@
 ---
 title: The docs say a value never reaches a command line
 status: todo
-depends: [task-01-docker-takes-every-value-by-name.md, task-02-the-dev-container-cli-takes-every-value-by-name.md]
+depends: [task-01-docker-takes-every-value-by-name.md, task-02-the-dev-container-cli-takes-every-value-by-name.md, task-04-a-need-value-answers-set.md]
 layer: "docs"
 refs:
   - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - the Security section"
@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-`docs/COMPUTER.md` says, under Security, that environment values reach a machine by name and are not visible in the host's process list.
+`docs/COMPUTER.md` says, under Security, that environment values reach a machine by name and are not visible in the host's process list, and that a need value in the plugin's options answers `<set>`.
 
 ## Files
 

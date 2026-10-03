@@ -17,7 +17,7 @@ A session-level preset cannot change the models offered either, because a harnes
 
 ## Decision
 
-A plugin appears once in `plugins`; a name written twice fails the start, and its root config key is always `plugins.<name>`.
+A plugin appears once in `plugins`; a name written twice fails the start, and its root config key is `plugins.<name>`.
 The agent is the plugin's wire, and a preset is a variant of it: every preset registers its own agent, keyed by the preset's key as provider id, with its `name`, its `models` and its options.
 A plugin with a built-in preset keeps it unless the preset is set to `false`; an object under the built-in's key is laid over it.
 Source: Softov, 2026-10-02: "agent is the name of the wire of the plugin.. preset is the variant."; asked "Is that the design?": "with buildin agent. can disable buildin preset. any new is a new agent on wire. move name to inside the present. Claude OpenRouter."; then "model also inside the preset."; asked "How is the built-in Claude preset switched off?": "presets.claude: false".

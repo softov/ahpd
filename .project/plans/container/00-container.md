@@ -1,40 +1,64 @@
 ---
 title: Container - what exists today
 domain: container
-revalidated: 2026-09-26
+revalidated: 2026-10-02
 ---
 
-A dev container is a computer, and this file is where the plan that made it one starts.
-What exists is a Docker runtime behind `computer://` machines, a dev container made by the Dev Container CLI and reached as the same kind of object, a protocol surface that already carries VS Code's own extension methods, and a transport seam a relay is built on.
+A computer is a machine a session runs in, named `computer://<id>`, and a dev container is one of them.
+The `@ahpd/computer` plugin makes and reaches machines, the SDK carries the `computers` and `containers` ports a backend and the host use, and the daemon serves VS Code's own dev container methods over the same host.
 
-## What is here
+## Packages
 
-- `code://packages/computer` - the Docker runtime behind `computer://<name>`, and the `computers` port that answers how to reach one as a process. A machine is made from an image, or from a folder's `devcontainer.json` by the Dev Container CLI, and both carry `ahpd.computer=1`.
-- `code://packages/computer/src/devcontainer.ts` - the launcher and the CLI runner: `up` with the two id labels, the host inside, and the relay's pipes.
-- `code://packages/sdk/src/host.ts` - the host, its `initialize` `_meta` block, its `NEEDS`/`UNGATED` gate, and the `vscode/*` extension methods it already serves for the reference client's detached worktree flow and its dev container relay.
-- `code://packages/sdk/src/rpc.ts` - `createPeer` and `receive`, the seam every transport goes through.
-- `code://packages/sdk/src/listen.ts` - the WebSocket server, which is one transport over that seam.
-- `code://packages/server/src/main.ts` - the daemon: flags, config, plugins, and one `listen(...)` call.
+- [`code://packages/computer`](../../../packages/computer) - the provider behind `computer://<id>` and the `computers` port; its entry point is [`code://packages/computer/src/plugin.ts`](../../../packages/computer/src/plugin.ts).
+- [`code://packages/computer/src/runtime.ts`](../../../packages/computer/src/runtime.ts) - the `docker` runtime: list, inspect, run, start, stop, remove and exec, all by the `ahpd.computer=1` label.
+- [`code://packages/computer/src/devcontainer.ts`](../../../packages/computer/src/devcontainer.ts) - the Dev Container CLI runner and the relay launcher: `up` with the two id labels, the host inside, and the relay's pipes.
+- [`code://packages/computer/src/owners.ts`](../../../packages/computer/src/owners.ts) - `computers.json` beside the daemon's config, which holds the owner of a machine the CLI made.
+- [`code://packages/sdk/src/nested.ts`](../../../packages/sdk/src/nested.ts) - the proxy a `runsNested` backend gets: an `ahpd --stdio` inside the machine, reached as a client.
+- [`code://packages/sdk/src/host.ts`](../../../packages/sdk/src/host.ts) - the host, its `initialize` `_meta` block and the `vscode/devContainers/*` methods it serves.
+- [`code://packages/sdk/src/listen.ts`](../../../packages/sdk/src/listen.ts) - the WebSocket and stdio transports over the same seam.
 
-## What is not here
+## Contracts
 
-- No stdio transport. The daemon has one way in, which is a WebSocket on a port.
-- The dev container surface is advertised only while Docker and the CLI are both there, so a host without the CLI offers nothing and is never asked.
-- No `devcontainer` CLI dependency, and the CLI is not installed on this machine. Docker 29.6.2 is.
-- No way for one host to carry another host's frames but the dev container relay.
+- [`code://packages/sdk/src/types/computers.ts`](../../../packages/sdk/src/types/computers.ts) - `Spawn`, `NestedStart`, `MachineSource` and `ComputerPort`: how a backend reaches a machine as a process.
+- [`code://packages/sdk/src/types/containers.ts`](../../../packages/sdk/src/types/containers.ts) - `ContainerPort`, the relay VS Code's dev container flow drives.
+- [`code://packages/computer/src/runtime.ts#L194`](../../../packages/computer/src/runtime.ts#L194) - `ComputerRuntime`, the shape every runtime implements.
+
+## Runtimes
+
+A profile's `runtime` names what makes the machine: `docker`, `ssh`, `libvirt` or `proxmox`, each with its own options, per [One computer: provider, the runtime named for what makes the machine](../../decisions/a-machine-runtime-is-named-for-its-maker.md).
+`docker` is the one built; the container/05 plans add the others.
+A machine id records which runtime made it, so several runtimes can serve one host.
 
 ## One computer, two recipes
 
-A `computer://<name>` machine is one object with two recipes.
-A profile makes it from an image, a manifest and the mounts a person or the deployment names, and it is reached by a backend through the `computers` port.
-A folder makes it from that folder's own `devcontainer.json`, read by the Dev Container CLI, which decides the image, the features, the mounts and the user.
-Both carry `ahpd.computer=1`, so both are listed, picked and reached as `computer://<id>`; a machine made from a folder also carries `ahpd.devcontainer.folder=<folder>`, which is how a reach (`devcontainer exec`) and a listing tell it apart.
-A dev container outlives the connection and the client that made it: a relay that ends leaves the container where the CLI can reuse it, and destroying the computer removes the container and never the folder or its `devcontainer.json`.
+A `docker` machine is made from an image, a manifest and the mounts a person or the deployment names.
+A dev container is made from a folder's own `devcontainer.json` by the Dev Container CLI's `up`, which decides the image, the features, the mounts and the user.
+Both carry `ahpd.computer=1`, so both are listed, picked and reached as `computer://<id>`; a dev container also carries `ahpd.devcontainer.folder=<folder>`, which is how a listing and the picker know a folder already has its computer.
+Every command in a dev container, the relay's nested host included, runs through `docker exec` with the user, environment and working folder read from the container's `devcontainer.metadata` label plus one `userEnvProbe` run when the container is made, per [A dev container is made by the Dev Container CLI and reached by docker exec](../../decisions/a-dev-container-is-reached-by-docker-exec.md).
+A dev container outlives the connection and the client that made it, and destroying the computer removes the container, never the folder or its `devcontainer.json`.
 A container made by hand with `devcontainer up` and without the labels is not a computer and is not listed.
-VS Code's own dev container flow stays as a door for clients that speak it, and its `connect` finds or makes the same computer.
-Decision `a-dev-container-is-a-computer-made-from-its-devcontainer-json` is where this is argued, and it corrects this file's earlier "two mechanisms, kept apart".
+VS Code's dev container flow stays as a door for clients that speak it, and its `connect` finds or makes the same computer.
+
+## Runtime path
+
+```
+create body / devcontainer://F / vscode connect -> devcontainer up --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=F
+session in computer://<id>                      -> how(id) -> docker exec -i [-u -w -e] <id> <command>
+runsNested backend                              -> nested(id) -> the same how() -> ahpd --stdio inside -> nested.ts proxy
+```
 
 ## Tests
 
-The container work is tested with a fake CLI and a fake runtime, because `pnpm test` is network-free and may have no Docker.
-`code://test/fixtures/docker.mjs` is the existing pattern for a fake Docker, `code://test/fixtures/devcontainer.mjs` is the fake CLI, and the CLI fixture writes what it made into the Docker fixture so the pair of them read as one machine.
+`pnpm test` is network-free and may have no Docker, so the container work runs against a fake Docker and a fake CLI.
+- [`code://packages/computer/test/fixtures/docker.mjs`](../../../packages/computer/test/fixtures/docker.mjs) - the fake Docker.
+- [`code://packages/computer/test/fixtures/devcontainer.mjs`](../../../packages/computer/test/fixtures/devcontainer.mjs) - the fake CLI, which writes what it made into the Docker fixture so the pair read as one machine.
+- [`code://packages/computer/test/computer-devcontainer.test.ts`](../../../packages/computer/test/computer-devcontainer.test.ts) and [`code://packages/computer/test/devcontainer.test.ts`](../../../packages/computer/test/devcontainer.test.ts) - the dev container computer and the relay.
+- [`code://packages/sdk/test/nested-proxy.test.ts`](../../../packages/sdk/test/nested-proxy.test.ts) and [`code://packages/sdk/test/nested-start.test.ts`](../../../packages/sdk/test/nested-start.test.ts) - the nested host.
+
+The real CLI is checked by hand; `@devcontainers/cli` 0.89.0 and Docker 29.6.2 are installed on the workstation.
+
+## Known gaps
+
+- The code still reaches a dev container through `devcontainer exec`; container/03 moves every road to `docker exec`.
+- The relay serves `vscode/devContainers/isDockerAvailable`, `connect`, `disconnect` and `relaySend`, not `stop` and `remove`.
+- Only the `docker` runtime exists.

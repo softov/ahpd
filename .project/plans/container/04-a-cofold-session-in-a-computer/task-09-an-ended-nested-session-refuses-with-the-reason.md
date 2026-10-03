@@ -5,8 +5,8 @@ depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:
   - "[code://packages/sdk/src/nested.ts#L253-L285](../../../../packages/sdk/src/nested.ts#L253-L285) - `deliver` drops silently once `fail` has set `ended`"
-  - "[code://packages/sdk/src/host.ts#L8044-L8104](../../../../packages/sdk/src/host.ts#L8044-L8104) - where a client action reaches a held session"
-  - "[code://packages/sdk/src/host.ts#L1879](../../../../packages/sdk/src/host.ts#L1879) - `refuse`"
+  - "[code://packages/sdk/src/host.ts#L10162-L10202](../../../../packages/sdk/src/host.ts#L10162-L10202) - where a client action reaches a held session, before the switch on `type` at :10202"
+  - "[code://packages/sdk/src/host.ts#L2300](../../../../packages/sdk/src/host.ts#L2300) - `refuse`"
 ---
 
 ## Objective
@@ -15,9 +15,9 @@ After the inner host has ended, every client action on the nested session, a new
 
 ## Files
 
-- `UPDATE: packages/sdk/src/types/session.ts:212-495` - `Session` gains an optional member that answers the sentence a session ended with, or nothing while it runs.
+- `UPDATE: packages/sdk/src/types/session.ts:225-543` - `Session` gains an optional member that answers the sentence a session ended with, or nothing while it runs.
 - `UPDATE: packages/sdk/src/nested.ts:270-285` - `fail` keeps the sentence; the new member answers it.
-- `UPDATE: packages/sdk/src/host.ts:8044` - before the switch on `type`, a held session that answers a sentence is refused with it through `refuse`.
+- `UPDATE: packages/sdk/src/host.ts:10202` - before the switch on `type`, a held session that answers a sentence is refused with it through `refuse`.
 
 ## Steps
 
@@ -27,8 +27,8 @@ After the inner host has ended, every client action on the nested session, a new
 
 ## Validation
 
-- `test/nested-process.test.ts`: a real inner host killed with SIGKILL, then a client `chat/turnStarted` for `t2` through the outer host, is answered with a refusal carrying the sentence; today nothing answers it.
-- `test/nested-proxy.test.ts`: `session.begin` after a scripted host's crash emits nothing new, and the session's new member answers the sentence.
-- `node_modules/.bin/vitest run test/nested-process.test.ts test/nested-proxy.test.ts` passes.
+- `packages/sdk/test/nested-process.test.ts`: a real inner host killed with SIGKILL, then a client `chat/turnStarted` for `t2` through the outer host, is answered with a refusal carrying the sentence; today nothing answers it.
+- `packages/sdk/test/nested-proxy.test.ts`: `session.begin` after a scripted host's crash emits nothing new, and the session's new member answers the sentence.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume

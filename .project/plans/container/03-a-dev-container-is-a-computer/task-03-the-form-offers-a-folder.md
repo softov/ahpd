@@ -4,23 +4,22 @@ status: todo
 depends: [task-01-made-from-a-folder.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/manifest.ts#L188](../../../../packages/computer/src/manifest.ts#L188) - `MANIFEST_SCHEMA`, the flat properties the form is drawn from"
-  - "[code://packages/computer/src/manifest.ts#L372](../../../../packages/computer/src/manifest.ts#L372) - `devcontainerOf`, which accepts only `{ folder }`"
-  - "[code://packages/computer/src/manifest.ts#L480](../../../../packages/computer/src/manifest.ts#L480) - the \"names both\" refusal"
-  - file:///github/ahpapp/src/computers.ts - `manifestFields` reads flat properties only (`type`, `enum`, `x-choices`, `default`)
+  - "[code://packages/computer/src/manifest.ts#L209](../../../../packages/computer/src/manifest.ts#L209) - `MANIFEST_SCHEMA`, the flat properties the form is drawn from"
+  - "[code://packages/computer/src/manifest.ts#L393](../../../../packages/computer/src/manifest.ts#L393) - `devcontainerOf`, which accepts only `{ folder }`"
+  - "[code://packages/computer/src/manifest.ts#L501](../../../../packages/computer/src/manifest.ts#L501) - the \"names both\" refusal"
 ---
 
 ## Objective
 
-The manifest schema offers a `source` choice (`image` or `devcontainer`) and a flat string field for the folder, so ahpapp draws it with no change of its own.
+The manifest schema offers a `source` choice (`image` or `devcontainer`), which it has not today, and a flat string field for the folder, so ahpapp draws it with no change of its own: its form reads only flat properties (`type`, `enum`, `x-choices`, `default`).
 This applies [The computer form offers a folder as a flat source choice](../../../decisions/the-computer-form-offers-a-folder-as-a-flat-source-choice.md).
 
 ## Files
 
-- `UPDATE: packages/computer/src/manifest.ts:188` - `source` (`enum` with `x-choices`, default `image`) and a string field for the folder; the key is not `folder`, which is plugin/16's host mount.
-- `UPDATE: packages/computer/src/manifest.ts:372` - `devcontainerOf` accepts the string the form sends as well as `{ folder }`.
-- `UPDATE: packages/computer/src/manifest.ts:480` - with `source: devcontainer`, an `image` equal to the host's default is the form's untouched default and is ignored; any other image is still refused.
-- `UPDATE: test/computer-devcontainer.test.ts` - the cases below.
+- `UPDATE: packages/computer/src/manifest.ts:209` - `source` (`enum` with `x-choices`, default `image`) and a string field for the folder; the key is not `folder`, which is plugin/16's host mount.
+- `UPDATE: packages/computer/src/manifest.ts:393` - `devcontainerOf` accepts the string the form sends as well as `{ folder }`.
+- `UPDATE: packages/computer/src/manifest.ts:501` - with `source: devcontainer`, an `image` equal to the host's default is the form's untouched default and is ignored; any other image is still refused.
+- `UPDATE: packages/computer/test/computer-devcontainer.test.ts` - the cases below.
 
 ## Steps
 

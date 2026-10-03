@@ -4,7 +4,7 @@ domain: container
 status: active
 priority: medium
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-02
 requires:
   - plans/plugin/14-cofold-runs-its-own-tools/plan.md
   - plans/plugin/15-an-agent-says-what-a-machine-needs/plan.md
@@ -18,12 +18,14 @@ decisions:
   - decisions/a-nested-host-is-configured-by-the-machine-profile-only.md
   - decisions/a-backend-that-runs-nested-names-its-plugin.md
 refs:
-  - "[code://packages/agent-cofold/src/agent.ts#L605](../../../../packages/agent-cofold/src/agent.ts#L605) - `refuseComputer`, the answer today"
-  - "[code://packages/sdk/src/computers.ts](../../../../packages/sdk/src/computers.ts) - `refuseComputer` and how a backend opens its computer"
-  - "[code://packages/sdk/src/types/computers.ts#L16-L49](../../../../packages/sdk/src/types/computers.ts#L16-L49) - `ComputerPort.how` and `Spawn`, a process in a machine"
-  - "[code://packages/sdk/src/rpc.ts#L74-L100](../../../../packages/sdk/src/rpc.ts#L74-L100) - `createPeer`, a `Wire` over stdio"
-  - "[code://packages/agent-acp/src/session.ts#L447-L479](../../../../packages/agent-acp/src/session.ts#L447-L479) - `placed()`, a backend that starts its process through the port"
-  - "[code://packages/computer/src/devcontainer.ts](../../../../packages/computer/src/devcontainer.ts) - the nested host started with `--stdio`"
+  - "[code://packages/agent-cofold/src/agent.ts#L646](../../../../packages/agent-cofold/src/agent.ts#L646) - cofold's `runsNested: true`"
+  - "[code://packages/sdk/src/nested.ts](../../../../packages/sdk/src/nested.ts) - the proxy: the nested host's stdio, the inner session, the mirror"
+  - "[code://packages/sdk/src/host.ts#L3617-L3619](../../../../packages/sdk/src/host.ts#L3617-L3619) - the host gives a `runsNested` backend the proxy when its session names a computer"
+  - "[code://packages/computer/src/plugin.ts#L634-L646](../../../../packages/computer/src/plugin.ts#L634-L646) - `nestedHost`, which starts the inner host through `reach`"
+  - "[code://packages/sdk/src/types/computers.ts#L19-L143](../../../../packages/sdk/src/types/computers.ts#L19-L143) - `ComputerPort.how` and `Spawn`, a process in a machine"
+  - "[code://packages/sdk/src/rpc.ts#L88](../../../../packages/sdk/src/rpc.ts#L88) - `createPeer`, a `Wire` over stdio"
+  - "[code://packages/agent-acp/src/session.ts#L615](../../../../packages/agent-acp/src/session.ts#L615) - `placed()`, a backend that starts its process through the port"
+  - "[code://packages/computer/src/devcontainer.ts#L481-L486](../../../../packages/computer/src/devcontainer.ts#L481-L486) - the relay's nested host started with `--stdio`"
   - npm://@microsoft/agent-host-protocol@0.9.0 - `AhpClient`, the client the proxy uses
   - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - where the image goes next: one that carries ahpd, with only the code shared in"
 ---
@@ -49,9 +51,15 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 ### Gaps
 
-- Nothing in the SDK speaks AHP as a client.
-- A backend that cannot move refuses a computer; nothing chooses a proxy instead.
-- A nested host is started only by the dev container launcher.
+- The inner host's end is taken from `exit` and its stdin has no `error` listener ([`code://packages/sdk/src/nested.ts#L173`](../../../../packages/sdk/src/nested.ts#L173)), so a dead pipe can throw in the daemon.
+- The stderr tail is twelve lines of any length ([`code://packages/sdk/src/nested.ts#L38`](../../../../packages/sdk/src/nested.ts#L38)), and stdout is rescanned from the start on every chunk.
+- An ended nested session drops later actions silently, and inner chat URIs reach the client unchanged.
+- The inner session has a random id ([`code://packages/sdk/src/nested.ts#L232`](../../../../packages/sdk/src/nested.ts#L232)), so a resume starts a blank session.
+- Several members answer `true` whatever happened (`setConfig` at [`code://packages/sdk/src/nested.ts#L486`](../../../../packages/sdk/src/nested.ts#L486)); `models` and `awaiting` are always empty (`:411`, `:506`).
+- The inner session is created at this host's path rather than the machine's.
+- `close` sends `disposeSession` and kills the process in the same tick ([`code://packages/sdk/src/nested.ts#L511-L524`](../../../../packages/sdk/src/nested.ts#L511-L524)).
+- The inner plugin is derived as `@ahpd/agent-${name}` ([`code://packages/sdk/src/nested.ts#L98`](../../../../packages/sdk/src/nested.ts#L98)), and `runsNested` is a boolean ([`code://packages/sdk/src/validate.ts#L69`](../../../../packages/sdk/src/validate.ts#L69), [`code://packages/sdk/src/types/agent.ts#L370`](../../../../packages/sdk/src/types/agent.ts#L370)).
+- `packages/sdk/test/nested-process.test.ts` does not exist yet; every pipe behaviour is tested only against in-memory fakes.
 
 ## Decisions locked in
 
@@ -111,7 +119,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 - **Done so far:** tasks 01 to 06 implemented on 2026-09-26: the computers port starts a nested host, `packages/sdk/src/nested.ts` is the proxy, `Agent.runsNested` chooses it, cofold declares it, and `docs/COMPUTER.md` explains it.
 - **Next action:** [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md), which also builds the real-process test the later tasks use.
 - **Open questions:** none.
-- **Watch out for:** a failure must end the session with a sentence and never hang or throw; the in-memory fakes in `test/nested-proxy.test.ts` hid an `EPIPE` crash, so a pipe or process behaviour is proved in `test/nested-process.test.ts` against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session.
+- **Watch out for:** a failure must end the session with a sentence and never hang or throw; the in-memory fakes in `packages/sdk/test/nested-proxy.test.ts` hid an `EPIPE` crash, so a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` (created by task 07) against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session. `nested` reaches a machine through `reach`, so a dev container is reached by `docker exec` once container/03 task 18 lands, and nothing here changes for it.
 
 ## Final verification checklist
 

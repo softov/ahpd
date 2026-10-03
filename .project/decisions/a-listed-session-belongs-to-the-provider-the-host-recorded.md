@@ -21,7 +21,7 @@ Source: Softov, 2026-10-02, asked "Two Claude harnesses list the same transcript
 ## Consequences
 
 A session made before this is recorded is listed under the first loaded harness until it is resumed under another.
-Presets that are harnesses, one agent-claude load for all of them, stay a proposal: [presets-are-harnesses](../ideas/presets-are-harnesses.md).
+Presets that are harnesses, one agent-claude load for all of them, are claude/15: [one load, each preset a variant](../plans/claude/15-one-load-and-each-preset-is-a-variant/plan.md).
 
 ## Options
 

@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/types/machine.ts](../../../../packages/sdk/src/types/machine.ts) - the kinds"
-  - "[code://packages/sdk/src/machine.ts#L62](../../../../packages/sdk/src/machine.ts#L62) - `resolveNeeds`"
+  - "[code://packages/sdk/src/types/machine.ts#L18-L94](../../../../packages/sdk/src/types/machine.ts#L18-L94) - the kinds, the common fields and `ResolvedNeed`"
+  - "[code://packages/sdk/src/machine.ts#L62-L106](../../../../packages/sdk/src/machine.ts#L62-L106) - `resolveNeeds`"
 ---
 
 ## Objective
@@ -16,7 +16,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/types/machine.ts` - `StateNeed`, `when`, `ResolvedNeed.seed`.
 - `UPDATE: packages/sdk/src/machine.ts` - the mode argument, `~` expansion in seed sources.
-- `UPDATE: packages/sdk/test/` the machine test.
+- `UPDATE: packages/sdk/test/machine-needs.test.ts` - the cases below.
 
 ## Steps
 

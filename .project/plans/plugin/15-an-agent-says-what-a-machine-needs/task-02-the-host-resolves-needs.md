@@ -4,7 +4,9 @@ status: implemented
 depends: [task-01-the-need-type.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/types/plugin.ts#L134-L138](../../../../packages/sdk/src/types/plugin.ts#L134-L138) - the plugin host"
+  - "[code://packages/sdk/src/types/plugin.ts#L152](../../../../packages/sdk/src/types/plugin.ts#L152) - `PluginHost.machineNeeds`"
+  - "[code://packages/sdk/src/plugins.ts#L325-L328](../../../../packages/sdk/src/plugins.ts#L325-L328) - its implementation over the live agent list"
+  - "[code://packages/sdk/src/machine.ts#L62-L106](../../../../packages/sdk/src/machine.ts#L62-L106) - `resolveNeeds`"
   - "[code://packages/sdk/src/computers.ts](../../../../packages/sdk/src/computers.ts) - the computers port wiring"
 ---
 
@@ -25,7 +27,7 @@ refs:
 
 ## Validation
 
-- `test/machine-needs.test.ts`: the three-level order, `~` expansion, a missing required need, a missing path, an unknown provider.
+- `packages/sdk/test/machine-needs.test.ts`: the three-level order, `~` expansion, a missing required need, a missing path, an unknown provider.
 
 ## Resume
 

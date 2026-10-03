@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-02
 requires:
   - plans/container/01-a-session-in-a-dev-container/plan.md
 changes: []
@@ -13,10 +13,14 @@ decisions:
   - decisions/vscode-reaches-ahpd-through-a-dev-tunnel.md
 refs:
   - "[code://.project/research/how-vscode-offers-a-dev-container.md](../../../research/how-vscode-offers-a-dev-container.md) - the checks VS Code makes, and which ones ahpd fails"
-  - "[code://packages/sdk/src/host.ts#L5140-L5149](../../../../packages/sdk/src/host.ts#L5140-L5149) - the `vscode.devContainers` key"
+  - "[code://packages/sdk/src/host.ts#L7526](../../../../packages/sdk/src/host.ts#L7526) - the `vscode.devContainers` key"
+  - "[code://packages/sdk/src/host.ts#L7430](../../../../packages/sdk/src/host.ts#L7430) - `containersReady`, which decides whether the key is advertised"
+  - "[code://packages/tunnel-devtunnel/src/discovery.ts#L33-L69](../../../../packages/tunnel-devtunnel/src/discovery.ts#L33-L69) - the tunnel labels, `vscode-server-launcher`, the protocol label and `_ahpd`"
   - "[code://packages/tunnel-devtunnel/README.md](../../../../packages/tunnel-devtunnel/README.md) - reaching ahpd as a Tunnel entry"
-  - "[code://packages/server/src/main.ts#L1052](../../../../packages/server/src/main.ts#L1052) - the line that prints the daemon's `ws://` URL"
-  - https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/sessions/contrib/providers/remoteAgentHost/browser/devContainerSource.ts#L26-L33 - only SSH, Tunnel and WSL entries are a dev container source
+  - "[code://packages/server/src/config.ts#L427](../../../../packages/server/src/config.ts#L427) - where the daemon's `ws://` URL is built"
+  - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/sessions/contrib/providers/remoteAgentHost/browser/devContainerSource.ts#L26-L33 - only SSH, Tunnel and WSL entries are a dev container source
+  - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/sessions/contrib/providers/remoteAgentHost/electron-browser/tunnelAgentHostServiceImpl.ts#L205-L227 - VS Code lists tunnels with its own GitHub or Microsoft token
+  - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/common/agentHostExtensionProtocol.ts#L24-L34 - the `vscode/devContainers/*` methods, `stop` and `remove` among them
 ---
 
 ## Goal
@@ -36,13 +40,15 @@ VS Code: Connect via Dev Tunnel             -> a Tunnel entry for ahpd
 picker: folder on that host, devcontainer.json -> isDockerAvailable on ahpd -> "Use Dev Container"
 first send                                      -> vscode/devContainers/connect (container/01)
 reload                                          -> VS Code reconnects on demand
+idle or removed                                 -> [new] vscode/devContainers/stop | remove -> the folder's computer
 ```
 
 ### Gaps
 
 - ahpd is reachable only as a WebSocket entry in the setup Softov uses.
 - Whether a Tunnel entry to ahpd passes every check is untested.
-- Nothing documents the route or the two VS Code settings.
+- Nothing documents the route.
+- ahpd does not serve `vscode/devContainers/stop` and `vscode/devContainers/remove`, which VS Code sends to stop an idle container or remove one.
 
 ## Decisions locked in
 
@@ -56,14 +62,17 @@ reload                                          -> VS Code reconnects on demand
 | An SSH route waits as an idea | Softov, 2026-09-26: "Later, as an idea" ([idea](../../../ideas/an-ssh-command-that-attaches-to-the-daemon.md)) | - |
 | A relayed dev container listed as a computer is `container/03` | Softov, 2026-09-26: "Its own plan, container/03" | - |
 | ahpapp keeping a container across its own reload is an ahpapp plan | Softov, 2026-09-26: "Yes, via do-spec in ahpapp" | - |
+| ahpd serves `vscode/devContainers/stop` and `remove` under VS Code's names and shapes | upstream parity; VS Code 1.140 `agentHostExtensionProtocol.ts:27-28` | 04 |
+| `chat.remoteAgentHostsEnabled` and `chat.agentHost.devContainer.enabled` both default to `true` in VS Code 1.140, so neither is a step, only a check | VS Code 1.140 (`7516b04bc94`) | 01, 03 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The tunnel route tried by hand, with every check recorded](task-01-the-tunnel-route-tried-by-hand.md) | blocked | - |
+| [01 - The tunnel route tried by hand, with every check recorded](task-01-the-tunnel-route-tried-by-hand.md) | todo | - |
 | [02 - What the tunnel try found missing is fixed in ahpd](task-02-what-the-tunnel-try-found-missing.md) | todo | 01 |
 | [03 - The route to VS Code's dev container flow is documented](task-03-the-route-documented.md) | todo | 01 |
+| [04 - VS Code's stop and remove reach the folder's computer](task-04-stop-and-remove-are-served.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -73,9 +82,9 @@ reload                                          -> VS Code reconnects on demand
 ## Resume state
 
 - **Done so far:** the research note and the route decision, 2026-09-26.
-- **Next action:** parked 2026-09-26: the tunnel did not appear in VS Code's Agents window; task 01's *Resume* says what to check first.
+- **Next action:** task 01 again, with the tunnel made under the same provider and account VS Code signs in with; task 04 needs nothing from it and can go first.
 - **Open questions:** none.
-- **Watch out for:** a local Windows folder is launched by VS Code with Windows' Docker and never reaches ahpd; testing with one proves nothing about ahpd.
+- **Watch out for:** a local Windows folder is launched by VS Code with Windows' Docker and never reaches ahpd; testing with one proves nothing about ahpd. The tunnel labels already match what VS Code filters on; VS Code lists tunnels with its own GitHub or Microsoft token, so a tunnel made by `devtunnel user login` under another provider or account never appears.
 
 ## Final verification checklist
 
@@ -83,5 +92,6 @@ reload                                          -> VS Code reconnects on demand
 - [ ] The first send makes the container on the ahpd host and the session runs in it.
 - [ ] After a VS Code reload the session is there and continues.
 - [ ] `docs/CONTAINERS.md` has the route.
+- [ ] VS Code stopping an idle dev container, and removing one, acts on the folder's computer on the ahpd host.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 - [ ] `plans/index.md` updated.

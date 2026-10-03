@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/types/machine.ts](../../../../packages/sdk/src/types/machine.ts) - the four kinds"
-  - "[code://packages/sdk/src/machine.ts#L62](../../../../packages/sdk/src/machine.ts#L62) - `resolveNeeds`"
+  - "[code://packages/sdk/src/types/machine.ts#L74-L78](../../../../packages/sdk/src/types/machine.ts#L74-L78) - the four kinds"
+  - "[code://packages/sdk/src/machine.ts#L62-L106](../../../../packages/sdk/src/machine.ts#L62-L106) - `resolveNeeds`"
 ---
 
 ## Objective
@@ -16,7 +16,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/types/machine.ts` - the interface, with a comment saying what a part is.
 - `UPDATE: packages/sdk/src/machine.ts` - resolution; a profile value for a part need names another part id.
-- `UPDATE: packages/sdk/test/` the machine test - the new kind.
+- `UPDATE: packages/sdk/test/machine-needs.test.ts` - the new kind.
 
 ## Steps
 

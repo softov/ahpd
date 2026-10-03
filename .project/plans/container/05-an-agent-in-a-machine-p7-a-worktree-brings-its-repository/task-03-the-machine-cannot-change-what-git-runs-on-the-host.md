@@ -4,7 +4,7 @@ status: todo
 depends: [task-02-a-machine-mounts-the-git-directory.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/runtime.ts#L634](../../../../packages/computer/src/runtime.ts#L634) - the folder mount the git directory joins"
+  - "[code://packages/computer/src/runtime.ts#L730](../../../../packages/computer/src/runtime.ts#L730) - the folder mount the git directory joins"
   - https://git-scm.com/docs/githooks - hooks in `$GIT_DIR/hooks` run on the host's next commit
   - https://git-scm.com/docs/git-config - `core.hooksPath`, `core.fsmonitor` and `core.sshCommand` name programs git runs
 ---

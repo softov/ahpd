@@ -28,7 +28,7 @@ Source: Softov, 2026-09-29, asked "Who sees the daemon and plugin keys in root c
 
 A form shows every current value but a secret, and a secret can be replaced without being read.
 A plugin author marks each credential `writeOnly` in its options schema; an unmarked credential is shown to `config:read`.
-A secret store is [an idea](../ideas/a-secret-store.md).
+A secret store is [vault/01](../plans/vault/01-secrets-live-in-a-vault/plan.md).
 
 ## Options
 

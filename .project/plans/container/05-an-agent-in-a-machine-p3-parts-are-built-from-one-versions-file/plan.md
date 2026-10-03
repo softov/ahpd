@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-03
 requires:
   - plans/container/05-an-agent-in-a-machine/plan.md
 changes: []
@@ -14,10 +14,13 @@ decisions:
   - decisions/the-published-image-is-the-parts-joined.md
   - decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md
 refs:
-  - "[code://packages/computer/src/runtime.ts#L484](../../../../packages/computer/src/runtime.ts#L484) - `must`, how the runtime runs docker"
-  - "[code://packages/computer/package.json](../../../../packages/computer/package.json) - `files`, which must ship `images/`"
+  - "[code://packages/computer/src/runtime.ts#L570-L577](../../../../packages/computer/src/runtime.ts#L570-L577) - `must`, how the runtime runs docker"
+  - "[code://packages/computer/src/plugin.ts#L37](../../../../packages/computer/src/plugin.ts#L37) - the default image, `debian:bookworm-slim`, which the joined image replaces"
+  - "[code://packages/server/src/install.ts#L367](../../../../packages/server/src/install.ts#L367) - `ahpd plugin install --no-enable`, which the ahpd part runs"
+  - "[code://packages/computer/package.json#L44-L48](../../../../packages/computer/package.json#L44-L48) - `files`, which must ship `images/`"
   - "[code://scripts/computer.mjs](../../../../scripts/computer.mjs) - the script a person already manages a machine with"
   - "[code://.github/workflows/ci.yml](../../../../.github/workflows/ci.yml) - the workflow style a scheduled job follows"
+  - "[code://.github/workflows/release.yml](../../../../.github/workflows/release.yml) - the release job a joined-image publish would join"
   - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - the ahpd part answers it"
   - https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json - the registry a bump diffs against
   - https://docs.docker.com/build/building/context/ - a build context piped on stdin
@@ -32,7 +35,8 @@ The same file builds `ahpd-agents`, the one image ahpd publishes, with every par
 
 ### Searches performed
 
-- `rg "docker build|images/" packages scripts` - nothing builds an image today.
+- `rg "docker build|image inspect|images/" packages scripts` - nothing builds or inspects an image today; there is no `packages/computer/images/` and no `parts.ts`.
+- `rg "no-enable" packages/server/src` - `ahpd plugin install --no-enable` exists (`install.ts:367`, `install.ts:435`).
 
 ### Runtime path
 
@@ -46,6 +50,8 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 ### Gaps
 
 - No versions file, no Dockerfile, no build step, no bump job.
+- The fake Docker knows neither `image inspect` nor `build -`.
+- A machine made with no image named is `debian:bookworm-slim`, not the joined image.
 
 ## Decisions locked in
 
@@ -62,6 +68,7 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 | Bases are glibc; a part is built on `debian:bookworm-slim` | the proposal: goose ships only glibc builds | 02 |
 | The build context is generated and piped, so nothing is written into the package at run time | (defaulted: an installed package may be read-only) | 03 |
 | Publishing to a registry is optional; building locally is the default | the proposal, 2026-09-26 | 04 |
+| For now, from a checkout the ahpd part is built from the workspace's packed tarballs, so a checkout tests its own code; from an installed package it comes from npm at the pinned version; one function, `ahpdSourceOf`, makes the choice, so it can change | Softov, 2026-10-03, asked "from a checkout, is the ahpd part built from the workspace's packed tarballs or from npm?": "packed tarballs" | 02, 03 |
 
 ## Proposed architecture
 
@@ -88,16 +95,19 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 
 ## Resume state
 
-- **Done so far:** nothing.
+- **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-01-the-versions-file.md](task-01-the-versions-file.md).
-- **Open questions:**
-  1. From a checkout, is the ahpd part built from the workspace's packed tarballs or from npm? - proposed: packed tarballs, so a checkout tests its own code.
-- **Watch out for:** `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build.
+- **Open questions:** none.
+- **Watch out for:**
+  - `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build.
+  - From a checkout the ahpd part's hash covers the packed tarballs, not only the versions entry, or a code change would reuse a stale image.
+  - Task 04 changes the image a machine with none named is made from, so every computer test that asserts `debian:bookworm-slim` as the default has to name its image or expect the joined tag.
 
 ## Final verification checklist
 
 - [ ] `ensure('codex')` on a host without the image builds it once; a second call does nothing.
 - [ ] Two sessions asking for one missing part start one build.
+- [ ] From a checkout, the ahpd part holds the workspace's own code, and a change to it builds a new part.
 - [ ] `ahpd-agents:<hash>` runs `/opt/ahpd/codex/bin/codex-acp --help` on a real Docker.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 - [ ] `docs/COMPUTER.md`, `plans/index.md` updated.

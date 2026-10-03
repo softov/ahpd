@@ -29,4 +29,4 @@ Implemented 2026-09-26.
 `packages/sdk/src/nested.ts` keeps the inner host's last twelve stderr lines and every failure ends the outer session with one sentence carrying them: a start that could not be made, a process that exited before the session existed, a host that speaks another protocol version at `initialize`, and a `createSession` the inner host refused.
 The timeout is `AhpClient`'s own `requestTimeoutMs`, set from `NestedOptions.timeoutMs` and defaulting to `ANSWER_TIMEOUT`, so a host that never answers `initialize` is a sentence rather than a wait.
 A failure kills the process and emits `session/creationFailed` - and a `chat/error` for a turn that had started - so nothing hangs.
-Validated by `test/nested-proxy.test.ts`, one case per failure, each asserting the sentence: ENOENT, an exit before `initialize` with its stderr, another protocol version, a refused `createSession`, and the `initialize` timeout.
+Validated by `packages/sdk/test/nested-proxy.test.ts`, one case per failure, each asserting the sentence: ENOENT, an exit before `initialize` with its stderr, another protocol version, a refused `createSession`, and the `initialize` timeout.

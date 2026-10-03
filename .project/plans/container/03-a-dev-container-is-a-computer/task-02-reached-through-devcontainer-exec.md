@@ -31,3 +31,5 @@ Implemented 2026-09-26.
 The folder comes from the container's label, never from the session.
 `dockerRuntime.exec` in `runtime.ts` takes the same route, so the `computer_exec` tool runs through the CLI too.
 Validated by the exec test in `test/computer-devcontainer.test.ts`, which asserts the exact arguments and spawns the descriptor through the fake CLI.
+
+Replaced on 2026-10-02 by [task 18](task-18-every-command-reaches-it-by-docker-exec.md), which reaches the same container through `docker exec` per [the decision](../../../decisions/a-dev-container-is-reached-by-docker-exec.md).

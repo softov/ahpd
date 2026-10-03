@@ -4,8 +4,9 @@ status: todo
 depends: [task-03-a-cofold-machine-runs-ahpd-from-its-part.md]
 layer: "agent-pi, computer"
 refs:
-  - "[code://packages/agent-pi/src/agent.ts#L70-L100](../../../../packages/agent-pi/src/agent.ts#L70-L100) - the agent object"
-  - "[code://packages/agent-cofold/src/agent.ts#L628-L634](../../../../packages/agent-cofold/src/agent.ts#L628-L634) - cofold's `runsNested`, the pattern"
+  - "[code://packages/agent-pi/src/agent.ts#L90-L155](../../../../packages/agent-pi/src/agent.ts#L90-L155) - the agent object `piAgent` answers"
+  - "[code://packages/agent-cofold/src/agent.ts#L640-L646](../../../../packages/agent-cofold/src/agent.ts#L640-L646) - cofold's `runsNested`, the pattern"
+  - "[code://packages/sdk/src/nested.ts#L95-L103](../../../../packages/sdk/src/nested.ts#L95-L103) - the proxy loads `@ahpd/agent-<provider>` inside by default"
   - "[code://.project/decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md](../../../decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md) - the proxy names pi as a later user"
 ---
 
@@ -15,7 +16,7 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/agent-pi/src/agent.ts:70-100` - `runsNested` and `machine()`, with a comment saying why, as cofold's has.
+- `UPDATE: packages/agent-pi/src/agent.ts:90-155` - `runsNested` and `machine()`, each with a comment saying what it is, as cofold's has.
 - `UPDATE: packages/computer/images/versions.json` - the `ahpd` part's plugin list gains `@ahpd/agent-pi`.
 - `UPDATE: packages/agent-pi/test/agent-pi.test.ts` - both fields.
 

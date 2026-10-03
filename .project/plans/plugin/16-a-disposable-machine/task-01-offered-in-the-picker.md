@@ -4,7 +4,8 @@ status: implemented
 depends: []
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/plugin.ts#L297-L321](../../../../packages/computer/src/plugin.ts#L297-L321) - the answerer"
+  - "[code://packages/computer/src/plugin.ts#L109-L141](../../../../packages/computer/src/plugin.ts#L109-L141) - `profilesOf`, which reads the three fields"
+  - "[code://packages/computer/src/plugin.ts#L951-L969](../../../../packages/computer/src/plugin.ts#L951-L969) - the `disposable:<key>` rows"
 ---
 
 ## Objective
@@ -26,5 +27,5 @@ The `computer` answerer adds a `disposable:<profile>` row, labelled with the pro
 
 ## Resume
 
-Done 2026-09-26. `Profile` carries `disposable`, `disposableDelay` and `disposableAlone` in `packages/computer/src/manifest.ts`, and `profilesOf` in `packages/computer/src/plugin.ts` validates the three, writing `disposableDelay` down as 300000 when the profile names none. The answerer appends a `disposable:<key>` row per disposable profile, labelled with its title and narrowed by the query. `test/computer-disposable.test.ts` covers the row, a profile without the flag and the typed query.
+Done 2026-09-26. `Profile` carries `disposable`, `disposableDelay` and `disposableAlone` in `packages/computer/src/manifest.ts`, and `profilesOf` in `packages/computer/src/plugin.ts` validates the three, writing `disposableDelay` down as 300000 when the profile names none. The answerer appends a `disposable:<key>` row per disposable profile, labelled with its title and narrowed by the query. `packages/computer/test/computer-disposable.test.ts` covers the row, a profile without the flag and the typed query.
 

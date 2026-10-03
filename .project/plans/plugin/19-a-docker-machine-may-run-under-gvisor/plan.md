@@ -18,7 +18,7 @@ refs:
   - "[code://packages/computer/src/runtime.ts#L56-L150](../../../../packages/computer/src/runtime.ts#L56-L150) - `MachineSpec`, which carries it to the runtime"
   - "[code://packages/computer/src/runtime.ts#L600-L630](../../../../packages/computer/src/runtime.ts#L600-L630) - the `docker run` flags, where `--runtime` is added"
   - "[code://packages/computer/src/manifest.ts#L291](../../../../packages/computer/src/manifest.ts#L291) - `allowedImages`: what a machine is made from is the operator's to name, not a body's"
-  - "[code://test/computer.test.ts](../../../../test/computer.test.ts) - the docker runtime's tests over a fake `docker`"
+  - "[code://packages/computer/test/computer.test.ts](../../../../packages/computer/test/computer.test.ts) - the docker runtime's tests over a fake `docker`"
   - "[code://docs/COMPUTER.md#L189-L225](../../../../docs/COMPUTER.md#L189-L225) - the Profiles section"
 ---
 
@@ -44,7 +44,7 @@ profile { ociRuntime: 'runsc' } -> manifestOf -> MachineSpec.ociRuntime -> docke
 ### Gaps
 
 - `Profile` and `MachineSpec` have no OCI runtime.
-- `Not found: any runtime but docker - searched "runtime" in packages/computer/src/plugin.ts`; every other runtime is an [idea](../../../ideas/more-computer-runtimes.md), not planned by Softov's choice.
+- `Not found: any runtime but docker - searched "runtime" in packages/computer/src/plugin.ts`; `ssh`, `libvirt` and `proxmox` are container 05 p9 to p11, and the rest is an [idea](../../../ideas/more-computer-runtimes.md), not planned by Softov's choice.
 
 ## Decisions locked in
 

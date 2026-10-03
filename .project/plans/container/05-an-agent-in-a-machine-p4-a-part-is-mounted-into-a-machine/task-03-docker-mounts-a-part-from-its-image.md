@@ -4,7 +4,7 @@ status: todo
 depends: [task-02-a-machine-is-made-with-its-parts.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/runtime.ts#L625-L650](../../../../packages/computer/src/runtime.ts#L625-L650) - the run flags"
+  - "[code://packages/computer/src/runtime.ts#L697-L746](../../../../packages/computer/src/runtime.ts#L697-L746) - the run flags"
   - "[code://packages/computer/test/fixtures/docker.mjs](../../../../packages/computer/test/fixtures/docker.mjs) - learns `type=image`"
 ---
 

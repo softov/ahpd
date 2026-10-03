@@ -4,7 +4,7 @@ status: implemented
 depends: [task-03-it-goes-after-the-last-session.md]
 layer: "docs"
 refs:
-  - "[code://docs/COMPUTER.md](../../../../docs/COMPUTER.md) - profiles"
+  - "[code://docs/COMPUTER.md#L226-L256](../../../../docs/COMPUTER.md#L226-L256) - the disposable section"
 ---
 
 ## Objective
@@ -25,5 +25,5 @@ refs:
 
 ## Resume
 
-Done 2026-09-26. `docs/COMPUTER.md` has a "Disposable machines" section: the three fields as a table, a `scratch` profile example, what the machine is labelled, that a re-picked source reuses the machine, that a failed create answers with the runtime's sentence, and that a copy-in is paid on every create so a disposable profile prefers mounts. The picker paragraph in "A session in one" links to it. `test/computer-disposable.test.ts` loads the example's `profiles` object as plugin options.
+Done 2026-09-26. `docs/COMPUTER.md` has a "Disposable machines" section: the three fields as a table, a `scratch` profile example, what the machine is labelled, that a re-picked source reuses the machine, that a failed create answers with the runtime's sentence, and that a copy-in is paid on every create so a disposable profile prefers mounts. The picker paragraph in "A session in one" links to it. `packages/computer/test/computer-disposable.test.ts` loads the example's `profiles` object as plugin options.
 

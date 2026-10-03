@@ -4,13 +4,13 @@ status: todo
 depends: [task-06-docs.md]
 layer: "sdk | agent-cofold"
 refs:
-  - "[code://packages/sdk/src/types/agent.ts#L356](../../../../packages/sdk/src/types/agent.ts#L356) - `runsNested?: boolean`"
+  - "[code://packages/sdk/src/types/agent.ts#L370](../../../../packages/sdk/src/types/agent.ts#L370) - `runsNested?: boolean`"
   - "[code://packages/sdk/src/validate.ts#L69](../../../../packages/sdk/src/validate.ts#L69) - `runsNested` checked as a boolean at plugin load"
-  - "[code://packages/sdk/src/host.ts#L2940-L2942](../../../../packages/sdk/src/host.ts#L2940-L2942) - the host chooses the proxy when `runsNested === true`"
+  - "[code://packages/sdk/src/host.ts#L3617-L3619](../../../../packages/sdk/src/host.ts#L3617-L3619) - the host chooses the proxy when `runsNested === true`"
   - "[code://packages/sdk/src/nested.ts#L95-L103](../../../../packages/sdk/src/nested.ts#L95-L103) - `nestedAgent`, which derives `@ahpd/agent-<provider>`"
   - "[code://packages/sdk/src/nested.ts#L376-L381](../../../../packages/sdk/src/nested.ts#L376-L381) - the inner `createSession`, under the outer provider name"
-  - "[code://packages/agent-cofold/src/agent.ts#L634](../../../../packages/agent-cofold/src/agent.ts#L634) - cofold's `runsNested: true`"
-  - "[code://test/computer-refusal.test.ts#L55-L97](../../../../test/computer-refusal.test.ts#L55-L97) - the cases that read `runsNested` as a boolean"
+  - "[code://packages/agent-cofold/src/agent.ts#L646](../../../../packages/agent-cofold/src/agent.ts#L646) - cofold's `runsNested: true`"
+  - "[code://packages/computer/test/computer-refusal.test.ts#L52-L98](../../../../packages/computer/test/computer-refusal.test.ts#L52-L98) - the cases that read `runsNested` as a boolean"
 ---
 
 ## Objective
@@ -19,13 +19,13 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/types/agent.ts:356` - `runsNested?: { plugin: string }`, with a doc comment saying what `plugin` names.
+- `UPDATE: packages/sdk/src/types/agent.ts:370` - `runsNested?: { plugin: string }`, with a doc comment saying what `plugin` names.
 - `UPDATE: packages/sdk/src/validate.ts:69` - an object with a non-empty string `plugin`.
-- `UPDATE: packages/sdk/src/host.ts:2940-2942` - the proxy when `runsNested` is present, handed `runsNested.plugin`.
+- `UPDATE: packages/sdk/src/host.ts:3617-3619` - the proxy when `runsNested` is present, handed `runsNested.plugin`.
 - `UPDATE: packages/sdk/src/nested.ts:62-103` - `NestedOptions.plugins` default and its doc comment; the provider-string form of `nestedAgent`.
 - `UPDATE: packages/sdk/src/nested.ts:376-381` - the provider named in the inner `createSession`.
-- `UPDATE: packages/agent-cofold/src/agent.ts:628-634` - `runsNested: { plugin: '@ahpd/agent-cofold' }`, and its comment.
-- `UPDATE: test/computer-refusal.test.ts:55-97` and `test/nested-proxy.test.ts:342-381` - the checks that read a boolean.
+- `UPDATE: packages/agent-cofold/src/agent.ts:636-646` - `runsNested: { plugin: '@ahpd/agent-cofold' }`, and its comment.
+- `UPDATE: packages/computer/test/computer-refusal.test.ts:52-98` and `packages/sdk/test/nested-proxy.test.ts:348-387` - the checks that read a boolean.
 
 ## Steps
 
@@ -37,8 +37,8 @@ refs:
 
 ## Validation
 
-- `test/computer-refusal.test.ts`: cofold's `runsNested` is `{ plugin: '@ahpd/agent-cofold' }`; a plugin whose agent declares `runsNested: true` is refused at load.
-- `test/nested-proxy.test.ts`: a backend registered as `cofold-work` with `runsNested: { plugin: '@ahpd/agent-cofold' }` asks the port for `@ahpd/agent-cofold`, and its inner `createSession` names the provider the inner host serves (`cofold`); today it asks for `@ahpd/agent-cofold-work` and names `cofold-work`.
-- `node_modules/.bin/vitest run test/computer-refusal.test.ts test/nested-proxy.test.ts` and `node_modules/.bin/tsc -p tsconfig.json --noEmit` pass.
+- `packages/computer/test/computer-refusal.test.ts`: cofold's `runsNested` is `{ plugin: '@ahpd/agent-cofold' }`; a plugin whose agent declares `runsNested: true` is refused at load.
+- `packages/sdk/test/nested-proxy.test.ts`: a backend registered as `cofold-work` with `runsNested: { plugin: '@ahpd/agent-cofold' }` asks the port for `@ahpd/agent-cofold`, and its inner `createSession` names the provider the inner host serves (`cofold`); today it asks for `@ahpd/agent-cofold-work` and names `cofold-work`.
+- `node_modules/.bin/vitest run packages/computer/test/computer-refusal.test.ts packages/sdk/test/nested-proxy.test.ts` and `node_modules/.bin/tsc -p tsconfig.json --noEmit` pass.
 
 ## Resume

@@ -4,9 +4,10 @@ status: todo
 depends: [task-01-the-sdk-has-a-part-need.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/manifest.ts#L34-L99](../../../../packages/computer/src/manifest.ts#L34-L99) - `Profile`"
-  - "[code://packages/computer/src/manifest.ts#L541-L560](../../../../packages/computer/src/manifest.ts#L541-L560) - where agents' needs are gathered"
-  - "[code://packages/computer/src/runtime.ts#L56-L148](../../../../packages/computer/src/runtime.ts#L56-L148) - `MachineSpec`"
+  - "[code://packages/computer/src/manifest.ts#L34-L100](../../../../packages/computer/src/manifest.ts#L34-L100) - `Profile`"
+  - "[code://packages/computer/src/manifest.ts#L561-L605](../../../../packages/computer/src/manifest.ts#L561-L605) - where agents' needs are gathered and every target checked"
+  - "[code://packages/computer/src/runtime.ts#L67-L178](../../../../packages/computer/src/runtime.ts#L67-L178) - `MachineSpec`"
+  - "[code://packages/computer/src/runtime.ts#L701-L723](../../../../packages/computer/src/runtime.ts#L701-L723) - the labels a machine is made with, `ahpd.agents` and the owner, team and project ones beside it"
 ---
 
 ## Objective

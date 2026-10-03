@@ -8,7 +8,7 @@ Pending, to see and think about; not a plan yet.
 
 Today a session opens on a folder this host already has (`file://`), and a machine works on that folder through a mount.
 The idea is a `repository:` (or `git:`) resource scheme, served like `computer:` and the people schemes: a host lists the repositories it can reach on GitHub and GitLab, and a session is opened on one of them rather than on a folder.
-The host clones it when a session needs it, where the session runs: on this host, or inside a machine that cannot mount anything ([more computer runtimes](more-computer-runtimes.md), "Clone the repository and branch inside the machine").
+The host clones it when a session needs it, where the session runs: on this host, or inside a machine that cannot mount anything ([container 05 p8](../plans/container/05-an-agent-in-a-machine-p8-a-profile-on-another-docker/plan.md) clones it there).
 Nothing is kept beyond the session's own clone, so a host needs no checked-out copies to serve a repository.
 
 | | |
@@ -23,7 +23,7 @@ Nothing is kept beyond the session's own clone, so a host needs no checked-out c
 A repository on GitLab needs the same pull request flow a GitHub one has today, as a merge request.
 The host's pull request port is named `github` ([`code://packages/sdk/src/types/github.ts`](../../packages/sdk/src/types/github.ts), `registerGithub`), though its three calls (`resource`, `forBranch`, `create`) are forge-neutral in shape.
 A host with repositories on both forges needs both at once, so the port would be renamed to a forge port that routes by the remote's URL, with a GitHub and a GitLab implementation behind it.
-Self-hosted instances (`git.brbyte.com`) are the case to design for: each instance has its own URL and its own token, kept in the [vault](a-secret-store.md).
+Self-hosted instances (`git.brbyte.com`) are the case to design for: each instance has its own URL and its own token, kept in the [vault](../plans/vault/01-secrets-live-in-a-vault/plan.md).
 The GitLab REST API covers merge requests, issues and pipelines without an SDK.
 Issues are their own idea: [issues follow the repository](issues-follow-the-repository.md).
 
@@ -38,7 +38,7 @@ Commits and branches come from git itself where a clone exists, and from the for
 Open before it is a plan:
 
 1. The URI: `git://` is the git protocol's own scheme, so a session on `git://` would read as that protocol; `repository://<provider>/<owner>/<name>` or `github:`/`gitlab:` schemes per provider are the alternatives.
-2. Whose token clones and lists: the host's, or the person's own. Either is kept in the vault ([a secret store](a-secret-store.md)), which comes first.
+2. Whose token clones and lists: the host's, or the person's own. Either is kept in the vault ([vault/01](../plans/vault/01-secrets-live-in-a-vault/plan.md)), which comes first.
 3. When the clone goes: with the session, after the session is archived, or kept as a cache.
 4. How a session on a repository relates to `paths`, sessions listed by directory, and the transcript stores keyed by directory (Claude's `~/.claude/projects/<dir>`).
 5. Whether the `github` port is renamed to a forge port before GitLab, or GitLab ships behind `github` first.

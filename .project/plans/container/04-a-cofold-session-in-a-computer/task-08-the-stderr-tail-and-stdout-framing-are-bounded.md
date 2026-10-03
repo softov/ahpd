@@ -25,10 +25,10 @@ A failure's sentence carries at most a bounded number of characters of the inner
 
 ## Validation
 
-- `test/nested-proxy.test.ts`, with the fake's `say` able to emit a raw chunk without a trailing newline:
+- `packages/sdk/test/nested-proxy.test.ts`, with the fake's `say` able to emit a raw chunk without a trailing newline:
   - a 100 000-character stderr line followed by an exit ends with a sentence shorter than 6 000 characters; today the whole line is in it;
   - `ahpd: no plugin` sent as `ahpd: no ` and `plugin\n` in two chunks is one tail entry; today it is two, joined by ` | `;
   - a 32 MiB frame fed in 64 KiB chunks reaches `AhpClient` within 3 s; measure it today first and raise the size until today's code misses the bound.
-- `node_modules/.bin/vitest run test/nested-proxy.test.ts` passes.
+- `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
