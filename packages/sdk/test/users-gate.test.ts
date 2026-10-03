@@ -227,6 +227,105 @@ it('serves a connection that arrived as somebody, with no authenticate', async (
   expect(await call(anonymous, 'listSessions', {})).toMatchObject({ code: -32007 });
 });
 
+/*
+ * Who a connection is.
+ *
+ * The host has known this since the socket arrived or the person signed in,
+ * and said nothing, so a client could not read their own `user://<id>` without
+ * already knowing it. It is said in the `_meta` the protocol declares `_meta`
+ * on: the handshake, and the root snapshot, which is built for one connection
+ * at a time. The sign-in result is not one of them - `AuthenticateResult` is
+ * declared empty - so a client that signs in after connecting learns who it
+ * became by taking the root snapshot again.
+ */
+
+it('says who a connection arrived as, on the handshake and in the root snapshot', async () => {
+  const MEMBER: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write'];
+  const made = host({ users: directory({ m: MEMBER }) });
+
+  // A personal connection token: somebody before the first frame, so the
+  // handshake is already the answer.
+  const person = made.accept(peer(), { id: 'ana', roles: ['r'], can: (one: Grant) => MEMBER.includes(one) });
+  const shook = await hello(person, 'ana') as Bag;
+  expect(shook._meta?.['ahpd.principal']).toBe('user:ana');
+  // And the same statement in the snapshot, so a client that subscribes later
+  // reads what a client that connected earlier was told.
+  expect(await rootMeta(person)).toEqual({ 'ahpd.principal': 'user:ana' });
+
+  // The deployment's own token is the host itself, which is a typed reference
+  // like any other and not the absence of one.
+  const door = made.accept(peer(), undefined, true);
+  expect((await hello(door, 'door') as Bag)._meta?.['ahpd.principal']).toBe('root:host');
+  expect(await rootMeta(door)).toEqual({ 'ahpd.principal': 'root:host' });
+});
+
+it('names no principal on a host with no people for one to be', async () => {
+  // Every existing install is in this case, and the key is absent rather than
+  // empty: there is nothing here to name, and saying "" would be a value.
+  const client = host().accept(peer());
+  expect((await hello(client) as Bag)._meta).not.toHaveProperty('ahpd.principal');
+  expect(await rootMeta(client)).not.toHaveProperty('ahpd.principal');
+});
+
+it('says who it became to a client that signed in after connecting', async () => {
+  const client = host({ users: directory({ m: ['file:read'] }) }).accept(peer());
+  expect((await hello(client) as Bag)._meta).not.toHaveProperty('ahpd.principal');
+  expect(await rootMeta(client)).not.toHaveProperty('ahpd.principal');
+
+  // The sign-in says nothing itself: the protocol declares that result empty,
+  // and a key there would be a field no client can read.
+  expect(await signIn(client, 'm')).toEqual({});
+
+  // The next root snapshot is where the update arrives.
+  expect(await rootMeta(client)).toEqual({ 'ahpd.principal': 'user:m' });
+});
+
+it('gives two connections each their own principal and never the other', async () => {
+  const made = host({ users: directory({ ana: [], bob: [] }) });
+  const one = made.accept(peer());
+  await hello(one, 'ana'); await signIn(one, 'ana');
+  const other = made.accept(peer());
+  await hello(other, 'bob'); await signIn(other, 'bob');
+
+  expect(await rootMeta(one)).toEqual({ 'ahpd.principal': 'user:ana' });
+  expect(await rootMeta(other)).toEqual({ 'ahpd.principal': 'user:bob' });
+
+  // One person signing out does not rewrite the other's, in either direction:
+  // the snapshot is built per connection, so there is no shared copy to be
+  // left stale or overwritten.
+  await signIn(other, '');
+  expect(await rootMeta(one)).toEqual({ 'ahpd.principal': 'user:ana' });
+  expect(await rootMeta(other)).not.toHaveProperty('ahpd.principal');
+});
+
+it('takes nobody else\'s principal out of a replayed root action', async () => {
+  /*
+   * The other way one connection's name could reach another is the replay
+   * buffer, which is one per host. It holds actions rather than snapshots, and
+   * a root action carries no `_meta`, so a client that comes back is answered
+   * with ana's change and nothing of ana.
+   */
+  const ADMIN: Grant[] = ['file:read', 'config:write'];
+  const made = host({ users: directory({ ana: ADMIN, bob: ADMIN }) });
+  const one = made.accept(peer());
+  await hello(one, 'ana'); await signIn(one, 'ana');
+  await one.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } } },
+  });
+
+  const other = made.accept(peer());
+  await hello(other, 'bob'); await signIn(other, 'bob');
+  const answered = await other.handle({
+    method: 'reconnect',
+    params: { clientId: 'bob', subscriptions: [ROOT], lastSeenServerSeq: 0 },
+  }) as Bag;
+  const back = (answered.result ?? answered) as Bag;
+
+  expect(JSON.stringify(back)).not.toContain('user:ana');
+  expect(await rootMeta(other)).toEqual({ 'ahpd.principal': 'user:bob' });
+});
+
 it('serves a read-only role reads and refuses its writes', async () => {
   const client = host({ users: directory({ v: ['file:read'] }) }).accept(peer());
   await hello(client);
@@ -531,6 +630,12 @@ const values = async (client: ReturnType<ReturnType<typeof createHost>['accept']
 const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Bag[]> => {
   const snap = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
   return (snap.snapshot?.state?.terminals ?? []) as Bag[];
+};
+
+/** What the root snapshot tells this connection about itself. Absent bag where it says nothing. */
+const rootMeta = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Bag> => {
+  const snap = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
+  return (snap.snapshot?.state?._meta ?? {}) as Bag;
 };
 
 it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {

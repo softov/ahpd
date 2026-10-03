@@ -479,6 +479,22 @@ The one exception is a person's own `user://<id>`, which they may read with no
 grant at all - a client showing somebody their own account has to be able to -
 while listing people and reading anybody else's still needs `user:read`.
 
+That exception needs an id, so a client is told which one it is.
+`_meta['ahpd.principal']` is the key, and it is spelled in two places: on the
+`initialize` handshake, and in the `_meta` of the root state snapshot.
+The value is `user:<id>` for a person and `root:<host>` for the deployment's own
+token, which is a typed reference like any other rather than the absence of one.
+Where there is nobody to name the key is absent, not empty: that is every host
+with no users directory, and every connection on one that has not signed in.
+A client that signs in after connecting is told nothing at the sign-in - the
+protocol declares that result empty - so it takes the root state snapshot again
+and reads the key there.
+A sign-out (`authenticate` with an empty token) and an expiry
+(`auth/required`, `reason: 'expired'`) clear it the same way, so the next
+snapshot the client takes carries no key at all.
+Everything else about that person is read from `user://<id>`, which is the only
+place a record like this is served from.
+
 ## Policies as resources
 
 A host with a policies store serves one more scheme of its own, the same way it

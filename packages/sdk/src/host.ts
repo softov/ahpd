@@ -6161,6 +6161,18 @@ export function createHost(options: HostOptions): Host {
     const meta = {
       ...(schemes === undefined ? {} : { 'ahpd.resourceProviders': schemes }),
       ...(restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
+      /*
+       * Who this snapshot is for, in the block the handshake already uses.
+       *
+       * The root snapshot is built per connection, which is the whole of why
+       * this key can live here: a client that signs in after connecting learns
+       * its id by taking the root snapshot again, and this is the same statement
+       * as the handshake's, so a client that subscribes later reads what a
+       * client that connected earlier was told. Nobody else's - a snapshot is
+       * never cached and never replayed to another connection - decision
+       * `a-connection-is-told-who-it-is-on-initialize-and-in-root-state`.
+       */
+      ...(connection === undefined || ownerFor(connection) === undefined ? {} : { 'ahpd.principal': ownerFor(connection) }),
     };
     return {
       // The host's list, rewritten for the one connection asking when it is
@@ -7661,6 +7673,12 @@ export function createHost(options: HostOptions): Host {
               // What this host serves beside `file:`, so a client can draw a
               // screen for a scheme before it has a URI to ask.
               ...(advertisedSchemes() === undefined ? {} : { 'ahpd.resourceProviders': advertisedSchemes() }),
+              // Who this connection is, so a client can read that person's own
+              // `user://<id>` and needs no grant to do it. Absent where the
+              // connection is nobody, which is every host with no users
+              // directory - decision
+              // `a-connection-is-told-who-it-is-on-initialize-and-in-root-state`.
+              ...(ownerFor(connection) === undefined ? {} : { 'ahpd.principal': ownerFor(connection) }),
             },
           };
         },

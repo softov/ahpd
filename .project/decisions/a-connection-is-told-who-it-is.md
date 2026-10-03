@@ -1,6 +1,7 @@
 ---
 title: A connection is told who it is, on initialize and on the authenticate that signs it in
-status: accepted
+status: superseded
+superseded-by: decisions/a-connection-is-told-who-it-is-on-initialize-and-in-root-state.md
 date: 2026-10-03
 refs:
   - "[code://packages/sdk/src/host.ts#L4507-L4511](../../packages/sdk/src/host.ts#L4507-L4511) - `ownerFor`, the typed reference a connection's work is owned by"

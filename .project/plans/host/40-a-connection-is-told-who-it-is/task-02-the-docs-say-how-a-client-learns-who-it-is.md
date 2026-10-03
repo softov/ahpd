@@ -1,6 +1,6 @@
 ---
 title: The docs say how a client learns who it is
-status: todo
+status: done
 depends: [task-01-initialize-and-sign-in-say-who.md]
 layer: "docs"
 refs:
@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-`docs/USERS.md` says that a client reads `_meta['ahpd.principal']` from `initialize` and from the sign-in `authenticate`, and reads the rest from `user://<id>`.
+`docs/USERS.md` says that a client reads `_meta['ahpd.principal']` from `initialize` and from the root state snapshot, takes the snapshot again after it signs in, and reads the rest from `user://<id>`.
 
 ## Files
 
@@ -21,6 +21,6 @@ refs:
 
 ## Validation
 
-- Read the section by hand: the key, `user:<id>`, `root:<host>`, absent with no users directory, and the authenticate update are all said.
+- Read the section by hand: the key, `user:<id>`, `root:<host>`, absent with no users directory, and taking the root snapshot again after a sign-in are all said.
 
 ## Resume

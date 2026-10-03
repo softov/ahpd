@@ -216,7 +216,9 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
   const { signedIn, rootOf, answerRestart } = served();
   const admin = await signedIn('admin', 'admin');
   const member = await signedIn('member', 'member');
-  expect((await rootOf(admin.client))._meta).toBeUndefined();
+  // The principal is the only thing in there yet: nobody has asked for a
+  // restart, and the notice is the whole of what this is about.
+  expect((await rootOf(admin.client))._meta).toEqual({ 'ahpd.principal': 'user:ana' });
 
   answerRestart(true);
   await admin.client.handle({
@@ -225,9 +227,10 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
   });
   await settle();
   // Held until the daemon restarts, and said to whoever reads the root, so a
-  // member sees the notice without seeing the keys it is about.
-  expect((await rootOf(admin.client))._meta).toEqual({ 'ahpd.restartNeeded': true });
-  expect((await rootOf(member.client))._meta).toEqual({ 'ahpd.restartNeeded': true });
+  // member sees the notice without seeing the keys it is about - and each
+  // snapshot names the person it was built for rather than the host's.
+  expect((await rootOf(admin.client))._meta).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:ana' });
+  expect((await rootOf(member.client))._meta).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:bo' });
 });
 
 it('gives a running session the advanced tools as soon as the daemon key is written', async () => {
