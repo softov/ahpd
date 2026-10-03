@@ -6,28 +6,26 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 Current progress and pending items only. [plans/index.md](../plans/index.md) is the backlog; what merged is in `git log` since `9e21f7e`.
 
-## In flight (2026-10-02)
+## In flight (2026-10-03, evening)
 
-- Builds run as sessions on Softov's local daemon, at most three at once, in worktrees under `/github/ahpd.worktrees/`. Each is validated against its plan (diff read, probes on security and data-loss paths, gates rerun) before it is closed and merged. Never push.
-- Merged today, unpushed: `a5f6704` (acp/12, acp/10), `c1408be` ([claude/15](../plans/claude/15-one-load-and-each-preset-is-a-variant/plan.md)), `19ef0e8` (acp/04, 06, 08, 09, 11). Nothing is building now.
-- Softov's `~/.config/ahpd/config.json` was rewritten to one agent-claude entry with presets `claude`, `claude-openrouter` and `claude-openrouter-build` (backup `config.json.bak-20261002-presets`). His daemon needs a restart, in his terminal, to pick up claude/15 and that config; until then the build runner falls back to `--set preset=build`.
-- acp/05 waits for an ACP presets plan, not yet written; container/05 p2 and p5 wait for it too.
+Builds run as sessions on Softov's daemon, at most three at once, in worktrees under `/github/ahpd.worktrees/`; each is reviewed against its plan with probes before it is closed and merged. Never push.
 
-## Uncommitted on main
+- **Merged today, unpushed:** plans review fixes (`b5c3992`), [host/42](../plans/host/42-an-automation-owner-rides-in-meta/plan.md) (`08371ca`), [host/40](../plans/host/40-a-connection-is-told-who-it-is/plan.md) (`d640a11`), [claude/16](../plans/claude/16-a-preset-that-fails-skips-only-itself/plan.md) and [host/41](../plans/host/41-a-failure-belongs-to-the-item-that-failed/plan.md) (`a603dc9`), plans host/43 (`22c08e0`).
+- **Building:** [plugin/16](../plans/plugin/16-a-disposable-machine/plan.md) in `build-agents-4f6063dd` (session `claude-openrouter-build:/464c648a-...`, base e168711, uncommitted), on its third fix turn: owner check at session creation, host-id read errors, UUID-only id, `wx` create. After it: re-review, rebase onto main (only `host.ts` overlaps), close, merge.
+- **Restart owed:** once plugin/16 merges, Softov restarts his daemon to wire in host/40, 41, 42, claude/16 and plugin/16. After it the daemon keeps `claude` without `OPENROUTER_API_KEY`; the build preset still needs the key.
+- **Plans being written (uncommitted on main when they land):** host/44 (move to AHP 1.0.0, p1 speak 1.0.0 and 0.9.0; p2 automation `disableConditions`, `runCount`; p3 `SessionSummary.chats`), with host/43 retargeted to 1.0.0; host/45 (root config declares the ~40 keys VS Code pushes, as upstream); host/46 (built-in surfaces advertised, roles grant `subject:operation`). Review them, then commit, then build host/44 p1 first.
+- **AHP 1.0.0:** additive over 0.9.0. ahpd accepts 1.0.0 and 0.9.0, highest compatible wins (Softov). ahpd must ship host/44 p1 before ahpapp bumps its protocol package; ahpc needs `'1.0.0'` at `src/ahp/live.ts:207`. Softov migrates the clients himself; the ahpapp session (softov-c6) waits for word that host/44 p1 merged.
+- **host/43** (wire follows the protocol): written, waits on host/44 p1. Client hand-off draft for it is in the build session's scratch `client-changes-for-protocol.md`, on hold.
+- **Old worktree** `build-agents-a6e38512`: another session's earlier copy of host/40, now merged from its own worktree; Softov decides whether to remove it.
+- **Flaky:** `agent-acp-ports.test.ts` ("reads and writes a file through the host's own store") fails under full load and passes alone.
 
-- [UPSTREAM.md](../../UPSTREAM.md) Pass 5, this file, and the computer-control planning below: five new decisions, two superseded, the vault domain, plugin/15 and 16, container/00 and 02 to 05 with p1 to p12, the trimmed idea `more-computer-runtimes`, and the index. Not committed until Softov approves.
+## Queue after that
 
-## Planning now: computer control and the vault
+host/44 p1, then host/43 p1-p4 (p4's renames after ahpapp and ahpc read both names), host/44 p2-p3, host/45, host/46; the container line: container/03 (rebase after plugin/16; listing labels and vault values in clear are known defects in its worktree `build-agents-74c74a74`), then 05 p1, container/02 task 04, 05 p3-p7, p12 (needs a proxy listener plan), p9, p11 (libvirt on dev86 first). Usage and policy plans (usage/05, policy/02, proxy/02, policy/03) belong to the other session, as do the ten records there that cite ahp-review.
 
-- Decisions made today: [a dev container is reached by docker exec](../decisions/a-dev-container-is-reached-by-docker-exec.md), [a machine runtime is named for its maker](../decisions/a-machine-runtime-is-named-for-its-maker.md), [the vault is a port with a plain local file until it is encrypted](../decisions/the-local-vault-is-a-plain-file-until-it-is-encrypted.md), which superseded the encrypted one on 2026-10-03 ([encryption is an idea](../ideas/the-local-vault-is-encrypted.md)), [a secret is named in a host, team or user scope](../decisions/a-secret-is-named-in-a-host-team-or-user-scope.md), [a plugin loads once and each preset is a variant](../decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md).
-- Order: [vault/01 p1](../plans/vault/01-secrets-live-in-a-vault-p1-the-vault-and-its-local-file/plan.md) and [container/05 p1](../plans/container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) first; then plugin/15 and 16 finish; then 05 p3 to p7; then the first remote test by hand on dev86 (Docker, `/dev/kvm`, no libvirt yet), then p12 (proxy) before p9 (ssh) and p11 (libvirt first on dev86).
-- Softov answered the open questions on 2026-10-03; the answers are rows in each plan's second table, chosen for now, each made in one function or option so it can change. Only container/05 p1's question on how `up` takes a value stays open.
-- Names the planning agent chose, for Softov to look at: the label `ahpd.name` (container/03), p8's profile options `code` and `gitCredential`, p2's rule that the host's tools reach a machine only at a non-loopback URL, and a joined node being host-owned and metered like an ssh machine (p10).
-- libvirt is not installed on dev86 yet; p11 task 01 starts with it.
-- A bug on main, fixed by [05 p5](../plans/container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md) task 09: a Claude variant's env and pushed credentials are spread after the filtered machine env, so the daemon's env reaches a machine (`packages/agent-claude/src/session.ts`, the machine launch). Two Claude variants on one profile are refused only because the create check compares targets; p6 task 05 merges identical needs.
-- Lost with claude/15 (in its `deferred.md`): agent-acp and agent-cofold can no longer serve two backends from one daemon until each gets presets.
-- Ten records from the usage and policy work cite ahp-review (`policies-are-a-scheme-clients-edit`, `teams-and-projects...`, `policy-checks...`, `a-deny-binds...`, `usage-and-computer-time...`, usage/00, usage/04, plugin/32, policy/01 tasks 03 and 04). That session owns them; left for it.
-- Then: usage/05 (prices), policy/02 (limits and charge rules), proxy/02 (listener), policy/03 (mid-turn debit), host/33 task files.
+## Open questions recorded in plans
+
+About thirty, in each plan's Resume state, asked when the plan comes up for building: container/02, 04, 05 p1, p3, p5, p6, p7, p8, p9, p10, p12; plugin/18, 20, 21, 22, 29 p4, 33; daemon/09, 12, 13; host/33, 43 p3 (`http` sent as `object`, `true` as `{}`, explained, awaiting a yes); claude/11.
 
 ## Waiting on Softov
 
@@ -35,7 +33,8 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 - host/30 task 06: the upstream issue's text, shown before it is posted.
 - cofold commands/03 and the `@cofold/terminal` range bump.
 - ahpapp chat/02's two open questions.
-- Removing the redundant worktrees `/github/.worktrees/ahpd-server`, `ahpd-sdk`, `ahpd-sdk-2`.
+- Removing the redundant worktrees `/github/.worktrees/ahpd-server`, `ahpd-sdk`, `ahpd-sdk-2`, and `build-agents-a6e38512`.
+- A rule he may want to write: a failure belongs to the item that failed (one bad preset, profile, part, runtime or secret fails alone).
 
 ## Must ship in 0.8.1
 
@@ -64,4 +63,5 @@ Current progress and pending items only. [plans/index.md](../plans/index.md) is 
 - The daemon runs out of heap at about 2 GB with six build sessions; three at once holds.
 - An OpenRouter Claude session cannot be resumed after a daemon restart (`400 previous_message_id`); start a new one in the same worktree. Its first request sometimes fails with an empty response; retry once.
 - `packages/computer/test/computer-disposable.test.ts` ("loads the disposable example") fails about one full run in three under load and passes alone.
+- `agent-acp-ports.test.ts` flakes the same way.
 - `ahpc watch --until idle` returns early; poll `session list --json` instead (status bit 8 is in progress).
