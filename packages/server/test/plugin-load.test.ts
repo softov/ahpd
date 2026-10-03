@@ -53,6 +53,16 @@ describe('loadPlugins', () => {
     expect(loaded).toEqual([]);
   });
 
+  it('carries what a plugin said it skipped, beside the ones it found', async () => {
+    const { loaded, problems } = await load(['./fixtures/plugin-skips/index.ts', './fixtures/plugin-throws/index.ts']);
+
+    // The plugin that said one is loaded: an item skipped costs the item.
+    expect(loaded.map((one) => one.name)).toEqual(['skips']);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toBe('presets.router reads OPENROUTER_API_KEY, which the daemon\'s environment does not have');
+    expect(problems[1]).toContain('the throws fixture threw on purpose');
+  });
+
   it('reports a provider two plugins share, naming the provider and both', async () => {
     const { loaded, problems } = await load(['./fixtures/plugin-hello', './fixtures/plugin-alike']);
 

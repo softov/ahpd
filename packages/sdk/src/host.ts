@@ -4151,28 +4151,36 @@ export function createHost(options: HostOptions): Host {
        * Whose this row is, which two harnesses reading one directory cannot
        * say between them: a transcript names the CLI that wrote it and not the
        * plugin that started it. The host recorded the answer when the session
-       * ran, and that is the one loaded agent it names. A session recorded for
-       * an agent this host is not serving, and one recorded before anything
-       * was, both go to the first agent that listed it - which is where a
-       * session that predates the record, or outlives its harness, opens.
+       * ran, and that is the one loaded agent it names.
+       *
+       * An agent this host recorded but is not serving is not the first one to
+       * read the transcript, and the row keeps its own provider rather than the
+       * reader's: listed under somebody else's id it would be opened by
+       * whichever agent answered, and a conversation would move to another
+       * endpoint on a daemon that merely failed to load one plugin. It waits
+       * for its agent instead, and no owner is recorded, so nothing can open
+       * it here. A session recorded before anything was has no agent to wait
+       * for and still goes to the first one that listed it.
        */
       const recorded = kept.provider(id);
-      const one = both.find((it) => it.agent.provider === recorded) ?? both[0];
+      const waiting = recorded !== undefined && !agents.has(recorded) ? recorded : undefined;
+      const one = waiting === undefined ? both.find((it) => it.agent.provider === recorded) ?? both[0] : both[0];
       // Never empty: an id is in the map only because an agent listed it.
       if (one === undefined) continue;
       const agent = one.agent;
       const row = one.row;
-      const resource = `${agent.provider}:/${id}`;
+      const provider = waiting ?? agent.provider;
+      const resource = `${provider}:/${id}`;
       // Remembered as it is listed: opening a row asks its backend for the
       // transcript, and the URI says neither whose it is nor where it ran.
       names.set(id, resource);
-      owners.set(resource, agent);
+      if (waiting === undefined) owners.set(resource, agent);
       wheres.set(resource, row.workingDirectories);
       births.set(resource, row.createdAt);
       moves.set(resource, row.modifiedAt);
       found.push({
         resource,
-        provider: agent.provider,
+        provider,
         title: row.title,
         // Nothing this host started is running yet, so activity is idle and
         // the only bits set are the client's own.
@@ -4234,6 +4242,23 @@ export function createHost(options: HostOptions): Host {
     };
     if (answered > 0 && !refused) kept.prune?.(gone);
     return found;
+  };
+
+  /**
+   * The agent a stored session is waiting for, or nothing.
+   *
+   * Set when the host recorded a provider and is not serving it, which is not
+   * the same as a session with no record: the first agent to read the
+   * transcript is a different harness, and continuing the conversation there
+   * would both read it with the wrong backend and rewrite the record that says
+   * which one it belongs to. The record is left exactly as it was, so the
+   * session is the same conversation again once its agent loads. A session
+   * recorded before anything was has no agent to wait for, and opens on the
+   * first one that listed it.
+   */
+  const waitingFor = (id: string): string | undefined => {
+    const recorded = kept.provider(id);
+    return recorded !== undefined && !agents.has(recorded) ? recorded : undefined;
   };
   /**
    * Every stored session's directory that `browsable()` leaves out, read once.
@@ -6446,12 +6471,18 @@ export function createHost(options: HostOptions): Host {
      */
     if (channel.endsWith(MARKS) && sessionChannel(channel)) {
       const owning = channel.slice(0, -MARKS.length);
+      const id = idOf(owning);
+      // The same sentence as the roads that open the session itself, since a
+      // client hydrates the marks on the way in and a row waiting for its
+      // harness has none to read.
+      const missing = waitingFor(id);
+      if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
       // Asked of `past`, which consults the catalogue itself, rather than of
       // the maps a listing fills: a client sends the three subscriptions that
       // open a session in one breath, before its own `listSessions` has come
       // back, and a test against those maps refuses on the race.
-      if (sessions.has(heldAs(owning)) || (await past(idOf(owning))) !== undefined)
-        return value({ resource: channel, state: marksOf(idOf(owning)), fromSeq: serverSeq });
+      if (sessions.has(heldAs(owning)) || (await past(id)) !== undefined)
+        return value({ resource: channel, state: marksOf(id), fromSeq: serverSeq });
     }
     /*
      * A watch another client is keeping, which this host only relays.
@@ -6636,6 +6667,8 @@ export function createHost(options: HostOptions): Host {
     // Never a session's id read out of a file, a terminal or a watch.
     if (!sessionChannel(owning)) throw new RpcError(-32001, `No agent for session ${channel}`);
     const id = idOf(owning);
+    const missing = waitingFor(id);
+    if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
     const turns = await past(id);
     const owner = owners.get(nameOf(id)) ?? first;
     if (turns) {
@@ -6876,11 +6909,18 @@ export function createHost(options: HostOptions): Host {
    * is made for the new one - a
    * worktree, a machine, the choices recorded for it - so a refusal leaves
    * nothing behind.
+   *
+   * A session recorded for an agent this host is not serving is refused the
+   * same way it is refused to open: it is a conversation of its own, and one
+   * made over its id here would write this host's harness over the record of
+   * which harness it is.
    */
   const unheld = (uri: string, asked = uri): void => {
     const name = nameOf(idOf(uri));
     if (sessions.has(name) || owners.has(name))
       throw new RpcError(-32003, `${idOf(uri)} is already held as ${name}`);
+    const waiting = waitingFor(idOf(uri));
+    if (waiting !== undefined) throw new RpcError(-32002, `${waiting} is not loaded on this host`);
     for (const one of new Set([name, uri, asked])) claimable(one, 'session');
   };
 
@@ -7901,6 +7941,11 @@ export function createHost(options: HostOptions): Host {
           // under that name is the same chat.
           const channel = meantBy(String(params.channel ?? ''));
           const live = byChat.get(channel);
+          // Asked before the transcript, so a page asked for out of a session
+          // waiting for its agent names that agent rather than saying the
+          // session is nowhere.
+          const missing = waitingFor(idOf(sessionFor(channel)));
+          if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
           const all = live ? live.chat.allTurns() : await past(idOf(sessionFor(channel)));
           if (!all)
             throw new RpcError(-32001, `No agent for session ${channel}`);
@@ -9758,6 +9803,14 @@ export function createHost(options: HostOptions): Host {
             no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
             return;
           }
+          // A mark on a session this host cannot open is a mark kept for a
+          // harness that is not here: refusing by name is what tells a client
+          // the row is waiting rather than gone.
+          const marked = waitingFor(idOf(channel.slice(0, -MARKS.length)));
+          if (marked !== undefined) {
+            no(`${marked} is not loaded on this host`);
+            return;
+          }
           const id = idOf(channel.slice(0, -MARKS.length));
           const before = marksOf(id);
           const after = annotationsReducer(before, action as unknown as AnnotationsAction);
@@ -10220,6 +10273,13 @@ export function createHost(options: HostOptions): Host {
             dispatch(uri, action, origin);
           };
           const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
+          // Before `past`, which answers nothing for a session waiting for its
+          // agent and would have this one say it is not a session at all.
+          const waiting = waitingFor(idOf(sessionFor(channel)));
+          if (waiting !== undefined) {
+            no(`${waiting} is not loaded on this host`);
+            return;
+          }
           if (known()) {
             keep();
             return;
@@ -10245,6 +10305,17 @@ export function createHost(options: HostOptions): Host {
           const uri = sessionFor(channel);
           const id = idOf(uri);
           void (async () => {
+            /*
+             * The agent this session was recorded for, before a transcript is
+             * read or a record rewritten: a host that is not serving it says
+             * so by name, and the session keeps its own provider until it is
+             * loaded again rather than becoming a conversation on this one.
+             */
+            const missing = waitingFor(id);
+            if (missing !== undefined) {
+              refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
+              return;
+            }
             const seed = await past(id);
             if (!seed) {
               refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
@@ -10324,6 +10395,11 @@ export function createHost(options: HostOptions): Host {
         if (!session && type === 'chat/draftChanged') {
           const id = idOf(sessionFor(channel));
           void (async () => {
+            const missing = waitingFor(id);
+            if (missing !== undefined) {
+              refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
+              return;
+            }
             if (!(await past(id))) {
               refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
               return;

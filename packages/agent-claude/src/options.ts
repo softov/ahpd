@@ -15,6 +15,7 @@
  */
 
 import type { Bag } from '@ahpd/sdk';
+import { secretRef } from '@ahpd/sdk';
 import { modelsProblem } from './models.js';
 
 /**
@@ -93,15 +94,19 @@ export const outputStyle: Declaration = {
  * environment is the base and these are laid over it, which is also what a
  * credential pushed by a client is layered over.
  *
- * A value is a string, `null` to unset the variable, or `{ "fromEnv": "<VAR>" }`
- * for the daemon's own value of another variable, so a key need not be written
- * in the configuration.
+ * A value is a string, `null` to unset the variable, `{ "fromEnv": "<VAR>" }`
+ * for the daemon's own value of another variable, or `{ "$secret": "<name>" }`
+ * for a credential kept in the vault, so a key need not be written in the
+ * configuration. The last is `secretAtUse` because a preset's key belongs to
+ * the daemon rather than to whoever wrote it down: the name reaches the plugin
+ * whole and is read once, for the load, rather than by the loader on its behalf.
  */
 export const env: Declaration = {
   schema: {
     type: 'object',
     fromEnv: true,
-    description: "Variables for the CLI's process, over the daemon's own environment. null unsets one; { fromEnv: NAME } reads the daemon's NAME.",
+    secretAtUse: true,
+    description: "Variables for the CLI's process, over the daemon's own environment. null unsets one; { fromEnv: NAME } reads the daemon's NAME; { \"$secret\": \"host:NAME\" } reads the vault.",
   },
   toQuery: (value) => {
     const held = variablesOf(value, true);
@@ -119,12 +124,15 @@ export const env: Declaration = {
  * Arguments the CLI is started with, beyond the ones this backend builds.
  *
  * The SDK's own shape: a name without the `--`, its value, and `null` for a
- * flag that takes none.
+ * flag that takes none. A value that is neither is JSON, because what the CLI
+ * is handed is always text: `settings` is an object in the configuration and
+ * `--settings '<json>'` on the command line, and a person writing a preset
+ * should not have to escape it themselves.
  */
 export const extraArgs: Declaration = {
-  schema: { type: 'object', description: 'Extra CLI arguments, by name and value. null for a flag that takes none.' },
+  schema: { type: 'object', description: 'Extra CLI arguments, by name and value. null for a flag that takes none, and anything else as its JSON text.' },
   toQuery: (value) => {
-    const held = variablesOf(value);
+    const held = argValuesOf(value);
     return Object.keys(held).length > 0 ? { extraArgs: held } : {};
   },
 };
@@ -192,14 +200,14 @@ export const presetSchema = (value: unknown, by: string): string | undefined => 
     const one = DECLARED[name];
     const held = one?.schema ?? OF_A_VARIANT[name];
     if (held === undefined) return `${by}.${name} is not an option a preset holds`;
-    const wrong = heldTo(held, given);
+    const wrong = heldTo(held, given, name);
     if (wrong !== undefined) return `${by}.${name}${wrong.startsWith('.') ? '' : ' '}${wrong}`;
   }
   return undefined;
 };
 
 /** What one value is held to by one field's schema, in the words a person reads. */
-const heldTo = (schema: Bag, value: unknown): string | undefined => {
+const heldTo = (schema: Bag, value: unknown, option: string): string | undefined => {
   const listed = Array.isArray(schema.enum) ? schema.enum : undefined;
   if (listed !== undefined) return listed.includes(value) ? undefined : `is not one of ${listed.map(String).join(', ')}`;
   if (schema.type === 'string') return typeof value === 'string' ? undefined : 'is not a string';
@@ -210,6 +218,16 @@ const heldTo = (schema: Bag, value: unknown): string | undefined => {
       const named = schema.fromEnv === true ? fromEnvOf(held) : undefined;
       if (named !== undefined) {
         if (process.env[named] === undefined) return `.${key} reads ${named}, which the daemon's environment does not have`;
+        continue;
+      }
+      // A name the plugin reads itself is held here whatever it will answer:
+      // whether the vault has it is not a question this check can ask.
+      if (schema.secretAtUse === true && secretRef(held) !== undefined) continue;
+      // An argument is text whatever it was written as, so anything the CLI can
+      // be handed as JSON is held. `{ fromEnv }` is not: it reads the daemon's
+      // own variables, which is what `env` is for and no argument has use of.
+      if (option === 'extraArgs') {
+        if (fromEnvOf(held) !== undefined) return `.${key} reads the daemon's environment only under env`;
         continue;
       }
       if (typeof held !== 'string' && held !== null) return `.${key} is not a string`;
@@ -229,9 +247,12 @@ const fromEnvOf = (value: unknown): string | undefined => {
 };
 
 /**
- * The name-and-value pairs of an `env` or an `extraArgs`, and nothing else.
+ * The name-and-value pairs of an `env`, and nothing else.
  *
  * With `resolve`, a `{ fromEnv }` value is the daemon's value of that variable.
+ * A value that is neither a string nor `null` is dropped: the CLI's subprocess
+ * takes variables as text, and a preset's `$secret` has been read into one by
+ * the time this runs.
  */
 const variablesOf = (value: unknown, resolve = false): Record<string, string | null> => Object.fromEntries(
   Object.entries(bagOf(value))
@@ -240,4 +261,18 @@ const variablesOf = (value: unknown, resolve = false): Record<string, string | n
       return [name, named === undefined ? one : process.env[named]];
     })
     .filter((entry): entry is [string, string | null] => typeof entry[1] === 'string' || entry[1] === null),
+);
+
+/**
+ * The name-and-value pairs of an `extraArgs`, each value as the CLI takes it.
+ *
+ * Its own reader rather than a flag on the one above, because the two hold
+ * different things: an `env` value is a variable and is dropped unless it is
+ * text, while an argument is text by the time it is started and whatever it was
+ * written as becomes its JSON. `null` is a flag that takes no value and passes
+ * as it is, which is why it is neither stringified nor dropped.
+ */
+const argValuesOf = (value: unknown): Record<string, string | null> => Object.fromEntries(
+  Object.entries(bagOf(value))
+    .map(([name, one]): [string, string | null] => [name, one === null || typeof one === 'string' ? one : JSON.stringify(one)]),
 );

@@ -27,6 +27,12 @@ export interface Running {
    * starts again. Absent from a record an older daemon wrote.
    */
   argv?: string[];
+  /**
+   * What this daemon started without, one line each, in the order the plugins
+   * found them: a plugin that failed, an item of a plugin's that it dropped.
+   * Absent when nothing was skipped, and from a record an older daemon wrote.
+   */
+  skipped?: string[];
 }
 
 /**
@@ -158,10 +164,15 @@ export function readyUrl(origin: string, token?: string): string {
  * origin and the directories come off its own announcement rather than off the
  * command line, because the directories may have come from the configuration
  * file and a record built from argv would name none of them.
+ *
+ * The lines it announced as skipped come off it too, which is the whole way
+ * they travel: the child that skipped wrote them beside the origin it announced,
+ * and the record is what a person who started it is shown.
  */
 export function recordOf(announced: string, pid: number, token?: string, argv?: string[]): Running {
   const url = /ws:\/\/[^\s,]+/.exec(announced)?.[0] ?? announced;
   const automations = /^automations (.+)$/m.exec(announced)?.[1]?.trim();
+  const skipped = skippedOf(announced);
   return {
     pid,
     url,
@@ -171,7 +182,20 @@ export function recordOf(announced: string, pid: number, token?: string, argv?: 
     startedAt: new Date().toISOString(),
     ...(automations !== undefined ? { automations } : {}),
     ...(argv !== undefined ? { argv } : {}),
+    ...(skipped.length > 0 ? { skipped } : {}),
   };
+}
+
+/**
+ * What an announcement said was skipped, without the `skipped: ` it is
+ * announced under, in the order the daemon found it.
+ *
+ * One line each and the mark is the line's own: an announcement other daemons
+ * also write to is read from an `ahpd on` line to the next one, so what this
+ * says is only ever about the daemon that said it.
+ */
+export function skippedOf(announced: string): string[] {
+  return [...announced.matchAll(/^skipped: (.*)$/gmu)].map((found) => found[1] as string);
 }
 
 /**

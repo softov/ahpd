@@ -1,7 +1,7 @@
 ---
 title: A Claude preset that cannot be resolved skips only itself
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 requires:
@@ -71,8 +71,8 @@ config plugins[] -> server loadPlugins -> agent-claude apply -> optionsOf (prese
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A preset that cannot be resolved skips only itself](task-01-a-failing-preset-skips-only-itself.md) | todo | - |
-| [02 - An extraArgs value may be written as JSON](task-02-an-extra-arg-may-be-json.md) | todo | 01 |
+| [01 - A preset that cannot be resolved skips only itself](task-01-a-failing-preset-skips-only-itself.md) | done | - |
+| [02 - An extraArgs value may be written as JSON](task-02-an-extra-arg-may-be-json.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,13 @@ config plugins[] -> server loadPlugins -> agent-claude apply -> optionsOf (prese
 
 ## Resume state
 
-- **Next:** task 01, then 02.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] With `OPENROUTER_API_KEY` unset, a config with `claude` and `claude-openrouter` registers `claude` and logs one line naming `options.presets.claude-openrouter`.
-- [ ] A wrongly written preset, and one whose `$secret` is missing or whose host has no vault, are skipped the same way.
-- [ ] Every preset failing fails the load.
-- [ ] `extraArgs.settings` written as an object reaches the CLI as `--settings '<json>'`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] With `OPENROUTER_API_KEY` unset, a config with `claude` and `claude-openrouter` registers `claude` and logs one line naming `options.presets.claude-openrouter`.
+- [x] A wrongly written preset, and one whose `$secret` is missing or whose host has no vault, are skipped the same way.
+- [x] Every preset failing fails the load.
+- [x] `extraArgs.settings` written as an object reaches the CLI as `--settings '<json>'`.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

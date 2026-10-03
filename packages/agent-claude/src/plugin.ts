@@ -12,7 +12,8 @@
  */
 
 import type { ModelEntry } from './models.js';
-import type { PluginHost } from '@ahpd/sdk';
+import type { Plugin, PluginHost } from '@ahpd/sdk';
+import { secretRef } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
 import { presetSchema } from './options.js';
@@ -60,8 +61,11 @@ export const optionsSchema = {
           },
           keepCliModels: { type: 'boolean', description: 'With models, add them to the CLI model list rather than replace it.' },
           // The variables of a preset's `env` are credentials wherever the CLI
-          // keeps one, so each answers `<set>` rather than what it is.
-          env: { type: 'object', additionalProperties: { type: ['string', 'null'], writeOnly: true }, description: 'Environment the CLI is run with, by variable name.' },
+          // keeps one, so each answers `<set>` rather than what it is. Held at
+          // use rather than read here, so a `{ "$secret": "host:<name>" }`
+          // reaches this plugin as the name it wrote and one preset's missing
+          // credential costs that preset and not this load.
+          env: { type: 'object', additionalProperties: { type: ['string', 'null'], writeOnly: true, secretAtUse: true }, description: 'Environment the CLI is run with, by variable name.' },
         },
       },
     },
@@ -107,6 +111,33 @@ const named = (variant: Record<string, unknown>, fallback: string): string =>
   typeof variant['name'] === 'string' ? variant['name'] : fallback;
 
 /**
+ * One preset's `env`, with every `{ "$secret": "<name>" }` read through the host.
+ *
+ * Read here and not by the loader because a preset's credential is the
+ * daemon's, not a person's: the name is in `host:` scope or it belongs to work
+ * this load is not doing, and a vault this daemon does not have is a host that
+ * cannot answer. Whichever of those it is, the caller is told which preset it
+ * was for and the other presets carry on.
+ */
+const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, unknown>> => {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(bagOf(env))) {
+    const referenced = secretRef(value);
+    if (referenced === undefined) {
+      out[name] = value;
+      continue;
+    }
+    try {
+      out[name] = await host.secret(referenced);
+    }
+    catch (error) {
+      throw new Error(`${by}.${name} names ${referenced}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return out;
+};
+
+/**
  * One agent's options per variant, out of values `optionsSchema` has checked.
  *
  * `paths` defaults to the host's, which is the whole configuration in the
@@ -116,23 +147,45 @@ const named = (variant: Record<string, unknown>, fallback: string): string =>
  *
  * `presets` is the one option whose contents `optionsSchema` cannot check: it
  * says a preset is an object, and what a preset holds is checked here against
- * the same declarations the session keys are made of. That a wrong preset is
- * the daemon refusing to load this package rather than an agent quietly
- * running as something nobody wrote.
+ * the same declarations the session keys are made of. A failure belongs to the
+ * preset it came from, so one that is wrongly written, whose `fromEnv` variable
+ * is not there or whose `$secret` cannot be read is left out with one line
+ * naming it and the rest of the presets register. The load fails only when
+ * nothing is left to register an agent for, because a daemon with no Claude at
+ * all is not a daemon somebody configured.
  */
-const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOptions[] => {
+const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Promise<ClaudeOptions[]> => {
   for (const key of ['provider', 'displayName', 'models', 'keepCliModels']) {
     if (values[key] !== undefined) throw new Error(`options.${key} is written per variant, as presets.<id>.${key}`);
   }
   const said = values as Partial<ClaudeOptions> & { presets?: Record<string, unknown> };
   const presets = said.presets ?? {};
-  for (const [id, preset] of Object.entries(presets)) {
-    if (preset === false) continue;
-    const wrong = presetSchema(preset, `options.presets.${id}`);
-    if (wrong !== undefined) throw new Error(wrong);
+  const variants: Variant[] = [];
+  const dropped: string[] = [];
+  for (const one of variantsOf(presets)) {
+    const { id, ...preset } = one;
+    try {
+      const wrong = presetSchema(preset, `options.presets.${id}`);
+      if (wrong !== undefined) throw new Error(wrong);
+      // Read once the preset is known to hold, so a wrongly written one says so
+      // rather than a name inside it being asked for first.
+      const env = preset['env'] === undefined
+        ? undefined
+        : await secretsOf(host, preset['env'], `options.presets.${id}.env`);
+      variants.push(env === undefined ? one : { ...one, env });
+    }
+    catch (error) {
+      // Said once, and the terminal prints it above the line that says this
+      // load failed; the refusal below names the presets, not the messages.
+      host.problem(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      dropped.push(id);
+    }
   }
-  const variants = variantsOf(presets);
-  if (variants.length === 0) throw new Error('presets names no variant left to register an agent for');
+  if (variants.length === 0) {
+    throw new Error(dropped.length === 0
+      ? 'presets names no variant left to register an agent for'
+      : `presets names no variant left to register an agent for: ${dropped.join(', ')}`);
+  }
   // The options every variant of one load shares, whatever the presets say.
   const paths = said.paths ?? host.paths;
   const shared = {
@@ -153,6 +206,6 @@ const optionsOf = (host: PluginHost, values: Record<string, unknown>): ClaudeOpt
 };
 
 /** Register one Claude agent per variant, over the directories the host serves. */
-export function apply(host: PluginHost, options: Record<string, unknown>): void {
-  for (const one of optionsOf(host, options)) host.registerAgent(claude(one));
-}
+export const apply: Plugin['apply'] = async (host, options) => {
+  for (const one of await optionsOf(host, options)) host.registerAgent(claude(one));
+};

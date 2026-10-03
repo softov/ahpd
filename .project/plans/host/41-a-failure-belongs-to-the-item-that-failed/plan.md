@@ -1,7 +1,7 @@
 ---
 title: A failure belongs to the item that failed, and a start says what it skipped
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 requires:
@@ -63,9 +63,9 @@ loadPlugins -> fold (clash) -> run.ts (stamp, exit) -> host listing (recorded pr
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A clashing agent is dropped alone](task-01-a-clashing-agent-is-dropped-alone.md) | todo | - |
-| [02 - A session waits for its own agent](task-02-a-session-waits-for-its-own-agent.md) | todo | - |
-| [03 - Start and restart say what was skipped](task-03-start-and-restart-say-what-was-skipped.md) | todo | - |
+| [01 - A clashing agent is dropped alone](task-01-a-clashing-agent-is-dropped-alone.md) | done | - |
+| [02 - A session waits for its own agent](task-02-a-session-waits-for-its-own-agent.md) | done | - |
+| [03 - Start and restart say what was skipped](task-03-start-and-restart-say-what-was-skipped.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,12 +74,12 @@ loadPlugins -> fold (clash) -> run.ts (stamp, exit) -> host listing (recorded pr
 
 ## Resume state
 
-- **Next:** task 01; the three are independent.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A plugin registering `pi` beside agent-pi loads its other agents, agent-pi keeps `pi`, and the daemon runs.
-- [ ] With `claude-openrouter` not loaded, its session is listed as `claude-openrouter:/<id>`, opening it answers a sentence naming the missing agent, and once the agent loads it opens there with its record unchanged.
-- [ ] `ahpd start` and `ahpd restart` print each skipped plugin and preset before the success line and exit 0.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] A plugin registering `pi` beside agent-pi loads its other agents, agent-pi keeps `pi`, and the daemon runs.
+- [x] With `claude-openrouter` not loaded, its session is listed as `claude-openrouter:/<id>`, opening it answers a sentence naming the missing agent, and once the agent loads it opens there with its record unchanged.
+- [x] `ahpd start` and `ahpd restart` print each skipped plugin and preset before the success line and exit 0.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

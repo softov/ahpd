@@ -1,6 +1,6 @@
 ---
 title: A clashing agent is dropped alone
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

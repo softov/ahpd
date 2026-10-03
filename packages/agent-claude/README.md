@@ -56,7 +56,7 @@ The built-in `claude` is Claude Code as it runs here, named `Claude Code`, and i
 
 Two presets, two entries in the picker, and a session picks the agent rather than a preset of it. Every key is the id clients name for that agent, and a preset that names none of its own is called by its key.
 
-A preset holds eight fields, and each is checked when the plugin loads, so a preset that names anything else is the daemon refusing this package rather than an agent quietly running as something nobody wrote:
+A preset holds eight fields, and each is checked when the plugin loads. A preset that is wrongly written, whose `fromEnv` variable is not in the daemon's environment or whose `$secret` cannot be read is not registered: it is skipped with one line naming it, which is stamped to the daemon's log and printed by `ahpd start` and `ahpd restart` as `skipped: <plugin>: <the preset and why>`, above the line that says the daemon is up. The other presets register as they were written. The load is refused only when no preset is left to register an agent for.
 
 | field | |
 | --- | --- |
@@ -66,8 +66,8 @@ A preset holds eight fields, and each is checked when the plugin loads, so a pre
 | `sandbox` | the CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
 | `thinking` | extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
 | `outputStyle` | the name of a style from the CLI's own settings |
-| `env` | variables for the CLI's process, laid over the daemon's own environment. A value is a string, `null` to unset the variable, or `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, which must be set when the plugin loads |
-| `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none |
+| `env` | variables for the CLI's process, laid over the daemon's own environment. A value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A variable that is not there when the plugin loads skips the preset that names it |
+| `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none. A value that is not a string reaches the CLI as its JSON text, so `"settings": { "permissions": { "allow": ["Read"] } }` is started as `--settings '{"permissions":{"allow":["Read"]}}'` |
 
 With nothing written the built-in runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer.
 

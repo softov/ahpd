@@ -1,6 +1,6 @@
 ---
 title: An extraArgs value may be written as JSON
-status: todo
+status: done
 depends: [task-01-a-failing-preset-skips-only-itself.md]
 layer: "agent-claude"
 refs:

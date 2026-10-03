@@ -200,6 +200,12 @@ const KEPT = join(import.meta.dirname, 'fixtures', 'plugin-kept', 'index.ts');
 const SLOW_STOP = join(import.meta.dirname, 'fixtures', 'plugin-slow-stop', 'index.ts');
 /** A plugin that says whether the daemon's environment holds `AHPD_DETACHED`. */
 const ENV = join(import.meta.dirname, 'fixtures', 'plugin-env', 'index.ts');
+/** A plugin whose `apply` throws, which costs it and not the daemon. */
+const THROWS = join(import.meta.dirname, 'fixtures', 'plugin-throws', 'index.ts');
+/** A plugin that drops one of its own items and says which. */
+const SKIPS = join(import.meta.dirname, 'fixtures', 'plugin-skips', 'index.ts');
+/** A plugin whose `apply` throws an error of two lines. */
+const MULTILINE = join(import.meta.dirname, 'fixtures', 'plugin-multiline.ts');
 
 /** A port nothing is listening on as this returns. */
 const freePort = (): Promise<number> => new Promise((done, fail) => {
@@ -587,6 +593,72 @@ describe('start, stop and status', () => {
     const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
     expect(log).toContain('plugins echo-plugin, schema');
     expect(log).not.toContain('skipped');
+  }, 40000);
+
+  it('prints what a plugin failed on, and what a plugin skipped, before it says it started', async () => {
+    // Both cost one item and not the daemon: the throwing plugin and the one
+    // that dropped a preset are both told about, and the echo backend is still
+    // served, so the start exits 0 either way.
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--plugin', THROWS, '--plugin', SKIPS,
+      '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; skipped?: string[] };
+    spawned.push(record.pid);
+
+    const lines = began.stdout.split('\n');
+    const up = lines.findIndex((line) => line.startsWith('ahpd on ws://'));
+    expect(up).toBeGreaterThan(0);
+    expect(lines.slice(0, up)).toEqual([
+      expect.stringMatching(/^skipped: plugin throws failed in \d+ ms: the throws fixture threw on purpose$/u),
+      'skipped: presets.router reads OPENROUTER_API_KEY, which the daemon\'s environment does not have',
+    ]);
+    // The record carries them too, which is how the same lines reach a restart.
+    expect(record.skipped).toHaveLength(2);
+  }, 40000);
+
+  it('prints the successor\'s skips when it restarts from the terminal', async () => {
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--plugin', SKIPS,
+      '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf() as { pid: number };
+    spawned.push(before.pid);
+
+    const again = await cli(['restart']);
+    const after = recordOf() as { pid: number; url: string };
+    spawned.push(after.pid);
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(again.stdout).toBe([
+      'skipped: presets.router reads OPENROUTER_API_KEY, which the daemon\'s environment does not have',
+      `ahpd on ${after.url} (pid ${String(after.pid)}), restarted from pid ${String(before.pid)}`,
+      '',
+    ].join('\n'));
+
+    // And the daemon announced them between its own two lines, which is what
+    // the terminal reads them out of.
+    const log = readFileSync(join(home, 'ahpd', 'daemon.log'), 'utf8');
+    expect(log.indexOf('restart: starting the successor')).toBeLessThan(log.lastIndexOf('skipped: presets.router'));
+    expect(log.lastIndexOf('skipped: presets.router')).toBeLessThan(log.lastIndexOf('restarted as'));
+  }, 90000);
+
+  it('prints a problem that is two lines as one line, and keeps the whole of it', async () => {
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--plugin', MULTILINE,
+      '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const record = JSON.parse(readFileSync(join(home, 'ahpd', 'daemon.json'), 'utf8')) as { pid: number; skipped?: string[] };
+    spawned.push(record.pid);
+
+    // One line, both halves of it: a reader takes the `skipped: ` lines off the
+    // announcement by line, and the second half of a thrown stack would be the
+    // one line nothing knows what to do with.
+    expect(record.skipped).toHaveLength(1);
+    expect(began.stdout).toContain('skipped: plugin multiline failed in');
+    expect(began.stdout).toContain('the multiline fixture threw: and this is the second line\n');
   }, 40000);
 
   it('restarts a started daemon from the terminal with the line it was started with', async () => {

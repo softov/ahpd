@@ -422,9 +422,13 @@ export const declareRestart = (registry: Registry<object>, served?: ServedFacts)
     if (served === undefined) {
       const before = running();
       const begun = await restartAtTerminal(context.flag('force'), realTerminal());
+      // The successor's own skips, from the record it wrote of its own start, in
+      // the terminal that asked for it and above the line that says it is up.
+      let text = '';
+      for (const line of begun.skipped ?? []) text += `skipped: ${line}\n`;
       return output(
         { url: begun.url, pid: begun.pid },
-        `ahpd on ${begun.url} (pid ${String(begun.pid)}), restarted from pid ${String(before?.pid)}\n`,
+        text + `ahpd on ${begun.url} (pid ${String(begun.pid)}), restarted from pid ${String(before?.pid)}\n`,
       );
     }
     const self = served.running();

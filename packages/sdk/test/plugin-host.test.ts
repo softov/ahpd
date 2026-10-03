@@ -378,10 +378,16 @@ it('advertises nothing when it serves no scheme beside file:', async () => {
   expect(ready.snapshots[0]?.state._meta).toBeUndefined();
 });
 
-it('marks a provider clash so a caller can refuse over one without reading prose', () => {
-  const twice = foldHostOptions(base(), [
-    { by: 'one', agents: [{ ...echo({ path: '/x' }), provider: 'echo' }], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {} },
-  ]);
-  expect(twice.problems).toHaveLength(1);
-  expect(twice.problems[0]?.startsWith(AGENT_CLASH)).toBe(true);
+it('drops a clashing agent alone, and says which plugin lost the id', () => {
+  const asAgents = (by: string, ...providers: string[]): Contribution => ({
+    by,
+    agents: providers.map((provider) => ({ ...echo({ path: '/x' }), provider })),
+    tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {},
+  });
+  const folded = foldHostOptions({ ...base(), agents: [] }, [asAgents('a', 'x', 'y'), asAgents('b', 'y', 'z')]);
+  expect(folded.options.agents?.map((one) => one.provider)).toEqual(['x', 'y', 'z']);
+  expect(folded.problems).toHaveLength(1);
+  expect(folded.problems[0]).toMatch(
+    new RegExp(`^${AGENT_CLASH} plugin b registers agent y, which plugin a already registered$`, 'u'),
+  );
 });

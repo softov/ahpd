@@ -681,6 +681,16 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(optionsSchema === undefined ? {} : { optionsSchema }),
   };
 
+  /*
+   * What the plugin itself dropped on the way, said through `problem`.
+   *
+   * A line the plugin said is a line this loader told on its behalf, so the
+   * person who started the daemon reads it beside the ones the loader found -
+   * which is the whole point of `problem`: an item skipped costs the item, and
+   * the one running `ahpd start` is the one who has to be told.
+   */
+  const told: string[] = [];
+
   const { host, contribution } = pluginHost(name, {
     path: options.path,
     paths: options.paths,
@@ -693,6 +703,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(options.agents === undefined ? {} : { agents: options.agents }),
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
+    problem: (line) => { told.push(line); },
   });
   try {
     await apply.call(plugin, host, values);
@@ -700,7 +711,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   catch (error) {
     // One failure path: whatever the registration check or the plugin itself
     // threw, the whole contribution is discarded and the plugin costs a line.
-    return { problems: [...problems, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
+    return { problems: [...problems, ...told, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
   }
   /*
    * A vault that read a secret out of its own options is a vault that decided
@@ -708,7 +719,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
    * to answer: it would be reading the store it is, or the one it took over.
    */
   if (unwrapped.named && contribution.ports.vault !== undefined) {
-    return { problems: [...problems, `plugin ${name} skipped: a vault plugin's own options cannot name a secret`] };
+    return { problems: [...problems, ...told, `plugin ${name} skipped: a vault plugin's own options cannot name a secret`] };
   }
 
   // The absolute path is logged, so what ran is in the log even when a spec
@@ -723,7 +734,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     plugin,
     ...(title === undefined ? {} : { title }),
   };
-  return { loaded, contribution, problems };
+  return { loaded, contribution, problems: [...problems, ...told] };
 }
 
 /*

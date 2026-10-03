@@ -1,6 +1,6 @@
 ---
 title: A preset that cannot be resolved skips only itself
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

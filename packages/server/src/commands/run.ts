@@ -14,7 +14,6 @@ import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } fr
 import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
-  AGENT_CLASH,
   createHost,
   fileResources,
   fileSessions,
@@ -83,6 +82,15 @@ export function apiOrigins(host: string, resource: string | undefined, port: num
   }
   return { authorities, origins };
 }
+
+/**
+ * A problem as the one line it is announced as.
+ *
+ * Whatever a plugin threw may hold a newline of its own, and a line is what
+ * says which problem a `skipped: ` line is: a second line would answer to
+ * nothing and be dropped by the reader that took the first.
+ */
+const oneLine = (problem: string): string => problem.replace(/\s*[\r\n]+\s*/gu, ' ');
 
 /**
  * What this daemon keeps between restarts, over whatever an earlier one left.
@@ -599,10 +607,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * `loadPlugins` is the only thing here that runs code the daemon did not
    * write, and it is handed the specs the flags and the file named. Every
    * problem is a line in the log so a skipped plugin is where a log reader
-   * looks; the one problem that is not skipped is a duplicate `provider`, which
-   * is refused because a host built over it would answer a turn with the wrong
-   * backend. Everything else - a plugin that does not resolve, one that throws,
-   * one whose manifest is wrong - costs itself and nothing else.
+   * looks, and every one of them costs itself and nothing else: a plugin that
+   * does not resolve, one that throws, one whose manifest is wrong, a duplicate
+   * `provider`, which drops the agent that lost the id and keeps the sessions
+   * recorded for it waiting for it, and an item of a plugin's that the plugin
+   * itself dropped and said so. The one thing that is refused is a daemon with
+   * no backend at all, which is answered just below. Each of them is announced
+   * as well as stamped, which is how the person who ran `ahpd start` is told
+   * what their daemon is missing before it says it started.
    */
   const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
     base,
@@ -620,7 +632,6 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     },
   });
   for (const problem of problems) stamp(problem);
-  if (problems.some((problem) => problem.startsWith(AGENT_CLASH))) process.exit(1);
 
   /*
    * A daemon with no backend, said in the words of the thing that fixes it.
@@ -762,6 +773,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       : `sign-in ${advertisedResource()}${issuer === undefined ? '' : ` (issuer ${issuer.id})`}\n`)
     + (options.advancedTools ? 'advanced tools: offered to every session\n' : '')
     + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
+    // What this daemon started without, one line each, so whoever started it
+    // reads it here rather than in the log they are not watching. The line
+    // starts every one, because `daemon.ts` takes them off the announcement and
+    // a problem may begin with any word at all. A problem that holds a newline
+    // of its own - a thrown error whose message is two lines - is put on one,
+    // because the line is what tells it apart.
+    + problems.map((problem) => `skipped: ${oneLine(problem)}\n`).join('')
     // What a plugin asked to have said, in the order the plugins were loaded,
     // and last so the lines `daemon.ts` matches keep the places it expects.
     + said.map((line) => `${line}\n`).join('')

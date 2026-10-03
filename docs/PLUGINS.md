@@ -317,8 +317,11 @@ nothing behaves exactly as it did before the field existed.
 | `configDir` | The folder the daemon keeps its own configuration in, where a plugin that has to keep a record puts its file |
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
+| `problem(line)` | One item of your own you dropped, said before the daemon says it started |
 
 `log` is stderr and a person reads it. `say` is stdout, which is what `ahpd status` parses, so it is where a plugin that made the host reachable somewhere new puts that address - a line only the log knows is an address nobody pastes. Say it while `listening` is being handled; the announcement is written once that event has been handled and a line offered after it is dropped.
+
+`problem(line)` is how a plugin that handles many items says which one it could not register: `ahpd start` and `ahpd restart` print each line as `skipped: <line>` before the line that says the daemon is up, beside the problems the loader found itself. Saying one costs the item and not the plugin, which keeps the rest of your contribution and does not fail the load. Unlike the two above it is on `PluginHost` and not on the event context, because an item is dropped while `apply` runs.
 
 ### Writing a usage record
 

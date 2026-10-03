@@ -16,8 +16,9 @@ import type { Agent } from '@ahpd/sdk';
  * written `false`, and an object under its key is laid over it. The cases here
  * are the shapes that takes: none written, the built-in alone; a variant beside
  * it, with its own name and models; the built-in dropped; the built-in
- * overridden; and the two ways a load is refused - a top-level option that
- * belongs inside a preset, and a preset map that leaves nothing to register.
+ * overridden; the two ways a load is refused - a top-level option that belongs
+ * inside a preset, and a preset map that leaves nothing to register - and the
+ * three ways one preset is not registered while the others are.
  */
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -80,20 +81,41 @@ const offered = (preset?: Record<string, unknown>) => {
   return agent.schema().properties as Record<string, Record<string, unknown>>;
 };
 
-/** The plugin's own load, which is where a preset is checked. */
-const load = (options: Record<string, unknown>) => loadPlugins([{ name: SOURCE, options }], {
-  base: { path: '/tmp/ahpd-preset', agents: [echo({ path: '/tmp/ahpd-preset' })] },
-  configDir: REPO,
-  cwd: REPO,
-  log: () => {},
+/** The plugin's own load, which is where a preset is checked, and what it skipped. */
+const load = async (options: Record<string, unknown>, vault?: Record<string, string>) => {
+  const { loaded, problems, options: served } = await loadPlugins([{ name: SOURCE, options }], {
+    base: {
+      path: '/tmp/ahpd-preset',
+      agents: [echo({ path: '/tmp/ahpd-preset' })],
+      ...(vault === undefined ? {} : { vault: heldVault(vault) }),
+    },
+    configDir: REPO,
+    cwd: REPO,
+    log: () => {},
+  });
+  return { loaded, problems, served };
+};
+
+/** A vault holding the given names, and nothing else. */
+const heldVault = (held: Record<string, string>) => ({
+  get: async (name: string) => held[name],
+  set: async () => {},
+  delete: async () => false,
+  list: async () => Object.keys(held).sort(),
 });
 
 /** The agents one load registered, beside the echo the base always carries. */
 const agentsOf = async (options: Record<string, unknown>) => {
-  const { problems, options: served } = await load(options);
+  const { problems, served } = await load(options);
   expect(problems).toEqual([]);
   return (served.agents ?? []).slice(1);
 };
+
+/** The lines one load said about the presets it would not register. */
+const skippedOf = (problems: string[]): string[] => problems.filter((line) => line.startsWith(`${NAME}: `));
+
+/** Everything else one load found, which in every case here is nothing. */
+const othersOf = (problems: string[]): string[] => problems.filter((line) => !line.startsWith(`${NAME}: `));
 
 /** What one registered agent offers the picker, models and all. */
 const modelsOf = async (agent: Agent | undefined) => (await agent?.probe?.())?.models;
@@ -164,14 +186,13 @@ it('offers no preset key on a session, which picks the agent instead', () => {
   expect(offered({ thinking: 'disabled' })).not.toHaveProperty('preset');
 });
 
-it('fails the plugin load over a preset field it does not hold, naming it', async () => {
-  const { loaded, problems } = await load({ presets: { work: { temperature: 1 } } });
-  expect(loaded).toEqual([]);
-  expect(problems).toHaveLength(1);
-  expect(problems[0]).toMatch(
-    // The loader says how long the load took, so only the failure is pinned.
-    new RegExp(`^plugin ${NAME.replace('/', '\\/')} failed[^:]*: options\\.presets\\.work\\.temperature is not an option a preset holds$`, 'u'),
-  );
+it('skips a preset over a field it does not hold, naming it, and registers the rest', async () => {
+  const { loaded, problems, served } = await load({ presets: { work: { temperature: 1 } } });
+  expect(othersOf(problems)).toEqual([]);
+  expect(loaded.map((one) => one.name)).toEqual([NAME]);
+  expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);
+  expect(skippedOf(problems)).toHaveLength(1);
+  expect(skippedOf(problems)[0]).toMatch(/options\.presets\.work\.temperature is not an option a preset holds$/u);
 });
 
 it('takes a preset whose fields are all declared, and holds its models like a harness\'s', async () => {
@@ -186,12 +207,13 @@ it('takes a preset whose fields are all declared, and holds its models like a ha
     },
   });
   expect(problems).toEqual([]);
+  expect(skippedOf(problems)).toEqual([]);
   expect(loaded.map((one) => one.name)).toEqual([NAME]);
-  expect((await load({ presets: { work: { models: [{ name: 'x' }] } } })).problems[0])
+  expect(skippedOf((await load({ presets: { work: { models: [{ name: 'x' }] } } })).problems)[0])
     .toMatch(/options\.presets\.work\.models\[0\] has neither an id nor a fetch$/u);
-  expect((await load({ presets: { work: { models: 'claude-opus-5' } } })).problems[0])
+  expect(skippedOf((await load({ presets: { work: { models: 'claude-opus-5' } } })).problems)[0])
     .toMatch(/options\.presets\.work\.models is not a list$/u);
-  expect((await load({ presets: { work: { keepCliModels: 'yes' } } })).problems[0])
+  expect(skippedOf((await load({ presets: { work: { keepCliModels: 'yes' } } })).problems)[0])
     .toMatch(/options\.presets\.work\.keepCliModels is not true or false$/u);
 });
 
@@ -218,6 +240,22 @@ it('lays a signed-in credential over a variant env, and lets it unset a variable
   expect(env.PATH).toBe(process.env.PATH);
 });
 
+it('hands an extraArgs value the CLI did not take as a string its JSON text', async () => {
+  const written = (await queried({ extraArgs: { settings: { permissions: { allow: ['Read'] } } } })).extraArgs;
+  expect(written).toEqual({ settings: '{"permissions":{"allow":["Read"]}}' });
+  // A string is its own text and `null` is a flag that takes none.
+  expect((await queried({ extraArgs: { settings: '{"a":1}', verbose: null } })).extraArgs)
+    .toEqual({ settings: '{"a":1}', verbose: null });
+  // The same declaration builds the session keys, so a session setting is held
+  // to the same values as a preset.
+  expect((await queried({ extraArgs: { 'max-turns': 4, 'add-dir': ['/a', '/b'], 'debug': true } })).extraArgs)
+    .toEqual({ 'max-turns': '4', 'add-dir': '["/a","/b"]', debug: 'true' });
+  // And a preset holding one as an object is held, so a written preset and a
+  // session setting are the same declaration read the same way.
+  expect((await load({ presets: { router: { extraArgs: { settings: { permissions: { allow: ['Read'] } } } } } })).problems)
+    .toEqual([]);
+});
+
 it('probes the endpoint the variant names, not the daemon\'s own', () => {
   const at = (preset: Record<string, unknown> | undefined) =>
     (claude({ paths: ['/tmp/ahpd-preset'], ...(preset === undefined ? {} : { preset }) }).endpoints?.() ?? [])
@@ -227,20 +265,77 @@ it('probes the endpoint the variant names, not the daemon\'s own', () => {
   expect(at(undefined)).toEqual([`${(process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '')}/v1/models`]);
 });
 
-it('reads a variant env value from the daemon environment, and fails the load when it is not there', async () => {
+it('reads a variant env value from the daemon environment', async () => {
   process.env.AHPD_PRESET_KEY = 'sk-from-daemon';
   const presets = { router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_KEY' } } } };
   expect((await load({ presets })).problems).toEqual([]);
   const env = (await queried(presets.router)).env as Record<string, string | undefined>;
   expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-daemon');
   delete process.env.AHPD_PRESET_KEY;
+});
 
-  const { loaded, problems } = await load({ presets });
+it('skips only the preset whose daemon variable is not there, and says which', async () => {
+  const { loaded, problems, served } = await load({
+    presets: { claude: {}, router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_UNSET' } } } },
+  });
+  expect(loaded.map((one) => one.name)).toEqual([NAME]);
+  expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);
+  expect(othersOf(problems)).toEqual([]);
+  expect(skippedOf(problems)).toHaveLength(1);
+  expect(skippedOf(problems)[0]).toMatch(
+    /options\.presets\.router\.env\.ANTHROPIC_AUTH_TOKEN reads AHPD_PRESET_UNSET, which the daemon's environment does not have$/u,
+  );
+});
+
+it('skips only the preset whose extraArgs value reads the daemon environment', async () => {
+  const { problems, served } = await load({ presets: { router: { extraArgs: { debug: { fromEnv: 'PATH' } } } } });
+  expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);
+  expect(othersOf(problems)).toEqual([]);
+  // Only `env` reads the daemon's own variables.
+  expect(skippedOf(problems)[0]).toMatch(/options\.presets\.router\.extraArgs\.debug reads the daemon's environment only under env$/u);
+});
+
+it('reads a preset `$secret` through the host and hands the value to the agent', async () => {
+  const presets = { router: { env: {
+    ANTHROPIC_AUTH_TOKEN: { $secret: 'host:or' },
+    ANTHROPIC_BASE_URL: { $secret: 'host:base' },
+  } } };
+  const { problems, served } = await load({ presets }, { 'host:or': 'sk-or', 'host:base': 'https://held.example' });
+  expect(problems).toEqual([]);
+  expect(skippedOf(problems)).toEqual([]);
+  const agents = (served.agents ?? []).slice(1);
+  expect(agents.map((one) => one.provider)).toEqual(['claude', 'router']);
+  // The value that was read is the endpoint the CLI is pointed at.
+  expect(agents[1]?.endpoints?.()[0]?.url).toBe('https://held.example/v1/models');
+});
+
+it('skips only the preset whose `$secret` is not held, or whose host has no vault', async () => {
+  const presets = { router: { env: { ANTHROPIC_AUTH_TOKEN: { $secret: 'host:or' } } } };
+  for (const [held, because] of [
+    [{}, 'the vault holds no host:or'],
+    [undefined, 'host:or cannot be read: this host has no vault'],
+  ] as const) {
+    const { problems, served } = await load({ presets }, held);
+    expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);
+    expect(othersOf(problems)).toEqual([]);
+    expect(skippedOf(problems)).toHaveLength(1);
+    expect(skippedOf(problems)[0]).toMatch(new RegExp(`options\\.presets\\.router\\.env\\.ANTHROPIC_AUTH_TOKEN names host:or: ${because}$`, 'u'));
+  }
+});
+
+it('fails the load when the presets leave nothing to register, naming what it skipped', async () => {
+  const { loaded, problems } = await load({ presets: { claude: false, router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_UNSET' } } } } });
   expect(loaded).toEqual([]);
-  expect(problems[0]).toMatch(/options\.presets\.router\.env\.ANTHROPIC_AUTH_TOKEN reads AHPD_PRESET_KEY, which the daemon's environment does not have$/u);
-  // Only `env` reads the daemon's variables.
-  expect((await load({ presets: { router: { extraArgs: { debug: { fromEnv: 'PATH' } } } } })).problems[0])
-    .toMatch(/options\.presets\.router\.extraArgs\.debug is not a string$/u);
+  // The line it skipped on, then the load it refused over: the line says why,
+  // the refusal names the preset, and neither says the message again.
+  expect(skippedOf(problems)).toHaveLength(1);
+  expect(skippedOf(problems)[0]).toMatch(
+    /options\.presets\.router\.env\.ANTHROPIC_AUTH_TOKEN reads AHPD_PRESET_UNSET, which the daemon's environment does not have$/u,
+  );
+  expect(othersOf(problems)).toHaveLength(1);
+  expect(othersOf(problems)[0]).toMatch(
+    new RegExp(`^plugin ${NAME.replace('/', '\\/')} failed in \\d+ ms: presets names no variant left to register an agent for: router$`, 'u'),
+  );
 });
 
 it('offers the models the harness names once a session has started', async () => {

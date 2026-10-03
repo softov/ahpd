@@ -125,6 +125,10 @@ export const declareStart = (registry: Registry<object>): Command => registry.ac
     try {
       const begun = await start(rest, process.argv[1] as string, token);
       let text = options.warnings.map((warning) => `${warning}\n`).join('');
+      // What the daemon started without, before the line that says it started:
+      // a plugin that did not load, a preset of one that was dropped, all of it
+      // in the same terminal and above the success it does not undo.
+      for (const line of begun.skipped ?? []) text += `skipped: ${line}\n`;
       text += `ahpd on ${begun.url} (pid ${String(begun.pid)}), sessions in ${begun.paths.join(', ') || process.cwd()}\n`;
       if (begun.automations !== undefined) text += `automations ${begun.automations}\n`;
       if (checkingUpdates(options.updateCheck)) text += updateLine(manifest()) ?? '';

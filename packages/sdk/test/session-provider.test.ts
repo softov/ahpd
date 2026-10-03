@@ -84,9 +84,9 @@ const uri = 'ahp-session:/made';
 const chatUri = 'ahp-chat:/made';
 
 /** A host on one store, with the backend behind it. */
-function serving(store: SessionStore, agents: Agent[]) {
+function serving(store: SessionStore, agents: Agent[], given: Peer = peer()) {
   const host = createHost({ path: DIR, agents, sessions: store });
-  const client = host.accept(peer());
+  const client = host.accept(given);
   void (async () => {
     await client.handle({
       method: 'initialize',
@@ -280,7 +280,9 @@ it('names the harness each of two backends a session runs on', async () => {
  * Two Claude harnesses read the same transcripts, so every session is one row
  * per harness. Which of them owns a row is not in the transcript: the host
  * recorded it when the session ran, and the row is given to that harness when
- * it is loaded.
+ * it is loaded. A row whose harness this host is not serving keeps its own
+ * provider and waits, rather than being answered by whichever harness read the
+ * file.
  */
 
 const STAMP = new Date(0).toISOString();
@@ -359,17 +361,141 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['one:/unrecorded']);
   });
 
-  it('goes to the first harness that lists it when the recorded one is not loaded', async () => {
+  it('keeps the recorded provider when that harness is not loaded, and waits for it', async () => {
     const one: string[] = [];
     const two: string[] = [];
     const store = memorySessions();
-    store.setProvider('shared', 'gone');
+    store.setProvider('shared', 'two');
+    const { client } = serving(store, [harness('one', ['shared'], one)]);
+    await settle();
+
+    // Not `one:/shared`: listed under the reader's id it would be opened by
+    // whichever agent answered, and the conversation would move endpoints on a
+    // daemon that merely failed to load one plugin.
+    expect(await catalogue(client)).toEqual(['two:/shared']);
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'two:/shared' } }))
+      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+    // Nothing moved it, so it is the same conversation once `two` is back.
+    expect(store.provider('shared')).toBe('two');
+    expect(one).toEqual([]);
+  });
+
+  it('refuses a turn to a row still waiting for its agent, naming it', async () => {
+    const refusals: unknown[] = [];
+    const store = memorySessions();
+    store.setProvider('shared', 'two');
+    const one: string[] = [];
+    const { client } = serving(store, [harness('one', ['shared'], one)], {
+      ...peer(),
+      notify: (_method, params) => { refusals.push((params as Record<string, unknown>)['rejectionReason']); },
+    });
+    await settle();
+    await catalogue(client);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/shared', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+
+    // The turn is refused to the client rather than run on the harness that
+    // happened to read the transcript, which is what would rewrite the record.
+    expect(refusals).toEqual(['two is not loaded on this host']);
+    expect(store.provider('shared')).toBe('two');
+    expect(one).toEqual([]);
+  });
+
+  it('opens on its own harness once the one it was recorded for is loaded', async () => {
+    const store = memorySessions();
+    store.setProvider('shared', 'two');
+    const one: string[] = [];
+    const two: string[] = [];
     const { client } = serving(store, [
       harness('one', ['shared'], one),
       harness('two', ['shared'], two),
     ]);
     await settle();
-    expect(await catalogue(client)).toEqual(['one:/shared']);
+    expect(await catalogue(client)).toEqual(['two:/shared']);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/shared', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+
+    expect(two).toEqual(['shared']);
+    expect(one).toEqual([]);
+  });
+
+  it('refuses a session created over a row waiting for its agent, naming it', async () => {
+    const one: string[] = [];
+    const store = memorySessions();
+    store.setProvider('shared', 'two');
+    const { client } = serving(store, [harness('one', ['shared'], one)]);
+    await settle();
+    await catalogue(client);
+
+    // The row belongs to `two`, so creating a session over `one:/shared` would
+    // be a second conversation under an id that already has one, and
+    // `keepProvider` would write `one` over the record on the way out.
+    await expect(client.handle({ method: 'createSession', params: { channel: 'one:/shared', provider: 'one' } }))
+      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+    expect(store.provider('shared')).toBe('two');
+    expect(one).toEqual([]);
+  });
+
+  it('refuses the marks of a waiting row, naming the agent', async () => {
+    const store = memorySessions();
+    store.setProvider('shared', 'two');
+    const one: string[] = [];
+    const { client } = serving(store, [harness('one', ['shared'], one)]);
+    await settle();
+    await catalogue(client);
+
+    // A client hydrates a session by subscribing to its turns, its config and
+    // its marks, and both spellings of the last are this row's.
+    for (const channel of ['two:/shared/annotations', 'ahp-session:/shared/annotations'])
+      await expect(client.handle({ method: 'subscribe', params: { channel } }))
+        .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+    expect(store.provider('shared')).toBe('two');
+  });
+
+  it('answers every other road to a waiting row with the agent that is missing', async () => {
+    const refusals: string[] = [];
+    const store = memorySessions();
+    store.setProvider('shared', 'two');
+    const one: string[] = [];
+    const { client } = serving(store, [harness('one', ['shared'], one)], {
+      ...peer(),
+      notify: (_method, params) => { refusals.push((params as Record<string, unknown>)['rejectionReason'] as string); },
+    });
+    await settle();
+    await catalogue(client);
+
+    // The older turns, the marks, the session's config and a draft: four roads
+    // that all end at a transcript this host cannot read, and none of which may
+    // answer as though the session were nowhere, which is what it is not.
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/shared' } }))
+      .rejects.toMatchObject({ code: -32002, message: 'two is not loaded on this host' });
+
+    for (const [channel, action] of [
+      ['two:/shared/annotations', {
+        type: 'annotations/set',
+        annotation: {
+          id: 'a1', origin: { session: 'two:/shared' }, resource: 'file:///x', resolved: false,
+          entries: [{ id: 'e1', text: 'one' }],
+        },
+      }],
+      ['two:/shared', { type: 'session/configChanged', config: { voice: 'shouty' } }],
+      ['ahp-chat:/shared', { type: 'chat/draftChanged', draft: { text: 'go' } }],
+    ] as [string, Record<string, unknown>][]) {
+      client.handle({ method: 'dispatchAction', params: { channel, action } });
+      await settle();
+    }
+
+    expect(refusals).toEqual(Array<string>(3).fill('two is not loaded on this host'));
+    // Nothing of the row was written either: no config, and no mark that the
+    // next client to hydrate it would find as though it had been set.
+    expect(store.config('shared')).toBeUndefined();
   });
 
   it('leaves a row only one harness lists alone', async () => {

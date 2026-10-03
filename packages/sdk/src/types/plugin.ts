@@ -138,6 +138,20 @@ export interface PluginContext {
  */
 export interface PluginHost extends PluginContext {
   /**
+   * One item of this plugin's own was skipped, and why.
+   *
+   * Where `log` is a line for a person reading the daemon's log, this is one
+   * the person who ran `ahpd start` or `ahpd restart` is shown before the
+   * success line, because it is a thing the daemon started without rather than
+   * a thing that went wrong in it: the preset a plugin dropped, the variant it
+   * could not read, the machine profile nothing holds.
+   *
+   * It costs the item and not the plugin - saying one is never a failure, and
+   * a plugin that said one keeps everything else it registered. One line,
+   * without a newline, naming the item.
+   */
+  problem(line: string): void;
+  /**
    * One agent's machine needs, read when called rather than at load.
    *
    * The plugin that makes machines is the one that asks: a machine whose

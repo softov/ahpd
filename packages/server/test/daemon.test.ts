@@ -118,6 +118,17 @@ describe('recordOf', () => {
     const argv = ['--path', '/x', '--plugin-option', 'a.b=1'];
     expect(recordOf(ANNOUNCED, 42, 'abc', argv).argv).toEqual(argv);
   });
+
+  it('keeps what the child said it skipped, and no field when it said nothing', () => {
+    // The line each one starts with, because a problem may begin with any word
+    // at all and this announcement is the only place the two are told apart.
+    const said = `${ANNOUNCED}skipped: plugin throws failed in 3 ms: it threw\nskipped: presets.router reads OPENROUTER_API_KEY\nplugins echo-plugin\n`;
+    expect(recordOf(said, 42, 'abc').skipped).toEqual([
+      'plugin throws failed in 3 ms: it threw',
+      'presets.router reads OPENROUTER_API_KEY',
+    ]);
+    expect(recordOf(ANNOUNCED, 42, 'abc').skipped).toBeUndefined();
+  });
 });
 
 describe('the record on disk', () => {

@@ -68,9 +68,10 @@ export interface FoldedOptions {
    * One message per conflict, in the order the contributions arrived. Empty
    * when nothing collided.
    *
-   * An agent `provider` clash starts with `AGENT_CLASH`, because the daemon
-   * refuses to start over one and needs to tell it from the problems it only
-   * reports - and reading prose is not how a program should decide that.
+   * Every conflict here is one line and nothing more: the clashing agent, the
+   * port and the scheme are each dropped, and the rest of the host is built.
+   * An agent `provider` clash starts with `AGENT_CLASH` so it can be told from
+   * a port or a scheme without reading prose.
    */
   problems: string[];
 }
@@ -83,8 +84,9 @@ export interface FoldedOptions {
  *
  * - `agents` and `tools` append, in contribution order. A `provider` already
  *   registered - by the base or by an earlier plugin - is a problem naming
- *   both, because two backends a client cannot tell apart is a daemon that
- *   answers the wrong one.
+ *   both, and the agent that lost it is dropped: the first registration keeps
+ *   the id, and a client that asks for it gets the backend that has always
+ *   answered for it rather than whichever loaded last.
  * - A port is set once. A later contribution that lands on a value already
  *   there - the daemon's or another plugin's - is a problem naming both and
  *   the value does not move, unless the later one carries `'replace'`, which
@@ -124,12 +126,20 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   for (const contribution of contributions) {
     for (const agent of contribution.agents) {
       const held = providers.get(agent.provider);
+      /*
+       * The first registration keeps the id, and the second one is dropped.
+       *
+       * A clash is one agent among many rather than a broken host: the plugin
+       * that wrote it still contributes everything else it registered, and the
+       * sessions recorded against the id it lost keep waiting for it. It is
+       * reported like every other collision here, so whoever configured the
+       * two plugins is told which id and which two parties.
+       */
       if (held !== undefined) {
         problems.push(`${AGENT_CLASH} plugin ${contribution.by} registers agent ${agent.provider}, which ${held === 'the daemon' ? 'the daemon' : `plugin ${held}`} already registered`);
+        continue;
       }
-      else {
-        providers.set(agent.provider, contribution.by);
-      }
+      providers.set(agent.provider, contribution.by);
       added.push(agent);
     }
 
@@ -280,6 +290,13 @@ export interface HostRecordingOptions {
    * registers a vault may load after this one, and a host may have none.
    */
   vault?: () => Vault | undefined;
+  /**
+   * Where a `problem` line goes, for the loader to carry beside its own.
+   *
+   * Collected rather than written, because the person who ran the start is the
+   * one who has to read them and the loader is what that person reads from.
+   */
+  problem?: (line: string) => void;
 }
 
 /**
@@ -294,7 +311,10 @@ export interface HostRecordingOptions {
  *
  * `machineNeeds` is the one method that reads rather than registers: it answers
  * an agent's `machine()` from the live list, so a plugin that makes machines
- * needs nothing of this package and no agent has to be loaded yet.
+ * needs nothing of this package and no agent has to be loaded yet. `problem`
+ * is the one that neither registers nor reads: it records a line and returns,
+ * so a plugin can say which of its own items it dropped without that costing
+ * the plugin anything else it registered.
  */
 export function pluginHost(by: string, context: PluginContext, options: HostRecordingOptions = {}): HostRecording {
   /*
@@ -328,6 +348,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
 
   const host: PluginHost = {
     ...context,
+    problem: (line) => { options.problem?.(line); },
     // Read from the live list, not a snapshot: the agents this host will have
     // are not all known while any one plugin is applying. An agent that
     // declares nothing answers an empty record, which is a machine with

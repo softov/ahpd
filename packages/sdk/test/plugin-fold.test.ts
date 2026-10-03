@@ -80,7 +80,7 @@ describe('foldHostOptions', () => {
     expect(options.tools).toBeUndefined();
   });
 
-  it('reports an agent whose provider the base already has, naming both', () => {
+  it('drops an agent whose provider the base already has, naming both', () => {
     const { options, problems } = foldHostOptions(base(), [
       contribution('alpha', { agents: [agent('echo')] }),
     ]);
@@ -89,7 +89,9 @@ describe('foldHostOptions', () => {
     expect(problems[0]).toContain('alpha');
     expect(problems[0]).toContain('echo');
     expect(problems[0]).toContain('the daemon');
-    expect(options.agents.map((one) => one.provider)).toEqual(['echo', 'echo']);
+    // The daemon's own keeps the id, so a client asking for it is answered by
+    // the backend that has always answered for it.
+    expect(options.agents.map((one) => one.provider)).toEqual(['echo']);
   });
 
   it('tells a plugin that sets a port the daemon already set, and keeps the daemon\'s value', () => {

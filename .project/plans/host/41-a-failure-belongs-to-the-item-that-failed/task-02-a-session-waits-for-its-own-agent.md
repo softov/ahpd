@@ -1,6 +1,6 @@
 ---
 title: A session waits for its own agent
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
