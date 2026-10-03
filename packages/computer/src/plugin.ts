@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec } from '@ahpd/sdk';
+import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
+import { secretRef } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
+import { revealed } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import type { Profile } from './manifest.js';
 import { claimedOf, devcontainerFolder, dockerRuntime, isRunning, preparedFor, profileOf } from './runtime.js';
@@ -50,6 +52,18 @@ const text = { type: 'string' } as const;
 const list = { type: 'array', items: { type: 'string' } } as const;
 
 /**
+ * One machine need's value: the value itself, or the name of a secret it is.
+ *
+ * `secretAtUse` leaves what was written whole, so a `team:` or a `user:` name
+ * survives the loader to reach the machine it is read for. The check still runs
+ * against a string, which is what the name is.
+ */
+const needValue = { type: 'string', secretAtUse: true } as const;
+
+/** A set of machine needs, by need name. */
+const needValues = { type: 'object', additionalProperties: needValue } as const;
+
+/**
  * The options `apply` receives, as a JSON Schema the daemon checks them against
  * before `apply` runs.
  */
@@ -68,9 +82,13 @@ export const optionsSchema = {
     prefix: { ...text, description: 'What the name of every machine this host makes starts with.' },
     sessionSetting: { type: 'boolean', description: 'Whether a session setting names the machine a session runs in.' },
     sessionDefault: { ...text, description: "That setting's default." },
-    needs: { type: 'object', description: "Values for any agent's machine needs, by need name." },
+    needs: { ...needValues, description: "Values for any agent's machine needs, by need name." },
     mounts: { ...list, description: 'What every machine this plugin makes can see.' },
-    profiles: { type: 'object', description: 'The named sets a person picks from when making a machine.' },
+    profiles: {
+      type: 'object',
+      additionalProperties: { type: 'object', properties: { needs: needValues } },
+      description: 'The named sets a person picks from when making a machine.',
+    },
     bodyMounts: { type: 'boolean', description: 'Whether a person making a machine may name mounts of their own.' },
     images: { ...list, description: 'The image patterns a machine may be made from.' },
     devcontainer: {
@@ -100,6 +118,21 @@ const named = (value: unknown): Record<string, string> | undefined => {
 };
 
 /**
+ * A set of machine needs, with a reference kept as one.
+ *
+ * Beside `named`, which drops a value that is not a string and so would drop
+ * `{ "$secret": "<name>" }`: a need naming a secret is read when the machine is
+ * made, not when the option loads, so the name has to survive to get there.
+ */
+const needValuesOf = (value: unknown): Record<string, string | SecretRef> | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const held = Object.entries(value as Record<string, unknown>)
+    .filter((entry): entry is [string, string | SecretRef] =>
+      typeof entry[1] === 'string' || secretRef(entry[1]) !== undefined);
+  return held.length > 0 ? Object.fromEntries(held) : undefined;
+};
+
+/**
  * The profiles an option named, with anything unusable dropped.
  *
  * The plugin's rule throughout: a misspelled key costs its own setting rather
@@ -124,7 +157,7 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       ...(words(said.mounts) === undefined ? {} : { mounts: words(said.mounts) as string[] }),
       // The agents a profile prepares for, and any value it gives their needs.
       ...(words(said.agents) === undefined ? {} : { agents: words(said.agents) as string[] }),
-      ...(named(said.needs) === undefined ? {} : { needs: named(said.needs) as Record<string, string> }),
+      ...(needValuesOf(said.needs) === undefined ? {} : { needs: needValuesOf(said.needs) as Record<string, string | SecretRef> }),
       ...(text('folder') === undefined ? {} : { folder: text('folder') as string }),
       // How the host inside a machine from this profile is started. Absent
       // means the port's own default, which is `ahpd`.
@@ -250,7 +283,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * lives somewhere else says so once, and every profile that prepares for
    * Claude picks it up without repeating it.
    */
-  const needValues = named(options.needs);
+  const needValues = needValuesOf(options.needs);
 
   /*
    * What every machine this plugin makes can see.
@@ -327,6 +360,16 @@ export const apply: Plugin['apply'] = (host, options) => {
 
   /** What the daemon's own record said, in this plugin's own log. */
   const noted = (line: string): void => { host.log(`${name}: ${line}`); };
+
+  /*
+   * Read one need's value when it names a secret.
+   *
+   * Handed the host's own `secret` and nothing of this plugin's: the vault is
+   * the host's, and a need is read for the machine's owner and team rather than
+   * for whoever loaded the option - decision
+   * `a-secret-is-named-in-a-host-team-or-user-scope`.
+   */
+  const secret = async (name: string, work: SecretWork): Promise<string> => host.secret(name, work);
 
   /*
    * One open stretch of up time per running machine.
@@ -549,6 +592,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     // that registers that agent may apply after this one.
     needsOf: (provider) => host.machineNeeds(provider),
     ...(needValues === undefined ? {} : { needValues }),
+    secret,
   }));
 
   /*
@@ -690,6 +734,14 @@ export const apply: Plugin['apply'] = (host, options) => {
           throw new Error(`${folder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
         }
         const id = `${prefix}-${randomUUID().slice(0, 8)}`;
+        const work: SecretWork = {
+          ...(asked.owner === undefined ? {} : { owner: asked.owner }),
+          ...(asked.team === undefined ? {} : { team: asked.team }),
+        };
+        // No profile stands behind this one, so the machine is made for the
+        // session's own harness and for nothing else's needs.
+        const forSession = needsFor(asked);
+        const values = await revealed(needValues, [asked.provider], forSession, work, secret);
         const spec = manifestOf(id, { data: JSON.stringify({}), encoding: 'utf-8' }, {
           runtime,
           image,
@@ -698,8 +750,8 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(mounts === undefined ? {} : { mounts }),
           bodyMounts,
           ...(images === undefined ? {} : { images }),
-          ...(needValues === undefined ? {} : { needValues }),
-          needsOf: needsFor(asked),
+          ...(values === undefined ? {} : { needValues: values }),
+          needsOf: forSession,
           for: asked.provider,
           devcontainer: folder,
           // Whose it is, which this machine cannot carry as a label: the record
@@ -731,13 +783,34 @@ export const apply: Plugin['apply'] = (host, options) => {
         throw new Error(`profile ${key} is not disposable, so no machine is made from it when a session starts; pick a running computer://<id> or make one from the form`);
       }
       const delay = profile.disposableDelay ?? defaults.disposableDelay;
+      const work: SecretWork = {
+        ...(asked.owner === undefined ? {} : { owner: asked.owner }),
+        ...(asked.team === undefined ? {} : { team: asked.team }),
+      };
+      // The agents this machine is made for: the profile's own, and the
+      // harness the session runs. Their declared needs are the whole of what a
+      // value here can land on, so a need only another harness declares is left
+      // for the machines that harness is in.
+      const forSession = needsFor(asked);
+      const agents = [...(profile.agents ?? []), asked.provider];
+      const values = await revealed(needValues, agents, forSession, work, secret);
+      /*
+       * Only this profile's needs are read, because only this profile is being
+       * made into a machine: a reference in a profile nobody picked is not
+       * this machine's to resolve.
+       */
+      const own = await revealed(profile.needs, agents, forSession, work, secret);
       /*
        * The session's folder wins over the profile's, and is written into the
        * profile rather than the body: a body's `folder` is the deployment's to
        * allow, and this one is the operator's own source plus the host's own
        * session folder.
        */
-      const chosen: Profile = { ...profile, ...(asked.folder === undefined ? {} : { folder: asked.folder }) };
+      const chosen: Profile = {
+        ...profile,
+        ...(asked.folder === undefined ? {} : { folder: asked.folder }),
+        ...(own === undefined ? {} : { needs: own }),
+      };
       const id = `${prefix}-${randomUUID().slice(0, 8)}`;
       const spec = manifestOf(id, { data: JSON.stringify({ profile: key }), encoding: 'utf-8' }, {
         runtime,
@@ -748,8 +821,8 @@ export const apply: Plugin['apply'] = (host, options) => {
         profiles: { ...known, [key]: chosen },
         bodyMounts,
         ...(images === undefined ? {} : { images }),
-        ...(needValues === undefined ? {} : { needValues }),
-        needsOf: needsFor(asked),
+        ...(values === undefined ? {} : { needValues: values }),
+        needsOf: forSession,
         for: asked.provider,
         /*
          * Whose the machine is, which the host hands down from the session that

@@ -1,6 +1,6 @@
 ---
 title: A need value is read from the vault when the machine is made
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:

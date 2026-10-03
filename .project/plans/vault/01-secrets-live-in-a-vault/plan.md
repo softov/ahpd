@@ -1,7 +1,7 @@
 ---
 title: Secrets live in a vault, and a plugin option or a machine need names one
 domain: vault
-status: active
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-03
@@ -72,7 +72,7 @@ Child plans, each scoped to one package or two.
 | Plan | Package | Status | Depends on |
 | --- | --- | --- | --- |
 | [p1 - The vault port and the daemon's plain file](../01-secrets-live-in-a-vault-p1-the-vault-and-its-local-file/plan.md) | sdk, server | built | - |
-| [p2 - A machine need names a secret](../01-secrets-live-in-a-vault-p2-a-machine-need-names-a-secret/plan.md) | computer | planned | p1 |
+| [p2 - A machine need names a secret](../01-secrets-live-in-a-vault-p2-a-machine-need-names-a-secret/plan.md) | computer | built | p1 |
 
 ## Risks and tradeoffs
 
@@ -80,15 +80,12 @@ Child plans, each scoped to one package or two.
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-02, reworked 2026-10-03 for a plain file.
-- **Next action:** [p2](../01-secrets-live-in-a-vault-p2-a-machine-need-names-a-secret/plan.md), task 01.
-- **Open questions:** each child lists its own; p1 holds which vault resolves options when a plugin replaces it.
-- **Watch out for:** container/05 p1 ([a secret reaches a machine by name](../../container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md)) is what keeps a resolved value out of `docker` argv; this plan does not need it, but a secret in a machine is only out of `ps` once it is built.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A plugin option written `{ "$secret": "host:<name>" }` reaches `apply` as the value, and root config shows the reference.
-- [ ] A disposable machine made for a person's session has their `user:` secret in its environment, and another person's session is refused it.
-- [ ] A daemon says `vault <path>` at start, and a plugin naming a secret the vault does not hold is skipped with a line that says so.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/DAEMON.md`, `docs/PLUGINS.md`, `docs/COMPUTER.md` and `plans/index.md` updated.
+- [x] A plugin option written `{ "$secret": "host:<name>" }` reaches `apply` as the value, and root config shows the reference.
+- [x] A disposable machine made for a person's session has their `user:` secret in its environment, and another person's session is refused it.
+- [x] A daemon says `vault <path>` at start, and a plugin naming a secret the vault does not hold is skipped with a line that says so.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `docs/DAEMON.md`, `docs/PLUGINS.md`, `docs/COMPUTER.md` and `plans/index.md` updated.

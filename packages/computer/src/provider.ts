@@ -1,7 +1,11 @@
 import { RpcError } from '@ahpd/sdk';
-import type { Entry, MachineNeed, Metadata, Owner, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
-import { bodyText, MANIFEST_SCHEMA, manifestOf } from './manifest.js';
+import type {
+  Entry, MachineNeed, Metadata, Owner, PluginHost, Read, ResourceProvider, SchemeDescription, SecretRef,
+  SecretWork, Write,
+} from '@ahpd/sdk';
+import { bodyText, MANIFEST_SCHEMA, manifestOf, pickedOf } from './manifest.js';
 import type { Profile } from './manifest.js';
+import { revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
@@ -45,7 +49,15 @@ export interface ProviderOptions {
    */
   needsOf?: (provider: string) => Record<string, MachineNeed> | undefined;
   /** Values the plugin option gives any agent's needs, by need name. */
-  needValues?: Record<string, string>;
+  needValues?: Record<string, string | SecretRef>;
+  /**
+   * Read a need's value when it names a secret, for the machine's owner.
+   *
+   * The host's own `secret`, handed down by the plugin: a machine made from a
+   * body has an owner and no team, so a `team:` secret in the profile it picked
+   * is refused - decision `a-secret-is-named-in-a-host-team-or-user-scope`.
+   */
+  secret: PluginHost['secret'];
 }
 
 /**
@@ -188,6 +200,39 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
   const asFile = (data: string): Read =>
     ({ data, encoding: 'utf-8', contentType: 'application/json' });
 
+  /** One need map with every reference read, a refusal as this write's. */
+  const read = async (
+    values: Record<string, string | SecretRef> | undefined,
+    agents: readonly string[],
+    work: SecretWork,
+  ): Promise<Record<string, string> | undefined> => {
+    try {
+      return await revealed(values, agents, options.needsOf, work, options.secret);
+    }
+    catch (error) {
+      throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  /*
+   * The profiles a body may pick from, with the picked one's needs read.
+   *
+   * Only the profile the body named is read: a profile nobody picked is never
+   * this machine's, so a reference in it is not this machine's to resolve, and
+   * a host with profiles for several people does not read all of them to make
+   * one machine.
+   */
+  const profilesFor = (
+    picked: string | undefined,
+    profile: Profile | undefined,
+    needs: Record<string, string> | undefined,
+  ): Record<string, Profile> | undefined => {
+    if (options.profiles === undefined || picked === undefined || profile === undefined || needs === undefined) {
+      return options.profiles;
+    }
+    return { ...options.profiles, [picked]: { ...profile, needs } };
+  };
+
   return {
     describe: (): SchemeDescription => ({
       title: 'Computer',
@@ -290,17 +335,29 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       if (held.id === '' || !isDirectory(held)) {
         throw new RpcError(-32602, `${uri} is not a name for a new computer; write to computer://<name>`);
       }
+      const work: SecretWork = owner === undefined ? {} : { owner };
+      /*
+       * The profile this body picked, and so the agents whose needs it is
+       * resolved with: a need none of them declares is not this machine's, and
+       * is never read - from the profile's own `needs` or from the plugin's.
+       */
+      const picked = pickedOf(content);
+      const profile = picked === undefined ? undefined : options.profiles?.[picked];
+      const agents = profile?.agents ?? [];
+      const own = await read(profile?.needs, agents, work);
+      const values = await read(options.needValues, agents, work);
+      const profiles = profilesFor(picked, profile, own);
       const spec = manifestOf(held.id, content, {
         runtime: runtime.kind,
         image: options.image,
         ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
         ...(options.memory === undefined ? {} : { memory: options.memory }),
         ...(options.mounts === undefined ? {} : { mounts: options.mounts }),
-        ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+        ...(profiles === undefined ? {} : { profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
         ...(options.images === undefined ? {} : { images: options.images }),
         ...(options.needsOf === undefined ? {} : { needsOf: options.needsOf }),
-        ...(options.needValues === undefined ? {} : { needValues: options.needValues }),
+        ...(values === undefined ? {} : { needValues: values }),
         ...(owner === undefined ? {} : { owner }),
       });
       if (await runtime.inspect(held.id) !== undefined) {

@@ -3,6 +3,7 @@ import { computerProvider } from '../src/provider.js';
 import { computerTools } from '../src/tools.js';
 import type { ComputerRuntime } from '../src/runtime.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
+import type { PluginHost } from '../../sdk/src/types/plugin.js';
 import type { Write } from '../../sdk/src/types/resources.js';
 
 /*
@@ -49,7 +50,10 @@ const fake = () => {
   return { runtime, held, calls };
 };
 
-const options = { image: 'debian:bookworm-slim', cpus: '2', memory: '2g', max: 2, label: 'ahpd.computer=1' };
+// No need value written here names a secret, so nothing is ever read.
+const unread: PluginHost['secret'] = async () => '';
+
+const options = { image: 'debian:bookworm-slim', cpus: '2', memory: '2g', max: 2, label: 'ahpd.computer=1', secret: unread };
 const at = {} as ToolCall;
 const by = (tools: ReturnType<typeof computerTools>, name: string) =>
   tools.find((one) => one.definition.name === name) as ReturnType<typeof computerTools>[number];

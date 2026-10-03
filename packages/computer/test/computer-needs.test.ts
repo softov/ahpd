@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
+import type { Vault } from '../../sdk/src/types/vault.js';
 
 /*
  * A machine made from what its agents declared.
@@ -26,6 +27,7 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
 });
@@ -45,11 +47,24 @@ const agent = (provider: string, needs: Record<string, MachineNeed> = {}): Agent
   create: () => { throw new Error('not started in this test'); },
 } as unknown as Agent);
 
-const base = (agents: Agent[]): HostOptions => ({
+const base = (agents: Agent[], vault?: Vault): HostOptions => ({
   path: '/tmp/computer-needs',
   agents,
   resources: fileResources(),
+  ...(vault === undefined ? {} : { vault }),
 });
+
+/** A vault holding `values` and nothing else, which records what it was asked for. */
+const holding = (values: Record<string, string>): Vault & { asked: string[] } => {
+  const asked: string[] = [];
+  return {
+    asked,
+    get: async (name) => { asked.push(name); return values[name]; },
+    set: async () => {},
+    delete: async () => false,
+    list: async () => Object.keys(values),
+  };
+};
 
 interface Held {
   machines: {
@@ -59,13 +74,13 @@ interface Held {
   calls: string[][];
 }
 
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = []) => loadPlugins(
+const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vault?: Vault) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
-  { base: base(agents), configDir: REPO, cwd: REPO, log: () => {} },
+  { base: base(agents, vault), configDir: REPO, cwd: REPO, log: () => {} },
 );
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
-  write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
 };
 
@@ -214,6 +229,179 @@ it('refuses a missing path, an unknown agent, a shared target and a missing fold
   // And a folder that is not there is refused like any other host path.
   const noFolder = await bad(withAgents({ claude: { agents: ['claude'], folder: gone } }), [agent('claude')], { profile: 'claude' });
   expect((noFolder as Error).message).toMatch(/folder names .* and that path is not there/);
+});
+
+/*
+ * A need value that names a secret rather than being one.
+ *
+ * The value is read when the machine is made and for the machine's owner, so
+ * the two cases that matter are whose machine it is and which profile was
+ * picked: a `user:` secret belongs to one person, a `host:` one to anybody, and
+ * a profile nobody picked is never this machine's to read.
+ */
+const KEY: Record<string, MachineNeed> = { anthropicKey: { name: 'ANTHROPIC_API_KEY', default: 'from-the-agent' } };
+
+const envOf = (state: string, at = 0): Record<string, string> | undefined =>
+  (JSON.parse(readFileSync(state, 'utf8')) as Held).machines[at]?.env;
+
+const written = async (
+  options: HostOptions,
+  name: string,
+  body: Record<string, unknown>,
+  owner?: string,
+): Promise<unknown> =>
+  providerOf(options).write(`computer://${name}`, { data: JSON.stringify(body), encoding: 'utf-8' }, owner)
+    .catch((error: unknown) => error);
+
+it('reads a profile need naming a secret, for the machine it is made for', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/token': 'ada-token' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { claude: { agents: ['claude'], needs: { anthropicKey: { $secret: 'user:ada/token' } } } },
+  }, [agent('claude', KEY)], store);
+  expect(problems).toEqual([]);
+
+  await written(options, 'ada', { profile: 'claude' }, 'user:ada');
+  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+
+  // Ada's secret is not a secret this work may read, so the machine is refused
+  // naming the need and the name rather than made without the credential.
+  const refused = await written(options, 'bo', { profile: 'claude' }, 'user:bo');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/token');
+  expect((refused as Error).message).toContain('is not a secret this work may read');
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines).toHaveLength(1);
+});
+
+it('reads a host-scoped need in the option for any owner', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'host:shared': 'shared-value' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    needs: { anthropicKey: { $secret: 'host:shared' } },
+    profiles: { claude: { agents: ['claude'] } },
+  }, [agent('claude', KEY)], store);
+  expect(problems).toEqual([]);
+
+  // The deployment's value, so it lands whichever person the machine is for.
+  await written(options, 'one', { profile: 'claude' }, 'user:ada');
+  await written(options, 'two', { profile: 'claude' }, 'user:bo');
+  expect(envOf(state, 0)).toEqual({ ANTHROPIC_API_KEY: 'shared-value' });
+  expect(envOf(state, 1)).toEqual({ ANTHROPIC_API_KEY: 'shared-value' });
+});
+
+it('refuses a need naming a secret the vault does not hold', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { claude: { agents: ['claude'], needs: { anthropicKey: { $secret: 'user:ada/none' } } } },
+  }, [agent('claude', KEY)], holding({}));
+
+  const refused = await written(options, 'box', { profile: 'claude' }, 'user:ada');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/none: the vault holds no user:ada/none');
+});
+
+it('never reads a need of a profile the body did not pick', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/token': 'ada-token', 'user:bo/token': 'bo-token' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: {
+      ada: { agents: ['claude'], needs: { anthropicKey: { $secret: 'user:ada/token' } } },
+      bo: { agents: ['claude'], needs: { anthropicKey: { $secret: 'user:bo/token' } } },
+    },
+  }, [agent('claude', KEY)], store);
+  expect(problems).toEqual([]);
+
+  await written(options, 'box', { profile: 'ada' }, 'user:ada');
+  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+  // Bo's profile is not this machine's, so his token was never wanted.
+  expect(store.asked).toEqual(['user:ada/token']);
+});
+
+it('reads a plugin-wide need only where an agent on the machine declares it', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/x': 'ada-x' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    // One value for every machine this host makes, under a need only Claude
+    // declares: the deployment's `needs` are one map, and a cofold machine
+    // resolves none of this.
+    needs: { anthropicKey: { $secret: 'user:ada/x' } },
+    profiles: { claude: { agents: ['claude'] }, cofold: { agents: ['cofold'] } },
+  }, [agent('claude', KEY), agent('cofold')], store);
+  expect(problems).toEqual([]);
+
+  // Ada's, and Ada's machine, so it lands.
+  await written(options, 'ada', { profile: 'claude' }, 'user:ada');
+  expect(envOf(state, 0)).toEqual({ ANTHROPIC_API_KEY: 'ada-x' });
+
+  // A machine for an agent that declares no needs: nothing under that name is
+  // this machine's, so nothing was read and the machine is made rather than
+  // refused over somebody else's token.
+  await written(options, 'cofold', { profile: 'cofold' }, 'user:bo');
+  expect(envOf(state, 1)).toEqual({});
+
+  // And it is still Ada's when Claude is the agent asked for.
+  const refused = await written(options, 'other', { profile: 'claude' }, 'user:bo');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/x');
+  expect((refused as Error).message).toContain('is not a secret this work may read');
+
+  // Read once, for the one machine it was wanted for.
+  expect(store.asked).toEqual(['user:ada/x']);
+});
+
+it('reads a disposable machine\'s need for the session it is made for', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/token': 'ada-token' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { claude: { agents: ['claude'], disposable: true, needs: { anthropicKey: { $secret: 'user:ada/token' } } } },
+  }, [agent('claude', KEY)], store);
+  expect(problems).toEqual([]);
+
+  // The machine is made when the session starts, and its owner is the
+  // session's: the profile named no agents of its own to make.
+  const create = options.computers?.create as NonNullable<NonNullable<typeof options.computers>['create']>;
+  await create({
+    source: 'disposable:claude',
+    session: 'ahp-session:/one',
+    provider: 'claude',
+    owner: 'user:ada',
+  });
+  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+
+  const refused = await create({
+    source: 'disposable:claude',
+    session: 'ahp-session:/two',
+    provider: 'claude',
+    owner: 'user:bo',
+  }).catch((error: unknown) => error);
+  expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/token');
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines).toHaveLength(1);
+  vi.useRealTimers();
 });
 
 it('offers a machine only to the agents it was prepared for', async () => {

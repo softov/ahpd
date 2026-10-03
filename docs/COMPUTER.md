@@ -215,6 +215,23 @@ A need is filled from the profile, then the plugin option, then the agent's own 
 
 A need is delivered as a bind mount, an environment variable or a file copied in. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine.
 
+A need value may be the name of a secret rather than the value itself, which is what keeps a credential out of the file:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "needs": { "anthropicKey": { "$secret": "host:shared" } },
+  "profiles": {
+    "ada": { "agents": ["claude"], "needs": { "anthropicKey": { "$secret": "user:ada/token" } } }
+  }
+} }] }
+```
+
+The value is read when the machine is made, not when the plugin loads, and it is read for that machine's own owner and team: `host:` for any machine, `team:<team>/` only for work charged to that team, `user:<id>/` only for that person's own sessions and machines. A machine made from the form has an owner and no team, so a `team:` value in the profile it picked is refused. A need that cannot be read refuses the machine, naming the need and the name.
+
+Only what the machine resolves is read. The profile picked is the only one read, and within it only the needs that machine's agents declare: a name under a need no agent in the machine declares belongs to the machines that agent is in, so the plugin's `needs` can hold one person's key without stopping a machine for a harness that never asks for it.
+
+`ahpd vault set host:shared` sets one. See [The vault](DAEMON.md#the-vault) for where the file is and who may write each of the three forms.
+
 `folder` names a host folder mounted at the same path inside the machine, and `workdir` defaults to it. The same path is what keeps an agent's own record consistent: Claude writes its history under the working directory it saw, so the same spelling inside and out is what makes a session written in a machine resumable on this host.
 
 A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed); a later one wins for the same target. Other fields come from the manifest, then the profile, then the host default.

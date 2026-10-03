@@ -1,7 +1,7 @@
 ---
 title: A machine need names a secret, read when the machine is made
 domain: vault
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-03
@@ -78,8 +78,8 @@ form write (owner) -> provider.write -> revealed(..., { owner }) -> manifestOf
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A need value is read from the vault when the machine is made](task-01-a-need-value-is-read-from-the-vault.md) | todo | - |
-| [02 - Docs](task-02-docs.md) | todo | 01 |
+| [01 - A need value is read from the vault when the machine is made](task-01-a-need-value-is-read-from-the-vault.md) | done | - |
+| [02 - Docs](task-02-docs.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -88,15 +88,12 @@ form write (owner) -> provider.write -> revealed(..., { owner }) -> manifestOf
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-02.
-- **Next action:** [task-01-a-need-value-is-read-from-the-vault.md](task-01-a-need-value-is-read-from-the-vault.md), once p1 is built.
-- **Open questions:** none of its own.
-- **Watch out for:** a machine made from the form has an owner and no team, so a `team:` secret in a profile picked from the form is refused; that is the scope rule, not a defect.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A disposable machine made for `user:ada`'s session has her `user:ada/token` in its environment; one made for `user:bo` is refused, naming the secret.
-- [ ] A need naming a secret the vault does not hold refuses the machine and says so.
-- [ ] Root config shows the reference, not `<set>` and not the value.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `docs/COMPUTER.md` and `plans/index.md` updated.
+- [x] A disposable machine made for `user:ada`'s session has her `user:ada/token` in its environment; one made for `user:bo` is refused, naming the secret.
+- [x] A need naming a secret the vault does not hold refuses the machine and says so.
+- [x] Root config shows the reference, not `<set>` and not the value.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `docs/COMPUTER.md` and `plans/index.md` updated.

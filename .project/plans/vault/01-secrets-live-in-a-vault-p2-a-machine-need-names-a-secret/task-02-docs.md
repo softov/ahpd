@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: done
 depends: [task-01-a-need-value-is-read-from-the-vault.md]
 layer: "docs"
 refs:

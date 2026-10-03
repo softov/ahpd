@@ -5,7 +5,7 @@ import { hasDefinition } from './devcontainer.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
-import type { MachineNeed, Owner, ResolvedNeed } from '@ahpd/sdk';
+import type { MachineNeed, Owner, ResolvedNeed, SecretRef } from '@ahpd/sdk';
 import type { MachineSpec } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
 
@@ -51,8 +51,15 @@ export interface Profile {
    * recorded on the machine as its `ahpd.agents` label.
    */
   agents?: string[];
-  /** Values this profile gives those agents' needs, by need name. */
-  needs?: Record<string, string>;
+  /**
+   * Values this profile gives those agents' needs, by need name.
+   *
+   * A value may be the name of a secret rather than the value: whoever picks
+   * this profile picks who it is read for, which is not known until the
+   * machine is being made - decision
+   * `a-secret-is-named-in-a-host-team-or-user-scope`.
+   */
+  needs?: Record<string, string | SecretRef>;
   /**
    * A host folder to mount at the same path in the machine.
    *
@@ -155,8 +162,13 @@ export interface ManifestDefaults {
    * load, because the agent may be registered after this plugin.
    */
   needsOf?: (provider: string) => Record<string, MachineNeed> | undefined;
-  /** Values the plugin option gives any agent's needs, by need name. */
-  needValues?: Record<string, string>;
+  /**
+   * Values the plugin option gives any agent's needs, by need name.
+   *
+   * Read for every machine this host makes, and so for whichever owner it is
+   * made for; see `Profile.needs` for why a value here may be a reference.
+   */
+  needValues?: Record<string, string | SecretRef>;
   /**
    * One agent whose needs this machine is made with, beside the profile's own.
    *
@@ -372,6 +384,15 @@ const bodyOf = (content: Write): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
+/**
+ * The profile a create body picks, before the body is made into a machine.
+ *
+ * For whoever has to know it earlier than `manifestOf` does: a need value that
+ * names a secret is read for the machine's owner, and only the profile the
+ * body picked is this machine's.
+ */
+export const pickedOf = (content: Write): string | undefined => said(bodyOf(content), 'profile');
+
 /** The strings in an array, or nothing when the field is absent or not one. */
 const list = (value: unknown): string[] | undefined => {
   if (value === undefined) return undefined;
@@ -583,8 +604,12 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     }
     try {
       resolved.push(...resolveNeeds(needs, {
-        ...(profile.needs === undefined ? {} : { profile: profile.needs }),
-        ...(defaults.needValues === undefined ? {} : { option: defaults.needValues }),
+        // What arrives here is what was written as a value; a value that named
+        // a secret was read by the caller, for the machine's owner, and only
+        // if an agent on this machine declares its need. So these are the
+        // strings `resolveNeeds` works in.
+        ...(profile.needs === undefined ? {} : { profile: profile.needs as Record<string, string> }),
+        ...(defaults.needValues === undefined ? {} : { option: defaults.needValues as Record<string, string> }),
       }));
     }
     catch (error) {
