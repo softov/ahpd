@@ -1,0 +1,40 @@
+---
+title: A session's owner, a turn's sender and a file's staging are sent as ahpd keys
+status: todo
+depends: []
+layer: "sdk"
+refs:
+  - "[code://packages/sdk/src/host.ts#L3123](../../../../packages/sdk/src/host.ts#L3123) - `owner` on a session with no directory"
+  - "[code://packages/sdk/src/host.ts#L3141](../../../../packages/sdk/src/host.ts#L3141) - `owner` beside the git facts"
+  - "[code://packages/sdk/src/host.ts#L2187-L2190](../../../../packages/sdk/src/host.ts#L2187-L2190) - `sender` on a stored turn's message"
+  - "[code://packages/sdk/src/host.ts#L3765-L3767](../../../../packages/sdk/src/host.ts#L3765-L3767) - `sender` on `chat/turnStarted`"
+  - "[code://packages/sdk/src/changes.ts#L634](../../../../packages/sdk/src/changes.ts#L634) - `staged` and `unstaged` on a file"
+  - "[code://packages/sdk/src/changes.ts#L108](../../../../packages/sdk/src/changes.ts#L108) - read back for the watch's comparison"
+  - "[code://packages/sdk/src/changes.ts#L244](../../../../packages/sdk/src/changes.ts#L244) - counted for the commit"
+  - "file:///github/ahpapp/src/changes.ts - lines 122-123, the staging reader"
+---
+
+## Objective
+
+A session summary and state carry `_meta['ahpd.owner']`, a live `chat/turnStarted` and a stored turn's message carry `_meta['ahpd.sender']`, and a changeset file carries `_meta['ahpd.staged']` and `_meta['ahpd.unstaged']`; none carries the bare name.
+
+## Files
+
+- `UPDATE: packages/sdk/src/host.ts:3123, 3141, 2190, 3767` - the new keys; the plugin event fields at :3808 and :3818 are not `_meta` and stay.
+- `UPDATE: packages/sdk/src/changes.ts:634, 108, 244` - write and read the new keys.
+- `UPDATE: packages/sdk/test/*.test.ts` - `host.test.ts`, `sessions.test.ts`, `plugin-events-fire.test.ts`, `commit.test.ts` and any other that reads the old keys (`rg -n "_meta\??\.(owner|sender|staged|unstaged)" packages/sdk/test`).
+- `UPDATE: packages/sdk/test/wire.test.ts` - `owner` and `sender` leave `PENDING`.
+- `UPDATE: docs/AHP.md:217, 246, 349, 633, 661` - the new names.
+
+## Steps
+
+1. Confirm ahpapp's release reads `ahpd.staged` and `ahpd.unstaged` beside the old names, and that ahpapp `chat/02` reads `ahpd.owner` and `ahpd.sender`; do not merge before.
+2. Rename at each producer and at the two readers in `changes.ts`.
+
+## Validation
+
+- `packages/sdk/test/wire.test.ts` passes with `owner` and `sender` gone from `PENDING`; its host has a users directory and `ana` signed in, so both are sent.
+- A changeset test runs p1's `metaKeys` census over a changeset with a staged and an unstaged file and finds only `ahpd.staged` and `ahpd.unstaged`; `commit.test.ts` still commits the index when anything is staged.
+- `pnpm test` passes.
+
+## Resume
