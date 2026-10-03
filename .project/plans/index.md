@@ -85,6 +85,7 @@ Reference: [00-host.md](host/00-host.md)
 | [38 - A client sees who owns a session and who sent each turn](host/38-a-client-sees-who-sent-each-turn/plan.md) | medium | built 2026-10-02 ([implemented.md](host/38-a-client-sees-who-sent-each-turn/implemented.md)) | host 34 | ahpapp chat/02 |
 | [39 - The pull request pill and the worktree's files come back in VS Code 1.140](host/39-what-vs-code-1140-stopped-reading/plan.md) | high | built 2026-10-02 ([implemented.md](host/39-what-vs-code-1140-stopped-reading/implemented.md)) | - | ahpc and ahpapp send the include files as a list |
 | [40 - A connection is told who it is signed in as](host/40-a-connection-is-told-who-it-is/plan.md) | high | planned 2026-10-03 | host 36 | ahpapp people/01 |
+| [41 - A failure belongs to the item that failed, and a start says what it skipped](host/41-a-failure-belongs-to-the-item-that-failed/plan.md) | high | planned 2026-10-03 | claude 15 | - |
 
 Next free number in `host`: `41`.
 
@@ -111,6 +112,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [13 - A Claude harness offers the models it is told, written or fetched from an endpoint](claude/13-a-claude-harness-offers-the-models-it-is-told/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/13-a-claude-harness-offers-the-models-it-is-told/implemented.md)) | claude 12 | - |
 | [14 - A model the CLI rejects fails the turn that asked for it](claude/14-a-rejected-model-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](claude/14-a-rejected-model-fails-the-turn/implemented.md)) | claude 13 | - |
 | [15 - A Claude plugin is loaded once, and each preset is a variant with its own name and models](claude/15-one-load-and-each-preset-is-a-variant/plan.md) | high | built 2026-10-02 ([implemented.md](claude/15-one-load-and-each-preset-is-a-variant/implemented.md)) | claude 10, 12, 13 | the ACP presets plan |
+| [16 - A Claude preset that cannot be resolved skips only itself](claude/16-a-preset-that-fails-skips-only-itself/plan.md) | high | planned | claude 15 | - |
 
 Next free number in `claude`: `14`.
 
