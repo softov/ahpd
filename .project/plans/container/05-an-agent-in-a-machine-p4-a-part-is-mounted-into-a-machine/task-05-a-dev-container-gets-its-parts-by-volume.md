@@ -24,8 +24,8 @@ A dev container made for an agent with a part gets it the way a Docker machine d
 
 ## Steps
 
-1. Check first, against a real `@devcontainers/cli`, that a `--mount type=image,...` entry in the override config's `runArgs` reaches `docker run` and the container has the part; write in this task's Resume what was seen. If it fails, `devcontainerPartRoute` answers `volume` always, and the Resume says why.
-2. Image route: the `runArgs` entry, with the same `type=image` fields as task 03.
+1. The image route works: checked on 2026-10-03 against `@devcontainers/cli@0.89.0` and Docker 29.6.2 (`container/03` task 17), `--mount type=image,source=busybox:latest,target=/opt/bb` in an override's `runArgs` reached `docker run`, mounted read-only, and ran. The source image must already be present: with it absent, `docker run` failed with a misleading "pull access denied for vsc-...". So the part image is ensured (built or pulled, task 02) before `up`, and `devcontainerPartRoute` keeps the volume route for a runtime where the check fails.
+2. Image route: the `runArgs` entry, with the same `type=image` fields as task 03, after the part image is present.
 3. Volume route: ensure each part's volume (task 04), then mount it read-only through the override configuration's `mounts`, because the CLI refuses `,readonly` in `--mount` (container/03 task 09).
 4. `cliMount` stays for binds; parts never pass through it.
 

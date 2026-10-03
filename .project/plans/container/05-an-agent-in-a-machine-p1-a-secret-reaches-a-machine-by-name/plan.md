@@ -76,7 +76,8 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 | A need value in the computer plugin's options answers `<set>`, as its `env` does | [code://packages/computer/src/plugin.ts#L62](../../../../packages/computer/src/plugin.ts#L62): the `env` option beside it is `writeOnly` because "a variable is a credential wherever the image keeps one", and a need value is the same variable | 04 |
 | A `$secret` is resolved by the vault before it reaches this plan; this plan only delivers | [Secrets live in a vault port, and the host's own vault is a plain file until it is encrypted](../../../decisions/the-local-vault-is-a-plain-file-until-it-is-encrypted.md) | - |
 | For now the names the `docker` program itself reads (`PATH`, `HOME`, `DOCKER_HOST`) stay `NAME=VALUE` in argv, and every other name goes by name; the list is one constant beside `byName`, so it can grow or change | Softov, 2026-10-03, asked "how does a variable docker itself reads reach the machine?": "those stay NAME=VALUE, every other name by name" | 01 |
-| For now a dev container's environment reaches it as `containerEnv` in the override config `container/03` task 09 writes 0600, and a value named from the vault is not written there in clear | `container/03`, Softov, 2026-10-03: "`containerEnv` in the override config" | 02 |
+| For now a dev container's plain values reach it as `containerEnv` in the override config `container/03` task 09 writes 0600 | `container/03`, Softov, 2026-10-03: "`containerEnv` in the override config" | 02 |
+| For now a vault-named value reaches a dev container on each `docker exec` as `-e NAME`, never through `up`, since the real CLI puts `containerEnv` values in its own `docker run` argv, its log and `docker inspect` | Softov, 2026-10-03, asked how a secret reaches a dev container: "Per docker exec, by name" | 02 |
 
 ## Proposed architecture
 
@@ -88,7 +89,7 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - Docker takes every value by name](task-01-docker-takes-every-value-by-name.md) | todo | - |
-| [02 - A vault-named value reaches a dev container without being written in clear](task-02-the-dev-container-cli-takes-every-value-by-name.md) | todo | container/03 task 09 |
+| [02 - A vault-named value reaches a dev container on each docker exec, by name](task-02-the-dev-container-cli-takes-every-value-by-name.md) | todo | 01, container/03 tasks 09 and 18 |
 | [03 - Docs](task-03-docs.md) | todo | 01, 02, 04 |
 | [04 - A need value answers set](task-04-a-need-value-answers-set.md) | todo | - |
 
@@ -101,8 +102,7 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 
 - **Done so far:** nothing.
 - **Next action:** [task-01-docker-takes-every-value-by-name.md](task-01-docker-takes-every-value-by-name.md).
-- **Open questions:**
-  1. If the Dev Container CLI does not resolve `${localEnv:NAME}` in the override config's `containerEnv` from its own environment, or puts the value in its own `docker run` argv, how does a vault-named value reach a dev container? - proposed: stop and ask, with what the CLI accepts.
+- **Open questions:** none.
 - **Watch out for:**
   - The fake Docker must refuse `-e NAME` when `NAME` is not in its environment, or the test proves nothing.
   - The check that `ps` shows no value in a dev container session waits for container/03's switch to `docker exec`.
