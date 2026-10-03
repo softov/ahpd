@@ -30,6 +30,7 @@ The files read are the `refs` above.
 | What | Source | Task |
 | --- | --- | --- |
 | The walk takes the nearest `package.json` only when it has an `ahpd` field; otherwise the spec has no manifest and is named by its module's `name` export, or its file name | Softov, 2026-09-30, asked which fix for the open problem: "Only an ahpd manifest" | 01 |
+| A file spec with no manifest lists under its file name (the listing does not import it) and loads under its module's `name` export, so the two may differ; accepted as it is | Softov, 2026-10-03, plan review: the listing/load name difference is accepted | 01 |
 
 ## Proposed architecture
 
@@ -48,8 +49,8 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** task 01 implemented, awaiting review.
-- **Next action:** review; then `implemented.md` and `status: built`.
+- **Done so far:** task 01 implemented on main (5221af7), awaiting review.
+- **Next action:** Softov's review; the close-out (`implemented.md`, `status: built`) waits on it.
 - **Open questions:** none.
 - **Watch out for:** the load and the listing must agree; both call `nearestManifest`.
 

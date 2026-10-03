@@ -1,7 +1,7 @@
 ---
 title: An ssh machine is listed from the options and answers over ssh
 status: todo
-depends: [task-01-several-runtimes-on-one-host.md]
+depends: [task-01-several-runtimes-on-one-host.md, task-04-the-ssh-fixture-and-tests.md]
 layer: "computer"
 refs:
   - "[code://packages/computer/src/plugin.ts#L56-L91](../../../../packages/computer/src/plugin.ts#L56-L91) - `optionsSchema`, where `ssh` is declared"
@@ -25,8 +25,8 @@ refs:
 ## Steps
 
 1. Every call is `ssh -T -o BatchMode=yes -o ConnectTimeout=<n> [-p port] [-i identity] <destination> -- <one quoted string>`; the program and its leading `args` are the option's, default `ssh`.
-2. `list` answers one row per configured machine; its status is `Up` when `ssh ... true` exits 0 and `unreachable: <ssh's last line>` otherwise, checked in parallel and bounded.
-3. `inspect` answers the configured record with the reachability it found, or `undefined` for a name not configured.
+2. `list` answers one row per configured machine; its status is `running` when `ssh ... true` exits 0 and `unreachable: <ssh's last line>` otherwise, checked in parallel and bounded. `running` is what `isRunning` (`runtime.ts:629-630`) reads as up; a bare `Up` is not, since it tests `startsWith('Up ')`.
+3. `inspect` answers `undefined` for a name not configured; what it answers for a configured one waits on the plan's open question, since the callers read Docker's shape (`State.Running`, `Config.Labels`, `Config.WorkingDir`, `HostConfig`).
 4. `exec(id, argv)` runs `cd <workdir> && <quoted argv>`, and answers the output and the exit code as docker's does.
 5. `stats` runs one remote command that reads `/proc/stat` twice half a second apart, `/proc/meminfo` and `nproc`, and answers `MachineStats`; a box without `/proc` answers `undefined`.
 6. `run`, `start`, `stop`, `restart` and `remove` throw "an ssh machine is listed in the options, not made by this host"; `capabilities()` answers `{ runtime: 'ssh', actions: ['exec'], resources: ['status', 'capabilities', 'stats'] }`.
@@ -35,7 +35,7 @@ refs:
 ## Validation
 
 - `packages/computer/test/computer-ssh.test.ts` with the fixture from task 04: a listing of two machines, one unreachable; `exec` argv; `stats` from fixed `/proc` text; a write to the `state` leaf refused.
-- A listing that sees a machine `Up` opens a stretch for it charged to the host, and one that sees it unreachable closes it.
+- A listing that sees a machine `running` opens a stretch for it charged to the host, `isRunning` answers true for that row, and a listing that sees it unreachable closes it.
 - `quote` holds `'`, `$()`, a backtick, `;`, a newline and a space.
 
 ## Resume

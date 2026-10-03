@@ -90,6 +90,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 | A new session whose id a running or listed session already holds, under any scheme, is refused with `-32003` before anything is made for it | (defaulted: the id is what a session's flags, config, marks and titles are kept by, so two sessions under one id would share them) | 01 |
 | A disposed session is dropped from `owners`, so its id can be created again until a listing finds it on disk | (defaulted: a disposed session is gone, and the check above would otherwise refuse its id for the life of the daemon) | 01 |
 | A nested host's inner session keeps `ahp-session:/<uuid>` | same answer | - |
+| A session whose recorded provider did not load after a restart is listed under that provider, is not openable, and its record is never rewritten | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item"; [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) | host/41 02 |
 | The mismatch is reported upstream: an issue on the agent-host-protocol repository asking whether a session's scheme must be its provider, its text shown to Softov before it is posted | Softov, 2026-09-30, asked "should we also report upstream that VS Code reads a session's provider from its URI scheme?": "Yes, text shown first" | 06 |
 
 ## Proposed architecture
@@ -135,7 +136,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 
 - [ ] A session created as `ahp-session:/<uuid>` with `provider: "claude"` is listed, added and removed as `claude:/<uuid>`.
 - [ ] The creating client subscribes, dispatches, forks and disposes under `ahp-session:/<uuid>` and is answered in that spelling.
-- [ ] The same session reads the same before and after a restart.
+- [ ] The same session reads the same before and after a restart, when its provider loads again; a provider that does not load leaves it listed under its name and not openable, per [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md).
 - [ ] `pnpm test` passes in `packages/sdk`, including `conformance.test.ts`.
 - [ ] The Agents Window opens a session ahpapp created, with its history and its pending approval.
 - [ ] `plans/index.md` updated.

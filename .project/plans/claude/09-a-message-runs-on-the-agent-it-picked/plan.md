@@ -7,8 +7,9 @@ created: 2026-09-29
 revalidated: 2026-09-29
 requires: []
 refs:
-  - "[code://packages/sdk/src/types/session.ts#L205-L210](../../../../packages/sdk/src/types/session.ts#L205-L210) - `MessageFrom`, which carries no agent"
-  - "[code://packages/sdk/src/host.ts#L5550-L5585](../../../../packages/sdk/src/host.ts#L5550-L5585) - `modelIn` and `messageFrom`, read on each send"
+  - "[code://packages/sdk/src/types/session.ts#L219-L225](../../../../packages/sdk/src/types/session.ts#L219-L225) - `MessageFrom`, which carries no agent"
+  - "[code://packages/sdk/src/host.ts#L6743-L6764](../../../../packages/sdk/src/host.ts#L6743-L6764) - `messageFrom`, read on each send, which answers undefined when a message has neither `origin` nor `_meta`"
+  - "[code://packages/sdk/src/host.ts#L1240-L1246](../../../../packages/sdk/src/host.ts#L1240-L1246) - `about(provider)`, whose `models` are what the variant offers"
   - "[code://packages/sdk/src/host.ts#L8401-L8523](../../../../packages/sdk/src/host.ts#L8401-L8523) - `chat/turnStarted` for a resumed and a live session"
   - "[code://packages/sdk/src/host.ts#L4455-L4470](../../../../packages/sdk/src/host.ts#L4455-L4470) - `beginOrRun`"
   - "[code://packages/agent-claude/src/session.ts#L185-L345](../../../../packages/agent-claude/src/session.ts#L185-L345) - `customizationsOf`: every agent, a built-in too, gets a `file://~/.claude/agents/<name>.md` uri"
@@ -53,6 +54,8 @@ client: message.agent = { uri } -> host chat/turnStarted -> messageFrom(message)
 | A uri resolves to the file's frontmatter `name`, its basename when that fails, or the last segment of a `claude-internal:` uri; a file removed since passes its basename | https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L206-L252 | 03 |
 | The agent is not stored per session: the next message carries it again | (defaulted: the protocol sends it on every message, so nothing is lost across a restart) | 03 |
 | A restored session reopens on its saved model and reports it, as VS Code restores `claude.model` | Softov, 2026-09-30, asked "A restored Claude session doesn't report its last model until the next message. Should I add a task so it reopens on its saved model, as VS Code does?": "Add to claude/09"; https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L75 | 05 |
+| A stored model is chosen only when the variant offers it (`about(provider).models`); otherwise the session opens with none chosen | (defaulted: a variant's endpoint may not serve a model another variant stored, and a stored id must not reach a CLI that refuses it) | 05 |
+| A message that carries only `agent`, with neither `origin` nor `_meta`, still hands the backend a `from` | (defaulted: `messageFrom` returning undefined for such a message would drop the pick) | 01 |
 
 ## Proposed architecture
 

@@ -66,7 +66,7 @@ session start -> placedIn(folder = worktree, owner, team, project) -> the varian
 ### Gaps
 
 - A secret sits in the host's process list as `-e KEY=VALUE`.
-- An ACP agent cannot say what its machine needs, and agent-acp has no presets to hang a machine block on; signing in is [acp 04](../../acp/04-the-bridge-signs-in/plan.md), not yet on main.
+- An ACP agent cannot say what its machine needs, and agent-acp has no presets to hang a machine block on until [acp/05](../../acp/05-presets/plan.md) is rewritten to agent-claude's shape; signing in is [acp 04](../../acp/04-the-bridge-signs-in/plan.md), built 2026-10-02.
 - A need value in the computer plugin's options is plain text in root config.
 - No agent CLI is built by ahpd; Claude's is the host's binary.
 - A disposable machine pays every copy-in again.
@@ -108,31 +108,31 @@ Child plans, each scoped to one package or two.
 | Plan | Package | Status | Depends on |
 | --- | --- | --- | --- |
 | [p1 - A secret reaches a machine in its environment, never in its argv](../05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) | computer | planned | container 03 |
-| [p2 - An ACP preset says what its machine needs](../05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md) | agent-acp | planned | p1, the ACP presets plan |
+| [p2 - An ACP preset says what its machine needs](../05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md) | agent-acp | planned | p1, acp 05 (the ACP presets plan) |
 | [p3 - Parts are built from one versions file](../05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md) | computer (images) | planned | - |
 | [p4 - A part is mounted into a machine](../05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md) | sdk, computer | planned | p3, plugin 15, container 03 |
-| [p5 - Agents run from their parts and keep their own state](../05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md) | agent-claude, agent-acp, agent-cofold, agent-pi | planned | p2, p4, p6, the ACP presets plan |
+| [p5 - Agents run from their parts and keep their own state](../05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md) | agent-claude, agent-acp, agent-cofold, agent-pi | planned | p2, p4, p6, acp 05 (the ACP presets plan) |
 | [p6 - An agent's configuration lives in a volume per profile](../05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/plan.md) | sdk, computer | planned | - |
 | [p7 - A worktree reaches its machine with its repository](../05-an-agent-in-a-machine-p7-a-worktree-brings-its-repository/plan.md) | sdk, computer | planned | plugin 16 |
 | [p8 - A profile's machines may live on another Docker](../05-an-agent-in-a-machine-p8-a-profile-on-another-docker/plan.md) | computer | planned | p5, p7, p9, p12 |
-| [p9 - An ssh machine runs a nested host](../05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md) | computer, sdk | planned | p5 |
-| [p10 - A host joins another, which relays its sessions](../05-an-agent-in-a-machine-p10-a-host-joins-a-hub/plan.md) | server, sdk | planned | p9 |
+| [p9 - An ssh machine runs a nested host](../05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md) | computer, sdk | planned | container 04 (tasks 11, 14, 15, 17) |
+| [p10 - A host joins another, which relays its sessions](../05-an-agent-in-a-machine-p10-a-host-joins-a-hub/plan.md) | server, sdk | planned | p9, p12, daemon 13 |
 | [p11 - A virtual machine is made for a computer, by libvirt and then by Proxmox](../05-an-agent-in-a-machine-p11-a-vm-is-made-for-a-machine/plan.md) | computer | planned | p3, p5, p8, p9, p12 |
-| [p12 - A machine off this host reaches its models through this host's proxy](../05-an-agent-in-a-machine-p12-a-machine-off-this-host-reaches-models-through-the-proxy/plan.md) | sdk, computer, server | planned | p9, proxy 02 |
+| [p12 - A machine off this host reaches its models through this host's proxy](../05-an-agent-in-a-machine-p12-a-machine-off-this-host-reaches-models-through-the-proxy/plan.md) | sdk, computer, server | planned | p9, claude 16, the proxy listener plan (not written yet) |
 
 ## Risks and tradeoffs
 
 - Image mounts are experimental in Docker 29 - the volume fallback is built in p4, and its test runs without image mount support.
 - Parts are read-only - an agent that writes beside its binary is pointed at its config dir by its preset.
 - Plugin 15 and 16 still have fix tasks open - p4, p6 and p7 change the same files, so those fix tasks land first.
-- acp/04, 05, 06, 08, 09 and 11 are not on main yet - no child builds on their code until they land, and acp/05's one-preset-per-load shape gives way to the ACP presets plan.
+- acp/05 assumes one spec per ACP backend - p2 and p5 build on it only once it is rewritten to agent-claude's shape, one load with a `presets` map.
 - container/03 switches dev containers to `docker exec` - p1 leaves the `devcontainer exec` writer to that switch, and p4's dev container parts wait for it.
 
 ## Resume state
 
 - **Done so far:** nothing; planned 2026-09-26, revalidated against main 2026-10-02 after claude/15 landed.
 - **Next action:** finish plugin 15 and 16's fix tasks, then p1 and p3, which do not depend on each other; p5 task 09 needs nothing else.
-- **Open questions:** each child carries its own in its Resume state; as of 2026-10-03 only p1's is open (how a vault-named value reaches a dev container if the Dev Container CLI does not resolve `${localEnv:NAME}`); p2 and p5 also wait for the ACP presets plan, not yet written, which ships presets for the known agents.
+- **Open questions:** each child carries its own in its Resume state, each marked with the task it must be asked before; p2 and p5 also wait for acp/05, rewritten as the ACP presets plan, which ships presets for the known agents; p12 waits for a proxy listener plan that does not exist yet.
 - **Watch out for:**
   - No child cites another project.
   - Most answers recorded in the children on 2026-10-03 are current choices for fast development, not decisions: each is made in one function or option named in its row, so it can change without a new decision.
@@ -141,7 +141,7 @@ Child plans, each scoped to one package or two.
 
 ## Final verification checklist
 
-- [ ] A disposable Codex session runs in `debian:bookworm-slim` with nothing installed in the image and nothing mounted from the host's home.
+- [ ] A disposable Codex session runs in `debian:bookworm-slim` with nothing installed in the image and nothing mounted from the host's home (waits on acp/05, the ACP presets plan, which gives Codex a preset).
 - [ ] `ps` on the host shows no secret value while a machine runs.
 - [ ] A second disposable machine of the same profile starts without building or copying anything.
 - [ ] A session with worktree isolation commits inside its machine.

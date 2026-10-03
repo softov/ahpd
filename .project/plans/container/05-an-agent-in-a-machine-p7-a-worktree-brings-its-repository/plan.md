@@ -7,12 +7,13 @@ created: 2026-09-26
 revalidated: 2026-10-02
 requires:
   - plans/plugin/16-a-disposable-machine/plan.md
+  - plans/container/03-a-dev-container-is-a-computer/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L5304-L5334](../../../../packages/sdk/src/host.ts#L5304-L5334) - `placedIn`, which hands the folder, already the worktree, to the machine maker beside the owner, team and project"
+  - "[code://packages/sdk/src/host.ts#L5372-L5402](../../../../packages/sdk/src/host.ts#L5372-L5402) - `placedIn`, which hands the folder, already the worktree, to the machine maker beside the owner, team and project"
   - "[code://packages/sdk/src/host.ts#L5223](../../../../packages/sdk/src/host.ts#L5223) - `isolated`, which makes the worktree"
   - "[code://packages/sdk/src/worktrees.ts#L58-L64](../../../../packages/sdk/src/worktrees.ts#L58-L64) - `gitWorktrees`, whose `repository` already asks git with `rev-parse` under a five-second limit"
   - "[code://packages/sdk/src/types/worktrees.ts#L73-L112](../../../../packages/sdk/src/types/worktrees.ts#L73-L112) - the `Worktrees` port"
@@ -24,7 +25,7 @@ refs:
 
 ## Goal
 
-A session whose folder is a worktree, or a folder below a repository's root, can run git inside its machine: the repository's git directory is mounted at its own path beside the folder.
+A session whose folder is a worktree, or a folder below a repository's root, can run git inside its machine: the repository's git directory is mounted at its own path beside the folder, and a subfolder session gets the repository root mounted rather than the subfolder alone.
 
 ## Reconnaissance
 
@@ -59,8 +60,11 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 | The git directory is mounted read-write, because a commit writes objects and refs there | git's own layout | 02 |
 | The whole common git directory, not only the worktree's entry under it | git needs the objects and refs, which are shared | 02 |
 | A git directory already inside the folder adds no mount | nothing to add | 01 |
-| `hooks/`, `config` and `config.worktree` are read-only in the machine | the worktree review of 2026-09-26: hooks and `core.hooksPath` in a shared git directory run on the host's next commit | 03 |
-| A crashed agent's `index.lock` in its own worktree entry is removed when the machine goes | same review: a stale lock stops every git command until a person removes it | 03 |
+| `hooks/`, `config`, `worktrees/` but the session's own entry, that entry's `config.worktree` and the worktree's `.git` file are read-only in the machine; no per-file bind for another worktree | the worktree review of 2026-09-26: hooks and `core.hooksPath` in a shared git directory run on the host's next commit; a per-file bind of a pruned entry makes a root-owned directory on the host | 03 |
+| A session in a subfolder mounts the repository root, not the subfolder and `.git` alone | (defaulted: a subfolder alone makes the rest of the tree look deleted to `git commit -a` and rewrites the shared index) | 01, 02 |
+| On the dev container route, the git directory and its read-only binds go through `overrideOf`, and `gitDir` is asked for the `devcontainer://` folder | (defaulted: container/03 delivers every read-only and extra mount through its override config) | 01, 02, 03 |
+| A failed `rev-parse` logs one line and mounts nothing | (defaulted: a quiet failure looks like a folder outside a repository) | 01 |
+| A crashed agent's `index.lock` in its own worktree entry is removed after the container is gone | same review: a stale lock stops every git command until a person removes it | 03 |
 
 ## Proposed architecture
 
@@ -85,7 +89,7 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 - **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-01-the-host-hands-on-the-git-directory.md](task-01-the-host-hands-on-the-git-directory.md).
-- **Open questions:** none.
+- **Open question (ask before task 02):** git in the machine runs as root (no `--user`), so it refuses the host user's repository as dubious ownership, or leaves root-owned objects in the host's `.git` - (a) run the machine's commands as the host user's uid:gid whenever `gitDir` is mounted, or (b) mark the directories safe with `safe.directory` through `GIT_CONFIG_COUNT` in the exec env and chown what the machine wrote back to the host user when the session leaves?
 - **Watch out for:**
   - plugin 16 task 10, not yet built, gates the folder by the profile; the git directory must go through the same gate.
   - This plan is for a machine on this host; a machine on another box gets the session's code by a clone, which is p8 to p10's.

@@ -8,11 +8,12 @@ revalidated: 2026-09-30
 requires:
   - plans/claude/08-tool-input-is-the-whole-input/plan.md
 refs:
-  - "[code://packages/agent-claude/src/session.ts#L1885-L1920](../../../../packages/agent-claude/src/session.ts#L1885-L1920) - AskUserQuestion becomes `chat/inputRequested`, questions keyed `q1`, `q2`"
-  - "[code://packages/agent-claude/src/session.ts#L3560-L3588](../../../../packages/agent-claude/src/session.ts#L3560-L3588) - the answers settled as `updatedInput: { questions, answers }`, keyed by question text"
+  - "[code://packages/agent-claude/src/session.ts#L2052-L2086](../../../../packages/agent-claude/src/session.ts#L2052-L2086) - AskUserQuestion becomes `chat/inputRequested`, questions keyed `q1`, `q2`"
+  - "[code://packages/agent-claude/src/session.ts#L3744-L3787](../../../../packages/agent-claude/src/session.ts#L3744-L3787) - the answers settled as `updatedInput: { questions, answers }`, keyed by question text"
   - "[code://packages/agent-claude/src/input.ts](../../../../packages/agent-claude/src/input.ts) - `toolInputOf`"
   - "[code://packages/agent-claude/src/transcript.ts#L230-L350](../../../../packages/agent-claude/src/transcript.ts#L230-L350) - a replayed `tool_result`"
   - https://github.com/microsoft/vscode/blob/832cf23c588/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L278-L305 - VS Code hands the SDK `{ ...input, answers }`
+  - npm://@microsoft/agent-host-protocol@0.9.0 - `ChatToolCallCompleteAction` (`src/types/channels-chat/actions.ts#L336-L342`) carries only `result` and `requiresResultConfirmation` beside the base's `turnId`, `toolCallId` and `_meta`, so it cannot carry a new `toolInput`; `ToolCallResult.structuredContent` is a free record
 ---
 
 ## Goal
@@ -36,14 +37,14 @@ The files read are the `refs` above.
 
 | What | Source | Task |
 | --- | --- | --- |
-| A completed AskUserQuestion's `toolInput` is the input the tool ran with: its questions plus `answers`, keyed by question text, a multi-select as an array, as the SDK is handed them | Softov, 2026-09-30, asked "Plan the answered-questions layout?": "claude/11 + ahpapp"; the shape is the SDK's and VS Code's `{ ...input, answers }` | 01, 02 |
+| A completed AskUserQuestion carries the input the tool ran with: its questions plus `answers`, keyed by question text, a multi-select as an array, as the SDK is handed them; where on the completed call it travels is the open question below | Softov, 2026-09-30, asked "Plan the answered-questions layout?": "claude/11 + ahpapp"; the shape is the SDK's and VS Code's `{ ...input, answers }` | 01, 02 |
 | A replayed call takes the answers from the transcript's `toolUseResult.answers`; a call with none keeps its input as sent | (defaulted: the transcript is the only record after a restart) | 02 |
 | A denied or cancelled question keeps its input as sent | (defaulted: nothing was answered) | 01 |
 | [A restored AskUserQuestion is drawn as the answered question](../../../decisions/a-restored-question-is-drawn-answered.md): a restored turn carries the answered `inputRequest` part, built by the code the live question uses | Softov, 2026-09-30, asked "Should ahpd rebuild the answered question on restore?": "Rebuild it, in claude/11" | 03 |
 
 ## Proposed architecture
 
-- **Data flow** - live: the settle at 3587 also sets the call's `toolInput` to `toolInputOf('AskUserQuestion', updatedInput)` and it reaches clients on the complete action; replay: `transcript.ts` merges `toolUseResult.answers` into the call's input.
+- **Data flow** - live: the settle at 3786 builds `{ ...input, answers }` and it reaches clients on the complete action, in the place the open question settles; replay: `transcript.ts` reads `toolUseResult.answers` and puts them in the same place on the replayed call.
 - **Layer responsibilities** - agent-claude only.
 - **Source-of-truth files** - [`code://packages/agent-claude/src/session.ts`](../../../../packages/agent-claude/src/session.ts), [`code://packages/agent-claude/src/transcript.ts`](../../../../packages/agent-claude/src/transcript.ts)
 
@@ -57,17 +58,17 @@ The files read are the `refs` above.
 
 ## Risks and tradeoffs
 
-- `toolInput` changes between the ready and the complete actions of one call; a client reads the latest, which the protocol's reducer keeps.
+- The protocol's complete action has no `toolInput`, so the input sent on the ready action stays the call's `toolInput`; the answers travel beside it, where the open question settles.
 
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md), after claude/08 is committed.
-- **Open questions:** none.
+- **Next action:** ask the question below, then [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md); claude/08 is committed (fd3295b).
+- **Open question (ask before task 01):** `ChatToolCallCompleteAction` carries only `result` and `requiresResultConfirmation` (protocol 0.9.0), so the answered input cannot be sent as a new `toolInput` on the complete action - (a) the answers travel in `result.structuredContent`, or (b) in the complete action's `_meta`; task 02's replayed call carries them in the same place.
 - **Watch out for:** VS Code hides a completed AskUserQuestion row and draws only the `inputRequest` part, so tasks 01 and 02 alone change nothing in VS Code. ahpapp's chat/01 draws from this; keep the answer values as the SDK has them, strings and arrays of strings.
 
 ## Final verification checklist
 
-- [ ] A live and a replayed answered AskUserQuestion carry the same `toolInput.answers` and the same answered `inputRequest` part.
+- [ ] A live and a replayed answered AskUserQuestion carry the same answers, in the place the open question settles, and the same answered `inputRequest` part.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 - [ ] `plans/index.md` updated.

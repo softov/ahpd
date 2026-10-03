@@ -18,9 +18,9 @@ decisions:
   - decisions/a-nested-host-is-configured-by-the-machine-profile-only.md
   - decisions/a-backend-that-runs-nested-names-its-plugin.md
 refs:
-  - "[code://packages/agent-cofold/src/agent.ts#L646](../../../../packages/agent-cofold/src/agent.ts#L646) - cofold's `runsNested: true`"
+  - "[code://packages/agent-cofold/src/agent.ts#L673](../../../../packages/agent-cofold/src/agent.ts#L673) - cofold's `runsNested: true`"
   - "[code://packages/sdk/src/nested.ts](../../../../packages/sdk/src/nested.ts) - the proxy: the nested host's stdio, the inner session, the mirror"
-  - "[code://packages/sdk/src/host.ts#L3617-L3619](../../../../packages/sdk/src/host.ts#L3617-L3619) - the host gives a `runsNested` backend the proxy when its session names a computer"
+  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - the host gives a `runsNested` backend the proxy when its session names a computer"
   - "[code://packages/computer/src/plugin.ts#L634-L646](../../../../packages/computer/src/plugin.ts#L634-L646) - `nestedHost`, which starts the inner host through `reach`"
   - "[code://packages/sdk/src/types/computers.ts#L19-L143](../../../../packages/sdk/src/types/computers.ts#L19-L143) - `ComputerPort.how` and `Spawn`, a process in a machine"
   - "[code://packages/sdk/src/rpc.ts#L88](../../../../packages/sdk/src/rpc.ts#L88) - `createPeer`, a `Wire` over stdio"
@@ -58,7 +58,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 - Several members answer `true` whatever happened (`setConfig` at [`code://packages/sdk/src/nested.ts#L486`](../../../../packages/sdk/src/nested.ts#L486)); `models` and `awaiting` are always empty (`:411`, `:506`).
 - The inner session is created at this host's path rather than the machine's.
 - `close` sends `disposeSession` and kills the process in the same tick ([`code://packages/sdk/src/nested.ts#L511-L524`](../../../../packages/sdk/src/nested.ts#L511-L524)).
-- The inner plugin is derived as `@ahpd/agent-${name}` ([`code://packages/sdk/src/nested.ts#L98`](../../../../packages/sdk/src/nested.ts#L98)), and `runsNested` is a boolean ([`code://packages/sdk/src/validate.ts#L69`](../../../../packages/sdk/src/validate.ts#L69), [`code://packages/sdk/src/types/agent.ts#L370`](../../../../packages/sdk/src/types/agent.ts#L370)).
+- The inner plugin is derived as `@ahpd/agent-${name}` ([`code://packages/sdk/src/nested.ts#L98`](../../../../packages/sdk/src/nested.ts#L98)), and `runsNested` is a boolean ([`code://packages/sdk/src/validate.ts#L69`](../../../../packages/sdk/src/validate.ts#L69), [`code://packages/sdk/src/types/agent.ts#L439`](../../../../packages/sdk/src/types/agent.ts#L439)).
 - `packages/sdk/test/nested-process.test.ts` does not exist yet; every pipe behaviour is tested only against in-memory fakes.
 
 ## Decisions locked in
@@ -83,6 +83,9 @@ process exits                    -> [new] the session ends with the stderr tail 
 | The inner session works at the path the session's folder is mounted at inside the machine | follows from the mount mapping `how` already applies | 14 |
 | The proxy rewrites every inner chat URI to an outer one before it emits: the inner default chat becomes the session's `chatUri`, and any other inner chat an outer URI the proxy names and serves. | Softov, 2026-09-26: "the proxy rewrites them to outer ones". | 10 |
 | A nested session whose inner host has ended refuses every later action and turn with the sentence it ended with; it neither hangs nor restarts the inner host. | Softov, 2026-09-26: "refuse later actions and turns with the reason (no hang, no restart)". | 09 |
+| The inner session falls back to the single agent the inner host serves only when the outer agent is the plugin's default provider; a variant the inner host does not serve ends the session with a sentence naming it | (defaulted: a variant run as the plain agent would run `claude-openrouter` with `claude`'s endpoint and keys) | 17 |
+| The real-process test hands the inner host an explicit env of `PATH`, `HOME` and the XDG directories only | (defaulted: a spread `process.env` lets the runner's environment decide what the inner host does) | 07 |
+| The image's user has a writable `HOME` and `XDG_CONFIG_HOME` with no mount under them, and a read-only config directory ends the session with the inner host's `EACCES` sentence; the image build is checked by hand | (defaulted: Docker makes a bind target's parents root, and a nested ahpd exits with `EACCES` when it cannot make `$XDG_CONFIG_HOME/ahpd`) | 16 |
 | The proxy implements a member only when it can report the inner session's real answer; the rest are left out so the host refuses them, and required members answer from the mirrored inner state. | Softov, 2026-09-26: "leave them out so the host refuses them honestly (no blind `true`)". | 12, 13 |
 
 ## Tasks
@@ -118,7 +121,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 - **Done so far:** tasks 01 to 06 implemented on 2026-09-26: the computers port starts a nested host, `packages/sdk/src/nested.ts` is the proxy, `Agent.runsNested` chooses it, cofold declares it, and `docs/COMPUTER.md` explains it.
 - **Next action:** [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md), which also builds the real-process test the later tasks use.
-- **Open questions:** none.
+- **Open question (ask before task 17):** task 17 removes the `@ahpd/agent-${name}` default, which is wrong for every variant, and container/05 p9 task 03 reaches every backend through `nestedAgent`, so how does the host know the package an agent comes from - (a) every backend declares its plugin (`runsNested: { plugin }`, or a `nestedPlugin` member for a backend that does not run nested by default), or (b) the host records which package registered each agent?
 - **Watch out for:** a failure must end the session with a sentence and never hang or throw; the in-memory fakes in `packages/sdk/test/nested-proxy.test.ts` hid an `EPIPE` crash, so a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` (created by task 07) against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session. `nested` reaches a machine through `reach`, so a dev container is reached by `docker exec` once container/03 task 18 lands, and nothing here changes for it.
 
 ## Final verification checklist

@@ -27,7 +27,7 @@ Variants of one plugin that declare one state directory share its volume.
 ## Steps
 
 1. Pass the mode to `resolveNeeds`.
-2. Name volumes through `stateVolumeOf`: by profile and the whole state directory; without a profile, by machine id and that directory. The provider is not in the name, so the variants of one plugin share one volume.
+2. Name volumes through `stateVolumeOf`: by profile and the whole state directory; without a profile, `ahpd-state-<machine id>-<state directory>`. The provider is not in the name, so the variants of one plugin share one volume. Whether the machine's owner joins the profile's name waits on the plan's open question; `stateVolumeOf` is the one place that changes.
 3. A state need identical to another collapses with it (task 05); refuse a state target that collides with a differing need, as any other target.
 
 ## Validation

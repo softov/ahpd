@@ -7,6 +7,8 @@ created: 2026-09-26
 revalidated: 2026-10-02
 requires:
   - plans/container/01-a-session-in-a-dev-container/plan.md
+  - plans/container/03-a-dev-container-is-a-computer/plan.md
+  - plans/plugin/16-a-disposable-machine/plan.md
 changes: []
 creates: []
 decisions:
@@ -63,6 +65,7 @@ idle or removed                                 -> [new] vscode/devContainers/st
 | A relayed dev container listed as a computer is `container/03` | Softov, 2026-09-26: "Its own plan, container/03" | - |
 | ahpapp keeping a container across its own reload is an ahpapp plan | Softov, 2026-09-26: "Yes, via do-spec in ahpapp" | - |
 | ahpd serves `vscode/devContainers/stop` and `remove` under VS Code's names and shapes | upstream parity; VS Code 1.140 `agentHostExtensionProtocol.ts:27-28` | 04 |
+| Stop and remove also answer `false` while any session is placed on the folder's computer, and task 04 is built after container/03 and plugin/16 | (defaulted: after container/03 the container is a shared computer with sessions placed on it, and plugin/16 brings the `computer:write` gate and the owner) | 04 |
 | `chat.remoteAgentHostsEnabled` and `chat.agentHost.devContainer.enabled` both default to `true` in VS Code 1.140, so neither is a step, only a check | VS Code 1.140 (`7516b04bc94`) | 01, 03 |
 
 ## Tasks
@@ -72,7 +75,7 @@ idle or removed                                 -> [new] vscode/devContainers/st
 | [01 - The tunnel route tried by hand, with every check recorded](task-01-the-tunnel-route-tried-by-hand.md) | todo | - |
 | [02 - What the tunnel try found missing is fixed in ahpd](task-02-what-the-tunnel-try-found-missing.md) | todo | 01 |
 | [03 - The route to VS Code's dev container flow is documented](task-03-the-route-documented.md) | todo | 01 |
-| [04 - VS Code's stop and remove reach the folder's computer](task-04-stop-and-remove-are-served.md) | todo | - |
+| [04 - VS Code's stop and remove reach the folder's computer](task-04-stop-and-remove-are-served.md) | todo | container 03, plugin 16 |
 
 ## Risks and tradeoffs
 
@@ -82,8 +85,8 @@ idle or removed                                 -> [new] vscode/devContainers/st
 ## Resume state
 
 - **Done so far:** the research note and the route decision, 2026-09-26.
-- **Next action:** task 01 again, with the tunnel made under the same provider and account VS Code signs in with; task 04 needs nothing from it and can go first.
-- **Open questions:** none.
+- **Next action:** task 01 again, with the tunnel made under the same provider and account VS Code signs in with; task 04 needs nothing from task 01 and is built after container/03 and plugin/16.
+- **Open question (ask before task 04):** what do `vscode/devContainers/stop` and `remove` need from the asker - (a) `container:write` and `computer:write`, or (b) those and being the computer's owner?
 - **Watch out for:** a local Windows folder is launched by VS Code with Windows' Docker and never reaches ahpd; testing with one proves nothing about ahpd. The tunnel labels already match what VS Code filters on; VS Code lists tunnels with its own GitHub or Microsoft token, so a tunnel made by `devtunnel user login` under another provider or account never appears.
 
 ## Final verification checklist

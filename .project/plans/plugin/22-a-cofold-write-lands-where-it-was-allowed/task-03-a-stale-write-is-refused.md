@@ -5,6 +5,7 @@ depends: [task-01-the-approach-is-chosen.md]
 layer: "cofold tools"
 refs:
   - file:///github/cofold/packages/tools/src/files.ts - `read_file`, `write_file` and `edit_file`
+  - file:///github/cofold/packages/agents/src/run/turn.ts - `capArgs`, rebuilt each run, carrying `sessionId` and `kv`
 ---
 
 ## Objective
@@ -13,13 +14,14 @@ In `/github/cofold`, `read_file` records `mtime` and size per session; a write o
 
 ## Files
 
-- `UPDATE: /github/cofold/packages/tools/src/files.ts` - the record and the check.
+- `UPDATE: /github/cofold/packages/tools/src/files.ts` - the record, keyed by `capArgs.sessionId`, and the check.
 - `UPDATE:` cofold's tools tests.
 
 ## Steps
 
-1. Tests first: read then write passes; write without a read is refused; read, change from outside, write is refused; write then write again passes; a new file needs no read.
-2. Implement.
+1. Where the record lives waits on the plan's open question; key it by `capArgs.sessionId` either way, since the tools closure lasts one run.
+2. Tests first: read then write passes; write without a read is refused; read, change from outside, write is refused; write then write again passes; a new file needs no read; a read in one run and a write in the next run of the same session passes.
+3. Implement.
 
 ## Validation
 

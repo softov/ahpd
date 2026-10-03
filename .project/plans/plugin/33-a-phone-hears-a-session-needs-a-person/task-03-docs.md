@@ -5,7 +5,7 @@ depends:
   - task-02-a-waiting-session-is-sent.md
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L241-L300](../../../../docs/PLUGINS.md#L241-L300) - the Events section, which gains a consumer"
+  - "[code://docs/PLUGINS.md#L373-L432](../../../../docs/PLUGINS.md#L373-L432) - the Events section, which gains a consumer"
 ---
 
 ## Objective

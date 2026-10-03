@@ -70,6 +70,9 @@ The files read are the `refs` above.
 | A close waits for the automation runs already starting a session, as for the sessions | Softov, fifth review of daemon/13, 2026-09-30 | 02 |
 | `HOST_CLOSE_WAIT_MS` is five seconds | (defaulted: a backend takes its process down in well under that once stdin closes, and one that ignores its kill does not hold a stop for ever) | 02 |
 | A daemon `start` spawns carries `AHPD_DETACHED=1`, which the daemon reads and deletes at once, and only such a daemon listens for the restart signals | (defaulted: a foreground daemon keeps the default for both signals, and a session's shell never inherits the variable) | 02 |
+| `plugin config` says when the running daemon's recorded `--plugin-option` overrides the key it set, since a restart starts that argv again | (defaulted: a set that a restart silently ignores reads as a broken command) | 04 |
+| A plugin or preset that fails to load at a restart is skipped and the successor runs with the rest; `start` and `restart` print what was skipped and exit 0 | Softov, 2026-10-03, "Only its item"; [host/41 task 03](../../host/41-a-failure-belongs-to-the-item-that-failed/task-03-start-and-restart-say-what-was-skipped.md) | host/41 03 |
+| A session whose agent did not load after a restart is listed under it, not openable, its record never rewritten | Softov, 2026-10-03; [host/41 task 02](../../host/41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) | host/41 02 |
 
 ## Proposed architecture
 
@@ -84,12 +87,15 @@ The files read are the `refs` above.
 | [01 - The record keeps the argv](task-01-the-record-keeps-the-argv.md) | implemented | - |
 | [02 - `ahpd restart`](task-02-ahpd-restart.md) | implemented | 01 |
 | [03 - The restart line and docs](task-03-the-restart-line-and-docs.md) | implemented | 02 |
+| [04 - `plugin config` says a recorded flag overrides it](task-04-plugin-config-says-a-recorded-flag-overrides-it.md) | todo | 01 |
 
 ## Risks and tradeoffs
 
 - Between the old listener closing and the new one opening, a client reconnects; the connect URL keeps its token unless the file or the recorded line changed it, in which case the new record carries the new one.
 - A new daemon that fails to start leaves none running; the command waits while the old daemon stops, then `SUCCESSOR_WAIT_MS` from its starting line, and reports the log's last lines when no answer comes.
-- A configuration or token that no longer reads, found at a restart, is refused before anything goes down, and the old daemon runs on; a fault the recorded line only meets once it runs, such as a plugin that now fails to load, still leaves no daemon running.
+- A configuration or token that no longer reads, found at a restart, is refused before anything goes down, and the old daemon runs on.
+- A plugin that now fails to load is skipped and the successor runs with the rest; only a successor left with no backend at all refuses to start. [host/41 task 03](../../host/41-a-failure-belongs-to-the-item-that-failed/task-03-start-and-restart-say-what-was-skipped.md) has `restart` print what was skipped, and [host/41 task 02](../../host/41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) keeps that agent's sessions listed under it.
+- A `--plugin-option` in the recorded argv is started again by every restart and wins over a later `plugin config` of the same key; task 04 says so when the key is set.
 - A backend whose process ignores its kill is left to the operating system after `HOST_CLOSE_WAIT_MS`, and may briefly overlap the successor, though never on the stores.
 - A child a pi or cofold session started, such as a pi bash tool's shell, is not waited on: pi's backend close is a synchronous `session.dispose()` and cofold's close stops its run without an exit to wait for, so a forced restart may leave such a child running briefly beside the successor, which does not share the stores with it.
 - Accepted, with no lock on the record: `claim` reads the record and then renames its own over it, and `forget` reads it and then unlinks it, each a few microseconds apart, so a write by another process in that window can be overwritten or removed. It needs two daemons changing the record in the same microseconds, which a person's `ahpd stop` and `ahpd start` beside a restart do not.
@@ -98,8 +104,8 @@ The files read are the `refs` above.
 
 - **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
 - **Reviews applied:** the first review of 2026-09-30, the terminal signalling only and waiting while the old daemon stops; the second, with the receipt line, refusals tagged by signal, the claimed record, the grace close and the quiesce; the third, with `stop` forgetting only its daemon's record, `Host.close` awaited and refusing new work, the line and token read before going down, the record's lock, the announcement by pid, Bun and Deno closes, and the terminal's words. The fourth, with the lock made whole by a hard link and reaped by compare, every failure after the way down began exiting 1, `Host.close` steps each logged and the stores closed after the wait, the turns read again after the line, `typedValue` refusing only what loses its value, and the log read from its offset. The fifth, with the lock dropped at Softov's answer, the listen tests waiting on the request rather than the clock, the receipt's words, `typedValue` alike at every depth, and a close waiting for automation runs already starting. The merge-readiness review, with a file that holds no record cleared, the child stopped when its record cannot be written, and the temp sweep keeping another user's pid.
-- **Next action:** review, the checklist's checks by hand, then `implemented.md` and `status: built`.
-- **Open questions:** none.
+- **Next action:** [task-04-plugin-config-says-a-recorded-flag-overrides-it.md](task-04-plugin-config-says-a-recorded-flag-overrides-it.md) once the question below is answered; review, the checklist's checks by hand, then `implemented.md` and `status: built`.
+- **Open question (ask before task 04):** a restart starts the recorded argv again, so a one-run flag such as `--plugin-option` or `--path` outlives the run it was typed for - (a) a restart keeps every one-run flag, and task 04 warns when one overrides a `plugin config` change, or (b) a restart drops the one-run flags and starts from the file, and task 04 is dropped.
 - **Watch out for:** `start` leaves out the program globals (`--remote`, `--token`); the recorded argv must be the child's, not the parent's.
 - **Watch out for:** a signal names no sender, so two terminals sending the same kind of signal read the same answer; they asked for the same thing, so either answer is true for both.
 
@@ -108,5 +114,6 @@ The files read are the `refs` above.
 - [ ] `ahpd start --path /tmp/x`, then `ahpd restart`: the new daemon serves `/tmp/x`, and a session made before resumes.
 - [ ] With a turn running, `ahpd restart` names the session and does nothing; `--force` restarts.
 - [ ] `POST /api/restart` from ahpapp restarts a daemon started with `ahpd start`.
+- [ ] Started with `--plugin-option @ahpd/agent-claude.workerStop=session`, `ahpd plugin config @ahpd/agent-claude workerStop turn` says the flag overrides it.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 - [ ] `plans/index.md` updated.

@@ -20,7 +20,7 @@ pi's `machine()` adds a state need at `/ahpd/pi`, with `PI_CODING_AGENT_DIR=/ahp
 ## Steps
 
 1. The host dir is `PI_CODING_AGENT_DIR` when the daemon has it, else `~/.pi/agent`.
-2. The secrets are the provider key variables pi reads; name them from pi's provider list, and stop and ask if pi's settings can name a variable of their own.
+2. The secrets are the provider key variables pi reads, named from pi's provider list. Whether pi's settings can name a variable of their own, and what then, waits on the plan's open question.
 3. A secret need has no default of the daemon's: its value is the profile's or the plugin's need value, which the vault resolves when it is written as a `{ "$secret" }`.
 4. In mode `host`, mount the host dir read-write at the same target, marked `when: 'host'`; pi locks `auth.json` across processes, so that route is safe on one filesystem.
 
@@ -28,5 +28,6 @@ pi's `machine()` adds a state need at `/ahpd/pi`, with `PI_CODING_AGENT_DIR=/ahp
 
 - Mode `volume`: the state need, its two seeds, the env, the secrets; no host mount.
 - Mode `host`: the mount and the env.
+- With `PI_CODING_AGENT_DIR` unset in the daemon, the seeds are read from `~/.pi/agent` under the test's `HOME`; with it set, from there.
 
 ## Resume

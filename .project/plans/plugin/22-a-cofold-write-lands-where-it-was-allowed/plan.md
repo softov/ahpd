@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: medium
 created: 2026-09-27
-revalidated: 2026-09-30
+revalidated: 2026-10-03
 requires:
   - plans/plugin/14-cofold-runs-its-own-tools/plan.md
 changes: []
@@ -17,6 +17,9 @@ refs:
   - "[code://packages/agent-cofold/src/session.ts#L446](../../../../packages/agent-cofold/src/session.ts#L446) - where the harness is given it"
   - file:///github/cofold/packages/tools/src/files.ts - `write_file` and `edit_file` resolve the path lexically with `resolveWithin(...).absolute` and write it with `writeFile`, which follows every link at the moment of the write
   - file:///github/cofold/packages/tools/src/paths.ts - `resolveWithin`, which judges real paths at the moment of the check
+  - file:///github/cofold/packages/agents/src/run/turn.ts - `capArgs` (around line 89): a capability's `tools` is called per run, so a record kept in the tools closure lasts one run; `capArgs.sessionId` and `capArgs.kv` outlive it
+  - file:///github/cofold/packages/agents/src/types/capability.ts - `CapabilityArgs`, with `sessionId` and `kv`
+  - "[code://packages/agent-cofold/test/agent-cofold-tools.test.ts#L324-L335](../../../../packages/agent-cofold/test/agent-cofold-tools.test.ts#L324-L335) - an `edit_file` of a file the session never read, which task 03 refuses"
   - npm://@cofold/tools@^0.1.1 - the release ahpd takes, whose tools this plan changes
   - https://nodejs.org/api/fs.html#file-open-constants - `O_NOFOLLOW` exists; `fs` has no `openat`, so a walk relative to a directory descriptor is not available
 ---
@@ -57,6 +60,8 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 | What | Source | Task |
 | --- | --- | --- |
 | The swapped-symlink window from plugin/14's Risks becomes a plan of its own, and plugin/14 closes as planned. | Softov, 2026-09-27, asked where the TOCTOU task goes: "New plugin plan". | - |
+| A write runs `resolveWithin` again inside `execute`, opens the file, and compares the handle's `fstat` with `stat` of the real path; a new file is opened `wx`; `edit_file` reads and writes through the same handle | (defaulted: the decision's mechanism spelt out so the check and the write share one file) | 02 |
+| The read record is keyed by `capArgs.sessionId`, because the tools closure is rebuilt each run | file:///github/cofold/packages/agents/src/run/turn.ts | 03 |
 | The candidates are opening then re-checking, opening by descriptor, and refusing a write when the file changed since it was read; which of them is decided in task 01. | Softov, 2026-09-27, asked how cofold's tools should close the window: "Open or recheck... also its possible to invalidate the write if the file was read and changed between the process?". | 01 |
 
 ## Tasks
@@ -65,7 +70,7 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 | --- | --- | --- |
 | [01 - The way cofold's tools close the window is chosen](task-01-the-approach-is-chosen.md) | done | - |
 | [02 - A write re-checks the file it opened](task-02-a-write-rechecks-the-file-it-opened.md) | todo | 01 |
-| [03 - A stale write is refused](task-03-a-stale-write-is-refused.md) | todo | 01 |
+| [03 - A stale write is refused](task-03-a-stale-write-is-refused.md) | todo | 01, and the open question in Resume state |
 | [04 - ahpd takes the cofold release](task-04-ahpd-takes-the-cofold-release.md) | todo | 02, 03, cofold release |
 
 ## Risks and tradeoffs
@@ -77,7 +82,7 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 
 - **Done so far:** task 01, the approach chosen 2026-09-30.
 - **Next action:** [task-02-a-write-rechecks-the-file-it-opened.md](task-02-a-write-rechecks-the-file-it-opened.md) and [task-03-a-stale-write-is-refused.md](task-03-a-stale-write-is-refused.md), in `/github/cofold`.
-- **Open questions:** none.
+- **Open question (ask before task 03):** where the per-session read record lives - (a) a module-level map in `@cofold/tools` keyed by session id, which lasts the process, or (b) the run's `kv` (`capArgs.kv`), which the store keeps.
 - **Watch out for:** Node's `fs` has `O_NOFOLLOW` but no `openat`, so "open by descriptor" can refuse a link only at the last name, not walk the path from the workspace one name at a time.
 
 ## Final verification checklist

@@ -23,7 +23,7 @@ refs:
   - "[code://packages/computer/src/runtime.ts#L194-L212](../../../../packages/computer/src/runtime.ts#L194-L212) - `ComputerRuntime`, which each maker implements"
   - "[code://packages/computer/src/runtime.ts#L389-L423](../../../../packages/computer/src/runtime.ts#L389-L423) - the records a docker machine keeps as labels, which a VM keeps in its own metadata"
   - "[code://packages/computer/src/plugin.ts#L410-L454](../../../../packages/computer/src/plugin.ts#L410-L454) - `made`, which meters up time around every start, stop and removal"
-  - "[code://packages/computer/src/plugin.ts#L56-L91](../../../../packages/computer/src/plugin.ts#L56-L91) - `optionsSchema`; a credential is `writeOnly` (daemon/11)"
+  - "[code://packages/computer/src/plugin.ts#L70-L108](../../../../packages/computer/src/plugin.ts#L70-L108) - `optionsSchema`; a credential is `writeOnly` (daemon/11)"
   - "[code://packages/computer/src/provider.ts#L156](../../../../packages/computer/src/provider.ts#L156) - `STATES`, the states a `state` write may ask for"
   - "[code://packages/computer/src/provider.ts#L278-L288](../../../../packages/computer/src/provider.ts#L278-L288) - the `state` leaf"
   - https://libvirt.org/formatdomain.html#general-metadata - `<metadata>` in a domain, under a namespace of ours
@@ -82,7 +82,11 @@ remove -> virsh destroy + undefine --remove-all-storage -> stretch written to th
 | Up time is metered by the plugin's wrapper, as for a container | usage/03 | 04 |
 | The template is built from `versions.json`, tagged with its hash, and rebuilt when the hash moves | p3's `hashOf` | 05 |
 | Start, stop, suspend and resume are offered where the runtime declares them | the `capabilities` resource is where a client learns what a runtime does | 04 |
-| The Proxmox API token is a plugin option, `writeOnly`; it may be a vault reference once the vault is built | daemon/11; Softov, 2026-10-02, asked "What does the vault unlock first?": "Options and machines" | 06 |
+| The Proxmox API token is a plugin option, `writeOnly` and `secretAtUse`, read with `host.secret` when used; a token that cannot be read fails only the Proxmox runtime | daemon/11; Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" | 06 |
+| Proxmox is called with `node:https` and its `ca` option, not `fetch` | (defaulted: `fetch` takes no CA without undici, and dependencies are Softov's call) | 06 |
+| A removed VM's address is removed from the known-hosts file, and the key maker is injectable | (defaulted: DHCP recycles addresses, and `accept-new` refuses a changed key; a test needs no `ssh-keygen`) | 02 |
+| A VM's host command is `/opt/ahpd/ahpd/bin/ahpd` | (defaulted: that is where the template puts it, and a VM's login `PATH` may not hold it) | 03, 05 |
+| A state need (p6's volume) is refused on a VM for now, with a line | (defaulted: a VM has no Docker volume, and syncing state into it is not planned) | 03 |
 | Code reaches a VM by clone, as on another Docker | Softov, 2026-10-02, asked "How does a session's code reach a machine on another box?": "clone everywhere.. but leave open for future case with virtiofs on local libvirt" | 03 |
 | For now a template copies `/opt/ahpd` out of `ahpd-agents:<hash>` (`docker create` and `docker cp`) into a cloud image booted once with cloud-init, over ssh, shuts it down and keeps its disk as `ahpd-template-<hash>`; Proxmox converts the same VM to a template; `ensureTemplate` is the one place this is done | Softov, 2026-10-03, asked "how does a template get the parts?": "as proposed" | 05, 06 |
 | For now a suspended VM is not up: its stretch closes at suspend and a new one opens at resume, in the one wrapper `made` uses | Softov, 2026-10-03, asked "does `suspend` keep the up-time stretch open?": "as proposed" | 04 |
@@ -114,7 +118,7 @@ remove -> virsh destroy + undefine --remove-all-storage -> stretch written to th
 
 - A VM takes tens of seconds to boot - a disposable profile on a VM runtime says so in its description, and the wait for SSH is bounded with the console's last lines in the failure.
 - A linked clone depends on its template - a template is never removed while a VM backs onto it; a new hash makes a new template beside the old one.
-- Proxmox answers TLS with a self-signed certificate - the option takes a CA file; Node's `fetch` cannot pin a fingerprint without a dependency, which is Softov's call.
+- Proxmox answers TLS with a self-signed certificate - the option takes a CA file, passed to `node:https`; pinning a fingerprint is not planned.
 - The VM's private network is not reachable from this host - the ssh reach jumps through the libvirt host, which is the same account `virsh` already uses.
 
 ## Resume state

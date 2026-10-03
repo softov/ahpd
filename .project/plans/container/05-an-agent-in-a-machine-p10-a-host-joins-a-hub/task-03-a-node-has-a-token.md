@@ -23,7 +23,7 @@ The hub keeps nodes in a file beside its users, each with a name and a token has
 ## Steps
 
 1. A token is shown once at `add` and only its hash is kept, as a user's.
-2. A node token is refused on every door but the join path.
+2. A node token is refused on every door but the join path, and the join path asks for nothing else: not the deployment token, not a person's.
 
 ## Validation
 

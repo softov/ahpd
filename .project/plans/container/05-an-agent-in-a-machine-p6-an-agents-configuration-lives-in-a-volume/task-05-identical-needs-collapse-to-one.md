@@ -4,19 +4,22 @@ status: todo
 depends: []
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/manifest.ts#L574-L606](../../../../packages/computer/src/manifest.ts#L574-L606) - every agent's needs resolved into one list, then refused on the first shared target"
+  - "[code://packages/computer/src/manifest.ts#L408-L419](../../../../packages/computer/src/manifest.ts#L408-L419) - `oneMountEach`, which already makes one entry of identical mounts and refuses differing ones"
+  - "[code://packages/computer/src/manifest.ts#L689-L691](../../../../packages/computer/src/manifest.ts#L689-L691) - env needs become one object, so two at one name are last-one-wins with no refusal"
+  - "[code://packages/computer/src/manifest.ts#L695](../../../../packages/computer/src/manifest.ts#L695) - mounts deduped with a `Set`"
   - "[code://packages/agent-claude/src/claude.ts#L373-L397](../../../../packages/agent-claude/src/claude.ts#L373-L397) - Claude's `machine()`, which every variant of one load answers identically"
   - "[code://packages/sdk/src/types/machine.ts#L18-L94](../../../../packages/sdk/src/types/machine.ts#L18-L94) - the need kinds and `ResolvedNeed`"
 ---
 
 ## Objective
 
-A profile that names two agents declaring the same need, such as the built-in Claude and a Claude variant, makes one machine with that need once.
-Two resolved needs with the same kind, source, target and `readOnly` are one need; two needs at one target that differ in any of those are refused as today, with both named.
+Main already makes one mount of identical directory and file needs (`oneMountEach`, `manifest.ts:408-419`, and the `Set` at `:695`), so a profile naming the built-in Claude and a Claude variant is made today.
+What is left is env needs and state needs: two env needs at one variable with the same value are one need, and two with different values are refused with both named, where today the last one wins silently; two state needs (task 02) at one target with the same seeds are one volume, and differing ones are refused.
 
 ## Files
 
-- `UPDATE: packages/computer/src/manifest.ts:594-606` - before the target check, `sameNeed(a, b)` compares kind, source, target and `readOnly`; a need equal to one already landed at its target is dropped, and only a differing one is refused.
+- `UPDATE: packages/computer/src/manifest.ts:689-691` - env needs pass through `sameNeed(a, b)` before they become one object: an equal one is dropped, a differing one at the same variable is refused with both named.
+- `UPDATE: packages/computer/src/manifest.ts:408-419` - state needs join `oneMountEach` through the same `sameNeed`, comparing state directory and seeds.
 - `UPDATE: packages/computer/test/computer-needs.test.ts` - the cases below.
 
 ## Steps
@@ -24,13 +27,13 @@ Two resolved needs with the same kind, source, target and `readOnly` are one nee
 1. `sameNeed` is one function, so what counts as the same need can widen or narrow later; it ignores the need's name and description, which differ between agents that ask for one thing.
 2. The first need's name is the one kept, so a later refusal or log names it.
 3. An env need compares its value too, as its source, and the comparison never prints it.
-4. `plugin/15` task 09 rewrites this check into one list of every mount with its origin; whichever lands second keeps the collapse, so identical needs are one entry in that list.
 
 ## Validation
 
-- A profile with `agents: ["claude", "claude-openrouter"]` makes a machine, and the fake Docker sees each Claude mount once; today create refuses it with "machine needs claudeConfigDirectory and claudeConfigDirectory both land at /ahpd/claude".
-- Two needs at one target with different sources are refused, both named, as today.
-- Two needs equal but for `readOnly` are refused.
+- Two agents declaring one env need with one value make a machine with one `-e` for it.
+- Two agents declaring one env variable with different values are refused, both needs named and neither value printed; today the last one wins.
+- Two state needs at one directory with the same seeds mount one volume; with different seeds they are refused.
+- A profile with `agents: ["claude", "claude-openrouter"]` still makes a machine with each Claude mount once, as today.
 - `pnpm --filter @ahpd/computer test` green.
 
 ## Resume

@@ -26,9 +26,11 @@ For now `computerCli: "part" | "host"` is a new plugin-wide option, `"part"` by 
 
 ## Steps
 
+0. This task needs p4 task 01's part need kind; build after it.
 1. Add `computerCli`; a value other than `part` or `host` fails the load, naming the option.
 2. Replace the executable need with the part need unless `computerCli` is `host`; the choice is one branch in `machine()`.
 3. Keep `claudeExecutablePath` for the host route.
+4. What happens when the part cannot be built (an offline host, a failed build) waits on the plan's open question; until it is answered, the part need is declared and nothing falls back.
 
 ## Validation
 

@@ -15,8 +15,9 @@ decisions:
   - decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md
 refs:
   - "[code://packages/computer/src/runtime.ts#L570-L577](../../../../packages/computer/src/runtime.ts#L570-L577) - `must`, how the runtime runs docker"
-  - "[code://packages/computer/src/plugin.ts#L37](../../../../packages/computer/src/plugin.ts#L37) - the default image, `debian:bookworm-slim`, which the joined image replaces"
-  - "[code://packages/server/src/install.ts#L367](../../../../packages/server/src/install.ts#L367) - `ahpd plugin install --no-enable`, which the ahpd part runs"
+  - "[code://packages/computer/src/plugin.ts#L38](../../../../packages/computer/src/plugin.ts#L38) - the default image, `debian:bookworm-slim`"
+  - "[code://packages/server/src/install.ts#L429](../../../../packages/server/src/install.ts#L429) - `ahpd plugin install`, `npm install --prefix <configDir>`, which the ahpd part runs with `AHPD_PLUGIN_ROOT` set"
+  - "[code://packages/server/src/plugins.ts#L169-L200](../../../../packages/server/src/plugins.ts#L169-L200) - `resolvePlugin`, which resolves a bare name from the config dir only"
   - "[code://packages/computer/package.json#L44-L48](../../../../packages/computer/package.json#L44-L48) - `files`, which must ship `images/`"
   - "[code://scripts/computer.mjs](../../../../scripts/computer.mjs) - the script a person already manages a machine with"
   - "[code://.github/workflows/ci.yml](../../../../.github/workflows/ci.yml) - the workflow style a scheduled job follows"
@@ -44,7 +45,7 @@ The same file builds `ahpd-agents`, the one image ahpd publishes, with every par
 ensure('codex') -> versions.json -> tag ahpd-part/codex:<version>
   -> docker image inspect -> present: done
   -> absent: lock -> docker build - <generated Dockerfile> -> done
-build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
+build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part's tag>
 ```
 
 ### Gaps
@@ -52,6 +53,7 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 - No versions file, no Dockerfile, no build step, no bump job.
 - The fake Docker knows neither `image inspect` nor `build -`.
 - A machine made with no image named is `debian:bookworm-slim`, not the joined image.
+- `ahpd plugin install` installs into the config dir, outside `/opt/ahpd/ahpd`, so a part built that way would lose its plugins.
 
 ## Decisions locked in
 
@@ -68,6 +70,9 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 | Bases are glibc; a part is built on `debian:bookworm-slim` | the proposal: goose ships only glibc builds | 02 |
 | The build context is generated and piped, so nothing is written into the package at run time | (defaulted: an installed package may be read-only) | 03 |
 | Publishing to a registry is optional; building locally is the default | the proposal, 2026-09-26 | 04 |
+| The ahpd part installs its plugins into `/opt/ahpd/ahpd/plugins`: `ahpd plugin install` and `resolvePlugin` read `AHPD_PLUGIN_ROOT`, which the part's launcher sets, and the config dir stays `$XDG_CONFIG_HOME/ahpd`, writable | (defaulted: only `/opt/ahpd/<id>` is copied into the part, and the config dir must stay writable for the inner host) | 02 |
+| One `tagOf` spells every part's tag; the ahpd part's carries its source hash, and the joined hash folds that tag in | (defaulted: two hashes for one source drift apart) | 01, 02, 04 |
+| A part whose build fails refuses only the machines that need it | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" (a failure belongs to the item that failed) | 04 |
 | For now, from a checkout the ahpd part is built from the workspace's packed tarballs, so a checkout tests its own code; from an installed package it comes from npm at the pinned version; one function, `ahpdSourceOf`, makes the choice, so it can change | Softov, 2026-10-03, asked "from a checkout, is the ahpd part built from the workspace's packed tarballs or from npm?": "packed tarballs" | 02, 03 |
 
 ## Proposed architecture
@@ -97,11 +102,12 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + ahpd version>
 
 - **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-01-the-versions-file.md](task-01-the-versions-file.md).
-- **Open questions:** none.
+- **Open question (ask before task 04):** which machines are made from the joined image when no image is named - (a) every machine, as the decision on the published image says, so `ensureJoined` builds all fifteen parts before the first default machine, or (b) only a machine whose runtime cannot mount parts, and `debian:bookworm-slim` with its parts mounted stays the default?
 - **Watch out for:**
   - `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build.
-  - From a checkout the ahpd part's hash covers the packed tarballs, not only the versions entry, or a code change would reuse a stale image.
-  - Task 04 changes the image a machine with none named is made from, so every computer test that asserts `debian:bookworm-slim` as the default has to name its image or expect the joined tag.
+  - From a checkout the ahpd part's tag covers the packed tarballs, not only the versions entry, or a code change would reuse a stale image.
+  - If task 04 changes the image a machine with none named is made from, every computer test that asserts `debian:bookworm-slim` as the default has to name its image or expect the joined tag.
+  - container/05 p5 tasks 03 and 06 run the ahpd part's plugins, so they wait for task 02's `AHPD_PLUGIN_ROOT`.
 
 ## Final verification checklist
 

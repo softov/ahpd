@@ -4,8 +4,9 @@ status: todo
 depends: []
 layer: "push"
 refs:
-  - "[code://packages/computer/src/plugin.ts#L366](../../../../packages/computer/src/plugin.ts#L366) - how a package registers its provider"
+  - "[code://packages/computer/src/plugin.ts#L582](../../../../packages/computer/src/plugin.ts#L582) - how a package registers its provider"
   - "[code://packages/computer/package.json](../../../../packages/computer/package.json) - the manifest shape to copy"
+  - "[code://packages/sdk/src/types/plugin.ts#L98-L105](../../../../packages/sdk/src/types/plugin.ts#L98-L105) - `configDir`"
 ---
 
 ## Objective
@@ -23,7 +24,7 @@ refs:
 
 1. Copy `@ahpd/computer`'s package shape.
 2. A write is JSON with a non-empty `token` and `platform` of `ios` or `android`; anything else is refused `-32602`.
-3. Keep the file in the daemon's state directory, read at load, written on each change.
+3. Keep the file at `join(host.configDir, 'push-devices.json')`, read at load, written on each change.
 
 ## Validation
 

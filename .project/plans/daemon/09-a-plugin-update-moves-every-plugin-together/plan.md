@@ -10,6 +10,8 @@ refs:
   - "[code://packages/server/src/commands/plugin.ts#L70-L126](../../../../packages/server/src/commands/plugin.ts#L70-L126) - `plugin install` and `plugin remove`, the shape `update` copies"
   - "[code://packages/server/src/install.ts#L92-L97](../../../../packages/server/src/install.ts#L92-L97) - `pinned`"
   - "[code://packages/server/src/install.ts#L233](../../../../packages/server/src/install.ts#L233) - `installPlugins`, and how npm's failure is reported"
+  - "[code://packages/server/src/install.ts#L80-L93](../../../../packages/server/src/install.ts#L80-L93) - `NpmFailure` and `npmFailed`: `failed` for the terminal, `message` with npm's reason when served"
+  - "[code://packages/server/src/install.ts#L476-L507](../../../../packages/server/src/install.ts#L476-L507) - `updatePlugins`, one npm call for everything it moves"
   - "[code://docs/DAEMON.md#L36-L70](../../../../docs/DAEMON.md#L36-L70) - the plugin commands and the 0.6 upgrade note"
   - "npm://@cofold/terminal@^0.2.0 - `unknown command` for a command missing its required argument; fixed in cofold commands/03"
 ---
@@ -17,7 +19,8 @@ refs:
 ## Goal
 
 After upgrading the daemon, `ahpd plugin update` brings every installed plugin to the matching version in one step.
-An install npm refuses says which installed package blocks it and what to run, and `ahpd plugin install` with no name says a name is needed.
+A failed npm call says once, at the terminal, what failed, after npm's own error has streamed; served over HTTP, the error keeps npm's reason.
+`ahpd plugin install` with no name says a name is needed.
 
 ## Reconnaissance
 
@@ -71,7 +74,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | --- | --- | --- |
 | [01 - `ahpd plugin update`](task-01-plugin-update.md) | implemented | - |
 | [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | implemented | - |
-| [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | todo | cofold commands/03 released |
+| [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | blocked | cofold commands/03 released |
 | [04 - Docs](task-04-docs.md) | implemented | 01, 02, 06, 08 |
 | [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
 | [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | implemented | - |
@@ -87,14 +90,14 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 ## Resume state
 
-- **Done so far:** in `/github/.worktrees/ahpd-fixes`, uncommitted: tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone.
-- **Next action:** Softov checks again; task 03 after the cofold release.
-- **Open questions:** none.
+- **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone.
+- **Next action:** Softov checks again; task 03 is blocked until cofold commands/03 is released (planned in cofold, `@cofold/terminal` still 0.2.0).
+- **Open question (ask before task 01 is reviewed):** `update all` makes one npm call, so one package npm cannot install fails every move in it - (a) keep one npm call and let the whole update fail with the `NpmFailure` line, or (b) on failure retry each package in its own call, so the others move and the failing one is named.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 
 ## Final verification checklist
 
 - [ ] A configuration directory with four 0.7.0 `@ahpd` plugins and a 0.8.0 daemon: `ahpd plugin update` makes one npm call naming all four at 0.8.0.
-- [ ] A refused install's message names the blocking package and `ahpd plugin update`, once.
+- [ ] A failed install, update or remove says what failed once at the terminal, without npm's text again; the served error keeps npm's reason.
 - [ ] `ahpd plugin install` with no name says a name is needed.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.

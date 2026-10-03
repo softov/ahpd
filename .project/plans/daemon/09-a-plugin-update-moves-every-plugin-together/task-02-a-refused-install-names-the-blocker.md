@@ -1,16 +1,18 @@
 ---
-title: An install npm refuses for a peer names the installed package that blocks it
+title: A failed npm call says what failed once, and keeps npm's reason when served
 status: implemented
 depends: []
 layer: "server"
 refs:
   - "[code://packages/server/src/install.ts#L233](../../../../packages/server/src/install.ts#L233) - `installPlugins`"
-  - "[code://packages/server/src/commands/plugin.ts#L101-L113](../../../../packages/server/src/commands/plugin.ts#L101-L113) - where the failure is stopped with"
+  - "[code://packages/server/src/install.ts#L80-L93](../../../../packages/server/src/install.ts#L80-L93) - `NpmFailure` and `npmFailed`"
+  - "[code://packages/server/src/commands/plugin.ts#L66-L74](../../../../packages/server/src/commands/plugin.ts#L66-L74) - `failure`, which stops with `failed` at the terminal and `message` when served"
 ---
 
 ## Objective
 
-When `plugin install` fails because an installed `@ahpd/*` package peers an older `@ahpd/sdk` than the one being installed, the message names that package and its version and says to run `ahpd plugin update`. npm's error is printed once, not twice.
+Every failed npm call in `install.ts` (install, update, remove) throws an `NpmFailure`. At the terminal the command stops with its `failed` line only, because npm's error has already streamed there, so npm's error is printed once. Served over HTTP, the error is its `message`, which keeps npm's reason.
+No message names a blocking plugin: since task 08, install and update put the daemon's `@ahpd/sdk` beside the plugins with `--legacy-peer-deps`, and the peer refusal this task first named is gone.
 
 ## Files
 
@@ -19,12 +21,13 @@ When `plugin install` fails because an installed `@ahpd/*` package peers an olde
 
 ## Steps
 
-1. Reproduce first with the faked runner answering `ERESOLVE`, the way dev86 did on 2026-09-29 (`@ahpd/agent-acp` 0.7.0 installed, three others asked at 0.8.0).
-2. Find why npm's error reaches the terminal twice (once from npm's own stderr, once in the stop message) and keep one.
+1. Failing first: a fake npm that writes its error to stderr and exits non-zero, through the CLI, for install, update and remove; the error appears twice.
+2. Every failed npm call throws `NpmFailure(failed, reason)`; `failure` in `commands/plugin.ts` answers `failed` at the terminal and `message` when served.
 
 ## Validation
 
-- The case names `@ahpd/agent-acp 0.7.0` and `ahpd plugin update`, and npm's error appears once.
+- `test/server-cli.test.ts`: a failed install, update and remove each print npm's error once and the `failed` line once.
+- `test/server-http.test.ts`: a served install that fails keeps npm's reason.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 
 ## Resume

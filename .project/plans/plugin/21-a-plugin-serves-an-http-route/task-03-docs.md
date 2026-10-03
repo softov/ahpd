@@ -4,8 +4,8 @@ status: todo
 depends: [task-02-the-listener-serves-routes.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L38-L61](../../../../docs/PLUGINS.md#L38-L61) - What you can register"
-  - "[code://docs/PLUGINS.md#L185-L196](../../../../docs/PLUGINS.md#L185-L196) - the \"not a kind\" line to remove"
+  - "[code://docs/PLUGINS.md#L114-L140](../../../../docs/PLUGINS.md#L114-L140) - What you can register"
+  - "[code://docs/PLUGINS.md#L358-L371](../../../../docs/PLUGINS.md#L358-L371) - the \"not a kind\" line to remove"
   - "[code://.project/plans/plugin/00-plugin.md](../00-plugin.md) - the registration kinds table"
 ---
 
@@ -15,8 +15,8 @@ A plugin author finds `registerRoute` where every kind is listed, and reads that
 
 ## Files
 
-- `UPDATE: docs/PLUGINS.md:38-61` - the route, its prefix, and that it is served with `http` off.
-- `UPDATE: docs/PLUGINS.md:185-196` - the "HTTP routes are not" line removed.
+- `UPDATE: docs/PLUGINS.md:114-140` - the route, its prefix, and that it is served with `http` off.
+- `UPDATE: docs/PLUGINS.md:358-371` - the "HTTP routes are not" line removed.
 - `UPDATE: .project/plans/plugin/00-plugin.md` - a `route` row in the kinds table, and the "not yet" line removed.
 
 ## Steps

@@ -4,21 +4,22 @@ status: todo
 depends: []
 layer: "agent-claude"
 refs:
-  - "[code://packages/agent-claude/src/session.ts#L3560-L3588](../../../../packages/agent-claude/src/session.ts#L3560-L3588) - the settle"
+  - "[code://packages/agent-claude/src/session.ts#L3744-L3787](../../../../packages/agent-claude/src/session.ts#L3744-L3787) - the settle"
 ---
 
 ## Objective
 
-When a question is answered and allowed, the call's `toolInput` becomes the JSON of `{ ...input, answers }` and the completed call carries it; a denied or cancelled one keeps its input.
+When a question is answered and allowed, the completed call carries `{ ...input, answers }`; a denied or cancelled one carries no answers.
+Where on the complete action it travels waits on the plan's open question: `ChatToolCallCompleteAction` has only `result` and `requiresResultConfirmation` (protocol 0.9.0 `channels-chat/actions.ts:336-342`), so it is either `result.structuredContent` or the action's `_meta`.
 
 ## Files
 
-- `UPDATE: packages/agent-claude/src/session.ts` - set the call's `toolInput` where the answers are settled, and send it on the complete action.
+- `UPDATE: packages/agent-claude/src/session.ts:3744-3787` - keep `{ ...input, answers }` where the answers are settled, and put it on the complete action in the place the open question settles.
 - `UPDATE: packages/agent-claude/test/agent-claude-tool-input.test.ts` - the cases below.
 
 ## Steps
 
-1. Tests first with the faked SDK: a two-question call, one multi-select, answered: the completed call's `toolInput` parses to the questions plus `answers` keyed by question text, the multi-select an array; a cancelled one keeps the input as sent.
+1. Waits on the plan's open question. Then tests first with the faked SDK: a two-question call, one multi-select, answered: the completed call carries the questions plus `answers` keyed by question text, the multi-select an array; a cancelled one carries no answers and its `toolInput` is the input as sent.
 2. Implement.
 
 ## Validation

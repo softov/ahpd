@@ -10,7 +10,8 @@ refs:
 
 ## Objective
 
-After `ahpd restart` on the hub, a session on a node resumes once the node reconnects; after the node's `ahpd join` restarts, the hub's next turn on that session opens a new data socket and resumes the inner session by id.
+After `ahpd restart` on the hub, a session on a node resumes once the node reconnects.
+When the node's `ahpd join` restarts, the data socket closes and `nested.ts` fails the session on the inner host's exit today; what happens instead waits on the plan's open question, and steps for that case are written once it is answered.
 
 ## Files
 
@@ -23,6 +24,7 @@ After `ahpd restart` on the hub, a session on a node resumes once the node recon
 1. The hub's close ends data sockets with p9 task 05's `stopping`, so no inner session is disposed.
 2. The node keeps no session state of its own: the inner host's store under the node's config directory is what is resumed.
 3. A node that does not come back within the bound ends the session with a sentence naming it.
+4. The node-restart case follows the answer to the plan's open question.
 
 ## Validation
 

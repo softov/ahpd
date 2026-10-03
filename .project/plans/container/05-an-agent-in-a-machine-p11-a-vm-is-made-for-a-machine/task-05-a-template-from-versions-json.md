@@ -25,6 +25,6 @@ The libvirt runtime makes `ahpd-template-<hash>` the first time a VM is asked fo
 ## Validation
 
 - With the fakes, a first create builds a template and a second does not; a changed hash builds a second.
-- By hand: a VM from the template runs `/opt/ahpd/ahpd/bin/ahpd --version` at this host's version.
+- By hand: a VM from the template runs `/opt/ahpd/ahpd/bin/ahpd --version` at this host's version, the path task 03's `hostCommand` answers.
 
 ## Resume

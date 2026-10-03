@@ -19,6 +19,7 @@ refs:
 
 1. Replace the copy-in warning with the state volume, keeping the warning for hand-written copies.
 2. Say that variants of one plugin share its state volume, and that two agents asking for the same thing at one target get it once.
+3. Say that a variant's key is never in the state volume or the container's environment: it reaches the CLI on each exec from that variant's own `env`, so variants sharing a machine never see each other's key.
 
 ## Validation
 

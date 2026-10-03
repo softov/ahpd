@@ -25,7 +25,7 @@ refs:
   - "[code://packages/sdk/src/nested.ts#L115-L129](../../../../packages/sdk/src/nested.ts#L115-L129) - `startInside`, the default `start` that spawns the port's descriptor"
   - "[code://packages/sdk/src/nested.ts#L138-L203](../../../../packages/sdk/src/nested.ts#L138-L203) - `stdioTransport`, one frame per line over a `NestedHost`"
   - "[code://packages/sdk/src/nested.ts#L340-L393](../../../../packages/sdk/src/nested.ts#L340-L393) - `bringUp`: the outer host is an `AhpClient` over that transport, then `createSession` and two subscriptions"
-  - "[code://packages/sdk/src/host.ts#L3617-L3619](../../../../packages/sdk/src/host.ts#L3617-L3619) - where the host builds `nestedAgent` for a session"
+  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - where the host builds `nestedAgent` for a session"
   - "[code://packages/sdk/src/listen.ts#L84-L127](../../../../packages/sdk/src/listen.ts#L84-L127) - the door: the deployment token, then `identify` against the users directory"
   - "[code://packages/server/src/commands/run.ts#L604-L615](../../../../packages/server/src/commands/run.ts#L604-L615) - a stdio connection is admitted as the host itself"
   - "[code://packages/sdk/src/users.ts#L40-L54](../../../../packages/sdk/src/users.ts#L40-L54) - `SUBJECTS`, the grant subjects"
@@ -53,8 +53,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ```
 node: ahpd join <hub> --token <t> -> control socket to the hub (reconnects)
 hub: lists computer://<node> -> session there -> nestedAgent(start = node socket)
-  -> control: open { id, plugins, cwd, env } -> node dials a data socket for it
-  -> node spawns `ahpd --stdio --plugin <each>` and pipes the data socket to it
+  -> control: open { id, plugins, env } -> node dials a data socket for it
+  -> node spawns `ahpd --stdio --plugin <each>` in its own workdir and pipes the data socket to it
   -> hub: AhpClient over the data socket as a NestedHost -> the node's ahpd runs the agent
 ```
 
@@ -86,7 +86,10 @@ hub: lists computer://<node> -> session there -> nestedAgent(start = node socket
 | For now one control socket per node and one data socket per session, so each session's transport is the proxy's own and needs no multiplexing | Softov, 2026-10-03, asked "one socket per session, or one carrying every session?": "as proposed" | 01, 02 |
 | For now each session is served by its own `ahpd --stdio` on the node, as over ssh, so the node needs no daemon running and the hub's frames do not reach its other clients; the spawn is one function in `join.ts` | Softov, 2026-10-03, asked "does the node serve each session from its own `ahpd --stdio`, or its daemon?": "as proposed" | 01 |
 | For now a node's id is `node.<name>`, through p9 task 01's `spellMachineId` and `parseMachineId` | Softov, 2026-10-03, answered in p9: "put runtime.name" | 04 |
-| For now a node is owned by the host and its up time is metered while it is connected, by p9 task 01's rule for a runtime that only lists | follows p9's answer for an ssh machine, Softov, 2026-10-03: "host-owned and metered" | 04 |
+| For now a node is owned by the host and its up time is metered while it is connected, from the registry's connect and drop events, through p9 task 01's metering function, which takes reachability events of which a listing is one source | follows p9's answer for an ssh machine, Softov, 2026-10-03: "host-owned and metered" | 04 |
+| A node is listed as `running` while connected | (defaulted: `isRunning` reads `running` or `Up ` with a trailing space) | 04 |
+| A node starts each session in its own workdir; `node/open` carries no `cwd` | (defaulted: a hub path is not a path on the node, as p9 says for an ssh machine) | 01 |
+| The join path takes a node token alone, not the deployment token | (defaulted: a node token opens only that door, and asking for the deployment token too would hand every node the host's key) | 02, 03 |
 
 ## Proposed architecture
 
@@ -116,7 +119,7 @@ hub: lists computer://<node> -> session there -> nestedAgent(start = node socket
 
 - **Done so far:** nothing; planned 2026-10-02.
 - **Next action:** [task-03-a-node-has-a-token.md](task-03-a-node-has-a-token.md), once p9 and p12 are built.
-- **Open questions:** none.
+- **Open question (ask before task 05):** when the node's `ahpd join` restarts, the data socket closes and the session's transport is lost - (a) the session ends with a sentence, resumable by id on the next turn, or (b) the hub reconnects in place through a new data socket and the session carries on?
 - **Watch out for:** container/04 tasks 11 and 15 and p9 task 05 change how a nested session closes and resumes; a profile that names a node to make machines on is not planned, see [deferred.md](deferred.md).
 
 ## Final verification checklist

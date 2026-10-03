@@ -4,22 +4,22 @@ domain: plugin
 status: planned
 priority: low
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-03
 requires:
   - plans/plugin/10-a-computer-a-person-manages/plan.md
 changes: []
 creates: []
 decisions:
   - decisions/gvisor-is-a-docker-profile-option-not-a-runtime.md
-  - decisions/one-computer-provider-with-runtimes-as-options.md
+  - decisions/a-machine-runtime-is-named-for-its-maker.md
 refs:
-  - "[code://packages/computer/src/manifest.ts#L25-L63](../../../../packages/computer/src/manifest.ts#L25-L63) - `Profile`, which gains `ociRuntime`"
-  - "[code://packages/computer/src/manifest.ts#L406-L610](../../../../packages/computer/src/manifest.ts#L406-L610) - `manifestOf`, where a profile's fields become a `MachineSpec`"
-  - "[code://packages/computer/src/runtime.ts#L56-L150](../../../../packages/computer/src/runtime.ts#L56-L150) - `MachineSpec`, which carries it to the runtime"
-  - "[code://packages/computer/src/runtime.ts#L600-L630](../../../../packages/computer/src/runtime.ts#L600-L630) - the `docker run` flags, where `--runtime` is added"
-  - "[code://packages/computer/src/manifest.ts#L291](../../../../packages/computer/src/manifest.ts#L291) - `allowedImages`: what a machine is made from is the operator's to name, not a body's"
+  - "[code://packages/computer/src/manifest.ts#L34-L106](../../../../packages/computer/src/manifest.ts#L34-L106) - `Profile`, which gains `ociRuntime`"
+  - "[code://packages/computer/src/manifest.ts#L508-L745](../../../../packages/computer/src/manifest.ts#L508-L745) - `manifestOf`, where a profile's fields become a `MachineSpec`"
+  - "[code://packages/computer/src/runtime.ts#L67-L178](../../../../packages/computer/src/runtime.ts#L67-L178) - `MachineSpec`, which carries it to the runtime"
+  - "[code://packages/computer/src/runtime.ts#L778-L830](../../../../packages/computer/src/runtime.ts#L778-L830) - the `docker run` flags, where `--runtime` is added"
+  - "[code://packages/computer/src/manifest.ts#L323](../../../../packages/computer/src/manifest.ts#L323) - `allowedImages`: what a machine is made from is the operator's to name, not a body's"
   - "[code://packages/computer/test/computer.test.ts](../../../../packages/computer/test/computer.test.ts) - the docker runtime's tests over a fake `docker`"
-  - "[code://docs/COMPUTER.md#L189-L225](../../../../docs/COMPUTER.md#L189-L225) - the Profiles section"
+  - "[code://docs/COMPUTER.md#L206-L263](../../../../docs/COMPUTER.md#L206-L263) - the Profiles section"
 ---
 
 ## Goal
@@ -51,12 +51,14 @@ profile { ociRuntime: 'runsc' } -> manifestOf -> MachineSpec.ociRuntime -> docke
 | # | Decision | Rationale / source |
 | --- | --- | --- |
 | 1 | [gVisor is a docker profile option, ociRuntime, and not a computer runtime](../../../decisions/gvisor-is-a-docker-profile-option-not-a-runtime.md) | Softov, 2026-09-26 |
-| 2 | [One computer: provider, one package, the runtime chosen by option](../../../decisions/one-computer-provider-with-runtimes-as-options.md) | Softov, 2026-09-22 |
+| 2 | [One computer: provider, the runtime named for what makes the machine](../../../decisions/a-machine-runtime-is-named-for-its-maker.md) | Softov, 2026-10-02 |
 
 | What | Source | Task |
 | --- | --- | --- |
 | `ociRuntime` comes from the profile only, and a body that names it is refused | the boundary is the operator's, as the image list is ([`code://packages/computer/src/manifest.ts#L291`](../../../../packages/computer/src/manifest.ts#L291)) | 01 |
 | Absent means no `--runtime` flag, so Docker's default runs | every existing profile is unchanged | 01 |
+| `ociRuntime` is an option of a profile the docker runtime makes; a machine made from a `devcontainer.json` with a profile that names it is refused with a sentence, as a body naming both an image and a dev container is | decision 2: the Dev Container CLI makes that machine, not `docker run` | 01 |
+| The flag is written as one argument, `--runtime=<value>` | (defaulted: one spelling in code, tests and docs) | 01 |
 | The value is passed as given; Docker refuses one it does not have | decision 1, Consequences | 01 |
 
 ## Proposed architecture
@@ -83,10 +85,10 @@ profile { ociRuntime: 'runsc' } -> manifestOf -> MachineSpec.ociRuntime -> docke
 - **Done so far:** nothing.
 - **Next action:** [task-01-a-profile-names-the-oci-runtime.md](task-01-a-profile-names-the-oci-runtime.md).
 - **Open questions:** none.
-- **Watch out for:** a dev container machine is made by the Dev Container CLI, not by `docker run`; this plan leaves it alone.
+- **Watch out for:** a dev container machine is made by the Dev Container CLI, not by `docker run`; task 01 refuses `ociRuntime` there rather than passing it.
 
 ## Final verification checklist
 
 - [ ] A profile with `"ociRuntime": "runsc"` makes a machine with `--runtime=runsc`, and one without it makes the same machine as today.
-- [ ] A body naming `ociRuntime` is refused with a sentence.
+- [ ] A body naming `ociRuntime` is refused with a sentence, and so is a dev container machine from a profile that names it.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/COMPUTER.md`, `plans/index.md` updated.

@@ -18,7 +18,8 @@ refs:
 ## Goal
 
 A session keeps the configuration it was created with and every change made while it ran, after the daemon restarts.
-A stored value its backend's schema no longer offers, such as a Claude preset that was renamed or removed, is dropped and the default is used, for every backend.
+A stored value its backend's schema no longer offers, such as an enum value a backend dropped, is dropped and the default is used, for every backend.
+A preset is not a session value: since claude/15 a preset is a provider id, and a session whose preset is renamed or removed is a session whose agent did not load, which [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) lists under it, not openable, its record never rewritten.
 
 ## Reconnaissance
 
@@ -49,6 +50,7 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 | A config change for a channel that names no session this host runs, lists or finds in the catalogue is refused, and nothing is stored for it | (defaulted: the store is keyed by id, and a row for no session is one nothing will read or forget) | 01 |
 | A listing answers `past` for `LISTING_FRESH` (2 s); an id missing from a listing `past` did not start itself is listed for once more, at most once in that window | (defaulted: a backend writes a session to disk after a listing, and an id that names nothing must not cost a listing each) | 01 |
 | A key the schema scopes to one chat is stored when it is set on the session's lead chat, which is what a resume applies it to, and not when it is set on a peer chat | Softov, 2026-09-30, asked "After a restart, should the lead chat come back on the model you last picked for it?": "Yes, save the lead chat's" | 01 |
+| A session whose recorded provider (a removed or renamed preset among them) did not load is listed under it, not openable, its record never rewritten | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item"; [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) | host/41 02 |
 
 ## Proposed architecture
 
@@ -73,6 +75,7 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 - **Next action:** review.
 - **Open questions:** none.
 - **Watch out for:** `sessions: 'memory'` forgets by design; test with `fileSessions`.
+- **Watch out for:** a `preset` key stored by a Claude session before claude/15 is no longer declared by the schema, so it is kept and handed back like any undeclared key, and the backend ignores it.
 
 ## Final verification checklist
 

@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-a-resume-does-not-replay.md, task-02-a-session-forks-where-the-server-can.md, task-03-a-servers-question-is-asked-in-the-chat.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L560-L642](../../../../docs/PLUGINS.md#L560-L642) - the ACP worked example and what the server may ask the host for"
+  - "[code://docs/PLUGINS.md#L750-L866](../../../../docs/PLUGINS.md#L750-L866) - the ACP worked example and what the server may ask the host for"
 ---
 
 ## Objective
@@ -13,11 +13,11 @@ refs:
 
 ## Files
 
-- `UPDATE: docs/PLUGINS.md:559-641` - three short paragraphs in the ACP section.
+- `UPDATE: docs/PLUGINS.md:750-866` - three short paragraphs in the ACP section.
 
 ## Steps
 
-1. One paragraph per behaviour, one sentence per line.
+1. One paragraph per behaviour, wrapped as the ACP section already is; no em dash.
 
 ## Validation
 

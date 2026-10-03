@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin install` with no name says a name is needed"
-status: todo
+status: blocked
 depends: []
 layer: "server"
 refs:
@@ -27,3 +27,4 @@ Once cofold commands/03 is released, the server depends on that `@cofold/termina
 
 ## Resume
 
+Blocked 2026-10-03: cofold commands/03 is planned, not released; `@cofold/terminal` is still 0.2.0.

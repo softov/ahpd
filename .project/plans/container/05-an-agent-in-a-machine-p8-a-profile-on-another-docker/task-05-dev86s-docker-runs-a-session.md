@@ -18,8 +18,9 @@ A disposable profile with `dockerHost: "ssh://softov@dev86.brbyte.com"` runs a c
 ## Steps
 
 1. Build an image with ahpd and the agent plugins on dev86's Docker.
-2. A profile with that image and `dockerHost`; start a disposable session, commit, leave; check the branch on this host. Once with the default `code: "bundle"`, once with `code: "clone"` and a `gitCredential` from the vault.
+2. A profile with that image and `dockerHost`, and `needs.cofoldConfig` naming a cofold config written for dev86 that reaches models through p12's proxy and holds no key (task 02 refuses the host's own); start a disposable session, commit, leave; check the branch on this host. Once with the default `code: "bundle"`, once with `code: "clone"` and a `gitCredential` from the vault.
 3. Restart this host mid-session and continue.
+4. Run it again with the vault's key and the `gitCredential` secret absent: the `bundle` session still runs, a `clone` profile's create is refused with a sentence naming the secret, and no other profile or session is affected.
 
 ## Validation
 

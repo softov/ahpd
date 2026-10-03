@@ -4,9 +4,9 @@ status: todo
 depends: []
 layer: "agent-acp"
 refs:
-  - "[code://packages/agent-acp/src/connection.ts#L60-L120](../../../../packages/agent-acp/src/connection.ts#L60-L120) - the client handlers and the capabilities the bridge advertises"
-  - "[code://packages/agent-acp/src/session.ts#L396](../../../../packages/agent-acp/src/session.ts#L396) - `askPermission`, the pattern for a request the person answers"
-  - "[code://test/agent-acp.test.ts](../../../../test/agent-acp.test.ts) - the scripted server"
+  - "[code://packages/agent-acp/src/connection.ts#L162-L214](../../../../packages/agent-acp/src/connection.ts#L162-L214) - the client handlers and the capabilities the bridge advertises"
+  - "[code://packages/agent-acp/src/session.ts#L806](../../../../packages/agent-acp/src/session.ts#L806) - `askPermission`, the pattern for a request the person answers"
+  - "[code://packages/agent-acp/test/agent-acp.test.ts](../../../../packages/agent-acp/test/agent-acp.test.ts) - the scripted server"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/guide/elicitation.md - `chat/inputRequested`, `chat/inputAnswerChanged` and `chat/inputCompleted`, and completing an `elicitation/create` from them
 ---
 
@@ -16,10 +16,10 @@ An `elicitation/create` from an ACP server appears to the person as an input req
 
 ## Files
 
-- `UPDATE: packages/agent-acp/src/connection.ts:60-120` - advertise `elicitation` and wire `createElicitation` and the `elicitation/complete` notification.
+- `UPDATE: packages/agent-acp/src/connection.ts:162-214` - advertise `elicitation` and wire `createElicitation` and the `elicitation/complete` notification.
 - `UPDATE: packages/agent-acp/src/session.ts` - the handler, beside `askPermission`.
 - `UPDATE: packages/agent-acp/src/mapping.ts` - an elicitation's form fields to the input request's questions, and the answers back.
-- `UPDATE: test/agent-acp.test.ts` - the cases below.
+- `UPDATE: packages/agent-acp/test/agent-acp.test.ts` - the cases below.
 
 ## Steps
 
@@ -31,7 +31,7 @@ An `elicitation/create` from an ACP server appears to the person as an input req
 
 ## Validation
 
-- `test/agent-acp.test.ts`: a form elicitation is answered from a client and the server receives the content; a decline and a cancel are passed through; a cancelled turn cancels the elicitation.
+- `packages/agent-acp/test/agent-acp.test.ts`: a form elicitation is answered from a client and the server receives the content; a decline and a cancel are passed through; a cancelled turn cancels the elicitation.
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume

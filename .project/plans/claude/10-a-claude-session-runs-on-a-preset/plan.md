@@ -23,7 +23,7 @@ refs:
 ## Goal
 
 An operator writes named presets of Claude options in agent-claude's options, and every Claude session runs on one of them.
-With one preset there is nothing to choose; with two or more the new-session screen offers `preset`, so a new option can be tried in one session without touching the others.
+Each preset is an agent of its own, chosen in the picker, as [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md) built; there is no session `preset` key.
 Output style, thinking and sandbox leave the composer and are preset fields, so Claude's chips match VS Code's except for `dontAsk`.
 
 ## Reconnaissance
@@ -34,7 +34,7 @@ The files read are the `refs` above.
 
 ```
 config.json plugins[agent-claude].options.presets -> optionsSchema check at load -> ClaudeOptions.presets
-  -> schema(): preset enum when there are two or more -> createSession(settings.preset)
+  -> one registerAgent per preset (claude/15) -> createSession on that variant
   -> session.ts: the preset's fields through their declarations -> query({ ... })
 ```
 
@@ -54,17 +54,17 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 | What | Source | Task |
 | --- | --- | --- |
 | The named sets are called presets, the word acp/05 uses for a named bundle of agent options | Softov, 2026-09-29, asked "is "preset" better?": "preset" | 02 |
-| One preset: no `preset` key; two or more: `preset` is a session key listing their names, fixed at creation | Softov, 2026-09-29: "claude could expose a 'profile'... if only one its that one... if not.. then expose the profile names" | 02 |
-| No presets configured is one empty preset, so today's install behaves as it does | (defaulted: an upgrade must not need a config change) | 02 |
-| The default preset is the first one written | (defaulted: JSON keeps the order the operator wrote) | 02 |
-| A session whose stored preset was removed or renamed runs on the default | Softov, 2026-09-29; built in host/31 task 02 | 02 |
+| Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md), where a preset is a provider id: one preset: no `preset` key; two or more: `preset` is a session key listing their names, fixed at creation | Softov, 2026-09-29: "claude could expose a 'profile'... if only one its that one... if not.. then expose the profile names" | 02 |
+| Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md), where the built-in `claude` is registered unless `presets.claude: false`: no presets configured is one empty preset, so today's install behaves as it does | (defaulted: an upgrade must not need a config change) | 02 |
+| Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md), where no preset is a default: the default preset is the first one written | (defaulted: JSON keeps the order the operator wrote) | 02 |
+| Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md) and [host/41 task 02](../../host/41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md), where a session whose preset is gone is listed under it and not openable: a session whose stored preset was removed or renamed runs on the default | Softov, 2026-09-29; built in host/31 task 02 | 02 |
 | The first fields are `sandbox`, `thinking`, `outputStyle`, `env` and `extraArgs`; any other SDK option is a new declaration | Softov, 2026-09-29, asked "What can a Claude preset hold?": "Names fields" | 01 |
 | `outputStyle`, `thinking` and `sandboxEnabled` leave the session schema | Softov, 2026-09-29: "Move, but keep dontAsk" | 03 |
 
 ## Proposed architecture
 
 - **Data flow** - a declaration is `{ schema, toQuery(value, options) }`; `presetSchema` lists the declared fields, `schema()` adds `preset` when there are two or more, and `createSession` resolves the preset's values through each field's `toQuery`.
-- **State flow** - the session stores only the preset's name (host/31); the preset's values are read from the loaded options when the session starts or resumes.
+- **State flow** - the session is held under its preset's provider id ([claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md)); the preset's values are read from the loaded options when the session starts or resumes.
 - **Layer responsibilities** - agent-claude only.
 - **Source-of-truth files** - `CREATE: packages/agent-claude/src/options.ts`, [`code://packages/agent-claude/src/plugin.ts`](../../../../packages/agent-claude/src/plugin.ts)
 
@@ -85,15 +85,15 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 04 done 2026-10-02. Task 03 is implemented; the schema no longer declares `outputStyle`, `thinking` or `sandboxEnabled`.
-- **Next action:** Softov's check in ahpapp that a Claude composer draws none of the three chips; then task 03 is done and the plan closes.
+- **Next action:** Softov's check in ahpapp that a Claude composer draws none of the three chips (checklist item 4, the only check left); then task 03 is done and the plan closes.
 - **Open questions:** none.
 - **Watch out for:** a preset's `env` is laid under a signed-in credential, and `null` in it unsets a variable. A stored `thinking` or `sandboxEnabled` from before is kept and no longer read.
 
 ## Final verification checklist
 
-- [ ] With no presets, a session starts as it does today, and no `preset` key is offered.
-- [ ] With `presets: { work: {}, test: { thinking: "disabled" } }`, ahpapp offers `preset`; a `test` session runs without thinking and a `work` one with it.
-- [ ] Removing `test` and restarting: a `test` session resumes on `work`.
+- Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md), which checks presets as variants: with no presets, a session starts as it does today, and no `preset` key is offered.
+- Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md): with `presets: { work: {}, test: { thinking: "disabled" } }`, ahpapp offers `preset`; a `test` session runs without thinking and a `work` one with it.
+- Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md) and host/41 task 02: removing `test` and restarting: a `test` session resumes on `work`.
 - [ ] The composer shows no Output style, Thinking or Sandbox chip; Approvals keeps Don't Ask.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 - [ ] `plans/index.md` updated.

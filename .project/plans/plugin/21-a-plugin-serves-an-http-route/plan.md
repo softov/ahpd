@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: medium
 created: 2026-09-26
-revalidated: 2026-09-26
+revalidated: 2026-10-03
 requires:
   - plans/daemon/05-an-http-api/plan.md
   - plans/plugin/20-a-plugin-is-a-client-of-its-own-host/plan.md
@@ -15,14 +15,18 @@ decisions:
   - decisions/cofold-serve-is-fetch-style-with-a-node-adapter.md
   - decisions/the-http-api-checks-origin-and-host-and-takes-only-json.md
 refs:
-  - "[code://packages/sdk/src/types/plugin.ts#L118-L207](../../../../packages/sdk/src/types/plugin.ts#L118-L207) - `PluginHost`, which gains `registerRoute`"
-  - "[code://packages/sdk/src/types/plugin.ts#L247-L282](../../../../packages/sdk/src/types/plugin.ts#L247-L282) - `Contribution`, which gains the routes"
+  - "[code://packages/sdk/src/types/plugin.ts#L139-L279](../../../../packages/sdk/src/types/plugin.ts#L139-L279) - `PluginHost`, which gains `registerRoute`"
+  - "[code://packages/sdk/src/types/plugin.ts#L329-L364](../../../../packages/sdk/src/types/plugin.ts#L329-L364) - `Contribution`, which gains the routes"
   - "[code://packages/sdk/src/plugins.ts](../../../../packages/sdk/src/plugins.ts) - the fold and the registration checks"
-  - "[code://packages/sdk/src/types/listen.ts#L95-L109](../../../../packages/sdk/src/types/listen.ts#L95-L109) - the listener's plain-request handler"
-  - "[code://.project/plans/daemon/05-an-http-api/task-15-serve-takes-a-request.md](../../daemon/05-an-http-api/task-15-serve-takes-a-request.md) - `Request` in, `Response` out"
-  - "[code://.project/plans/daemon/05-an-http-api/task-16-the-api-on-bun-and-deno.md](../../daemon/05-an-http-api/task-16-the-api-on-bun-and-deno.md) - the same on Bun and Deno"
+  - "[code://packages/sdk/src/types/listen.ts#L99-L112](../../../../packages/sdk/src/types/listen.ts#L99-L112) - the listener's plain-request handler"
+  - "[code://packages/server/src/commands/run.ts#L341-L342](../../../../packages/server/src/commands/run.ts#L341-L342) - `daemonRequest`, the plain-request chain, built before the plugins load"
+  - "[code://packages/server/src/commands/run.ts#L607](../../../../packages/server/src/commands/run.ts#L607) - `loadPlugins`, where the fold that holds the routes is made"
+  - "[code://packages/server/src/commands/run.ts#L687](../../../../packages/server/src/commands/run.ts#L687) - the listener always gets `plainRequests(daemonRequest)`"
+  - "[code://packages/server/src/commands/run.ts#L74-L86](../../../../packages/server/src/commands/run.ts#L74-L86) - `apiOrigins`, the names the API's Host check accepts, made only when `http` is on"
+  - "[code://.project/plans/daemon/05-an-http-api/task-15-serve-takes-a-request.md](../../daemon/05-an-http-api/task-15-serve-takes-a-request.md) - `Request` in, `Response` out; done"
+  - "[code://.project/plans/daemon/05-an-http-api/task-16-the-api-on-bun-and-deno.md](../../daemon/05-an-http-api/task-16-the-api-on-bun-and-deno.md) - the same on Bun and Deno; done"
   - "[code://.project/plans/daemon/05-an-http-api/task-11-origin-and-host-are-checked.md](../../daemon/05-an-http-api/task-11-origin-and-host-are-checked.md) - the Host check a route shares"
-  - "[code://docs/PLUGINS.md#L185-L196](../../../../docs/PLUGINS.md#L185-L196) - \"HTTP routes are not, because there is no HTTP server\""
+  - "[code://docs/PLUGINS.md#L358-L371](../../../../docs/PLUGINS.md#L358-L371) - \"HTTP routes are not, because there is no HTTP server\""
 ---
 
 ## Goal
@@ -42,14 +46,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ```
 apply -> [new] registerRoute(handler) -> Contribution.routes -> fold
-listener: a plain request -> /api -> the HTTP API, as today
-                          -> [new] /plugins/<name>/... -> Host check -> handler(Request) -> Response
+listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encoded name>/... -> Host check -> handler(Request) -> Response
+                                       -> /api -> the HTTP API, as today
 ```
 
 ### Gaps
 
 - No registration kind for a route, and the domain reference says there is none because there was no HTTP server.
-- The listener hands every plain request to one handler.
+- The listener hands every plain request to `daemonRequest`, which is built before the plugins load, so a route is read from the fold per request.
 
 ## Decisions locked in
 
@@ -62,10 +66,12 @@ listener: a plain request -> /api -> the HTTP API, as today
 | What | Source | Task |
 | --- | --- | --- |
 | `registerRoute(handler: (request: Request) => Promise<Response>)`, one per plugin, served under `/plugins/<name>/` | Softov, 2026-09-26 | 01, 02 |
+| The fold's field is `routes`, keyed by plugin name, and `Contribution.routes` carries a plugin's | (defaulted: one spelling, the plan's) | 01 |
+| The prefix is the plugin's name with each `/`-separated segment percent-encoded, matched by whole segments; no name is refused for its shape | (defaulted: a throw from a register method discards the plugin's whole contribution) | 01, 02 |
 | The Host check applies to a route; the Origin and JSON-only checks do not, and the route authenticates its own caller | Softov, 2026-09-26 | 02 |
 | Routes are served whenever a plugin registers one, with `http` on or off | Softov, 2026-09-26 | 02 |
 | What a route does on the host goes through its plugin's connection, so the plugin's grants apply | [plan 20](../20-a-plugin-is-a-client-of-its-own-host/plan.md) | - |
-| Waits on daemon 05 tasks 15 and 16, so a route runs on Node, Bun and Deno | Softov, 2026-09-26 | 02 |
+| Builds on daemon 05 tasks 15 and 16, done, so a route runs on Node, Bun and Deno | Softov, 2026-09-26 | 02 |
 | The registration kinds table, the "not a kind" line and `docs/PLUGINS.md` gain the route | decision 1 | 03 |
 
 ## Proposed architecture
@@ -73,7 +79,7 @@ listener: a plain request -> /api -> the HTTP API, as today
 - **Data flow** - the request's path below `/plugins/<name>` reaches the handler unchanged; its `Response` goes back as it is.
 - **Event flow** - none.
 - **State flow** - none; a route holds what its plugin holds.
-- **Layer responsibilities** - `packages/sdk`: the kind, its check and its fold · `packages/server` and `packages/sdk/src/listen.ts`: the prefix and the Host check · `docs/PLUGINS.md` and `00-plugin.md`: the kind.
+- **Layer responsibilities** - `packages/sdk`: the kind, its check and its fold · `packages/server/src/commands/run.ts`: the prefix in `daemonRequest` and the Host check · `docs/PLUGINS.md` and `00-plugin.md`: the kind.
 - **Source-of-truth files** - [`code://packages/sdk/src/types/plugin.ts`](../../../../packages/sdk/src/types/plugin.ts)
 
 ## Tasks
@@ -81,7 +87,7 @@ listener: a plain request -> /api -> the HTTP API, as today
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - registerRoute is a registration kind](task-01-register-route-is-a-kind.md) | todo | - |
-| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | todo | 01, daemon 05 tasks 15 and 16 |
+| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | todo | 01, and the open question in Resume state |
 | [03 - Docs](task-03-docs.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -92,13 +98,13 @@ listener: a plain request -> /api -> the HTTP API, as today
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** [task-01-register-route-is-a-kind.md](task-01-register-route-is-a-kind.md); task 02 waits on daemon 05 tasks 15 and 16.
-- **Open questions:** none.
-- **Watch out for:** the plugin's `name` can hold `@` and `/`, so the prefix must be the name as a path, and a name that cannot be one is refused at registration.
+- **Next action:** [task-01-register-route-is-a-kind.md](task-01-register-route-is-a-kind.md); daemon 05 tasks 15 and 16 are done.
+- **Open question (ask before task 02):** the Host check takes its names from `apiOrigins` (`run.ts:74-86`), which refuses a tunnel's host and is made only when `http` is on, so with `http` off nothing defines the list - (a) check Host against `apiOrigins(...)` plus the host a tunnel announces, built whether `http` is on or not, or (b) skip the Host check for routes, since a route authenticates its own caller.
+- **Watch out for:** the plugin's `name` can hold `@` and `/`; the prefix encodes each segment rather than refusing a name.
 
 ## Final verification checklist
 
 - [ ] A fixture plugin's route answers `POST /plugins/<name>/hook` with `http` off and with it on.
-- [ ] A foreign `Host` is refused; a request with no `Origin` and a non-JSON body reaches the route.
+- [ ] The Host rule the open question settles holds; a request with no `Origin` and a non-JSON body reaches the route.
 - [ ] `/api` is unchanged.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `00-plugin.md`, `plans/index.md` updated.

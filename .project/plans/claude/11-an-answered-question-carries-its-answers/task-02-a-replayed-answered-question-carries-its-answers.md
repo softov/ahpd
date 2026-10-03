@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-A restored AskUserQuestion call whose transcript entry has `toolUseResult.answers` has `toolInput` equal to what the live call ended with.
+A restored AskUserQuestion call whose transcript entry has `toolUseResult.answers` carries them in the same place as the live call of task 01, which waits on the plan's open question.
 
 ## Files
 
@@ -18,7 +18,7 @@ A restored AskUserQuestion call whose transcript entry has `toolUseResult.answer
 
 ## Steps
 
-1. Test first: a transcript with an AskUserQuestion `tool_use` and its `tool_result` entry carrying `toolUseResult: { questions, answers }` restores a call whose `toolInput` parses to the questions plus those answers; one without `toolUseResult` keeps the input.
+1. Test first: a transcript with an AskUserQuestion `tool_use` and its `tool_result` entry carrying `toolUseResult: { questions, answers }` restores a call that carries the questions plus those answers where task 01's live call does; one without `toolUseResult` carries none and keeps its input.
 2. Implement.
 
 ## Validation

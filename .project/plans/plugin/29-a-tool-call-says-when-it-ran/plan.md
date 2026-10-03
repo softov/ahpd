@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: medium
 created: 2026-09-29
-revalidated: 2026-09-29
+revalidated: 2026-10-03
 requires: []
 decisions:
   - decisions/a-tool-calls-times-are-stamped-by-its-plugin.md
@@ -65,7 +65,7 @@ harness transcript on disk -> plugin restores the turns -> the same _meta on eac
 
 - **Done so far:** researched and planned 2026-09-29.
 - **Next action:** p1, then p2 to p5.
-- **Open questions:** none.
+- **Open questions:** p4 has one (which receive time is an ACP call's start), recorded in its Resume state; ask before p4 task 01.
 - **Watch out for:** every `_meta` a plugin sends after a call starts must carry the timing keys and `toolKind` again.
 
 ## Final verification checklist

@@ -22,14 +22,18 @@ This task builds the default route, `code: "bundle"`: no credential reaches the 
 ## Steps
 
 1. In: `git bundle create` of the session's branch on this host, `docker cp` into the machine, `git clone` of it to the machine's `workdir` on that branch, then `git remote set-url origin <the repository's own origin URL>`, so the clone looks like a normal checkout; no credential is sent.
-2. Back: `git bundle create` of the branch inside, `docker cp` out, `git fetch` of it into the session's worktree branch on this host, when the session leaves the machine and before a disposable machine is removed; this host fetches, the machine never pushes.
+2. Back: `git bundle create` of the branch inside, `docker cp` out, `git fetch` of it into a ref of its own (`refs/ahpd/back/<session>`), then `git merge --ff-only` of that ref in the session's worktree, when the session leaves the machine and before a disposable machine is removed; git refuses a fetch straight into a branch checked out in a worktree. This host fetches, the machine never pushes.
+6. A session with `isolation: folder` on a remote profile has no worktree of its own to merge into; what happens then waits on the plan's open question.
+7. A bring-back that fails keeps the machine: a disposable machine is not removed while its work has not come back, and the log says which machine holds it.
 3. A folder that is not a repository is refused with a sentence.
 4. Nothing here is Docker-specific but the copy; keep the copy behind the runtime so p11 can use `scp`.
-5. A fetch back that is not a fast-forward of the session's branch is kept under a side ref and said in the log, not forced over the branch.
+5. A fetch back that is not a fast-forward of the session's branch stays under its own ref and is said in the log, not forced over the branch.
 
 ## Validation
 
 - With the fake Docker recording `cp`, a disposable session's create copies a bundle in and runs `git clone` inside, then sets `origin` to the repository's URL; its leave copies one out and fetches it into the session's branch.
+- With a fake whose bundle-out fails, a disposable machine is not removed and the log names it.
+- A real temporary repository with a linked worktree on a branch: the bring-back fetches into `refs/ahpd/back/<session>` and fast-forwards the worktree's branch.
 - By hand on dev86 in task 05.
 
 ## Resume

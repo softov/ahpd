@@ -4,11 +4,11 @@ status: todo
 depends: []
 layer: "sdk, server"
 refs:
-  - "[code://packages/sdk/src/types/plugin.ts#L118-L207](../../../../packages/sdk/src/types/plugin.ts#L118-L207) - `PluginHost`"
+  - "[code://packages/sdk/src/types/plugin.ts#L139-L279](../../../../packages/sdk/src/types/plugin.ts#L139-L279) - `PluginHost`"
   - "[code://packages/sdk/src/types/rpc.ts#L34-L59](../../../../packages/sdk/src/types/rpc.ts#L34-L59) - `Peer`"
-  - "[code://packages/sdk/src/types/host.ts#L611-L646](../../../../packages/sdk/src/types/host.ts#L611-L646) - `Host.accept`"
-  - "[code://packages/sdk/src/plugins.ts#L279](../../../../packages/sdk/src/plugins.ts#L279) - `pluginHost`"
-  - "[code://packages/server/src/commands/run.ts#L338](../../../../packages/server/src/commands/run.ts#L338) - where the host is built"
+  - "[code://packages/sdk/src/types/host.ts#L753](../../../../packages/sdk/src/types/host.ts#L753) - `Host.accept`"
+  - "[code://packages/sdk/src/plugins.ts#L299](../../../../packages/sdk/src/plugins.ts#L299) - `pluginHost`"
+  - "[code://packages/server/src/commands/run.ts#L639](../../../../packages/server/src/commands/run.ts#L639) - where the host is built"
 ---
 
 ## Objective
@@ -17,11 +17,11 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/types/plugin.ts:118-207` - `connect()` and the type of the end it answers, documented.
+- `UPDATE: packages/sdk/src/types/plugin.ts:139-279` - `connect()` and the type of the end it answers, documented.
 - `CREATE: packages/sdk/src/pair.ts` - an in-memory pair: the host's `Peer` and the plugin's end.
-- `UPDATE: packages/sdk/src/plugins.ts:279` - `pluginHost` takes a late binding to the built host.
-- `UPDATE: packages/server/src/commands/run.ts:338` - binds the host once `createHost` returns, and closes open connections at `stopping`.
-- `CREATE: test/plugin-connect.test.ts` - the cases below.
+- `UPDATE: packages/sdk/src/plugins.ts:299` - `pluginHost` takes a late binding to the built host.
+- `UPDATE: packages/server/src/commands/run.ts:639` - binds the host once `createHost` returns, and closes open connections at `stopping`.
+- `CREATE: packages/server/test/plugin-connect.test.ts` - the cases below.
 
 ## Steps
 
@@ -32,7 +32,7 @@ refs:
 
 ## Validation
 
-- `test/plugin-connect.test.ts`: a fixture plugin connects at `listening`, sends `initialize`, `createSession` and a message, and receives the session's actions; `connect()` during `apply` throws.
+- `packages/server/test/plugin-connect.test.ts`: a fixture plugin connects at `listening`, sends `initialize`, `createSession` and a message, and receives the session's actions; `connect()` during `apply` throws.
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume

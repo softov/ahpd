@@ -41,8 +41,8 @@ refs:
   - "[code://packages/sdk/src/types/computers.ts#L143](../../../../packages/sdk/src/types/computers.ts#L143) - `nested`"
   - "[code://packages/sdk/src/plugins.ts#L393](../../../../packages/sdk/src/plugins.ts#L393) - `registerComputers` is one port per host, so every runtime lives inside this plugin"
   - "[code://packages/sdk/src/computers.ts#L103-L129](../../../../packages/sdk/src/computers.ts#L103-L129) - `computersFor`, the agents gate around `how` and `nested`"
-  - "[code://packages/sdk/src/host.ts#L3617-L3619](../../../../packages/sdk/src/host.ts#L3617-L3619) - a session runs nested only when its backend says `runsNested`"
-  - "[code://packages/sdk/src/host.ts#L6975-L6986](../../../../packages/sdk/src/host.ts#L6975-L6986) - `Host.close` closes every chat, which for a nested session sends `disposeSession` inside"
+  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - a session runs nested only when its backend says `runsNested`"
+  - "[code://packages/sdk/src/host.ts#L7094-L7096](../../../../packages/sdk/src/host.ts#L7094-L7096) - `Host.close` closes every chat, which for a nested session sends `disposeSession` inside"
   - "[code://packages/sdk/src/nested.ts#L511-L524](../../../../packages/sdk/src/nested.ts#L511-L524) - the nested `close`"
   - "[code://packages/sdk/src/decide.ts#L68-L71](../../../../packages/sdk/src/decide.ts#L68-L71) - a policy value is a whole-value glob, `*` the only special character"
   - git://c81ebe0:.project/ideas/more-computer-runtimes.md - the idea this plan takes `ssh` and several runtimes on one host from
@@ -83,7 +83,8 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 - `@ahpd/computer` refuses every runtime but `docker`, and its plugin holds one runtime.
 - `how` and `nestedHost` speak `docker exec` only, with `-w` and `-e` flags ssh does not have.
 - The host runs a `how` backend (Claude, every ACP agent) directly even when the machine is on another box.
-- A restart of this host closes every nested session with `disposeSession`, which ends the inner session it should resume.
+- A restart of this host, `restartChat`, a working-directory change and a truncate close a nested session with `disposeSession`, which ends the inner session they should resume.
+- The router has no rule for a runtime whose `list` throws, and Docker's does by design.
 
 ## Decisions locked in
 
@@ -106,7 +107,11 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 | `within` gives no answer for an ssh machine: a path on this host is not a path on the box, so the machine's own `workdir` stands | there is no mount to read a host path through | 03 |
 | A session on a machine off this host runs nested whatever its backend | decision `a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent`, "A runtime that reaches another host answers `nested()` for every backend" | 03 |
 | `nested` sends no environment and no secret: the box's ahpd holds whatever it was given by hand | model credentials never leave this host; p12 adds the per-session token | 03 |
-| A restart of this host leaves the inner session to resume, rather than disposing it | decision `a-nested-session-resumes-its-inner-transcript-by-id` | 05 |
+| A restart of this host, and every close that is followed by a resume, leaves the inner session to resume; only `removeSession` and a chat removal dispose it | decision `a-nested-session-resumes-its-inner-transcript-by-id` | 05 |
+| The router lists with `allSettled`, bounds each runtime, keeps the rows that answered and reports each that did not; `claimOf` reads through the router, and the `stopping` loop closes each stretch alone | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" (a failure belongs to the runtime that failed) | 01 |
+| An ssh machine that answers is listed as `running` | (defaulted: `isRunning` reads `running` or `Up ` with a trailing space, so a bare `Up` would read as down) | 02 |
+| The vault-named env refusal in `how` applies to exec tools; a session's credentials are p12 task 03's | (defaulted: a session on a remote machine runs nested and `nested` sends no env, so the check never fires for one) | 03 |
+| The ssh fixture (task 04) is built before tasks 02 and 03, whose tests run through it | (defaulted: the tests need it) | 02, 03, 04 |
 | For now a machine id is `<runtime>.<name>` (`ssh.dev86`, `libvirt.<name>`, `node.<name>`, `docker-<profile>.<name>` for a profile's remote Docker), and the local Docker keeps a bare name; one function spells an id and one parses it, so the spelling can change in one place | Softov, 2026-10-03, asked "how is a machine id spelled so it records its runtime?": "not a decision now.. but put runtime.name" | 01 |
 | For now an ssh machine is owned by the host (`root:<host>`), and its up time is metered: a stretch opens when a listing sees it reachable and closes when one sees it unreachable or the daemon stops | Softov, 2026-10-03, asked "who owns an ssh machine, and is its up time metered?": "host-owned, and metered" | 01, 02 |
 | For now ahpd is installed on the box by hand, at this host's version; the copy from p5's ahpd part waits for p5 and goes to p11's template or a later plan | Softov, 2026-10-03, asked "how does ahpd get onto the box?": "installed by hand for now" | 06 |
@@ -127,9 +132,9 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The plugin serves several runtimes, and an id says which](task-01-several-runtimes-on-one-host.md) | todo | - |
-| [02 - An ssh machine is listed from the options and answers over ssh](task-02-an-ssh-machine-is-listed-from-the-options.md) | todo | 01 |
-| [03 - A session on an ssh machine runs nested over ssh](task-03-a-session-on-an-ssh-machine-runs-nested.md) | todo | 02 |
-| [04 - The ssh fixture and the tests](task-04-the-ssh-fixture-and-tests.md) | todo | 03 |
+| [02 - An ssh machine is listed from the options and answers over ssh](task-02-an-ssh-machine-is-listed-from-the-options.md) | todo | 01, 04 |
+| [03 - A session on an ssh machine runs nested over ssh](task-03-a-session-on-an-ssh-machine-runs-nested.md) | todo | 02, container 04 task 17 |
+| [04 - The ssh fixture and the tests](task-04-the-ssh-fixture-and-tests.md) | todo | 01 |
 | [05 - A restart of this host leaves a nested session to resume](task-05-a-restart-leaves-a-nested-session-to-resume.md) | todo | 03 |
 | [06 - dev86, set up by hand, runs a session](task-06-dev86-runs-a-session.md) | todo | 04 |
 | [07 - Docs](task-07-docs.md) | todo | 06 |
@@ -144,9 +149,11 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 ## Resume state
 
 - **Done so far:** nothing; planned 2026-10-02.
-- **Next action:** [task-01-several-runtimes-on-one-host.md](task-01-several-runtimes-on-one-host.md).
-- **Open questions:** none.
-- **Watch out for:** `ssh:dev86` is not a usable id, because `new URL('computer://ssh:dev86')` reads the colon as a port, so the separator is a dot; a policy matches a runtime with `computer: ["ssh.*"]`; a docker name that starts with a served runtime value and a dot is refused at create; p8, p10 and p11 spell their ids through task 01's functions; container/04 tasks 11 (resume by id) and 14 (the inner working directory) must land first, or a nested session on the box starts in a path the box does not have and never resumes; container/04 task 15 makes close wait for `disposeSession`, which task 05 here must not undo for a session that is ending because this host is stopping; claude/15 loads a plugin once with presets as variants, so the box's ahpd needs the same plugin options to serve a preset.
+- **Next action:** [task-01-several-runtimes-on-one-host.md](task-01-several-runtimes-on-one-host.md), then task 04's fixture, then 02.
+- **Open question (ask before task 02):** callers read a machine's `inspect` record in Docker's shape (`State.Running` in `provider.ts:179`, `Config.Labels` in `runtime.ts:457`, `Config.WorkingDir`, `HostConfig`) - (a) the ssh and node runtimes answer `inspect` with a Docker-shaped record, or (b) the runtime gains `state()`, `agents()` and `owner()`, and the plugin stops parsing the record?
+- **Open question (ask before task 02):** an ssh machine's up time is metered from what a listing sees, so a box that goes down between listings is charged until the next one - (a) poll each listing runtime on an interval (which interval?), or (b) accept coarse metering driven by listings?
+- **Open question (ask before task 03):** step 5 wraps a backend without `runsNested` with the plugin it comes from; this is container/04's open question (every backend declares its plugin, or the host records which package registered each agent), and task 03 waits on it.
+- **Watch out for:** `ssh:dev86` is not a usable id, because `new URL('computer://ssh:dev86')` reads the colon as a port, so the separator is a dot; a policy matches a runtime with `computer: ["ssh.*"]`; a docker name that starts with a served runtime value and a dot is refused at create; p8, p10 and p11 spell their ids through task 01's functions; container/04 tasks 11 (resume by id), 14 (the inner working directory), 15 (close waits for dispose) and 17 (a backend names its plugin) must land first, or a nested session on the box starts in a path the box does not have and never resumes; container/04 task 15 makes close wait for `disposeSession`, which task 05 here must not undo for a session that is ending because this host is stopping; claude/15 loads a plugin once with presets as variants, so the box's ahpd needs the same plugin options to serve a preset.
 
 ## Final verification checklist
 

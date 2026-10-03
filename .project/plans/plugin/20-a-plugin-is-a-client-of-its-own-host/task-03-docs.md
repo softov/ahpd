@@ -4,8 +4,8 @@ status: todo
 depends: [task-02-the-connection-is-the-plugins-principal.md]
 layer: "docs"
 refs:
-  - "[code://docs/PLUGINS.md#L171-L184](../../../../docs/PLUGINS.md#L171-L184) - Read-only context, beside which `connect` is described"
-  - "[code://docs/PLUGINS.md#L282-L308](../../../../docs/PLUGINS.md#L282-L308) - the configuration entry, which gains `grants`"
+  - "[code://docs/PLUGINS.md#L307-L322](../../../../docs/PLUGINS.md#L307-L322) - Read-only context, beside which `connect` is described"
+  - "[code://docs/PLUGINS.md#L465-L496](../../../../docs/PLUGINS.md#L465-L496) - the configuration entry, which gains `grants`"
 ---
 
 ## Objective
@@ -14,8 +14,8 @@ refs:
 
 ## Files
 
-- `UPDATE: docs/PLUGINS.md:171-184` - a short section on `connect()`, with a ten-line example that starts a session.
-- `UPDATE: docs/PLUGINS.md:282-308` - `grants` in the object form, and that none is the default.
+- `UPDATE: docs/PLUGINS.md:307-322` - a short section on `connect()`, with a ten-line example that starts a session.
+- `UPDATE: docs/PLUGINS.md:465-496` - `grants` in the object form, and that none is the default.
 
 ## Steps
 

@@ -29,13 +29,14 @@ For now the names the `docker` program itself reads, `PATH`, `HOME` and `DOCKER_
 1. Add a small helper in `runtime.ts`, exported for `plugin.ts`: `byName(env) -> { flags: ['-e', NAME, ...], env: { NAME: VALUE } }`, with `DOCKER_OWN = ['PATH', 'HOME', 'DOCKER_HOST']` beside it; a name in that list is written `-e NAME=VALUE` and kept out of the returned env. The list is the one place the choice is made.
 2. Use it for the exec answer in `reach`; keep `-w` and the order of flags as they are.
 3. Give `must` an optional env argument and use the helper for `run` and for `create` on the copy-in route.
-4. Teach the fake Docker to resolve `-e NAME` from its own environment and to record the resolved value on the machine.
+4. Teach the fake Docker to resolve `-e NAME` from its own environment and to record the resolved value on the machine. The fake fails when `NAME` is absent from its environment, which is stricter than real Docker: Docker drops an unset `-e NAME` silently and the variable is simply missing inside. The strictness is on purpose, so a caller that loses the env is a failing test and not a missing variable; the docs and the fake's comment say so.
 
 ## Validation
 
 - `computer-spawn.test.ts`: an exec asked with `{ KEY: 'secret' }` answers args with `-e` and `KEY` and no `secret`, and `env.KEY === 'secret'`.
 - `computer-needs.test.ts`: a create with an env need records no value in the fake's argv, and the machine's recorded env has it.
 - `computer-spawn.test.ts`: an exec asked with `{ PATH: '/opt/x/bin:/usr/bin', KEY: 'secret' }` answers `-e PATH=/opt/x/bin:/usr/bin` and `-e KEY`, and the answered env has `KEY` and not the asked `PATH`.
+- `computer-spawn.test.ts`: a caller that spawns the answered descriptor without its `Spawn.env` (args only, `process.env` as it is) makes the fake Docker fail naming `KEY`, so a backend that drops the env is caught.
 - `pnpm --filter @ahpd/computer test` green.
 
 ## Resume

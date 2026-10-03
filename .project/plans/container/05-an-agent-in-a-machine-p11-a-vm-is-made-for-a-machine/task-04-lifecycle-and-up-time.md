@@ -6,8 +6,8 @@ layer: "computer"
 refs:
   - "[code://packages/computer/src/provider.ts#L156](../../../../packages/computer/src/provider.ts#L156) - `STATES`"
   - "[code://packages/computer/src/provider.ts#L278-L288](../../../../packages/computer/src/provider.ts#L278-L288) - the `state` write"
-  - "[code://packages/computer/src/plugin.ts#L359-L368](../../../../packages/computer/src/plugin.ts#L359-L368) - `claimOf`, which must read a VM's owner from its metadata"
-  - "[code://packages/computer/src/plugin.ts#L410-L454](../../../../packages/computer/src/plugin.ts#L410-L454) - `made`"
+  - "[code://packages/computer/src/plugin.ts#L403-L412](../../../../packages/computer/src/plugin.ts#L403-L412) - `claimOf`, which must read a VM's owner from its metadata"
+  - "[code://packages/computer/src/plugin.ts#L454-L498](../../../../packages/computer/src/plugin.ts#L454-L498) - `made`"
 ---
 
 ## Objective
@@ -18,7 +18,7 @@ A runtime may declare `suspend` and `resume` in its capabilities; the `state` le
 
 - `UPDATE: packages/computer/src/runtime.ts:194-212` - optional `suspend(id)` and `resume(id)`.
 - `UPDATE: packages/computer/src/provider.ts:156, 278-288` - `suspended` where declared.
-- `UPDATE: packages/computer/src/plugin.ts:359-368, 410-454` - `claimOf` uses the row's `owner` from `inspect` through the runtime; `suspend` and `resume` wrapped so a suspend closes the stretch and a resume opens one, in the one wrapper `made` uses.
+- `UPDATE: packages/computer/src/plugin.ts:454-498` - `claimOf` already reads through the router (p9 task 01), and the libvirt runtime answers the owner in the form p9's open question settles; `suspend` and `resume` wrapped so a suspend closes the stretch and a resume opens one, in the one wrapper `made` uses.
 - `UPDATE: packages/computer/src/libvirt.ts` - `start`, `stop` (`shutdown`, then `destroy` after a bound), `restart`, `suspend`, `resume`.
 
 ## Steps

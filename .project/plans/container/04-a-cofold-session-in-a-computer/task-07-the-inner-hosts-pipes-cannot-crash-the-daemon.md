@@ -25,7 +25,7 @@ A nested host that dies at any moment, or closes its stdin, ends the outer sessi
 2. Take the end from `close` instead of `exit`, so every stdout line the process wrote is delivered before the session ends.
 3. Carry the signal into the sentence: `(code, signal)` from `close`, and a process killed by a signal says `it was killed by SIGKILL` rather than an empty reason.
 4. Widen `NestedHost` (nested.ts:47) with whatever step 1 and step 2 need, and keep the in-memory fakes in `packages/sdk/test/nested-proxy.test.ts` compiling.
-5. In the new test, start the inner host as `process.execPath` with `--conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --stdio --plugin ./packages/sdk/test/fixtures/plugin-nested-echo`, with `HOME` and the XDG directories pointed at a temporary directory, through `NestedOptions.start`.
+5. In the new test, start the inner host as `process.execPath` with `--conditions development --import ./scripts/dev.mjs packages/server/src/main.ts --stdio --plugin ./packages/sdk/test/fixtures/plugin-nested-echo`, through `NestedOptions.start`, with an explicit env of `PATH`, `HOME` and the XDG directories only, `HOME` and the XDG directories pointed at a temporary directory; never spread `process.env` into it, as `startInside` does at `nested.ts:126`, so nothing from the test runner's environment reaches the inner host.
 
 ## Validation
 

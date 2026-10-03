@@ -6,13 +6,13 @@ layer: "agent-pi, computer"
 refs:
   - "[code://packages/agent-pi/src/agent.ts#L90-L155](../../../../packages/agent-pi/src/agent.ts#L90-L155) - the agent object `piAgent` answers"
   - "[code://packages/agent-cofold/src/agent.ts#L640-L646](../../../../packages/agent-cofold/src/agent.ts#L640-L646) - cofold's `runsNested`, the pattern"
-  - "[code://packages/sdk/src/nested.ts#L95-L103](../../../../packages/sdk/src/nested.ts#L95-L103) - the proxy loads `@ahpd/agent-<provider>` inside by default"
+  - "[code://.project/plans/container/04-a-cofold-session-in-a-computer/task-17-a-backend-names-its-nested-plugin.md](../04-a-cofold-session-in-a-computer/task-17-a-backend-names-its-nested-plugin.md) - `runsNested: { plugin }`, the package the inner host loads"
   - "[code://.project/decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md](../../../decisions/a-session-reaches-a-nested-host-through-a-generic-proxy.md) - the proxy names pi as a later user"
 ---
 
 ## Objective
 
-`@ahpd/agent-pi` declares `runsNested: true` and `machine()` with `ahpdPart: { part: 'ahpd' }`, and the ahpd part installs `@ahpd/agent-pi` beside `@ahpd/agent-cofold`, so a pi session on a computer runs in an ahpd started inside it.
+`@ahpd/agent-pi` declares `runsNested: { plugin: '@ahpd/agent-pi' }` (container/04 task 17) and `machine()` with `ahpdPart: { part: 'ahpd' }`, and the ahpd part installs `@ahpd/agent-pi` beside `@ahpd/agent-cofold`, so a pi session on a computer runs in an ahpd started inside it.
 
 ## Files
 
@@ -22,6 +22,7 @@ refs:
 
 ## Steps
 
+0. This task needs container/04 task 17 (`runsNested: { plugin }`) and p3 task 02 (plugins installed into `/opt/ahpd/ahpd/plugins`, resolved through `AHPD_PLUGIN_ROOT`).
 1. Add both fields; nothing in pi's session changes, because the inner host runs pi as it runs on this one.
 2. The proxy starts `ahpd --stdio --plugin @ahpd/agent-pi`, which the plugin list makes resolvable.
 

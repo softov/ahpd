@@ -66,7 +66,11 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 | What | Source | Task |
 | --- | --- | --- |
 | A part's target is always `/opt/ahpd/<part>`, never chosen by the agent | the joined image puts it there, so both routes agree | 01 |
-| Whether image mounts work is probed once per daemon and kept | (defaulted: the answer does not change while Docker runs) | 03 |
+| Whether image mounts work is probed with the part being mounted, after it is ensured, and only an answer about the mount type is kept for the daemon's life | (defaulted: the mount type's answer does not change while Docker runs, and a missing image says nothing about it) | 03 |
+| A part whose build fails is left out of the machine, which is labelled with the parts it has; only a session needing the missing part is refused | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" (a failure belongs to the item that failed) | 02 |
+| A part volume is filled first and marked filled last, by a marker file; one without the marker is filled again | (defaulted: "present means filled" would keep a half-filled volume for ever) | 04 |
+| Whether a real Docker fills a volume from a scratch image at create is checked by hand, and the build keeps the fake | (defaulted: the build agent has no Docker) | 04 |
+| A dev container's parts reach `PATH` by being prepended to the probed `PATH` in container/03 task 18's exec derivation | (defaulted: the probed `PATH` is passed as `-e` on every exec and would override one set at create) | 02 |
 | A running machine never gains a part; a session whose part is missing is refused, naming it | the rule that a machine is kept to the agents it was prepared for | 02 |
 | For now a dev container's image mount is a `--mount type=image,...` entry in the override config's `runArgs`, checked against a real CLI first; where that fails, the volume route; the route is chosen in one function beside the Docker probe, so it can change | Softov, 2026-10-03, asked "how does `devcontainer up` take an image mount?": "a `--mount type=image` entry in the override config's runArgs, checked against a real CLI first; where that fails, the volume route" | 05 |
 
@@ -105,5 +109,6 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 - [ ] A disposable machine for an agent that needs `codex` has `/opt/ahpd/codex` and `/opt/ahpd/node`, read-only, and nothing else of ours.
 - [ ] With image mounts switched off in the fake, the same machine gets both from volumes.
 - [ ] A session on a long-lived machine without its part is refused with the part named.
+- [ ] A part whose build fails leaves the machine made without it, and only sessions needing it are refused.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 - [ ] `docs/COMPUTER.md`, `plans/index.md` updated.

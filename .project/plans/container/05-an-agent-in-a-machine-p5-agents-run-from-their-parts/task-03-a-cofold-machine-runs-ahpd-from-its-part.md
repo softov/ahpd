@@ -19,6 +19,7 @@ Cofold's `machine()` adds `ahpdPart: { part: 'ahpd' }`, and the default `host` c
 
 ## Steps
 
+0. This task needs p3 task 02, which installs the ahpd part's plugins into `/opt/ahpd/ahpd/plugins` and has the part's `ahpd` launcher set `AHPD_PLUGIN_ROOT`; without it the inner ahpd finds no `@ahpd/agent-cofold`.
 1. Add the need; nothing changes in `host`, because p4 puts the part's `bin` on `PATH`.
 2. A profile whose `host` names another program keeps it.
 

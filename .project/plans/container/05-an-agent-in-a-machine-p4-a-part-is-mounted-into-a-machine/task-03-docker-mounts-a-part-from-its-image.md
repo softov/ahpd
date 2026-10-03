@@ -19,13 +19,14 @@ Each part becomes `--mount type=image,source=<tag>,image-subpath=opt/ahpd/<id>,t
 
 ## Steps
 
-1. Probe once: `docker create --mount type=image,source=<node tag>,target=/probe <node tag> x`, then remove it; success means yes. Keep the answer for the daemon's life.
+1. Probe on the first machine that has a part, after that part's image is ensured: `docker create --mount type=image,source=<that part's tag>,target=/probe <that part's tag> x`, then remove it. Success means yes. Keep the answer for the daemon's life only when it is about the mount type: a refusal that names `type=image` (or an unknown mount type) is a kept no; any other failure (the image missing, Docker unreachable) is not kept, and the next machine probes again. An archive part has no `node` image, so the probe never names an image that may not exist.
 2. Add the flags after the bind mounts.
 3. Ignore Docker's experimental warning on stderr.
 
 ## Validation
 
 - With the fake accepting image mounts, the flags are present for each part.
+- The probe names the part being mounted; a probe that fails because the image is missing is asked again for the next machine, and one that fails on the mount type is not.
 - By hand on Docker 29: a codex machine runs `/opt/ahpd/codex/bin/codex-acp --help`.
 
 ## Resume

@@ -49,15 +49,15 @@ agent calls list_sessions -> host tool run(input, toolContext(uri, chat)) -> eve
 | What | Source | Task |
 | --- | --- | --- |
 | Under a users directory a session tool acts with the grants of the person it works for: reading a session needs `session:read`, creating, messaging, renaming or deleting one needs `session:write`, and `list_sessions` lists only what that person may read | Softov, 2026-09-30, asked which guards to plan for the session tools: "Act as the session's person" | 01 |
-| VS Code's limits: spawn depth 3, 50 created sessions, 50 created chats and 100 sent messages per process, with its refusal words | same answer: "VS Code's limits" | 02 |
+| VS Code's limits: spawn depth 3, 50 created sessions, 50 created chats and 100 sent messages, with its refusal words; what the counts are kept per is the open question below | same answer: "VS Code's limits" | 02 |
 | An install can turn the session tools off: a daemon option `sessionTools`, `true` by default, `false` for none, or a list of providers whose sessions get them | same answer: "A switch to turn them off"; then asked "What should the switch that turns session tools off look like?": "Option: on, off, or providers" | 03 |
-| A tool call carries the grants of the person who sent the turn it runs in; a turn an automation started carries the automation's creator; a turn with no person gets no session tool that writes | Softov, 2026-09-30, asked "No session has an owner, so whose grants should a session tool call carry?": "Who sent the turn" | 01 |
+| A tool call carries the grants of the person who sent the turn it runs in; a turn an automation started carries the automation's creator; under a users directory, a turn with no person gets no session tool that writes | Softov, 2026-09-30, asked "No session has an owner, so whose grants should a session tool call carry?": "Who sent the turn" | 01 |
 | No confirmation is forced host-side: whether a session tool asks is the backend's permission mode, so a person who lets an agent work can let it `send_message` without being asked each time | same answer, on host-side confirmation "whatever the permissions": "not ideal for a get to working agent. if desired by the user... so whatever the permissions ask was not accepted as written" | - |
 
 ## Proposed architecture
 
 - **Data flow** - `toolContext` gains the person a call works for; each session tool asks it before acting, and the listing filters by it.
-- **State flow** - the counts for task 02 are per process, as VS Code keeps them; spawn depth is per session, from the session that created it.
+- **State flow** - spawn depth is per session, from the session that created it; what the counts for task 02 are kept per waits on the open question.
 - **Layer responsibilities** - `packages/sdk`: the person, the grants, the limits; `packages/server`: the option for task 03.
 - **Source-of-truth files** - [`code://packages/sdk/src/sessiontools.ts`](../../../../packages/sdk/src/sessiontools.ts)
 
@@ -73,12 +73,12 @@ Task files are written once the open questions are answered.
 
 ## Risks and tradeoffs
 
-- Built on host/30's gate and its one name registry; it waits for that worktree to merge, since both change `host.ts`.
+- Built on host/30's gate and its one name registry, which are on main (e33ebee).
 - A host with no users directory has no person: the tools act as today there, bounded by task 02 only.
 
 ## Resume state
 
 - **Done so far:** planned 2026-09-30, draft.
-- **Next action:** the three task files; then the build, after host/30 merges.
-- **Open questions:** none.
+- **Next action:** ask the question below; then the three task files, then the build.
+- **Open question (ask before task 02):** VS Code keeps its counts per process, and a daemon process lives for weeks and serves many people, so 50 sessions or 100 messages per process would stop every session tool on the host until a restart - keep the counts (a) per session tree, from the session the first spawn came from, (b) per person the turns work for, or (c) per process with a reset window.
 - **Watch out for:** the artifact tools and `ahp_terminals` are not session tools; this plan leaves them as they are.
