@@ -17,7 +17,7 @@ decisions:
   - decisions/a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent.md
   - decisions/a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback.md
   - decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md
-  - decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md
+  - decisions/cofold-config-reaches-a-machine-by-a-path-variable.md
 refs:
   - "[code://packages/agent-claude/src/claude.ts#L373-L398](../../../../packages/agent-claude/src/claude.ts#L373-L398) - Claude's needs: config dir, `.claude.json`, and the host's binary"
   - "[code://packages/agent-claude/src/claude.ts#L390-L396](../../../../packages/agent-claude/src/claude.ts#L390-L396) - the host binary mount, made whatever the options say"
@@ -78,7 +78,7 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 | [A nested host is used only for a backend that runs nested and for a machine on another host](../../../decisions/a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent.md) | 03, 06 |
 | [A part is mounted from its own image, and a volume filled from that image is the fallback](../../../decisions/a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback.md) | 01, 02, 03 |
 | [A plugin is loaded once, and each of its presets is a variant registered as an agent of its own](../../../decisions/a-plugin-loads-once-and-each-preset-is-a-variant.md) | 02, 04, 09 |
-| [Cofold's configuration reaches a machine at a fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) | 05 |
+| [Cofold's configuration reaches a machine at a fixed target, named by a path variable](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md) | 05 |
 
 | What | Source | Task |
 | --- | --- | --- |

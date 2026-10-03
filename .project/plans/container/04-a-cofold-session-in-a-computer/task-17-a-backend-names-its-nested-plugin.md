@@ -31,7 +31,7 @@ refs:
 
 1. Change the type and the validation; `runsNested: true` is refused at plugin load with a sentence saying it takes `{ plugin }`.
 2. The host passes `{ plugins: [agent.runsNested.plugin] }` to `nestedAgent`; remove the `@ahpd/agent-${name}` default, so a caller without a plugin is a type error, not a guess.
-3. Pass no outer plugin options into the machine: the inner host loads the plugin with its defaults, and cofold reads its configuration where [the fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) mounts it.
+3. Pass no outer plugin options into the machine: the inner host loads the plugin with its defaults, and cofold reads its configuration where [the fixed target](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md) mounts it.
 4. Create the inner session under the provider the inner host serves: after `initialize`, read the inner root's `agents`, use the outer provider name when it is there and otherwise the single agent the inner host serves; more than one candidate ends the session with a sentence naming them (Softov confirmed, 2026-09-26).
 5. cofold declares its package, and the comment above it says what the member is, not how it came to be.
 

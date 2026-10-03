@@ -77,7 +77,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 | The profile provides ahpd: its image or mounts carry it, and an optional `host` command says how to start it, default `ahpd` | Softov, 2026-09-26: "profile serves it.. command if desired and will be needed for kvm" | 01 |
 | No install step; a machine without ahpd is refused with a sentence | follows from the profile providing it | 01, 05 |
 | A backend opts in to the proxy by declaring `runsNested: { plugin }`; cofold does | the proxy is generic | 04, 17 |
-| cofold's config reaches the machine as its declared need, at a fixed target | [decision](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md), `plugin/15` | 12 |
+| cofold's config reaches the machine as its declared need, at a fixed target | [decision](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md), `plugin/15` | 12 |
 | A write to a dead inner host, or its stdin closing, is the session's end and never an uncaught error; the end is read from `close`, with the signal in the sentence | follows from "a failure is a sentence, never a hang" | 07 |
 | The proxy is tested against a real child process as well as the in-memory fakes | the fakes cannot raise `EPIPE` or reorder `exit` and stdout | 07 |
 | The inner session works at the path the session's folder is mounted at inside the machine | follows from the mount mapping `how` already applies | 14 |

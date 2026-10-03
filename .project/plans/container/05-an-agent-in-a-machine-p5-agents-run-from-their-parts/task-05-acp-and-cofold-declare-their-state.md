@@ -6,7 +6,7 @@ layer: "agent-acp, agent-cofold"
 refs:
   - "[code://.project/plans/container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/task-02-acp-presets-name-their-parts.md](task-02-acp-presets-name-their-parts.md) - the presets' config dirs"
   - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - cofold's config file need, at the host's own path today"
-  - "[code://.project/decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md) - the target it moves to"
+  - "[code://.project/decisions/cofold-config-reaches-a-machine-by-a-path-variable.md](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md) - the target it moves to"
   - "[code://.project/plans/plugin/15-an-agent-says-what-a-machine-needs/task-06-cofold-declares.md](../../plugin/15-an-agent-says-what-a-machine-needs/task-06-cofold-declares.md) - the task that moves it there"
 ---
 

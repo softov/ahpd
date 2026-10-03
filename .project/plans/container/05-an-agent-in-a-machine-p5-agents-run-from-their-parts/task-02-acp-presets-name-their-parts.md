@@ -29,6 +29,8 @@ None of these reach a spawn on the host, only a machine.
 | amp | amp (holds `amp` and `amp-acp`) | `AMP_CLI_PATH=amp` | `AMP_API_KEY` |
 | qwen | qwen | `QWEN_HOME=/ahpd/qwen` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` |
 
+An env need is the whole machine's, so `XDG_CONFIG_HOME` for opencode, kilo or devin also moves the folder of a nested `ahpd` in the same machine, which must be writable ([why cofold moved off it](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md)); prefer each agent's own path variable where it has one, and check a profile that puts one of these beside cofold.
+
 ## Files
 
 - `UPDATE: packages/agent-acp/src/types.ts` - `AcpMachine.part`.
