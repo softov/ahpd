@@ -1,6 +1,6 @@
 ---
 title: Every mount target is checked at create
-status: todo
+status: done
 depends: []
 layer: "computer | docs"
 refs:

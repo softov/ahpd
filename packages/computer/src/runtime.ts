@@ -500,6 +500,29 @@ const cliMount = (mount: string): string => {
 };
 
 /**
+ * A command as a refusal may name it, with every environment value left out.
+ *
+ * An env need may be a credential, so a `run` that failed over a duplicate
+ * mount point would otherwise write `-e ANTHROPIC_API_KEY=sk-...` into a log
+ * and into the sentence a session is answered with. The value is not what
+ * identifies the call that failed - the flag before it is, and the name is what
+ * is worth keeping.
+ */
+const readable = (args: string[]): string => {
+  const said: string[] = [];
+  for (let at = 0; at < args.length; at++) {
+    const one = args[at] ?? '';
+    said.push(one);
+    if (one !== '-e' && one !== '--env') continue;
+    const value = args[at + 1];
+    if (value === undefined) continue;
+    at += 1;
+    said.push(value.split('=', 1)[0] ?? '');
+  }
+  return said.join(' ');
+};
+
+/**
  * The disposable profile a machine was made from, from the record `inspect`
  * answered, and whether it is alone.
  */
@@ -524,28 +547,76 @@ export const profileOf = (found: Record<string, unknown>): string | undefined =>
   return disposableOf(found)?.profile;
 };
 
-/** The labels a `docker ps` row's `Labels` column names, as a flat record. */
-const labelsListed = (labels: string): Record<string, string> => {
-  const held: Record<string, string> = {};
-  for (const pair of labels.split(',')) {
-    const at = pair.indexOf('=');
-    if (at !== -1) held[pair.slice(0, at)] = pair.slice(at + 1);
+/**
+ * The labels a listing reads, by name.
+ *
+ * A listing does not read the `Labels` column. `docker ps` prints every label
+ * of a machine as one column of `key=value` pairs joined by commas, so a value
+ * holding a comma cannot be told from the pair after it: the agents a machine
+ * was prepared for lose every one after the first, and a dev container folder
+ * with a comma in it is a folder no listing can match again. The labels come
+ * back as one JSON object instead, where every value is quoted and escaped, so
+ * nothing a value holds - a comma, a tab, a newline - can be read as the
+ * boundary between two things. A label added to a machine later is read by
+ * adding it here.
+ */
+const LISTED_LABELS = [
+  MACHINE_AGENTS,
+  MACHINE_DISPOSABLE,
+  MACHINE_ALONE,
+  DEVCONTAINER_FOLDER,
+  MACHINE_OWNER,
+  MACHINE_TEAM,
+  MACHINE_PROJECT,
+] as const;
+
+/** The `--format` a listing asks with: its own fields, then every label at once. */
+const LISTED_FORMAT = [
+  '{{.Names}}',
+  '{{.Image}}',
+  '{{.Status}}',
+  '{{.CreatedAt}}',
+  '{{json .Labels}}',
+].join('\t');
+
+/** The labels one row answered, by the keys `LISTED_LABELS` holds. */
+type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
+
+/** One row's labels as JSON, as a record of what a machine carries. */
+const labelsOfRow = (said: string | undefined): Record<string, unknown> => {
+  if (said === undefined) return {};
+  try {
+    const parsed = JSON.parse(said) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
   }
-  return held;
+  catch { return {}; }
 };
 
-/** The agents a `docker ps` row's `Labels` column names. */
-const agentsListed = (labels: string): string[] =>
-  agentsSaid(labelsListed(labels)[MACHINE_AGENTS]);
-
-/** The disposable profile a `docker ps` row names, and whether it is alone. */
-const disposableListed = (labels: string): { profile: string; alone: boolean } | undefined => {
-  const held = labelsListed(labels);
-  const profile = held[MACHINE_DISPOSABLE];
-  return profile === undefined || profile === ''
-    ? undefined
-    : { profile, alone: held[MACHINE_ALONE] === 'true' };
-};
+/**
+ * One machine as a listing answered it, with every label it carries.
+ *
+ * A tab between the columns, which is what `LISTED_FORMAT` joins with, so the
+ * fields come in the order that string holds them and the labels come back whole
+ * from the one JSON object at the end. A label the machine does not carry
+ * answers empty rather than being absent, so a row is read the same way whatever
+ * it holds.
+ */
+const listed = (said: string): { name: string; image: string; status: string; created: string; labels: ListedLabels }[] =>
+  said
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => {
+      const [name, image, status, created, labels] = line.split('\t');
+      return {
+        name: name ?? '',
+        image: image ?? '',
+        status: status ?? '',
+        created: created ?? '',
+        labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(labelsOfRow(labels)[key])])) as ListedLabels,
+      };
+    });
 
 /**
  * Whether a machine from a listing is up.
@@ -571,7 +642,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     const held = await ran(options, args);
     if (held.code !== 0) {
       const said = held.stderr.trim() || held.stdout.trim() || 'no output';
-      throw new Error(`${options.command} ${args.join(' ')} exited ${held.code}: ${said}`);
+      throw new Error(`${options.command} ${readable(args)} exited ${held.code}: ${said}`);
     }
     return held.stdout;
   };
@@ -599,22 +670,23 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   return {
     kind: 'docker',
 
-    list: async () => rows(await must(['ps', '-a', '--filter', `label=${options.label}`, '--format', '{{json .}}']))
+    list: async () => listed(await must([
+      'ps', '-a', '--filter', `label=${options.label}`, '--format', LISTED_FORMAT,
+    ]))
       .map((row) => {
-        const labels = text(row.Labels);
-        const disposable = disposableListed(labels);
-        const folder = labelsListed(labels)[DEVCONTAINER_FOLDER];
+        const profile = row.labels[MACHINE_DISPOSABLE];
+        const folder = row.labels[DEVCONTAINER_FOLDER];
         return {
-          id: text(row.Names),
-          image: text(row.Image),
-          status: text(row.Status),
-          created: text(row.CreatedAt),
-          ...(folder === undefined || folder === '' ? {} : { folder }),
-          agents: agentsListed(labels),
-          ...(disposable === undefined ? {} : { disposable }),
+          id: row.name,
+          image: row.image,
+          status: row.status,
+          created: row.created,
+          ...(folder === '' ? {} : { folder }),
+          agents: agentsSaid(row.labels[MACHINE_AGENTS]),
+          ...(profile === '' ? {} : { disposable: { profile, alone: row.labels[MACHINE_ALONE] === 'true' } }),
           // Who is paying for these, said by the machine itself rather than by
           // whatever this daemon happens to remember making.
-          ...claimedBy(labelsListed(labels)),
+          ...claimedBy(row.labels),
         };
       })
       .filter((one) => one.id !== ''),
@@ -663,14 +735,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           '--workspace-folder', spec.devcontainer,
           ...idLabels(options.label, spec.devcontainer),
         ];
-        // What the agents this machine is prepared for need, in the CLI's own
-        // two flags: a host path made visible, and a variable set in there.
-        for (const mount of spec.mounts ?? []) argv.push('--mount', cliMount(mount));
-        // A copy-in has no CLI verb: a file or folder is bind-mounted instead,
-        // which is the delivery this recipe has.
-        for (const copy of spec.copies ?? []) {
-          argv.push('--mount', `type=bind,source=${copy.source},target=${copy.target}`);
-        }
+        /*
+         * What the agents this machine is prepared for need, in the CLI's own
+         * flags: a host path made visible, and a variable set in there.
+         *
+         * A copy-in has no CLI verb, so it is bind-mounted as well, which is
+         * the delivery this recipe has - and a copy saying what a mount already
+         * says is one mount, not two, as it is on the Docker route.
+         */
+        const bound = [...new Set([
+          ...(spec.mounts ?? []).map(cliMount),
+          ...(spec.copies ?? []).map((one) => `type=bind,source=${one.source},target=${one.target}`),
+        ])];
+        for (const mount of bound) argv.push('--mount', mount);
         for (const [key, value] of Object.entries(spec.env ?? {})) argv.push('--remote-env', `${key}=${value}`);
         let ran: { code: number; stdout: string; stderr: string };
         try {
@@ -723,11 +800,26 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (spec.project !== undefined) flags.push('--label', `${MACHINE_PROJECT}=${spec.project}`);
       if (spec.cpus !== undefined) flags.push('--cpus', spec.cpus);
       if (spec.memory !== undefined) flags.push('--memory', spec.memory);
-      for (const mount of spec.mounts ?? []) flags.push('-v', mount);
-      // The folder a session works in, at the same path, so an agent that keys
-      // its own record by the working directory finds the same key inside and
-      // out - Claude's history is one such record.
-      if (spec.folder !== undefined) flags.push('-v', `${spec.folder}:${spec.folder}`);
+      /*
+       * One `-v` per entry, however many said the same one.
+       *
+       * The manifest collapses identical entries, since a target two different
+       * mounts share is refused there and the same one twice is one statement.
+       * The session's folder is not among them - the runtime adds it - so a
+       * profile that mounts the folder by hand at the same path, and a need
+       * resolved to exactly what a mount says, would each hand Docker the same
+       * target twice. Docker refuses that as a duplicate mount point, so the
+       * machine is not made at all; the fold is here rather than in the
+       * manifest because this is where the last of the entries appears.
+       */
+      const mounted = [...new Set([
+        ...(spec.mounts ?? []),
+        // The folder a session works in, at the same path, so an agent that
+        // keys its own record by the working directory finds the same key
+        // inside and out - Claude's history is one such record.
+        ...(spec.folder === undefined ? [] : [`${spec.folder}:${spec.folder}`]),
+      ])];
+      for (const mount of mounted) flags.push('-v', mount);
       for (const [key, value] of Object.entries(spec.env ?? {})) flags.push('-e', `${key}=${value}`);
       if (spec.workdir !== undefined) flags.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine

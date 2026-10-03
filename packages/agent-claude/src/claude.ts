@@ -16,11 +16,10 @@ import type { Agent, Bag, MachineNeed, Start } from '@ahpd/sdk';
  * The host's Claude Code CLI, as the installer leaves it.
  *
  * `~/.local/bin/claude` is a symlink into a versioned directory, and the
- * version changes under it on every update - which is why the computer docs
- * once pinned `versions/2.1.267` and the mount became an empty directory the
- * session exited 127 from. So this follows the link when it is asked, rather
- * than reading it once, and answers the path it points at. A missing link
- * answers the path itself, which a machine is then refused over by name.
+ * version changes under it on every update, so a path named once stops being
+ * the CLI. This follows the link when it is asked and answers what it points
+ * at. A missing link answers the path itself, which a machine is then refused
+ * over by name.
  */
 export const claudeExecutablePath = (home: string = homedir()): string => {
   const named = join(home, '.local', 'bin', 'claude');
@@ -87,11 +86,10 @@ export interface ClaudeOptions {
   /**
    * The configuration directory the CLI reads *inside a machine*.
    *
-   * Passed as `CLAUDE_CONFIG_DIR`, so a machine that mounts this host's
-   * `~/.claude` at the same path is a machine the CLI is already signed in on.
-   * Nothing here mounts it: the mount is the operator's, in the computer
-   * plugin's `mounts` or in the machine's own manifest, and this only says
-   * where to look. `false` says nothing at all and leaves the image's own.
+   * `/ahpd/claude` by default. `machine()` mounts this host's `~/.claude`
+   * there, and the CLI runs with `CLAUDE_CONFIG_DIR` pointing at it, so a
+   * machine made for this backend is one the CLI is already signed in on.
+   * `false` declares no configuration need at all and leaves the image's own.
    */
   computerConfigDir?: string | false;
   /**
@@ -363,12 +361,11 @@ export function claude(options: ClaudeOptions): Agent {
      * What a machine needs for this CLI to run in it.
      *
      * The configuration directory and the file beside it are what the CLI
-     * signs in from, and the executable is what runs. They are the same host
-     * paths the computer docs used to list as mounts by hand, and the
-     * executable is resolved here so an update on this host is followed rather
-     * than a pinned version that stops existing. `computerConfigDir: false`
-     * leaves the image's own configuration alone, and a machine for this
-     * backend then carries the executable alone.
+     * signs in from, and the executable is what runs. The executable is
+     * resolved here so an update on this host is followed rather than a pinned
+     * version that stops existing. `computerConfigDir: false` leaves the
+     * image's own configuration alone, and a machine for this backend then
+     * carries the executable alone.
      */
     machine: (): Record<string, MachineNeed> => {
       const config = configDir === false ? {} : {

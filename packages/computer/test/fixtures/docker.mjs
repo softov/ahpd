@@ -79,9 +79,29 @@ if (verb === 'ps') {
    */
   const wanted = args.includes('--filter') ? args[args.indexOf('--filter') + 1] : undefined;
   const asked = wanted?.startsWith('label=') === true ? wanted.slice('label='.length) : undefined;
+  /*
+   * Any `--format` a provider asks with, as Docker renders it.
+   *
+   * `{{.Field}}` is one of the listing's own fields, `{{.Label "key"}}` one
+   * label by name, and `{{json .Labels}}` every label as one JSON object, which
+   * is the only one of the three a value holding a tab or a newline survives.
+   * `{{json .}}` keeps its own shape, with every label in one comma-joined
+   * column, because that is what it says it is.
+   */
+  const render = (format, row, labels) => format.replace(
+    /\{\{\s*(json\s+)?\.(\w+)(?:\s+"([^"]*)")?\s*\}\}/gu,
+    (whole, json, field, label) => {
+      if (field === 'Labels') return JSON.stringify(labels);
+      if (json !== undefined) return JSON.stringify(String(row[field] ?? ''));
+      if (field === 'Label') return String(labels[label] ?? '');
+      return String(row[field] ?? '');
+    },
+  );
+  const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : undefined;
   for (const machine of held.machines) {
     if (asked !== undefined && machine.bare === true) continue;
-    process.stdout.write(`${JSON.stringify({
+    const labels = machine.labels ?? {};
+    const row = {
       Names: machine.name,
       Image: machine.image,
       // As `docker ps` words it: `Up ...` for a container that is running,
@@ -89,11 +109,13 @@ if (verb === 'ps') {
       // apart. The listing is `ps -a`, so it holds both.
       Status: (machine.state ?? 'running') === 'running' ? 'Up 1 second' : 'Exited (0) 2 minutes ago',
       CreatedAt: '2026-09-22 00:00:00 +0000',
-      // As `docker ps --format '{{json .}}'` reports it: one comma-separated
-      // column, which is where the runtime reads the `ahpd.agents` label from
-      // for the picker's filter.
-      Labels: Object.entries(machine.labels ?? {}).map(([key, value]) => `${key}=${value}`).join(','),
-    })}\n`);
+    };
+    // `{{json .}}` keeps the shape Docker gives it, where every label is one
+    // comma-joined column and a value holding a comma cannot be told from the
+    // pair after it. Any other format is rendered field by field.
+    process.stdout.write(format === undefined || format === '{{json .}}'
+      ? `${JSON.stringify({ ...row, Labels: Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(',') })}\n`
+      : `${render(format, row, labels)}\n`);
   }
   keep();
   process.exit(0);
@@ -192,6 +214,20 @@ if (verb === 'run' || verb === 'create') {
     if (args[i] === '-v') mounts.push(args[i + 1]);
     if (args[i] === '-e') { const [key, value] = pair(args[i + 1]); env[key] = value; }
     if (args[i] === '--label') { const [key, value] = pair(args[i + 1]); labels[key] = value; }
+  }
+  /*
+   * Two mounts at one target, refused as Docker refuses them: the same error,
+   * so a manifest that named one target twice fails here as it would there.
+   */
+  const targets = new Set();
+  for (const mount of mounts) {
+    const target = mount.split(':')[1];
+    if (targets.has(target)) {
+      keep();
+      process.stderr.write(`Error response from daemon: Duplicate mount point: ${target}\n`);
+      process.exit(1);
+    }
+    targets.add(target);
   }
   held.machines.push({
     name: named === -1 ? `unnamed-${held.machines.length}` : args[named + 1],

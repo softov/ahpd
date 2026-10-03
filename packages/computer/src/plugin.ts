@@ -162,10 +162,11 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // How the host inside a machine from this profile is started. Absent
       // means the port's own default, which is `ahpd`.
       ...(words(said.host) === undefined ? {} : { host: words(said.host) as string[] }),
-      // The three fields that make a profile disposal: a machine is made from
-      // it when a session starts, it goes a delay after the last session, and
-      // `alone` keeps it out of the picker. The delay is written down as the
-      // number that will be used, so the timer and the docs cannot disagree.
+      // The three fields that make a profile disposable: a machine is made
+      // from it when a session starts, it goes a delay after the last session,
+      // and `alone` keeps it out of the picker. The delay is written down as
+      // the number that will be used, so the timer and the docs cannot
+      // disagree.
       ...(said.disposable === true ? { disposable: true, disposableDelay: whole(said.disposableDelay, defaults.disposableDelay) } : {}),
       ...(said.disposableAlone === true ? { disposableAlone: true } : {}),
     };
@@ -514,7 +515,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const disposables = new Map<string, Disposable>();
 
-  /** The machine's machine is made with this session's agent needs. */
+  /** What each agent this machine is made for declares it needs, by provider. */
   const needsFor = (asked: MachineSource) =>
     (provider: string): Record<string, MachineNeed> | undefined =>
       provider === asked.provider

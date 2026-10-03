@@ -1,6 +1,6 @@
 ---
 title: A path a machine is made with is absolute and there
-status: todo
+status: done
 depends: []
 layer: "sdk | computer"
 refs:

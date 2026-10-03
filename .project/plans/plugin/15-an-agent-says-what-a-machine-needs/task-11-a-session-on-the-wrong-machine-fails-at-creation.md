@@ -1,6 +1,6 @@
 ---
 title: A session on a machine not prepared for its agent fails at creation
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

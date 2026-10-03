@@ -1,6 +1,6 @@
 ---
 title: Cofold declares its needs, at a fixed target like Claude's
-status: todo
+status: done
 depends: [task-01-the-need-type.md]
 layer: "agent-cofold"
 refs:
@@ -17,7 +17,7 @@ refs:
 ## Objective
 
 agent-cofold's `machine()` mounts the cofold configuration read-only at `<computerConfigDir>/cofold/config.json` (default `/ahpd/cofold`), and an env need sets `XDG_CONFIG_HOME` to that directory, so a cofold host inside a machine finds its providers whatever user the image runs as.
-This applies [Cofold's configuration reaches a machine at a fixed target](../../../decisions/cofold-config-reaches-a-machine-at-a-fixed-target.md).
+This applies [Cofold's configuration reaches a machine at a fixed target, named by a path variable](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md), which supersedes the fixed-target decision this task was first written against.
 
 ## Files
 
@@ -41,5 +41,3 @@ This applies [Cofold's configuration reaches a machine at a fixed target](../../
 - `pnpm typecheck` green.
 
 ## Resume
-
-The first version (2026-09-26) mounted the file at the host's own path; the review found a container user with another home never reads it, and Softov chose the fixed target.

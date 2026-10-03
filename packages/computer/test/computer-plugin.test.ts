@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -256,6 +256,13 @@ it('lists its manifest and title without importing the entry', async () => {
 it('reads a host path through the machine mounts, or falls back to its workdir', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-within-'));
   const state = join(loose, 'docker.json');
+  // A mount's host path is checked at create, so the three sources are made
+  // here rather than named as paths this host happens not to have.
+  const srv = join(loose, 'srv');
+  const app = join(srv, 'app');
+  const claude = join(loose, 'claude');
+  mkdirSync(app, { recursive: true });
+  mkdirSync(claude);
   const { options } = await load({
     command: process.execPath,
     args: [FIXTURE],
@@ -271,13 +278,13 @@ it('reads a host path through the machine mounts, or falls back to its workdir',
   /*
    * Two mounts, one nested inside the other, and a working directory besides.
    *
-   * The nested one is the case a shortest-match would get wrong: `/srv` covers
-   * `/srv/app/x` too, and the answer a person means is the mount that actually
-   * holds it.
+   * The nested one is the case a shortest-match would get wrong: the outer
+   * source covers the inner one too, and the answer a person means is the
+   * mount that actually holds it.
    */
   await provider.write('computer://box', {
     data: JSON.stringify({
-      mounts: ['/srv:/mnt/srv', '/srv/app:/workspaces/app', '/home/me/.claude:/ahpd/claude'],
+      mounts: [`${srv}:/mnt/srv`, `${app}:/workspaces/app`, `${claude}:/ahpd/claude`],
       workdir: '/workspaces/app',
     }),
     encoding: 'utf-8',
@@ -290,17 +297,17 @@ it('reads a host path through the machine mounts, or falls back to its workdir',
   };
 
   // The longest source wins, so the nested mount answers for its own subtree.
-  expect(await where('/srv/app')).toBe('/workspaces/app');
-  expect(await where('/srv/app/src/deep')).toBe('/workspaces/app/src/deep');
+  expect(await where(app)).toBe('/workspaces/app');
+  expect(await where(join(app, 'src/deep'))).toBe('/workspaces/app/src/deep');
   // And the outer one still answers for everything it alone covers.
-  expect(await where('/srv/other')).toBe('/mnt/srv/other');
+  expect(await where(join(srv, 'other'))).toBe('/mnt/srv/other');
   // A mount's own root maps to the target itself, with no trailing slash.
-  expect(await where('/home/me/.claude')).toBe('/ahpd/claude');
+  expect(await where(claude)).toBe('/ahpd/claude');
   // A path no mount covers is not a directory in there at all, so the
   // machine's own working directory stands rather than a host path.
-  expect(await where('/elsewhere')).toBe('/workspaces/app');
-  // A near miss is not a match: `/srv` must not cover `/srvx`.
-  expect(await where('/srvx')).toBe('/workspaces/app');
+  expect(await where(join(loose, 'elsewhere'))).toBe('/workspaces/app');
+  // A near miss is not a match: the outer source must not cover `srvs`.
+  expect(await where(`${srv}s`)).toBe('/workspaces/app');
   // Nothing named is the machine's own, as before.
   expect(await where()).toBe('/workspaces/app');
 });
@@ -349,6 +356,12 @@ it('reports what a machine is using, as numbers a gauge can be drawn from', asyn
 it('makes a machine from a named profile, and refuses one it does not define', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-profiles-'));
   const state = join(loose, 'docker.json');
+  // Every mount's host path is checked at create, so both are directories this
+  // host has.
+  const shared = join(loose, 'shared');
+  const claude = join(loose, 'claude');
+  mkdirSync(shared);
+  mkdirSync(claude);
   const { options } = await load({
     command: process.execPath,
     args: [FIXTURE],
@@ -356,7 +369,7 @@ it('makes a machine from a named profile, and refuses one it does not define', a
     sessionSetting: false,
     // One line the operator writes, which is the whole point: what a machine
     // is given stops being three mount strings a person retypes correctly.
-    mounts: ['/shared:/shared'],
+    mounts: [`${shared}:/shared`],
     profiles: {
       claude: {
         title: 'Claude',
@@ -364,7 +377,7 @@ it('makes a machine from a named profile, and refuses one it does not define', a
         image: 'node:22',
         cpus: '2',
         memory: '512m',
-        mounts: ['/home/me/.claude:/ahpd/claude'],
+        mounts: [`${claude}:/ahpd/claude`],
         workdir: '/work',
       },
       plain: { image: 'debian:bookworm-slim' },
@@ -394,7 +407,7 @@ it('makes a machine from a named profile, and refuses one it does not define', a
   // never a ceiling.
   expect(box.workdir).toBe('/mine');
   // Widest first: the deployment's, then the profile's.
-  expect(box.mounts).toEqual(['/shared:/shared', '/home/me/.claude:/ahpd/claude']);
+  expect(box.mounts).toEqual([`${shared}:/shared`, `${claude}:/ahpd/claude`]);
 
   // Named and unknown is refused, because silently getting a machine with
   // none of the profile's mounts fails later and further away.

@@ -186,6 +186,23 @@ Only `CLAUDE_*` and `ANTHROPIC_*` variables are passed into the machine. The hos
 
 **One `~/.claude` is one sign-in.** Every machine that mounts this host's configuration uses the same subscription, and anything running in one can read it. Use a profile to decide which machines get it, and treat the folder as shared for now.
 
+### Cofold in a machine
+
+A profile that names `cofold` carries the harness's own configuration, the file holding its provider endpoints and keys, at a path inside the machine rather than at the host's:
+
+| Need | What it is on the host | Where it goes |
+| --- | --- | --- |
+| `cofoldConfig` | the harness's `config.json`, read-only | `/ahpd/cofold/cofold/config.json` |
+| `cofoldConfigPath` | - | `COFOLD_CONFIG=/ahpd/cofold/cofold/config.json` |
+
+`computerConfigDir` in the `@ahpd/agent-cofold` options names that directory, `/ahpd/cofold` by default, and `false` leaves the image's own configuration alone and declares no need at all.
+
+The path inside the machine is fixed and `COFOLD_CONFIG` points at the file, so the configuration is found whichever user the image runs as - a container whose home is `/home/app` reads it the same as one running as root. A profile that mounts the configuration at some other path of its own gets a machine where the harness does not look.
+
+`XDG_CONFIG_HOME` is not touched, and that is the point: it is the nested `ahpd`'s own folder as well, and a machine's mount point is root-owned, so pointing it at `/ahpd/cofold` stops any image that does not run as root from starting at all - `EACCES: permission denied, mkdir '/ahpd/cofold/ahpd/usage'` on the way in. Every other program in the machine keeps its own XDG configuration.
+
+**The configuration holds keys.** Anything running in a machine that carries this one can read the provider keys inside it, so the same warning as for `~/.claude` applies: use a profile to decide which machines get it, and treat the file as shared for now.
+
 ## Profiles
 
 A profile is a named set of machine settings in the plugin options:
@@ -234,9 +251,13 @@ Only what the machine resolves is read. The profile picked is the only one read,
 
 `folder` names a host folder mounted at the same path inside the machine, and `workdir` defaults to it. The same path is what keeps an agent's own record consistent: Claude writes its history under the working directory it saw, so the same spelling inside and out is what makes a session written in a machine resumable on this host.
 
-A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed); a later one wins for the same target. Other fields come from the manifest, then the profile, then the host default.
+A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed), then what the agents declared. Other fields come from the manifest, then the profile, then the host default.
 
-An unknown profile is refused with the list of known ones. A profile that names an agent this host does not have is refused too, rather than made without what it was prepared for. Two needs landing on one target is refused, because one of them would silently lose.
+An unknown profile is refused with the list of known ones. A profile that names an agent this host does not have is refused too, rather than made without what it was prepared for.
+
+A target two different mounts land at is refused at create, naming both and where each came from, because one of them would silently lose - Docker refuses the machine outright. Two mounts that are one statement, the same source and target, are one mount however many of them say it, so two variants of one plugin can share a profile's state, and a profile may mount an agent's configuration by hand at the need's own target.
+
+A mount whose host path is not there is refused at create, naming the mount and whether it came from the plugin options, a profile or a body - not mounted as an empty directory for the session to find out about later. A relative source is refused the same way, because Docker reads `cache:/cache` as a named volume rather than as a path on this host. The check is at create and not at load, so a folder made after the daemon started is still accepted, and the same is true of a need's own value.
 
 The names are published in the create schema as an `enum` with titles and descriptions in `x-choices`, so a client can draw a picker. No profiles means no such property.
 
@@ -251,7 +272,7 @@ A profile that sets `disposable: true` has no machine until a session starts. It
       "title": "Scratch",
       "description": "A machine of this session's own, with the CLI shared in.",
       "image": "node:22",
-      "mounts": ["/srv/claude-home:/ahpd/claude"],
+      "needs": { "claudeConfigDirectory": "/srv/claude-home" },
       "disposable": true,
       "disposableDelay": 300000,
       "disposableAlone": true

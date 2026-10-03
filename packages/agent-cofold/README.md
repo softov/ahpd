@@ -36,7 +36,7 @@ Or in the configuration file, with the backend's own options as defaults for eve
 }
 ```
 
-With no model named anywhere, the providers, keys and model come from cofold's own configuration file, `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`.
+With no model named anywhere, the providers, keys and model come from cofold's own configuration file, `$COFOLD_CONFIG` or `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`. Inside a machine the first of those is what finds it.
 
 ## In your own host
 
@@ -65,6 +65,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 | `model` | the cofold file's | The model id a session that names none runs on |
 | `baseUrl` | the cofold file's | The OpenAI-compatible endpoint a session that names none uses |
 | `instructions` | | The system prompt the agent is created with |
+| `computerConfigDir` | the configuration directory the harness reads *inside a machine*. `/ahpd/cofold` by default; `false` leaves the image's own |
 | `store` | `$XDG_DATA_HOME/ahpd/cofold` | Where the cofold file store lives |
 | `memory` | | `true` to hold the store in memory, for a test |
 | `tools` | all four on | Which capabilities a session runs, and where `web_search` gets its providers |

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +53,9 @@ const execOf = (spawn: { command: string; args: string[] } | undefined): string[
 it('starts the host a profile names, and ahpd when it names none', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-nested-start-'));
   const state = join(loose, 'docker.json');
+  // A host path the mount reads is checked at create, so it has to be there.
+  const work = join(loose, 'work');
+  mkdirSync(work);
   const { options, problems } = await load({
     command: process.execPath,
     args: [FIXTURE],
@@ -61,8 +64,8 @@ it('starts the host a profile names, and ahpd when it names none', async () => {
     // The mount is what makes a host path a path inside the machine, which is
     // what a caller's `cwd` is read through.
     profiles: {
-      plain: { mounts: ['/work:/work'] },
-      nodejs: { host: ['node', '/work/ahpd.js'], mounts: ['/work:/work'] },
+      plain: { mounts: [`${work}:/work`] },
+      nodejs: { host: ['node', '/work/ahpd.js'], mounts: [`${work}:/work`] },
     },
   });
   expect(problems).toEqual([]);
@@ -75,19 +78,19 @@ it('starts the host a profile names, and ahpd when it names none', async () => {
   if (computers?.nested === undefined) throw new Error('the plugin registered no nested start');
 
   // The default: the command the container's install step provides.
-  const plain = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: '/work' });
+  const plain = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: work });
   expect(plain?.command).toBe(process.execPath);
   expect(execOf(plain)).toEqual(['exec', '-i', '-w', '/work', 'plain', 'ahpd', '--stdio', '--plugin', '@ahpd/agent-cofold']);
 
   // A profile's own host, with the same `--stdio --plugin` argv after it.
-  const nodejs = await computers.nested('nodejs', { plugins: ['@ahpd/agent-cofold'], cwd: '/work' });
+  const nodejs = await computers.nested('nodejs', { plugins: ['@ahpd/agent-cofold'], cwd: work });
   expect(execOf(nodejs)).toEqual([
     'exec', '-i', '-w', '/work', 'nodejs',
     'node', '/work/ahpd.js', '--stdio', '--plugin', '@ahpd/agent-cofold',
   ]);
 
   // More than one plugin, in the order the caller named them.
-  const many = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold', '@ahpd/some-other'], cwd: '/work' });
+  const many = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold', '@ahpd/some-other'], cwd: work });
   expect(execOf(many)).toEqual([
     'exec', '-i', '-w', '/work', 'plain',
     'ahpd', '--stdio', '--plugin', '@ahpd/agent-cofold', '--plugin', '@ahpd/some-other',

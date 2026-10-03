@@ -1,6 +1,6 @@
 ---
 title: Every label a listing reads is read by name, so a value holding a comma is read whole
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:

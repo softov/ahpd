@@ -138,6 +138,34 @@ against its contract before it is recorded.
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 
+### What a backend needs from a machine
+
+A backend that can run inside a machine says so with an optional `machine()` method beside `schema()` and `defaults()`, returning what it needs by name.
+The computer plugin asks the host for those needs when a machine is made and turns them into its own flags, and the machine is labelled with the agents it was prepared for, so a client is only offered machines that named yours.
+
+A need is delivered four ways, and the field that names the way is the one that carries its value:
+
+| Shape | What it is | What the machine gets |
+| --- | --- | --- |
+| `{ directory, target, readOnly? }` | a host directory | a bind mount at `target` |
+| `{ file, target, readOnly? }` | a host file | a bind mount at `target` |
+| `{ name, default? }` | an environment variable | `-e <name>=<value>` |
+| `{ source, target }` | a host path | a `docker cp` after the create |
+
+Every one of them takes `default`, `required` and `description`.
+A `required` need with no value at all refuses the machine, naming the need; one without it is left out, which is how an image that already carries the thing is used.
+A leading `~` is the host user's home.
+
+The value is the profile's, then the plugin option's, then the need's own `default`, then the path the shape itself carries - so a profile can point your agent at another configuration without your being changed:
+
+```json
+{ "profiles": { "claude": { "agents": ["claude"], "needs": { "claudeConfigDirectory": "/srv/claude-home" } } } }
+```
+
+`machine()` is called when a machine is made and never at load, so a plugin that registers your agent may load after the one that makes machines.
+A value that cannot work is refused there rather than made into something else: a mount or a copy-in whose value is relative or is not there, and a target two mounts land at.
+The refusal names the need or the mount and where the value came from, and never an environment need's value, which may be a credential.
+
 ### A backend's worker chats
 
 A backend that runs a subagent inside one of its tool calls asks the host for a chat of its own through the `Start` it was handed: `start.subagent(toolCallId, { title, agentName?, description?, prompt?, parentToolCallId? })`. The host is the only thing that knows what a chat URI looks like, so it mints `ahp-chat://subagent/<session>/<call>`, announces the row read-only, opens its turn with the prompt, links the spawning call with a `subagent` content and hands back `{ uri, turnId, emit, end }`. The backend writes the worker's parts through `emit` and closes its turn with `end`. A backend without it draws a worker's output inline, and the member is optional, so a backend written before this existed keeps working unchanged.
@@ -643,11 +671,13 @@ harness runs:
 
 ### The harness configuration is the default
 
-`@ahpd/agent-cofold` reads cofold's own file,
+`@ahpd/agent-cofold` reads cofold's own file, `$COFOLD_CONFIG` or
 `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`, so a
 person who has already pointed the harness at a provider does not say it again
-in the plugin's options. An OpenRouter file of your own, which the cofold
-repository also carries copyable at `examples/cofold-config.example.json`, looks
+in the plugin's options. `COFOLD_CONFIG` is what a machine sets, since it is the
+one place a path can be moved for cofold alone. An OpenRouter file of your own,
+which the cofold repository also carries copyable at
+`examples/cofold-config.example.json`, looks
 like this with your key in place:
 
 ```json

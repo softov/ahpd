@@ -55,6 +55,7 @@ it.each<[string, unknown]>([
   ['model', 5],
   ['baseUrl', 5],
   ['instructions', 5],
+  ['computerConfigDir', 5],
   ['store', 5],
   ['memory', 'yes'],
   ['tools', 'all'],
@@ -72,4 +73,12 @@ it.each<[string, unknown]>([
 it('reports a tools switch of the wrong type by its full key', async () => {
   const { problems } = await load({ tools: { files: 'no' } });
   expect(problems).toEqual([`plugin ${NAME} skipped: plugins.${NAME}.options.tools.files must be true or false`]);
+});
+
+it('takes computerConfigDir as a directory and as false', async () => {
+  for (const value of ['/srv/cofold-home', false]) {
+    const { loaded, problems } = await load({ ...VALID, computerConfigDir: value });
+    expect(problems).toEqual([]);
+    expect(loaded).toHaveLength(1);
+  }
 });

@@ -22,7 +22,7 @@ import type { AnnotationsAction, AnnotationsState, ChangesetFile, ChatAction, Ch
 import type { OnWire, WireTurn } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
 import { notServed } from './resources.js';
-import { computerId, computerSource, computersFor, openComputer } from './computers.js';
+import { computerId, computerSource, computersFor, machineRefusal, openComputer } from './computers.js';
 import { nestedAgent } from './nested.js';
 import { createCallLinks } from './calllinks.js';
 import { join } from 'node:path';
@@ -4617,6 +4617,37 @@ export function createHost(options: HostOptions): Host {
     computerId(config.computer) ?? computerSource(config.computer) ?? 'host';
 
   /**
+   * What a session is refused before it runs in a machine, or nothing.
+   *
+   * The two questions every road asks, in one order: the policy first and the
+   * machine's own label second, so a person refused this machine by policy is
+   * told that rather than that some other agent's machine it also is. The two
+   * calls sit next to each other here rather than at each road, so the order is
+   * one line to change and every road keeps it.
+   *
+   * `createSession`, a change before the first turn and an automation's start
+   * all come through here, which is the point: a check that one of them has and
+   * the others do not is a check nobody can rely on. Only a `computer://<id>`
+   * is read for its label - a `disposable:` source is made by `placedIn` with
+   * `for: <provider>`, so it is prepared for the agent asking by construction.
+   */
+  const admitted = async (
+    principal: Principal | undefined,
+    scope: Scope | undefined,
+    config: Record<string, unknown>,
+    provider: string,
+  ): Promise<string | undefined> => {
+    const machine = machineFor(config);
+    const refused = await checked(principal, scope, [
+      { kind: 'agent', asked: { agent: provider, computer: machine } },
+      { kind: 'computer', asked: { computer: machine } },
+    ]);
+    if (refused !== undefined) return refused;
+    const named = computerId(config.computer);
+    return named === undefined ? undefined : machineRefusal(options.computers, named, provider);
+  };
+
+  /**
    * The `scope` picker, and what it starts on.
    *
    * The choices are the asking person's own memberships, and the default is
@@ -6947,6 +6978,22 @@ export function createHost(options: HostOptions): Host {
     // exists for - nobody is at the keyboard to notice two of them colliding.
     const where = await isolated(uri, config, wanted.workingDirectory);
     await settle(uri, wanted.workingDirectory, config);
+    /*
+     * The two checks a client's `createSession` makes, asked here too and before
+     * anything runs in the machine - an automation is nobody at the keyboard to
+     * notice a refusal, so this is the only gate before the run.
+     *
+     * It acts as its owner, which is who sent the work and whose policies apply
+     * to it. An owner this process has never seen sign in cannot be checked, so
+     * the run waits for them rather than going unchecked.
+     */
+    const owner = wanted.owner;
+    const person = principalFor(owner);
+    if (owner?.startsWith('user:') === true && person === undefined) {
+      throw new RpcError(-32009, `${owner.slice('user:'.length)} has to sign in once before an automation of theirs may run`);
+    }
+    const wrong = await admitted(person, charged.get(uri)?.scope, config, provider);
+    if (wrong !== undefined) throw new RpcError(-32009, wrong);
     // A source in the config is made into a machine before anything runs, the
     // same step a client's `createSession` takes.
     await placedIn(uri, provider, config, where, wanted.owner);
@@ -7080,6 +7127,16 @@ export function createHost(options: HostOptions): Host {
         // And one admitted on the deployment's own token is the host itself.
         ...(root === true ? { root: true } : {}),
       };
+      /*
+       * A person this host was given rather than one that signed in.
+       *
+       * `principals` is how an owner is resolved to the memberships behind the
+       * name, and it is filled from `authenticate`. A socket handed a principal
+       * never sends one, so without this a session it owns has no principal and
+       * every check against it is skipped - the work runs unchecked rather than
+       * refused, which is the worse of the two answers.
+       */
+      if (principal !== undefined) principals.set(`user:${principal.id}`, principal);
       /**
        * Whether this connection has been introduced.
        *
@@ -8743,11 +8800,7 @@ export function createHost(options: HostOptions): Host {
              * none, against the computer the client asked for and the scope the
              * session is charged to.
              */
-            const machine = machineFor(config);
-            const refused = await checked(connection.principal, charged.get(uri)?.scope, [
-              { kind: 'agent', asked: { agent: provider, computer: machine } },
-              { kind: 'computer', asked: { computer: machine } },
-            ]);
+            const refused = await admitted(connection.principal, charged.get(uri)?.scope, config, provider);
             if (refused !== undefined) throw new RpcError(-32009, refused);
             // A `disposable:<profile>` setting is a machine made for this
             // session, with this harness's needs and this folder, before the
@@ -10537,10 +10590,16 @@ export function createHost(options: HostOptions): Host {
                  * this host began before it recorded an owner is answered for
                  * exactly as it always was. An owner this process has not seen
                  * sign in cannot be checked, so the turn is refused until they do.
+                 *
+                 * What it was charged to is held, because a refusal below puts
+                 * it back: the action is one decision, and a decision that was
+                 * not taken leaves nothing of itself behind.
                  */
+                const wasCharged = charged.get(session.uri);
+                const wasScope = kept.scope(idOf(session.uri));
+                const owner = kept.owner(idOf(session.uri));
+                const person = owner === undefined ? connection.principal : principalFor(owner);
                 if (rescoped.length > 0) {
-                  const owner = kept.owner(idOf(session.uri));
-                  const person = owner === undefined ? connection.principal : principalFor(owner);
                   if (owner?.startsWith('user:') === true && person === undefined) {
                     charged.set(session.uri, { refusal: `${owner.slice('user:'.length)} has to sign in once before this session's scope can change` });
                   }
@@ -10574,18 +10633,51 @@ export function createHost(options: HostOptions): Host {
                    * promise before it touches the session. It is cleared before
                    * the promise settles to its consumers, so an action that
                    * waited re-runs against the backend that is actually there.
+                   *
+                   * Whether this session may move to the machine it is being
+                   * moved to is asked here, where the keys are still theirs and
+                   * the backend is still the one it was - not inside `restart`,
+                   * which is past the point of undoing anything. It is the same
+                   * `admitted` a client's `createSession` asks, against the
+                   * person who owns the work and the scope it is being charged
+                   * to.
+                   *
+                   * A refusal undoes the whole action rather than half of it: the
+                   * keys, the row this host decides from, and the charge the
+                   * scope moved onto. Nothing is announced either - the change
+                   * never happened, so a `configChanged` would tell every other
+                   * subscriber about a setting the session does not have, and a
+                   * key written to the store would be what a resume starts the
+                   * lead chat with. The session stays exactly where it was.
                    */
                   const work = (async () => {
+                    const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider);
+                    if (wrong !== undefined) {
+                      for (const [key] of moved) undo(key);
+                      for (const [key] of rescoped) undo(key);
+                      decided.set(session.uri, settled);
+                      if (rescoped.length > 0) {
+                        if (wasCharged === undefined) charged.delete(uri);
+                        else charged.set(uri, wasCharged);
+                        kept.setScope(idOf(uri), wasScope);
+                      }
+                      no(wrong);
+                      return false;
+                    }
                     await restart(uri, tokensFor(owning.agent.provider));
+                    return true;
                   })();
-                  restarting.set(uri, work);
+                  restarting.set(uri, work.then(() => undefined));
+                  const held = restarting.get(uri);
                   const clear = (): void => {
-                    if (restarting.get(uri) === work) restarting.delete(uri);
+                    if (restarting.get(uri) === held) restarting.delete(uri);
                   };
                   void work.then(
-                    () => {
+                    (restarted) => {
                       clear();
-                      tell();
+                      // Announced only where the restart happened. A refusal is
+                      // the action refused and nothing more.
+                      if (restarted) tell();
                     },
                     (error: unknown) => {
                       clear();

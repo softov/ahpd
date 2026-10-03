@@ -6,8 +6,7 @@
  * put in order - the profile first, then the plugin option, then the agent's
  * own default - and where a value that cannot work is refused before a machine
  * is made from it: a required need with nothing to fill it, or a path that is
- * not there. Both were silent before this existed: a missing mount source
- * became an empty directory and the session in it exited 127.
+ * not absolute or is not there.
  *
  * Nothing here touches a runtime. It answers `ResolvedNeed`s, which is what a
  * machine maker turns into its own flags, so a second runtime takes the same
@@ -54,10 +53,11 @@ const from = (source: 'profile' | 'option' | 'default'): string =>
  * The order is the profile's value, then the plugin option's, then the need's
  * own default, then the path the need itself carries - so a profile may point
  * Claude's configuration at another directory without the agent being changed.
- * A mount or a copy whose host path is not there is refused whatever named it,
- * naming the need, the path and where the value came from; a required need with
- * no value at all is refused the same way. An optional need with no value is
- * left out, which is how an image that already carries something is used.
+ * A mount or a copy whose value is not an absolute path, or whose host path is
+ * not there, is refused whatever named it, naming the need, the path and where
+ * the value came from; a required need with no value at all is refused the same
+ * way. An optional need with no value is left out, which is how an image that
+ * already carries something is used.
  */
 export function resolveNeeds(
   needs: Record<string, MachineNeed>,
@@ -82,6 +82,18 @@ export function resolveNeeds(
     if ('name' in need) {
       resolved.push({ name, kind: 'env', target: need.name, source: value, ...about });
       continue;
+    }
+    /*
+     * A path this machine is made with, before it is looked for.
+     *
+     * A relative one is checked against the daemon's working directory, which
+     * is not what the person who wrote it meant, and a runtime given
+     * `cache:/cache` reads the source as a named volume rather than as a path
+     * on this host - so a machine made that way is a machine nobody wrote. An
+     * environment variable's value is not a path and is not checked here.
+     */
+    if (!value.startsWith('/')) {
+      throw new Error(`machine need ${name} is ${value} (from ${from(where)}), and a path a machine is made with is absolute`);
     }
     if ('source' in need) {
       if (!existsSync(value)) {

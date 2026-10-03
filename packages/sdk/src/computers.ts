@@ -84,29 +84,46 @@ export const openComputer = async (
 };
 
 /**
- * The port a session's backend is handed, with the machine's label checked.
+ * What stops `provider` running on machine `id`, or nothing.
  *
  * A machine is prepared for the agents its profile named, and remembers them
  * in its `ahpd.agents` label. The picker already offers only machines prepared
  * for the asking agent, but a value can be set by hand, or arrive from a client
  * that read an older list - and a session running in a machine that was not
- * prepared for it fails much later and further away, if it runs at all. So the
- * provider is checked as the backend asks to enter, which is the one place the
- * host knows both numbers and the one place every path - a client's
- * `createSession`, an automation, a tool call - goes through.
+ * prepared for it fails much later and further away, if it runs at all.
  *
  * A machine with no label is one made before this existed, and is offered to
- * every agent; a port that cannot answer labels is one this check cannot make.
- * The refusal names the agents the machine was made for rather than only the
+ * every agent; a port that cannot answer labels is one this reader cannot ask.
+ * The sentence names the agents the machine was made for rather than only the
  * one it was not, because that is what tells a person where to go.
+ *
+ * A sentence rather than a throw, because the three places that ask are three
+ * different shapes of refusal: a request that answers an error, an action that
+ * is undone, and a port that throws before either verb reaches the machine.
+ */
+export const machineRefusal = async (
+  computers: ComputerPort | undefined,
+  id: string,
+  provider: string,
+): Promise<string | undefined> => {
+  const for_ = computers?.agents === undefined ? undefined : await computers.agents(id);
+  if (for_ === undefined || for_.length === 0 || for_.includes(provider)) return undefined;
+  return `computer://${id} was prepared for ${for_.join(', ')}, and this session runs ${provider}; make a machine prepared for ${provider} or run this session on the host`;
+};
+
+/**
+ * The port a session's backend is handed, with the machine's label checked.
+ *
+ * The check is the one every path goes through - a client's `createSession`, an
+ * automation, a tool call - and the host asks it once more of its own before it
+ * makes a session or starts one again, so a wrong machine fails where the
+ * person is rather than at the first turn.
  */
 export const computersFor = (computers: ComputerPort, provider: string): ComputerPort => {
   /** Refuse a machine prepared for somebody else, before either verb reaches it. */
   const prepared = async (id: string): Promise<void> => {
-    const for_ = computers.agents === undefined ? undefined : await computers.agents(id);
-    if (for_ !== undefined && for_.length > 0 && !for_.includes(provider)) {
-      throw new Error(`computer://${id} was prepared for ${for_.join(', ')}, and this session runs ${provider}; make a machine prepared for ${provider} or run this session on the host`);
-    }
+    const said = await machineRefusal(computers, id, provider);
+    if (said !== undefined) throw new Error(said);
   };
   return {
     ...computers,

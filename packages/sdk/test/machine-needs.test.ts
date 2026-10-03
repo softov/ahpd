@@ -84,6 +84,40 @@ it('refuses a required need with no value at all', () => {
     .toEqual([{ name: 'token', kind: 'env', target: 'TOKEN', source: 'from-option' }]);
 });
 
+it('refuses a relative value for a mount, and never reads it against the cwd', () => {
+  const needs: Record<string, MachineNeed> = {
+    claudeConfigDirectory: { directory: '~/.claude', target: '/ahpd/claude', required: true },
+  };
+  // `existsSync('rel/dir')` answers against whatever directory the daemon runs
+  // in, and the value then goes out as `-v rel/dir:/ahpd/claude`, which Docker
+  // reads as a named volume - a machine nobody wrote.
+  const failure = (): unknown => resolveNeeds(needs, { profile: { claudeConfigDirectory: 'rel/dir' } });
+  expect(failure).toThrow(/machine need claudeConfigDirectory is rel\/dir \(from the profile\)/);
+  expect(failure).toThrow(/a path a machine is made with is absolute/);
+  // The same for a copy-in, which is a path read off this host.
+  expect(() => resolveNeeds({ cli: { source: 'rel/cli', target: '/usr/local/bin/cli' } }))
+    .toThrow(/machine need cli is rel\/cli \(from the agent's default\)/);
+});
+
+it('does not check an environment need, which is not a path', () => {
+  // A value that is not a path is the ordinary case here, and it is printed
+  // into the machine's environment rather than mounted.
+  expect(resolveNeeds({ token: { name: 'TOKEN', default: 'rel' } }))
+    .toEqual([{ name: 'token', kind: 'env', target: 'TOKEN', source: 'rel' }]);
+  // And the refusal for one with no value names the need and where a value
+  // could come from, and nothing else: an env need's value may be a
+  // credential, so there is none to print.
+  const said = (): string => {
+    try {
+      resolveNeeds({ token: { name: 'TOKEN', required: true } });
+    } catch (error) {
+      return (error as Error).message;
+    }
+    throw new Error('the need was resolved');
+  };
+  expect(said()).toMatch(/^machine need token is required, and neither the profile, the plugin option nor the agent's default names one$/);
+});
+
 it('refuses a path that is not there, naming the need, the path and the source', () => {
   const dir = temp();
   const gone = join(dir, 'not-there');

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -141,6 +142,31 @@ it('turns resolved needs into flags, a copy, a label and a same-path folder', as
   expect(await options.computers?.agents?.('nope')).toBeUndefined();
 });
 
+it('mounts one entry where the folder is named as a mount as well', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  /*
+   * The target check already collapses two identical entries, so this pair is
+   * accepted - and the runtime has to agree, because `docker run` refuses the
+   * machine outright as `Duplicate mount point` when it hears the same target
+   * twice. The refusal would come from the runtime, not from here.
+   */
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { claude: { agents: ['claude'], folder, mounts: [`${folder}:${folder}`] } },
+  }, [agent('claude', {})]);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'claude' }), encoding: 'utf-8' });
+
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  expect(held.machines[0]?.mounts).toEqual([`${folder}:${folder}`]);
+});
+
 it('fills a need from the profile over the plugin option over the agent', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
@@ -183,6 +209,8 @@ it('refuses a missing path, an unknown agent, a shared target and a missing fold
   const state = join(dir, 'docker.json');
   const good = join(dir, 'good');
   mkdirSync(good);
+  const other = join(dir, 'other');
+  mkdirSync(other);
   const gone = join(dir, 'gone');
 
   const bad = async (
@@ -220,11 +248,11 @@ it('refuses a missing path, an unknown agent, a shared target and a missing fold
     withAgents({ both: { agents: ['one', 'two'] } }),
     [
       agent('one', { config: { file: good, target: '/shared/target' } }),
-      agent('two', { config: { file: good, target: '/shared/target' } }),
+      agent('two', { other: { file: other, target: '/shared/target' } }),
     ],
     { profile: 'both' },
   );
-  expect((clash as Error).message).toMatch(/both land at \/shared\/target/);
+  expect((clash as Error).message).toMatch(/need config and need other both land at \/shared\/target/);
 
   // And a folder that is not there is refused like any other host path.
   const noFolder = await bad(withAgents({ claude: { agents: ['claude'], folder: gone } }), [agent('claude')], { profile: 'claude' });
@@ -404,14 +432,140 @@ it('reads a disposable machine\'s need for the session it is made for', async ()
   vi.useRealTimers();
 });
 
+it('refuses a target two mounts land at, and makes one that only says it once', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const good = join(dir, 'good');
+  const other = join(dir, 'other');
+  mkdirSync(good);
+  mkdirSync(other);
+  const withAgents = (profiles: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles,
+    ...extra,
+  });
+  const bad = async (options: Record<string, unknown>, agents: Agent[], body: Record<string, unknown>): Promise<Error> => {
+    const { options: loaded } = await load(options, agents);
+    return providerOf(loaded).write('computer://box', { data: JSON.stringify(body), encoding: 'utf-8' })
+      .then(() => { throw new Error('the machine was made'); })
+      .catch((error: unknown) => error as Error);
+  };
+
+  // A profile mount and a need at one target: the operator's hand-written path
+  // and the agent's declaration, named as they are in the sentence.
+  const withProfileMount = await bad(
+    withAgents({ claude: { agents: ['claude'], mounts: [`${good}:/ahpd/claude`] } }),
+    [agent('claude', { claudeConfigDirectory: { directory: other, target: '/ahpd/claude', required: true } })],
+    { profile: 'claude' },
+  );
+  expect(withProfileMount.message).toBe(
+    `the profile's mount ${good}:/ahpd/claude and need claudeConfigDirectory both land at /ahpd/claude`,
+  );
+
+  // The same target from the profile's own folder, which the Docker route
+  // mounts at the path it has here.
+  const withFolder = await bad(
+    withAgents({ claude: { agents: ['claude'], folder: good } }),
+    [agent('claude', { claudeConfigDirectory: { directory: other, target: good, required: true } })],
+    { profile: 'claude' },
+  );
+  expect(withFolder.message).toMatch(/need claudeConfigDirectory and the folder .* both land at/);
+
+  // And on the CLI's route, where a copy-in is a bind: a need and a copy at
+  // one target are refused there too.
+  const folder = join(dir, 'workspace');
+  mkdirSync(join(folder, '.devcontainer'), { recursive: true });
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+  const withCopy = await bad(
+    withAgents({ claude: { agents: ['claude'] } }),
+    [agent('claude', {
+      claudeConfigDirectory: { directory: good, target: '/ahpd/claude', required: true },
+      cliHome: { source: other, target: '/ahpd/claude' },
+    })],
+    { profile: 'claude', devcontainer: { folder } },
+  );
+  expect(withCopy.message).toMatch(/need claudeConfigDirectory and the copy from .* both land at \/ahpd\/claude/);
+
+  // Two agents declaring the same need at the same target are one statement,
+  // not a clash: variants of one plugin share a profile's state.
+  const { options: same } = await load(
+    withAgents({ both: { agents: ['one', 'two'] } }),
+    [
+      agent('one', { config: { directory: good, target: '/ahpd/shared', required: true } }),
+      agent('two', { config: { directory: good, target: '/ahpd/shared', required: true } }),
+    ],
+  );
+  await providerOf(same).write('computer://same', { data: JSON.stringify({ profile: 'both' }), encoding: 'utf-8' });
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines[0]?.mounts).toEqual([`${good}:/ahpd/shared`]);
+});
+
+it('refuses a mount whose host path is relative or not there, whoever named it', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const good = join(dir, 'good');
+  const gone = join(dir, 'gone');
+  mkdirSync(good);
+
+  const bad = async (pluginOptions: Record<string, unknown>, body: Record<string, unknown>): Promise<Error> => {
+    const { options } = await load(pluginOptions);
+    return providerOf(options).write('computer://box', { data: JSON.stringify(body), encoding: 'utf-8' })
+      .then(() => { throw new Error('the machine was made'); })
+      .catch((error: unknown) => error as Error);
+  };
+  const runtime = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: state }, sessionSetting: false, ...extra,
+  });
+
+  // A profile's own mount. Today this is made with an empty directory at the
+  // target, and the session finds out by exiting.
+  const fromProfile = await bad(
+    runtime({ profiles: { plain: { mounts: [`${gone}:/ahpd/gone`] } } }),
+    { profile: 'plain' },
+  );
+  expect(fromProfile).toMatchObject({ code: -32602 });
+  expect(fromProfile.message).toBe(`the profile's mount ${gone}:/ahpd/gone names ${gone}, and that path is not there`);
+
+  // The deployment's, which a relative source turns into a Docker named volume.
+  const fromPlugin = await bad(runtime({ mounts: ['cache:/cache'] }), {});
+  expect(fromPlugin.message).toBe("the plugin's mount cache:/cache names cache, which is not an absolute path on this host");
+
+  // And a body's own, where the deployment allows bodies to name mounts at all.
+  const fromBody = await bad(runtime({ bodyMounts: true }), { mounts: [`${gone}:/ahpd/gone`] });
+  expect(fromBody.message).toBe(`the body's mount ${gone}:/ahpd/gone names ${gone}, and that path is not there`);
+});
+
+it('the scripted docker refuses two mounts at one target, as Docker does', async () => {
+  const dir = temp();
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: join(dir, 'docker.json') },
+    label: 'ahpd.computer=1',
+  });
+
+  // What a manifest is checked for before any flag is written, so the fake
+  // refusing it too is what makes a regression here fail rather than pass.
+  await expect(runtime.run({
+    name: 'twice',
+    image: 'node:22',
+    label: 'ahpd.computer=1',
+    mounts: [`${dir}:/shared`, `${join(dir, 'other')}:/shared`],
+  })).rejects.toThrow(/Duplicate mount point: \/shared/);
+});
+
 it('offers a machine only to the agents it was prepared for', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
-  // Two machines, one for each agent, and one made before any label existed.
+  // Two machines, one for each agent, one made for both, and one made before
+  // any label existed.
   writeFileSync(state, JSON.stringify({
     machines: [
       { name: 'for-claude', image: 'node:22', labels: { 'ahpd.agents': 'claude' } },
       { name: 'for-cofold', image: 'node:22', labels: { 'ahpd.agents': 'cofold' } },
+      { name: 'for-both', image: 'node:22', labels: { 'ahpd.agents': 'claude,cofold' } },
       { name: 'old', image: 'debian:bookworm-slim', labels: {} },
     ],
     calls: [],
@@ -424,15 +578,86 @@ it('offers a machine only to the agents it was prepared for', async () => {
   });
   const answerer = options.sessionConfigCompletions?.computer as NonNullable<typeof options.sessionConfigCompletions>['computer'];
   const forClaude = await answerer({ property: 'computer', query: '', provider: 'claude' });
-  expect(forClaude.map((one) => one.value)).toEqual(['', 'computer://for-claude', 'computer://old']);
+  expect(forClaude.map((one) => one.value)).toEqual(['', 'computer://for-claude', 'computer://for-both', 'computer://old']);
 
   const forCofold = await answerer({ property: 'computer', query: '', provider: 'cofold' });
-  expect(forCofold.map((one) => one.value)).toEqual(['', 'computer://for-cofold', 'computer://old']);
+  expect(forCofold.map((one) => one.value)).toEqual(['', 'computer://for-cofold', 'computer://for-both', 'computer://old']);
 
   // A client that names no agent is offered everything, which is what a picker
   // drawn before the harness is chosen has to do.
   const anyone = await answerer({ property: 'computer', query: '' });
   expect(anyone.map((one) => one.value)).toEqual([
-    '', 'computer://for-claude', 'computer://for-cofold', 'computer://old',
+    '', 'computer://for-claude', 'computer://for-cofold', 'computer://for-both', 'computer://old',
   ]);
+});
+
+it('reads every label a listing reads by name, so a value holding a comma is whole', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'awkward',
+      image: 'node:22',
+      labels: {
+        'ahpd.computer': '1',
+        'ahpd.agents': 'claude,cofold',
+        'ahpd.disposable': 'claude,fast',
+        'ahpd.disposable.alone': 'true',
+        'ahpd.owner': 'user:ana,admin',
+        'ahpd.team': 'backend,platform',
+        'ahpd.project': 'ahpd,docs',
+      },
+    }],
+    calls: [],
+  }));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    label: 'ahpd.computer=1',
+  });
+
+  // `docker ps` prints every label in one comma-joined column, so a value
+  // holding a comma is cut where the pairs are cut. Each label is asked for by
+  // name instead, and comes back as it was written.
+  expect((await runtime.list())[0]).toMatchObject({
+    id: 'awkward',
+    agents: ['claude', 'cofold'],
+    disposable: { profile: 'claude,fast', alone: true },
+    owner: 'user:ana,admin',
+    team: 'backend,platform',
+    project: 'ahpd,docs',
+  });
+});
+
+it('reads a label value holding a tab or a newline as it was written', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  // A row is one line of tab-separated columns, so a value holding either of
+  // the two separators is the case that splits on them. `owner` is a typed
+  // reference and `project` a name, and neither is checked for whitespace.
+  const owner = 'user:ana\tsilva';
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'wrapped',
+      image: 'node:22',
+      labels: {
+        'ahpd.computer': '1',
+        'ahpd.agents': 'claude',
+        'ahpd.owner': owner,
+        'ahpd.project': 'ahpd\tdocs\nold',
+      },
+    }],
+    calls: [],
+  }));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    label: 'ahpd.computer=1',
+  });
+
+  // The labels are read as one JSON object rather than a row of columns, which
+  // is what a value cannot break: the separators are escaped inside it.
+  expect((await runtime.list())[0]).toMatchObject({ id: 'wrapped', owner, project: 'ahpd\tdocs\nold' });
 });

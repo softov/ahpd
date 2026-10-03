@@ -45,10 +45,9 @@ export interface Profile {
    * The agents this profile prepares the machine for.
    *
    * A machine made from this profile carries what each of them says it needs,
-   * rather than the operator listing the same host paths by hand - which is
-   * what this replaces, and why a version pinned in a mount path stopped the
-   * session with a 127. The names are the agents' `provider` ids, and they are
-   * recorded on the machine as its `ahpd.agents` label.
+   * rather than the operator listing the same host paths by hand. The names are
+   * the agents' `provider` ids, and they are recorded on the machine as its
+   * `ahpd.agents` label, which is what the picker and the session check read.
    */
   agents?: string[];
   /**
@@ -118,8 +117,8 @@ export interface ManifestDefaults {
    *
    * The operator's, not the person's: a directory the deployment shares with
    * every machine, such as the agent configuration a harness inside one reads.
-   * A body's own mounts are appended, so a machine can add to these and the
-   * later entry wins wherever a runtime resolves two at one target.
+   * A body's own mounts are appended, so a machine can add to these; a target
+   * two of them share is refused at create rather than resolved by order.
    */
   mounts?: string[];
   /** The named sets a body may pick from, by key. */
@@ -359,6 +358,67 @@ const said = (held: Record<string, unknown>, key: string): string | undefined =>
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 };
 
+/** Where a `source:target[:ro]` mount lands inside the machine. */
+const targetOf = (mount: string): string => mount.split(':')[1] ?? '';
+
+/**
+ * The host side of a mount, which has to be an absolute path that is there.
+ *
+ * Checked at create rather than at load, so a folder made after the daemon
+ * started is accepted, and refused with the mount's own words rather than left
+ * to the runtime: a relative source is read by Docker as a named volume, and a
+ * missing one becomes an empty directory the session finds out about by
+ * exiting.
+ */
+const sourceOf = (mount: string, said: string): void => {
+  const source = mount.split(':')[0] ?? '';
+  if (!source.startsWith('/')) {
+    throw new RpcError(-32602, `${said} names ${source}, which is not an absolute path on this host`);
+  }
+  if (!existsSync(source)) {
+    throw new RpcError(-32602, `${said} names ${source}, and that path is not there`);
+  }
+};
+
+/**
+ * One mount the machine will carry, and the words a refusal about it uses.
+ *
+ * Every mount is collected before any flag is written, because a runtime's own
+ * answer for two mounts at one target is that one of them is not used, and
+ * which one is not something this host can see afterwards.
+ */
+interface Landed {
+  /** The mount as the runtime is handed it, `source:target` or `source:target:ro`. */
+  mount: string;
+  /** Where it lands, which is the thing two of them may not share. */
+  target: string;
+  /** How this one is named in a sentence: `the profile's mount x`, or `need y`. */
+  said: string;
+}
+
+/**
+ * Refuse a target two mounts land at, unless the two are one statement.
+ *
+ * The same source, the same target and the same `ro` is one entry rather than a
+ * clash: two variants of one plugin declare the same needs, and a profile that
+ * mounts Claude's configuration by hand at the need's own target is the machine
+ * it meant. What differs is refused with both named, since one of them would
+ * silently lose.
+ */
+const oneMountEach = (landed: Landed[]): void => {
+  const seen = new Map<string, Landed>();
+  for (const one of landed) {
+    const first = seen.get(one.target);
+    if (first === undefined) {
+      seen.set(one.target, one);
+      continue;
+    }
+    if (first.mount !== one.mount) {
+      throw new RpcError(-32602, `${first.said} and ${one.said} both land at ${one.target}`);
+    }
+  }
+};
+
 /**
  * A write body as text, whatever encoding it arrived in.
  *
@@ -547,12 +607,15 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
   }
   for (const mount of asked ?? []) {
     if (!MOUNT.test(mount)) throw new RpcError(-32602, `mounts are "source:target" or "source:target:ro", and ${mount} is neither`);
+    sourceOf(mount, `the body's mount ${mount}`);
   }
   for (const mount of profile.mounts ?? []) {
     if (!MOUNT.test(mount)) {
       throw new RpcError(-32602, `profile ${picked ?? ''} names the mount ${mount}, which is not "source:target"`);
     }
+    sourceOf(mount, `the profile's mount ${mount}`);
   }
+  for (const mount of defaults.mounts ?? []) sourceOf(mount, `the plugin's mount ${mount}`);
   /*
    * The folder a session in this machine works in, mounted at the same path.
    *
@@ -617,18 +680,9 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     }
   }
   /*
-   * Two needs landing on one target is one of them silently winning, which is
-   * how an agent ends up without the file it asked for. Checked across every
-   * agent the profile names, because that is where two of them can collide.
+   * The mounts each need becomes, and the two deliveries that are not mounts
+   * here: a variable set in the machine, and a path copied into it.
    */
-  const landed = new Map<string, string>();
-  for (const need of resolved) {
-    const first = landed.get(need.target);
-    if (first !== undefined) {
-      throw new RpcError(-32602, `machine needs ${first} and ${need.name} both land at ${need.target}`);
-    }
-    landed.set(need.target, need.name);
-  }
   const needMounts = resolved
     .filter((one) => one.kind === 'directory' || one.kind === 'file')
     .map((one) => `${one.source}:${one.target}${one.readOnly === true ? ':ro' : ''}`);
@@ -638,12 +692,37 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
   const copies = resolved
     .filter((one) => one.kind === 'copy')
     .map((one) => ({ source: one.source, target: one.target }));
+  const mounts = [...new Set([...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? []), ...needMounts])];
   /*
-   * Widest first, so the narrower statement wins where two name one target:
-   * the deployment's every machine, then the profile this one was made from,
-   * then what this body itself asked for, then what the agents declared.
+   * Every mount this machine will carry, in the order the runtime is given
+   * them: the deployment's, the profile's, the body's, then what the agents
+   * declared. The same mount is one entry however many say it, since a runtime
+   * given `-v` twice for one target refuses the machine; a target two different
+   * mounts share is refused here rather than left to the runtime, which answers
+   * it by not using one of the two.
    */
-  const mounts = [...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? []), ...needMounts];
+  oneMountEach([
+    ...(defaults.mounts ?? []).map((one) => ({ mount: one, target: targetOf(one), said: `the plugin's mount ${one}` })),
+    ...(profile.mounts ?? []).map((one) => ({ mount: one, target: targetOf(one), said: `the profile's mount ${one}` })),
+    ...(asked ?? []).map((one) => ({ mount: one, target: targetOf(one), said: `the body's mount ${one}` })),
+    ...resolved
+      .filter((one) => one.kind === 'directory' || one.kind === 'file')
+      .map((one) => ({
+        mount: `${one.source}:${one.target}${one.readOnly === true ? ':ro' : ''}`,
+        target: one.target,
+        said: `need ${one.name}`,
+      })),
+    // A copy-in is a `docker cp` on the Docker route and a bind on the CLI's,
+    // which has no verb for it - so it joins the list on that route alone.
+    ...(devcontainer === undefined
+      ? []
+      : copies.map((one) => ({ mount: `${one.source}:${one.target}`, target: one.target, said: `the copy from ${one.source}` }))),
+    // And the session's folder, at the path it has here, which the Docker route
+    // mounts and the CLI's does not: its own file already mounts the workspace.
+    ...(devcontainer === undefined && folder !== undefined
+      ? [{ mount: `${folder}:${folder}`, target: folder, said: `the folder ${folder}` }]
+      : []),
+  ]);
   // A machine with a folder starts a session in it, so a host path inside the
   // folder is the same path in there.
   const workdir = said(held, 'workdir') ?? profile.workdir ?? folder;

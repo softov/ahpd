@@ -332,6 +332,29 @@ it('answers a session whose machine could not be made with the runtime sentence'
   expect(held(state).machines).toEqual([]);
 });
 
+it('names an env need in a refused run and never its value', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({ machines: [], calls: [], failRun: true }));
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { claude: { title: 'Claude', disposable: true } },
+  }), [agentWith({
+    // The value a machine is given is exactly the sort of thing a log and a
+    // sentence a session is answered with have no business holding.
+    token: { name: 'TOKEN', default: 'sk-x', required: true },
+  })]);
+  const { open } = await room(loaded);
+  const refusal = await open('ahp-session:/one', { computer: 'disposable:claude' })
+    .then(() => undefined, (error: Error) => error);
+
+  // The name is what identifies the call that failed and is worth keeping.
+  expect(refusal?.message).toContain('-e TOKEN');
+  expect(refusal?.message).not.toContain('sk-x');
+  // The flag before the value is what tells them apart, so it stays too.
+  expect(refusal?.message).toMatch(/run -d .* -e TOKEN debian:bookworm-slim/);
+});
+
 /*
  * Task 03: the count and the delay.
  */
@@ -425,27 +448,45 @@ it('gives a leftover disposable machine the delay again at startup', async () =>
  * Task 04: the docs' own example.
  *
  * The object below is the `profiles` half of the example in `docs/COMPUTER.md`,
- * kept in step by hand: an example that does not load is worse than none.
+ * kept in step by hand, with its one host path pointed at a directory this host
+ * has: an example that does not load is worse than none.
  */
 it('loads the disposable example from docs/COMPUTER.md', async () => {
-  const state = join(temp(), 'docker.json');
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const claudeHome = join(dir, 'claude-home');
+  const folder = join(dir, 'project');
+  mkdirSync(claudeHome);
+  mkdirSync(folder);
   const docs = {
     profiles: {
       scratch: {
         title: 'Scratch',
         description: 'A machine of this session\'s own, with the CLI shared in.',
         image: 'node:22',
-        mounts: ['/srv/claude-home:/ahpd/claude'],
+        needs: { claudeConfigDirectory: claudeHome },
         disposable: true,
         disposableDelay: 300000,
         disposableAlone: true,
       },
     },
   };
-  const { options: loaded, problems } = await load(options(state, docs));
+  const { options: loaded, problems } = await load(options(state, docs), [
+    agentWith({ claudeConfigDirectory: { directory: '~/.claude', target: '/ahpd/claude', required: true } }),
+  ]);
   expect(problems).toEqual([]);
 
   const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
   const all = await answerer({ property: 'computer', query: '' });
   expect(all.find((one) => one.value === 'disposable:scratch')).toMatchObject({ label: 'Scratch' });
+
+  // And the machine it makes for the harness the session runs: the profile's
+  // own value of the need, at the target that need declares. It used to mount
+  // `/srv/claude-home:/ahpd/claude` beside that same target, which is two
+  // mounts at one target and is refused.
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:scratch' }, folder);
+  const box = held(state).machines[0];
+  expect(box?.mounts).toEqual([`${claudeHome}:/ahpd/claude`, `${folder}:${folder}`]);
+  expect(box?.labels).toMatchObject({ 'ahpd.agents': 'echo', 'ahpd.disposable': 'scratch' });
 });

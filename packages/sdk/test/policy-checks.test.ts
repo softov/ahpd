@@ -252,8 +252,11 @@ describe('example 26, which is the machine and not a policy', () => {
   it('lets the policies through and leaves the refusal to the machine', async () => {
     const { client } = await signedIn(await host(true), 'alice');
     // A1 allows any harness and C1 gives alice the machine, so nothing in the
-    // store has an opinion about cofold here.
-    await expect(makeSession(client, 'cofold', 'cofold', 'sandbox-alice')).resolves.toBeUndefined();
+    // store has an opinion about cofold here. What refuses this is the
+    // machine: it was prepared for `claude, pi`, so the session is refused at
+    // its own creation with that sentence rather than at the first turn.
+    const refusal = await refusalOf(makeSession(client, 'cofold', 'cofold', 'sandbox-alice'));
+    expect(refusal.message).toBe('computer://sandbox-alice was prepared for claude, pi, and this session runs cofold; make a machine prepared for cofold or run this session on the host');
   });
 
   it('is refused by the port the host hands the agent, naming what the machine carries', async () => {

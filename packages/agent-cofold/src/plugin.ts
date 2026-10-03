@@ -57,6 +57,10 @@ export const optionsSchema = {
     model: { type: 'string', description: 'The model id a session that names none runs on.' },
     baseUrl: { type: 'string', description: 'The OpenAI-compatible endpoint a session that names none uses.' },
     instructions: { type: 'string', description: 'The system prompt the agent is created with.' },
+    computerConfigDir: {
+      anyOf: [{ type: 'string' }, { const: false }],
+      description: 'The configuration directory the harness reads inside a machine. /ahpd/cofold by default; false leaves the image\'s own.',
+    },
     store: { type: 'string', description: 'Where the cofold file store lives.' },
     memory: { type: 'boolean', description: 'true to hold the store in memory, for a test.' },
     tools: {

@@ -1,6 +1,7 @@
 ---
 title: Cofold's configuration reaches a machine at a fixed target
-status: accepted
+status: superseded
+superseded-by: decisions/cofold-config-reaches-a-machine-by-a-path-variable.md
 date: 2026-09-26
 refs:
   - "[code://packages/agent-cofold/src/agent.ts#L541-L560](../../packages/agent-cofold/src/agent.ts#L541-L560) - `machine()`, which mounts the configuration at the host's own path"

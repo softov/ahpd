@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { cofoldAgent, harnessConfig, modelOf, resourceOf, splitModel } from '../src/index.js';
+import { cofoldAgent, harnessConfig, harnessConfigPath, modelOf, resourceOf, splitModel } from '../src/index.js';
 
 /*
  * The harness's own configuration, read by the backend.
@@ -10,7 +10,8 @@ import { cofoldAgent, harnessConfig, modelOf, resourceOf, splitModel } from '../
  * cofold already has a file a person writes once, and the point of reading it
  * is that a key does not have to be lent or repeated: a daemon whose bridge
  * names no model still runs on the provider the harness was pointed at. Every
- * case here owns its own `XDG_CONFIG_HOME`, so nothing reads the real one.
+ * case here owns its own `XDG_CONFIG_HOME` and starts with no `COFOLD_CONFIG`,
+ * so nothing reads the real one.
  */
 
 let home: string;
@@ -20,10 +21,12 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-config-'));
   had = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = home;
+  delete process.env.COFOLD_CONFIG;
 });
 
 afterEach(() => {
   if (had === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = had;
+  delete process.env.COFOLD_CONFIG;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -48,6 +51,17 @@ it('reads the file the harness reads, and only the parts a backend needs', () =>
   expect(found.providers).toEqual([{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }]);
   expect(found.model).toBe('open_router/~deepseek/deepseek-flash-latest');
   expect(found.instructions).toBe('Be careful.');
+});
+
+it('takes the file COFOLD_CONFIG names before the folder the harness itself would use', () => {
+  // What a machine sets: the configuration is mounted at a fixed target and
+  // the variable points at that file, so it is read wherever the image's user
+  // would otherwise look.
+  process.env.COFOLD_CONFIG = join(home, 'elsewhere', 'config.json');
+  expect(harnessConfigPath()).toBe(join(home, 'elsewhere', 'config.json'));
+
+  delete process.env.COFOLD_CONFIG;
+  expect(harnessConfigPath()).toBe(join(home, 'cofold', 'config.json'));
 });
 
 it('answers nothing rather than failing when the file is absent or partly wrong', () => {

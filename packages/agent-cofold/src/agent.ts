@@ -49,6 +49,15 @@ export interface CofoldOptions {
   model?: string;
   /** The system prompt the agent is created with. */
   instructions?: string;
+  /**
+   * The configuration directory the harness reads *inside a machine*.
+   *
+   * The configuration is mounted there and `COFOLD_CONFIG` is pointed at the
+   * file, so a cofold host in the machine finds the providers whatever user the
+   * image runs as, and `XDG_CONFIG_HOME` is left as the image has it.
+   * `false` says nothing at all and leaves the image's own.
+   */
+  computerConfigDir?: string | false;
   /** Where the file store lives; absent means the tool's own data directory. */
   store?: string;
   /** Hold everything in memory instead of on disk; for a test. */
@@ -382,6 +391,7 @@ export const storeOf = (options: CofoldOptions = {}): Store =>
 export function cofoldAgent(options: CofoldOptions = {}): Agent {
   const provider = options.provider ?? 'cofold';
   const displayName = options.displayName ?? 'Cofold';
+  const configDir = options.computerConfigDir === undefined ? '/ahpd/cofold' : options.computerConfigDir;
   /*
    * One store for the whole backend, built here rather than per session.
    *
@@ -553,20 +563,37 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     /*
      * What a machine needs for this harness to find its providers.
      *
-     * The harness configuration holds the provider keys, and it is read from
-     * the same path inside a machine as on this host, so a cofold host in
-     * there finds the same endpoints. Read here rather than at construction,
-     * so a profile that points `XDG_CONFIG_HOME` elsewhere is followed.
+     * The harness configuration holds the provider keys, and it is mounted
+     * read-only at a fixed target under `computerConfigDir`, with `COFOLD_CONFIG`
+     * naming that file. The variable is this package's own, and it is a path to
+     * one file rather than a directory, because `XDG_CONFIG_HOME` cannot be
+     * moved for one program: it is the nested host's own folder as well, and a
+     * machine's mount point is root-owned, so a cofold machine whose image runs
+     * as anybody else would exit with EACCES creating its usage folder. Nothing
+     * here touches `XDG_CONFIG_HOME`, so every other program in the machine
+     * keeps its own.
+     *
+     * The target keeps the `cofold/config.json` shape the file has on a host, so
+     * a person reading a mounted machine sees the same relative path they see
+     * at `~/.config`.
+     *
+     * The source path is read here rather than at construction, so a profile
+     * that points the variable elsewhere is followed.
      */
     machine: (): Record<string, MachineNeed> => {
-      const path = harnessConfigPath();
+      if (configDir === false) return {};
       return {
         cofoldConfig: {
-          file: path,
-          target: path,
+          file: harnessConfigPath(),
+          target: `${configDir}/cofold/config.json`,
           readOnly: true,
           required: true,
           description: 'The cofold configuration, which holds the provider endpoints and their keys.',
+        },
+        cofoldConfigPath: {
+          name: 'COFOLD_CONFIG',
+          default: `${configDir}/cofold/config.json`,
+          description: 'Where the harness looks for its configuration inside the machine.',
         },
       };
     },

@@ -43,8 +43,8 @@ const temp = (): string => {
 };
 
 /** A folder that is a dev container, and one that is not. */
-function workspace(root: string, withDefinition = true): string {
-  const folder = mkdtempSync(join(root, 'work-'));
+function workspace(root: string, withDefinition = true, name = 'work-'): string {
+  const folder = mkdtempSync(join(root, name));
   if (withDefinition) {
     mkdirSync(join(folder, '.devcontainer'), { recursive: true });
     writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
@@ -331,6 +331,43 @@ it('offers the session folder\'s dev container, and not once one exists', async 
   await answered(existing, 2);
 });
 
+it('reads a folder holding a comma whole, so the picker offers no second container', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir, true, 'work, two-');
+  const existing = join(dir, 'docker-existing.json');
+  const existingDev = join(dir, 'dev-existing.json');
+  // The machine this folder already became, labelled with the whole path.
+  writeFileSync(existing, JSON.stringify({
+    machines: [{
+      name: 'existing',
+      image: 'node:22',
+      labels: { 'ahpd.computer': '1', 'ahpd.devcontainer.folder': folder },
+    }],
+    calls: [],
+  }));
+  const { options: loaded } = await load(optionsOf(existingDev, existing));
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+
+  // The label's value holds the same comma the listing's own column is joined
+  // by, so a listing that read that column would report a folder that is not
+  // this one - and offer to make a second container beside the first.
+  const rows = await answerer({ property: 'computer', query: '', workingDirectory: `file://${folder}` });
+  expect(rows.map((one) => one.value)).toContain('computer://existing');
+  expect(rows.some((one) => one.value === `devcontainer://${folder}`)).toBe(false);
+
+  // A daemon with no machine for the folder offers the container as before.
+  const { options: fresh } = await load(optionsOf(devState, dockerState));
+  const freshAnswerer = fresh.sessionConfigCompletions?.computer as NonNullable<typeof fresh.sessionConfigCompletions>['computer'];
+  const offered = await freshAnswerer({ property: 'computer', query: '', workingDirectory: `file://${folder}` });
+  expect(offered.map((one) => one.value)).toContain(`devcontainer://${folder}`);
+
+  // Each answer's own listing.
+  await answered(existing, 2);
+  await answered(dockerState, 1);
+});
+
 it('makes it at session start, with the harness needs as --mount and --remote-env', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
@@ -364,6 +401,33 @@ it('makes it at session start, with the harness needs as --mount and --remote-en
   // What the session actually runs in is the machine the CLI named, not the
   // source the person picked.
   expect(opened.snapshot.state.config?.values?.computer).toBe('computer://abc123');
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await answered(dockerState, 2);
+});
+
+it('binds one entry where a copy-in is the same bind as a need', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const shared = join(dir, 'shared');
+  mkdirSync(shared);
+  const folder = workspace(dir);
+
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [
+    agentWith({
+      config: { directory: shared, target: '/ahpd/shared', required: true },
+      // The same bind by another road. The target check already accepts the
+      // pair, so the CLI has to collapse it: the CLI's own `devcontainer up`
+      // refuses two `--mount`s landing at one place.
+      copy: { source: shared, target: '/ahpd/shared', required: true },
+    }),
+  ], join(dir, 'config'));
+  const { client, open } = await room(loaded);
+  await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder);
+
+  const up = devHeld(devState).calls.find((one) => one[0] === 'up');
+  const bind = `type=bind,source=${shared},target=/ahpd/shared`;
+  expect(up?.filter((one) => one === bind)).toHaveLength(1);
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 2);
 });

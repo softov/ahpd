@@ -2,11 +2,12 @@
  * The harness configuration this backend runs on.
  *
  * cofold already has a configuration a person writes once, at
- * `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`, where
- * the providers and their keys live and the model is named as
- * `<provider>/<model>`. Reading it here is what makes the plugin usable
- * without repeating a key: a daemon whose bridge names no model and is given
- * no token still runs, because the person already said where and how.
+ * `$COFOLD_CONFIG` or `$XDG_CONFIG_HOME/cofold/config.json` or
+ * `~/.config/cofold/config.json`, where the providers and their keys live and
+ * the model is named as `<provider>/<model>`. Reading it here is what makes the
+ * plugin usable without repeating a key: a daemon whose bridge names no model
+ * and is given no token still runs, because the person already said where and
+ * how.
  *
  * Only the parts a backend needs are read. The rest of that file - the theme,
  * the shell, the permissions - belongs to the harness and is not this
@@ -41,9 +42,22 @@ export interface HarnessConfig {
   path: string;
 }
 
-/** The file the harness configuration lives in. */
+/**
+ * The file the harness configuration lives in.
+ *
+ * `COFOLD_CONFIG` names that file outright, and is what a machine sets: the
+ * configuration is mounted at a fixed target under `computerConfigDir` and the
+ * variable points at it, because `XDG_CONFIG_HOME` cannot be moved for this
+ * one program. It is the nested host's own folder too, and a machine's mount
+ * point is root-owned, so pointing it there stops any image that does not run
+ * as root from starting at all.
+ *
+ * Without the variable it is where the harness itself would look, which is
+ * `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`.
+ */
 export const harnessConfigPath = (env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string =>
-  join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'cofold', 'config.json');
+  env['COFOLD_CONFIG']
+  ?? join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'cofold', 'config.json');
 
 /** A non-empty string, or nothing for a blank or missing one. */
 const word = (value: unknown): string | undefined =>

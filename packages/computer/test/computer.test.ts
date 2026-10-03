@@ -1,4 +1,7 @@
-import { expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it } from 'vitest';
 import { computerProvider } from '../src/provider.js';
 import { computerTools } from '../src/tools.js';
 import type { ComputerRuntime } from '../src/runtime.js';
@@ -14,6 +17,32 @@ import type { Write } from '../../sdk/src/types/resources.js';
  * limits they apply. The end-to-end case in `computer-plugin.test.ts` is where
  * a command is actually spawned.
  */
+
+/** The temporary directory the tests that name a host path keep their paths in. */
+let loose: string | undefined;
+afterEach(() => {
+  if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
+  loose = undefined;
+});
+
+/** A directory in a temporary one, which a mount can name as a source. */
+const temp = (name: string): string => {
+  const path = join(tempRoot(), name);
+  mkdirSync(path, { recursive: true });
+  return path;
+};
+
+/** A file in a temporary directory, which a read-only mount can name. */
+const tempFile = (name: string): string => {
+  const path = join(tempRoot(), name);
+  writeFileSync(path, '// mounted read only\n');
+  return path;
+};
+
+const tempRoot = (): string => {
+  loose ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-'));
+  return loose;
+};
 
 /** A runtime that keeps its machines in a map and every call in a list. */
 const fake = () => {
@@ -142,6 +171,9 @@ const made = (value: unknown, extra: Record<string, unknown> = {}): Write =>
 
 it('makes a machine from a manifest, with the limits and the mounts it names', async () => {
   const { runtime, calls } = fake();
+  // A mount's host path is checked at create, so both are made here.
+  const work = temp('work');
+  const server = tempFile('server.mjs');
   // Mounts in a body are the deployment's to allow, and this is the host that
   // allows them: one person on it, where a machine is a convenience.
   const provider = computerProvider(runtime, { ...options, bodyMounts: true });
@@ -150,11 +182,11 @@ it('makes a machine from a manifest, with the limits and the mounts it names', a
     image: 'node:22-slim',
     cpus: '4',
     memory: '512m',
-    mounts: ['/work:/work', '/srv/server.mjs:/srv/server.mjs:ro'],
+    mounts: [`${work}:/work`, `${server}:/srv/server.mjs:ro`],
     workdir: '/work',
   }));
 
-  expect(calls).toEqual(['run box node:22-slim 4 512m ahpd.computer=1 v=/work:/work,/srv/server.mjs:/srv/server.mjs:ro w=/work']);
+  expect(calls).toEqual([`run box node:22-slim 4 512m ahpd.computer=1 v=${work}:/work,${server}:/srv/server.mjs:ro w=/work`]);
 });
 
 it('makes a machine with the host\'s own defaults when the body names few', async () => {
@@ -175,10 +207,12 @@ it('makes a machine with the host\'s own defaults when the body names few', asyn
  */
 it('will not take mounts from a body unless the deployment allows them', async () => {
   const { runtime, calls } = fake();
+  const shared = temp('shared');
+  const claude = temp('claude');
   const provider = computerProvider(runtime, {
     ...options,
-    mounts: ['/shared:/shared'],
-    profiles: { claude: { mounts: ['/home/me/.claude:/ahpd/claude'] } },
+    mounts: [`${shared}:/shared`],
+    profiles: { claude: { mounts: [`${claude}:/ahpd/claude`] } },
   });
 
   const refused = await provider.write('computer://box', made({ mounts: ['/:/host'] }))
@@ -189,7 +223,7 @@ it('will not take mounts from a body unless the deployment allows them', async (
   // And what the operator named still reaches the machine, which is the point:
   // the mounts are not gone, they are the deployment's to choose.
   await provider.write('computer://box', made({ profile: 'claude' }));
-  expect(calls[0]).toContain('v=/shared:/shared,/home/me/.claude:/ahpd/claude');
+  expect(calls[0]).toContain(`v=${shared}:/shared,${claude}:/ahpd/claude`);
 });
 
 /*
