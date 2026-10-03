@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { memoryAutomations } from './automations.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
-import type { Automation, AutomationStore } from './types/automations.js';
+import type { Automation, AutomationEntry, AutomationStore } from './types/automations.js';
 import type { Bag } from './types/common.js';
 import type { Owner } from './types/usage.js';
 
@@ -166,7 +166,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   };
 
   /** Everything this store knows, with what it added. */
-  const dressed = (automation: Automation): Automation => {
+  const dressed = (automation: AutomationEntry): AutomationEntry => {
     const at = nextAt.get(automation.resource);
     const stamp = stamps.get(automation.resource);
     return {
@@ -182,10 +182,13 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       version: 1,
       automations: inner.list().map((one) => {
         const at = nextAt.get(one.resource);
+        // The inner store answers the entry a client reads, which carries the
+        // owner in `_meta` rather than under its own name.
+        const owner = owned(one._meta?.['ahpd.owner']);
         return {
           resource: one.resource,
           definition: one.definition,
-          ...(one.owner === undefined ? {} : { owner: one.owner }),
+          ...(owner === undefined ? {} : { owner }),
           ...(stamps.get(one.resource) ?? { createdAt: one.createdAt, modifiedAt: one.modifiedAt }),
           ...(at ? { nextRunAt: at.toISOString() } : {}),
         };

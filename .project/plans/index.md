@@ -86,7 +86,7 @@ Reference: [00-host.md](host/00-host.md)
 | [39 - The pull request pill and the worktree's files come back in VS Code 1.140](host/39-what-vs-code-1140-stopped-reading/plan.md) | high | built 2026-10-02 ([implemented.md](host/39-what-vs-code-1140-stopped-reading/implemented.md)) | - | ahpc and ahpapp send the include files as a list |
 | [40 - A connection is told who it is signed in as](host/40-a-connection-is-told-who-it-is/plan.md) | high | planned 2026-10-03 | host 36 | ahpapp people/01 |
 | [41 - A failure belongs to the item that failed, and a start says what it skipped](host/41-a-failure-belongs-to-the-item-that-failed/plan.md) | high | planned 2026-10-03 | claude 15 | - |
-| [42 - An automation's owner rides in _meta, where the protocol has room for it](host/42-an-automation-owner-rides-in-meta/plan.md) | high | planned 2026-10-03 | - | host 40 |
+| [42 - An automation's owner rides in _meta, where the protocol has room for it](host/42-an-automation-owner-rides-in-meta/plan.md) | high | built 2026-10-03 ([implemented.md](host/42-an-automation-owner-rides-in-meta/implemented.md)) | - | host 40 |
 
 Next free number in `host`: `41`.
 

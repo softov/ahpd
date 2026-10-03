@@ -24,6 +24,11 @@ export interface Automation {
    * automation somebody else may run or switch off is still their work. Absent
    * where nobody was behind it, which is every automation written before this
    * and every one made on a host with no users directory.
+   *
+   * The store's own field, and the gates read it here. A client never sees it
+   * under this name: the protocol declares `_meta` on an automation entry and
+   * no `owner`, so what goes out is `_meta['ahpd.owner']` - see
+   * {@link AutomationEntry}.
    */
   owner?: Owner;
   /** ISO 8601, when a schedule says it will fire next. Absent for one nothing will fire. */
@@ -38,6 +43,20 @@ export interface Automation {
   modifiedAt: string;
 }
 
+/**
+ * One automation as a client receives it.
+ *
+ * The stored record less `owner`, and the reason it is a type of its own: the
+ * protocol's `AutomationEntry` declares `_meta` and no `owner`, so an owner
+ * that rode out under its own name would be a field no client can read. It goes
+ * as `_meta['ahpd.owner']`, and a type that will not hold `owner` is what keeps
+ * it off the wire.
+ */
+export interface AutomationEntry extends Omit<Automation, 'owner'> {
+  /** `ahpd.owner`, when the automation is somebody's work. */
+  _meta?: Record<string, unknown>;
+}
+
 /** One run of one automation. */
 export interface AutomationRun {
   /** `ahp-automation-run:/<id>`, which is also a channel a client may watch. */
@@ -50,6 +69,9 @@ export interface AutomationRun {
    * Not whoever pressed the button: the protocol's manual origin carries no
    * room for who asked, and a run pressed by a colleague is still the
    * automation maker's work. Absent where the automation names no owner.
+   *
+   * Stored, never sent under this name: the run state carries it as
+   * `_meta['ahpd.owner']`, as an automation entry does.
    */
   owner?: Owner;
   /** Why it started: somebody pressed it, or a trigger fired. */
@@ -60,6 +82,17 @@ export interface AutomationRun {
   sessions: string[];
   /** The one a client should open when it opens the run. */
   primarySession?: string;
+}
+
+/**
+ * One run as a client receives it, on the run's own channel.
+ *
+ * The stored record less `owner`, for the reason {@link AutomationEntry} gives:
+ * the protocol's `AutomationRunState` declares `_meta` and no `owner`.
+ */
+export interface AutomationRunState extends Omit<AutomationRun, 'owner'> {
+  /** `ahpd.owner`, when the run is somebody's work. */
+  _meta?: Record<string, unknown>;
 }
 
 /** How a store asks the host to start a session, since only the host can. */
@@ -117,9 +150,9 @@ export interface RunEnding {
  */
 export interface AutomationStore {
   /** Every automation, for the catalogue channel's snapshot. */
-  list(): Automation[];
+  list(): AutomationEntry[];
   /** One, by resource URI. Undefined for one this store has never heard of. */
-  get(resource: string): Automation | undefined;
+  get(resource: string): AutomationEntry | undefined;
 
   /**
    * The *event* triggers this store understands.
@@ -140,9 +173,9 @@ export interface AutomationStore {
    * it, and `update` patches a definition rather than moving the work to
    * whoever edited it last.
    */
-  create(resource: string, definition: Bag, owner?: Owner): Automation;
+  create(resource: string, definition: Bag, owner?: Owner): AutomationEntry;
   /** Patch one. Absent keys are left alone, which is what a patch means. */
-  update(resource: string, changes: Bag): Automation | undefined;
+  update(resource: string, changes: Bag): AutomationEntry | undefined;
   /** Forget one, and everything it ever did. */
   remove(resource: string): boolean;
 

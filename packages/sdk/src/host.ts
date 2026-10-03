@@ -57,7 +57,7 @@ import type { Agent, BoundTool, Listed, McpServer } from './types/agent.js';
 import type { ToolsEndpoint } from './toolserver.js';
 import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
-import type { RunEnding, StartSession } from './types/automations.js';
+import type { AutomationRun, AutomationRunState, RunEnding, StartSession } from './types/automations.js';
 import type { Peer } from './types/rpc.js';
 import type { Owner } from './types/usage.js';
 
@@ -395,6 +395,20 @@ const baseOf = (uri: string): string => {
   const cut = uri.indexOf('/changeset/');
   return cut > 0 ? uri.slice(0, cut) : uri;
 };
+
+/**
+ * The run state a client reads on the run's own channel.
+ *
+ * The stored record less `owner`, under the key an automation entry carries
+ * the same value on: the protocol declares `_meta` on a run state and no
+ * `owner`, so a client that found one would be reading a field it has no
+ * declaration for. Nothing here is lost to the host - the gates that check an
+ * owner before a run starts read it off the record the store holds.
+ */
+const runState = ({ owner, ...rest }: AutomationRun): AutomationRunState => ({
+  ...rest,
+  ...(owner === undefined ? {} : { _meta: { 'ahpd.owner': owner } }),
+});
 
 /** What a name this host holds is. */
 type NameKind = 'session' | 'chat' | 'terminal' | 'watch';
@@ -6403,7 +6417,7 @@ export function createHost(options: HostOptions): Host {
     if (channel.startsWith('ahp-automation-run:/')) {
       const found = options.automations?.runOf(channel);
       if (!found) throw new RpcError(-32001, `No automation run at ${channel}`);
-      return value({ resource: channel, state: found, fromSeq: serverSeq });
+      return value({ resource: channel, state: runState(found), fromSeq: serverSeq });
     }
     /*
      * A session's annotations, nested under the session the way a changeset

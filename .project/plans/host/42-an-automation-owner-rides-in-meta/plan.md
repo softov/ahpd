@@ -1,7 +1,7 @@
 ---
 title: An automation's owner rides in _meta, where the protocol has room for it
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 refs:
@@ -52,7 +52,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An automation's owner is sent in _meta](task-01-the-owner-is-sent-in-meta.md) | todo | - |
+| [01 - An automation's owner is sent in _meta](task-01-the-owner-is-sent-in-meta.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -61,11 +61,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Next:** task 01; then host/40 lands with its wire traffic on a signed-in person.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] On a host with a users directory, every `automation/set` entry and run state passes the protocol schema, and carries `_meta['ahpd.owner']`.
-- [ ] An automation's run still starts as its owner, and an owner who has not signed in is still refused.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] On a host with a users directory, every `automation/set` entry and run state passes the protocol schema, and carries `_meta['ahpd.owner']`.
+- [x] An automation's run still starts as its owner, and an owner who has not signed in is still refused.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

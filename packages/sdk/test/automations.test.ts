@@ -63,6 +63,7 @@ const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .map((n) => n.action);
 
 const ONE = 'ahp-automation:/nightly';
+const PLAIN = 'ahp-automation:/plain';
 
 /** Write one, the way a client does: a request, and the host says what it holds. */
 const write = async (
@@ -94,7 +95,7 @@ const runState = async (
       lifecycle: { status: string; startedAt?: string; completedAt?: string; error?: { message?: string } };
       sessions: string[];
       primarySession?: string;
-      owner?: string;
+      _meta?: Record<string, unknown>;
     };
   };
 }).snapshot.state;
@@ -645,13 +646,17 @@ it('records whose work an automation is, and gives every run of it that owner', 
   const asked: StartSession[] = [];
   const start = async (options: StartSession): Promise<string> => { asked.push(options); return 'echo:/one'; };
 
-  expect(store.create(ONE, DEFINITION, 'user:ana').owner).toBe('user:ana');
-  expect(store.get(ONE)?.owner).toBe('user:ana');
+  // The entry a client reads carries the owner in `_meta`, where the protocol
+  // has room for it, and never under a field of its own.
+  expect(store.create(ONE, DEFINITION, 'user:ana')._meta).toEqual({ 'ahpd.owner': 'user:ana' });
+  expect(store.get(ONE)?._meta?.['ahpd.owner']).toBe('user:ana');
   // A patch does not move it: a colleague who edited the definition did not
   // take it over.
   store.update(ONE, { title: 'Renamed' });
-  expect(store.get(ONE)?.owner).toBe('user:ana');
+  expect(store.get(ONE)?._meta?.['ahpd.owner']).toBe('user:ana');
 
+  // The run record keeps it under its own name, because that is the store the
+  // host's own gates read.
   const run = await store.run(ONE, { kind: 'manual' }, start);
   expect(run?.owner).toBe('user:ana');
   // And the session is handed the owner too, because the host is what opens
@@ -659,7 +664,7 @@ it('records whose work an automation is, and gives every run of it that owner', 
   expect(asked[0]?.owner).toBe('user:ana');
 
   // An automation made before this names nobody, and neither does a run of it.
-  expect(store.create('ahp-automation:/plain', DEFINITION).owner).toBeUndefined();
+  expect(store.create('ahp-automation:/plain', DEFINITION)._meta).toBeUndefined();
   const older = await store.run('ahp-automation:/plain', { kind: 'trigger' }, start);
   expect(older?.owner).toBeUndefined();
   expect(asked[1]?.owner).toBeUndefined();
@@ -683,9 +688,11 @@ it('takes the owner from the connection that made it, and a run is that person\'
   await write(client, DEFINITION);
 
   // The catalogue says whose it is, which is the whole of what a create knows
-  // that a definition does not.
-  expect((await entries(client))[0]).toMatchObject({ owner: 'user:ana' });
-  expect(store.get(ONE)?.owner).toBe('user:ana');
+  // that a definition does not. Under the key the protocol has room for and
+  // nowhere else: `AutomationEntry` declares `_meta` and no `owner`.
+  const catalogue = (await entries(client))[0] as Record<string, unknown>;
+  expect(catalogue._meta).toEqual({ 'ahpd.owner': 'user:ana' });
+  expect('owner' in catalogue).toBe(false);
 
   // A run pressed here is still that person's work: the manual origin is
   // `{ kind: 'manual' }` and carries nobody, and what runs at nine is the
@@ -694,7 +701,21 @@ it('takes the owner from the connection that made it, and a run is that person\'
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'req-1' },
   }) as { resource: string };
   const state = await runState(client, run.resource);
-  expect(state.owner).toBe('user:ana');
+  expect(state._meta).toEqual({ 'ahpd.owner': 'user:ana' });
+  expect('owner' in state).toBe(false);
   // And the session it started is owned the same way.
   expect(sessions.owner(idOf(state.primarySession ?? ''))).toBe('user:ana');
+
+  // An automation nobody was behind carries neither key: an `_meta` saying
+  // nothing is a claim that there is no owner, which is not what it says.
+  store.create(PLAIN, DEFINITION);
+  const plain = (await entries(client)).find((one) => one.resource === PLAIN) as Record<string, unknown>;
+  expect(plain._meta).toBeUndefined();
+  expect('owner' in plain).toBe(false);
+  const plainRun = await client.handle({
+    method: 'runAutomation', params: { channel: AUTOMATIONS, automation: PLAIN, requestId: 'req-2' },
+  }) as { resource: string };
+  const plainState = await runState(client, plainRun.resource);
+  expect(plainState._meta).toBeUndefined();
+  expect('owner' in plainState).toBe(false);
 });

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { checker, collapse, framesIn, SCHEMA } from '../../../tools/wire.mjs';
 import { lineFor } from '../../server/src/wire.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Principal, Users } from '../src/types/users.js';
 
 /*
  * Everything this host sends, against everything the protocol declares.
@@ -92,6 +93,41 @@ const { fileResources } = await import('../src/resources.js');
 const { memoryAutomations } = await import('../src/automations.js');
 const { hostTools } = await import('../src/tools.js');
 
+/*
+ * A person this capture runs as.
+ *
+ * A host with no users directory has nobody to name, so every field a signed
+ * in person adds to a frame stayed absent here - and a check that never sees
+ * the field cannot catch it. The traffic below is a client on a host with a
+ * directory, on a connection that is somebody.
+ */
+const ana: Principal = { id: 'ana', roles: [], can: () => true };
+
+const people = (): Users => ({
+  resource: {
+    resource: 'ahpd://users',
+    resource_name: 'ahpd users',
+    authorization_servers: ['https://example.test/users'],
+    required: false,
+  },
+  verify: async () => undefined,
+  list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
+  add: async () => {},
+  roles: async () => [],
+  addRole: async () => {},
+  removeRole: async () => false,
+  teams: async () => [],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
+  remove: async () => false,
+  mint: async () => 'nonsense',
+});
+
 const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
@@ -143,8 +179,9 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     terminals: shellTerminals(),
     automations: memoryAutomations(),
     tools: hostTools(),
+    users: people(),
   });
-  const client = host.accept(peer());
+  const client = host.accept(peer(), ana);
   const ask = asking(client);
 
   await ask('initialize', {

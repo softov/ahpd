@@ -1,7 +1,7 @@
 /** Automations held in memory, run when somebody asks. */
 
 import { randomUUID } from 'node:crypto';
-import type { Automation, AutomationRun, AutomationStore, StartSession } from './types/automations.js';
+import type { Automation, AutomationEntry, AutomationRun, AutomationStore, StartSession } from './types/automations.js';
 import type { Bag } from './types/common.js';
 
 /**
@@ -49,10 +49,11 @@ export function memoryAutomations(): AutomationStore {
   });
 
   /** Rebuild the entry a client reads, so `runs` and `operations` are never stale. */
-  const entry = (automation: Automation): Automation => {
+  const entry = (automation: Automation): AutomationEntry => {
     const enabled = automation.definition.enabled !== false;
+    const { owner, ...rest } = automation;
     return {
-      ...automation,
+      ...rest,
       runs: (history.get(automation.resource) ?? []).slice(0, PAGE).map(summary),
       ...((history.get(automation.resource) ?? []).length > PAGE
         ? { runsNextCursor: String(PAGE) }
@@ -61,6 +62,15 @@ export function memoryAutomations(): AutomationStore {
       // somebody switched off, and offering the button anyway is a control
       // that argues with the switch beside it.
       operations: enabled ? ['update', 'remove', 'run'] : ['update', 'remove'],
+      /*
+       * Whose work this is, where a client can read it.
+       *
+       * The protocol declares `_meta` on an automation entry and no `owner`, so
+       * a client that finds `owner` on the wire is finding something it has
+       * no declaration to read. The value is the same one the store holds and
+       * the host's gates read, under the key ahpd's other additions use.
+       */
+      ...(owner === undefined ? {} : { _meta: { 'ahpd.owner': owner } }),
     };
   };
 

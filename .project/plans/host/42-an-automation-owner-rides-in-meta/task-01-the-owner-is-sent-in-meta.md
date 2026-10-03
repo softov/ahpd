@@ -1,6 +1,6 @@
 ---
 title: An automation's owner is sent in _meta
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

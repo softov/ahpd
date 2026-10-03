@@ -203,10 +203,11 @@ describe('across a restart', () => {
 
     const second = clockwork();
     store = scheduledAutomations({ file, now: second.now, timer: second.timer });
-    expect(store.get(ONE)?.owner).toBe('user:ana');
+    // Read back through `_meta`, where the entry a client reads carries it.
+    expect(store.get(ONE)?._meta?.['ahpd.owner']).toBe('user:ana');
     // An automation written before this carried no owner, and saying so is
     // what it says rather than one that names nobody.
-    expect(store.get('ahp-automation:/older')?.owner).toBeUndefined();
+    expect(store.get('ahp-automation:/older')?._meta?.['ahpd.owner']).toBeUndefined();
   });
 
   it('reads a row whose owner is not a typed reference as one nobody owns', () => {
@@ -217,7 +218,7 @@ describe('across a restart', () => {
     const clock = clockwork();
     store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
     expect(store.get(ONE)?.definition.title).toBe('Nightly review');
-    expect(store.get(ONE)?.owner).toBeUndefined();
+    expect(store.get(ONE)?._meta?.['ahpd.owner']).toBeUndefined();
   });
 
   it('keeps when it was written, rather than when it was read', () => {

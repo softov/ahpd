@@ -329,7 +329,7 @@ it('names the maker of an automation as the sender of the turn it started', asyn
       },
     },
   });
-  expect(store.get('ahp-automation:/nightly')?.owner).toBe('user:ana');
+  expect(store.get('ahp-automation:/nightly')?._meta?.['ahpd.owner']).toBe('user:ana');
 
   // Somebody else presses Run, and there is nobody at the keyboard to send the
   // turn it starts: it is sent by whoever wrote the automation down.

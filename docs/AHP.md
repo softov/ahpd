@@ -309,6 +309,14 @@ which is a different complaint from an action nobody has served.
 | `automationRun/primarySessionChanged` | host | ✅ | The one a client opens when it opens the run. Cleared when that session is the one removed. |
 | `automationRun/cancelRequested` | client | ✅ | A request the store answers, because only it knows whether the run has got far enough to be stopped. |
 
+Whose work an automation is reaches a client as `_meta['ahpd.owner']`, on the
+entry in the catalogue snapshot and on every `automation/set`, and on the run's
+own state the same way - `user:<id>` or `root:<host>`, as a turn's sender is
+spelled. Never as a field of its own: the protocol declares `_meta` on both
+shapes and no `owner`, so an owner under that name is one no client can read. A
+run's is the automation's, not whoever pressed Run. Absent on a host given no
+users directory, which has nobody to name.
+
 ### What a refusal is
 
 Anything dispatched that this host will not act on is **refused**, not dropped:
