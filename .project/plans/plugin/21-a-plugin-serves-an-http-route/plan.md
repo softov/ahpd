@@ -70,6 +70,7 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 | The prefix is the plugin's name with each `/`-separated segment percent-encoded, matched by whole segments; no name is refused for its shape | (defaulted: a throw from a register method discards the plugin's whole contribution) | 01, 02 |
 | The Host check applies to a route; the Origin and JSON-only checks do not, and the route authenticates its own caller | Softov, 2026-09-26 | 02 |
 | A route's Host check accepts the names `apiOrigins` gives plus the host a tunnel announces, and the list is built whether `http` is on or off | Softov, 2026-10-04 | 02 |
+| The tunnel's host is learnt from the listener's announcements: each `scheme://` URL a plugin says adds its host and hostname; `@ahpd/tunnel-devtunnel` announcing its URL is a follow-up outside this plan | Softov, 2026-10-04 | 02 |
 | Routes are served whenever a plugin registers one, with `http` on or off | Softov, 2026-09-26 | 02 |
 | What a route does on the host goes through its plugin's connection, so the plugin's grants apply; this plan is built before plan 20, and a route gains the connection when plan 20 lands | [plan 20](../20-a-plugin-is-a-client-of-its-own-host/plan.md), Softov, 2026-10-04 | - |
 | Builds on daemon 05 tasks 15 and 16, done, so a route runs on Node, Bun and Deno | Softov, 2026-09-26 | 02 |
