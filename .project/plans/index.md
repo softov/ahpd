@@ -98,8 +98,29 @@ Reference: [00-host.md](host/00-host.md)
 | [44 p3 - A session's row lists its chats with their status, and a chat is read or archived on its own](host/44-ahpd-speaks-ahp-1-0-0-p3-a-sessions-row-lists-its-chats/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 44 p1 | - |
 | [45 - The root config declares every value it holds, as VS Code's agent host declares it](host/45-root-config-declares-every-value-it-holds/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo | host 44 p1, host 43 p1, host 43 p3 | - |
 | [46 - The host's own surfaces are advertised with their operations, and a role grants an operation](host/46-built-in-surfaces-are-advertised-for-role-control/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo | host 44 p1 | ahpapp people/01's role editor |
+| [47 - ahpd serves what AHP 1.0.0 added](host/47-ahpd-serves-what-ahp-1-0-0-added/plan.md) | medium | planned 2026-10-03; p1-p6 planned, canvas left out, Softov's three answers in; p1 goes past VS Code | host 44 p1 | - |
+| [47 p1 - A chat is reordered in its session, or moved to another session of the same agent and machine](host/47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) | medium | planned 2026-10-03; task 01 dropped, 04 then 02-03 todo; cross-agent and cross-machine moves deferred | host 47, host 44 p1, host 50 | - |
+| [47 p2 - A chat lists the shells and subagents running in its background](host/47-ahpd-serves-what-ahp-1-0-0-added-p2-a-chat-lists-its-background-work/plan.md) | medium | planned 2026-10-03; tasks 01-02 todo | host 47, host 44 p1 | - |
+| [47 p3 - A blocking MCP server startup can be sent to the background](host/47-ahpd-serves-what-ahp-1-0-0-added-p3-an-mcp-server-startup-can-be-backgrounded/plan.md) | low | planned 2026-10-03; task 01 todo | host 47, host 44 p1 | - |
+| [47 p4 - A file edit is the protocol's type, and a Claude write confirmation previews its edit](host/47-ahpd-serves-what-ahp-1-0-0-added-p4-a-file-edit-is-the-protocols-type/plan.md) | low | planned 2026-10-03; tasks 01-02 todo | host 47, host 44 p1 | - |
+| [47 p5 - An automation carries the client plugins its template names](host/47-ahpd-serves-what-ahp-1-0-0-added-p5-an-automation-carries-client-plugins/plan.md) | low | planned 2026-10-03; task 01 todo, 02 waits on host 49 | host 47, host 44 p1, host 49 | - |
+| [47 p6 - A changeset being recomputed says so, and keeps its files](host/47-ahpd-serves-what-ahp-1-0-0-added-p6-a-changeset-says-it-is-recomputing/plan.md) | low | planned 2026-10-03; task 01 todo | host 47, host 44 p1 | - |
+| [48 - host.ts is split into one file per area, and the URI routing and the grant tables are files of their own](host/48-host-is-split-by-area/plan.md) | high | planned 2026-10-03; p1-p11 planned, Softov's four answers in; runs after plugin 29 merges | plugin 29 | host 43, host 44 p2, host 44 p3, host 45, host 46, host 47 |
+| [48 p1 - The grant tables and the URI names are files of their own](host/48-host-is-split-by-area-p1-the-grant-and-uri-tables/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 48, plugin 29 | 48 p2 |
+| [48 p2 - The URI routing, the client relay and the connection gate are files of their own](host/48-host-is-split-by-area-p2-routing/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | host 48 p1 | 48 p3, 48 p4 |
+| [48 p3 - Changesets and git and GitHub facts are files of their own, and the repository ports live in repo/](host/48-host-is-split-by-area-p3-changesets-and-facts/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | host 48 p2 | 48 p6 |
+| [48 p4 - Telemetry, sign-in requirements, owners and machines are files of their own](host/48-host-is-split-by-area-p4-telemetry-owners-and-machines/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | host 48 p2 | 48 p5 |
+| [48 p5 - Session config and root config are files of their own](host/48-host-is-split-by-area-p5-session-and-root-config/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 48 p4 | 48 p6 |
+| [48 p6 - The catalogue, past sessions and snapshots are files of their own](host/48-host-is-split-by-area-p6-catalogue-and-transcripts/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 48 p3, host 48 p5 | 48 p7 |
+| [48 p7 - Starting, restarting and removing a session are files of their own](host/48-host-is-split-by-area-p7-session-lifecycle/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 48 p6 | 48 p8 |
+| [48 p8 - Session tools, terminals and automations are files of their own](host/48-host-is-split-by-area-p8-tools-terminals-and-automations/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | host 48 p7 | 48 p9 |
+| [48 p9 - The method table is split by family](host/48-host-is-split-by-area-p9-the-method-table/plan.md) | high | planned 2026-10-03; tasks 01-05 todo | host 48 p8 | 48 p10 |
+| [48 p10 - Action dispatch is split by family](host/48-host-is-split-by-area-p10-action-dispatch/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 48 p9 | 48 p11 |
+| [48 p11 - Open plans cite the new files](host/48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | medium | planned 2026-10-03; task 01 todo | host 48 p10 | - |
+| [49 - A session loads the plugins a client hands it](host/49-a-session-loads-a-clients-plugins/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo, 30 s disconnect grace per Softov | host 44 p1 | host 47 p5 |
+| [50 - A peer chat is its own conversation, and survives a restart](host/50-a-peer-chat-is-its-own-conversation/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | - | host 47 p1 |
 
-Next free number in `host`: `47`.
+Next free number in `host`: `51`.
 
 ## claude
 

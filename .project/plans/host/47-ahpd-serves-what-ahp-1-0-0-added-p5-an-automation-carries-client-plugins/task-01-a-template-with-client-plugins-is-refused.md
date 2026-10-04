@@ -1,0 +1,32 @@
+---
+title: A template that names client plugins is refused while the host does not advertise them
+status: todo
+depends: []
+layer: "sdk"
+refs:
+  - "[code://packages/sdk/src/host.ts#L10222-L10241](../../../../packages/sdk/src/host.ts#L10222-L10241) - where a create or update is handed to the store"
+  - "[code://packages/sdk/src/host.ts#L7871](../../../../packages/sdk/src/host.ts#L7871) - the advertised automation capabilities"
+  - "[code://packages/sdk/test/automations.test.ts#L228-L256](../../../../packages/sdk/test/automations.test.ts#L228-L256) - a create and a patch through a client"
+---
+
+## Objective
+
+An `automation/createRequested` whose `definition.session.customizations`, or an `automation/updateRequested` whose `changes.session.customizations`, is a non-empty array is refused with a sentence saying this host does not load client plugins, the store is not called, and the advertised capabilities still have no `customizations`.
+
+## Files
+
+- `UPDATE: packages/sdk/src/host.ts:10222-10241` - the check before `store.create` and `store.update`.
+- `UPDATE: packages/sdk/test/automations.test.ts` - the cases below.
+- `UPDATE: docs/AHP.md` - the automation rows: client plugins on a template are refused, and `customizations` is not advertised.
+
+## Steps
+
+1. Read `session.customizations` off the definition or the changes; absent or an empty array passes.
+2. Refuse with `no('This host does not load client plugins, so an automation cannot carry them')` and return.
+
+## Validation
+
+- `packages/sdk/test/automations.test.ts`: a create with one client plugin in `session.customizations` is refused and no `automation/set` follows; an update adding one to an existing automation is refused and the entry is unchanged; a create with `customizations: []` and one with no `customizations` are accepted; the `initialize` result's `automations` capability has no `customizations` key.
+- `pnpm test` passes.
+
+## Resume
