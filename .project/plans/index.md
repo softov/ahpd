@@ -122,7 +122,7 @@ Reference: [00-host.md](host/00-host.md)
 | [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | built 2026-10-03 ([implemented.md](host/51-a-user-put-clears-issuer-and-roles-from/implemented.md)) | host 36 | - |
 | [52 - Deleting a session deletes the backend's copy, and a listed row can be deleted](host/52-deleting-a-session-deletes-the-backends-copy/plan.md) | high | built 2026-10-04 ([implemented.md](host/52-deleting-a-session-deletes-the-backends-copy/implemented.md)); tasks implemented, awaiting review | - | - |
 | [53 - ahpd.grants lists every subject a role can name, the schemes included](host/53-ahpd-grants-lists-every-scheme/plan.md) | high | built 2026-10-04 ([implemented.md](host/53-ahpd-grants-lists-every-scheme/implemented.md)); tasks implemented, awaiting review | host 46 | ahpapp people/01's role editor |
-| [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-08 todo | - | - |
+| [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/54-host-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-03 todo | - | - |
 
 Next free number in `host`: `53`.
