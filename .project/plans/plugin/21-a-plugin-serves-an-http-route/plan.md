@@ -69,8 +69,9 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 | The fold's field is `routes`, keyed by plugin name, and `Contribution.routes` carries a plugin's | (defaulted: one spelling, the plan's) | 01 |
 | The prefix is the plugin's name with each `/`-separated segment percent-encoded, matched by whole segments; no name is refused for its shape | (defaulted: a throw from a register method discards the plugin's whole contribution) | 01, 02 |
 | The Host check applies to a route; the Origin and JSON-only checks do not, and the route authenticates its own caller | Softov, 2026-09-26 | 02 |
+| A route's Host check accepts the names `apiOrigins` gives plus the host a tunnel announces, and the list is built whether `http` is on or off | Softov, 2026-10-04 | 02 |
 | Routes are served whenever a plugin registers one, with `http` on or off | Softov, 2026-09-26 | 02 |
-| What a route does on the host goes through its plugin's connection, so the plugin's grants apply | [plan 20](../20-a-plugin-is-a-client-of-its-own-host/plan.md) | - |
+| What a route does on the host goes through its plugin's connection, so the plugin's grants apply; this plan is built before plan 20, and a route gains the connection when plan 20 lands | [plan 20](../20-a-plugin-is-a-client-of-its-own-host/plan.md), Softov, 2026-10-04 | - |
 | Builds on daemon 05 tasks 15 and 16, done, so a route runs on Node, Bun and Deno | Softov, 2026-09-26 | 02 |
 | The registration kinds table, the "not a kind" line and `docs/PLUGINS.md` gain the route | decision 1 | 03 |
 
@@ -99,7 +100,7 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 
 - **Done so far:** nothing.
 - **Next action:** [task-01-register-route-is-a-kind.md](task-01-register-route-is-a-kind.md); daemon 05 tasks 15 and 16 are done.
-- **Open question (ask before task 02):** the Host check takes its names from `apiOrigins` (`run.ts:74-86`), which refuses a tunnel's host and is made only when `http` is on, so with `http` off nothing defines the list - (a) check Host against `apiOrigins(...)` plus the host a tunnel announces, built whether `http` is on or not, or (b) skip the Host check for routes, since a route authenticates its own caller.
+- **Open questions:** none.
 - **Watch out for:** the plugin's `name` can hold `@` and `/`; the prefix encodes each segment rather than refusing a name.
 
 ## Final verification checklist
