@@ -1,6 +1,6 @@
 ---
 title: The session's shared state is one context
-status: todo
+status: implemented
 depends: []
 layer: "agent-acp"
 refs:
@@ -37,4 +37,14 @@ refs:
 - `wc -l packages/agent-acp/src/session.ts` recorded.
 
 ## Resume
+
+- Done: `session/common.ts` (`bag`, `UNTITLED`, `messageOf`) and `session/context.ts` (`SessionContext`, 118 lines) created; the 25 shared fields are now `ctx` fields, the funnel is in the literal, and `acpSession` reads and writes them as `ctx.<name>`. `offers`, `listedModels`, `endpoint`, `asked`, `extras`, `signIns`, `activity`, `modified` and `draft` stayed `let`s in `session.ts`.
+- Gates: `pnpm exec tsc --noEmit` clean; `pnpm boundary` clean; `pnpm exec vitest run packages/agent-acp/test` 146/146.
+- `wc -l packages/agent-acp/src/session.ts` 2054 (was 2105); `session/context.ts` 118, `session/common.ts` 9.
+- Pure-move check: 29 lines, all wiring - the 25 field declarations that became fields, and the three `title` sites in `runCommand`, `begin` and `setTitle` that now read `ctx.title`.
+- Departures, both forced:
+  - `touch`, `doing` and `status` go into the `ctx` literal rather than being assigned onto it afterwards. `as SessionContext` rejects a literal missing those three (TS2352), and a type annotation would reject it too. They are still defined in `session.ts` and reached through `ctx`; only the three `ctx.x = x` lines are gone. `status` reads `ctx.permissions` rather than a destructured `permissions`, because the destructuring follows the literal.
+  - `modes` (was 263-270) is in the enumerated 25 shared fields but in no line range of the plan's *Proposed architecture* table. It crosses files (config's `schemaOf`, handlers' `receivedUpdate`, opening's `learnModes`), so it became a field on `SessionContext`, as the enumerations decide.
+- `active`, `closed` and `title` carry no comment on the context: they had none at the declaration, and this task adds none.
+- Next: [task-02-config-and-models.md](task-02-config-and-models.md).
 

@@ -1,6 +1,6 @@
 ---
 title: A prompted turn is one file
-status: todo
+status: implemented
 depends: [task-04-opening.md]
 layer: "agent-acp"
 refs:
@@ -35,4 +35,12 @@ refs:
 - `wc -l packages/agent-acp/src/session.ts` recorded.
 
 ## Resume
+
+- Done: `session/turn.ts` (408 lines) exports `Turn` and `createTurn(ctx)`. `NOT_AN_ANSWER`, `inline` and `referencing` are module-level in the new file; `openTurn`, `finish`, `stopReasonFor`, `saidUsage`, `attachmentUri`, `named`, `contentOf`, `blocksFor` and `run` are in the factory. `session.ts` calls `Object.assign(ctx, createTurn(ctx))`; `begin` calls `ctx.openTurn` and `ctx.run`, and `close` calls `ctx.finish`. `run` keeps its local `signIn` name and reaches `ctx.open`, `ctx.chooseModel` and `ctx.signInFailure`. `SessionContext extends Config, Handlers, Opening, Turn`, and carries the `startNext` wire this task calls for.
+- Gates: `pnpm exec tsc --noEmit` clean; `pnpm boundary` clean; `pnpm exec vitest run packages/agent-acp/test` 146/146, `agent-acp-turn.test.ts` 22/22 among them.
+- `wc -l packages/agent-acp/src/session.ts` 558 (was 944); `session/turn.ts` 408 (the plan's "about 405").
+- Pure-move check: 50 lines, all wiring - task 04's 43 plus seven import lines: the six ACP content and usage types off `session.ts`'s SDK type import (`BlobResourceContents`, `ContentBlock`, `PromptCapabilities`, `StopReason`, `TextResourceContents`, `Usage`), which `session/turn.ts` now names itself, and `AcpConnection` off the `./types.js` import. `closePlan` moved whole to `session/turn.ts`, which is its only user.
+- `Turn` carries three members rather than the nine declarations the file holds: `stopReasonFor`, `saidUsage`, `attachmentUri`, `named`, `contentOf` and `blocksFor` are read only inside the area, so they stay factory-local.
+- The `startNext` wire is assigned onto `ctx` immediately after its definition, where task 02 assigned `open`.
+- Next: [task-06-the-queue-and-the-shell-turn.md](task-06-the-queue-and-the-shell-turn.md).
 

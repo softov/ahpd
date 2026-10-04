@@ -1,6 +1,6 @@
 ---
 title: Spawning, signing in and opening are one file
-status: todo
+status: implemented
 depends: [task-03-what-the-server-sends.md]
 layer: "agent-acp"
 refs:
@@ -36,4 +36,12 @@ refs:
 - `wc -l packages/agent-acp/src/session.ts` recorded.
 
 ## Resume
+
+- Done: `session/opening.ts` (372 lines) exports `Opening` and `createOpening(ctx)`. `advertised`, `HOST_TOOLS`, `serversFor` and `AUTH_REQUIRED` are module-level in the new file; `endpoint`, `asked`, `toolsServer`, `extras` and `signIns` are the factory's own, and `placed`, `signIn`, `signInFailure` and `open` sit after them. `session.ts` calls `Object.assign(ctx, createOpening(ctx))`, and `run` reaches `ctx.open` and `ctx.signInFailure`. `SessionContext extends Config, Handlers, Opening`, and the `open` it declared as a temporary wire since task 02 is gone - `open` is now declared on `Opening`.
+- Gates: `pnpm exec tsc --noEmit` clean; `pnpm boundary` clean; `pnpm exec vitest run packages/agent-acp/test` 146/146, `agent-acp-signin.test.ts` 5/5 and `agent-acp-failure.test.ts` among them. No test runs a session in a machine, so `placed` is covered by the pure-move check alone, as the task allows.
+- `wc -l packages/agent-acp/src/session.ts` 944 (was 1301); `session/opening.ts` 372 (the plan's "about 365").
+- Pure-move check: 43 lines, all wiring - task 03's 38 plus five import lines that moved whole: `RequestError` (`import { RequestError } ...`), `machineAsked` on the `@ahpd/sdk` value import, `watchSession`, `connectAcp`, and the `AgentCapabilities` and `McpServer as AcpMcpServer` entries of the SDK type import. `RequestError` moved to a named import of its own in `session/opening.ts` because there it is the only value that file needs from the SDK.
+- `Opening` carries two members rather than the twelve declarations the file holds: only `open` and `signInFailure` are read outside the area, so `placed`, `signIn`, `endpoint`, `asked`, `toolsServer`, `extras` and `signIns` stay factory-local.
+- The plan's `session.ts:90-99,125-204` range is one block that also holds `inline`, `referencing` and `CLOSE_GRACE_MS` between `advertised` and `HOST_TOOLS`. Those three are named by task 05 or stay in `session.ts`, so they were restored to `session.ts` immediately after `NOT_AN_ANSWER` - their order relative to the constants they sat between is unchanged.
+- Next: [task-05-a-prompted-turn.md](task-05-a-prompted-turn.md).
 

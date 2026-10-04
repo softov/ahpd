@@ -1,7 +1,7 @@
 ---
 title: session.ts is split into one file per area
 domain: acp
-status: planned
+status: implemented
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -109,12 +109,12 @@ It prints the removed lines that reappear nowhere once indentation and the `ctx.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The session's shared state is one context](task-01-the-shared-state-is-one-context.md) | todo | - |
-| [02 - Config, modes and models are one file](task-02-config-and-models.md) | todo | 01 |
-| [03 - What the server sends the session is one file](task-03-what-the-server-sends.md) | todo | 02 |
-| [04 - Spawning, signing in and opening are one file](task-04-opening.md) | todo | 03 |
-| [05 - A prompted turn is one file](task-05-a-prompted-turn.md) | todo | 04 |
-| [06 - The queue and the shell turn are one file](task-06-the-queue-and-the-shell-turn.md) | todo | 05 |
+| [01 - The session's shared state is one context](task-01-the-shared-state-is-one-context.md) | implemented | - |
+| [02 - Config, modes and models are one file](task-02-config-and-models.md) | implemented | 01 |
+| [03 - What the server sends the session is one file](task-03-what-the-server-sends.md) | implemented | 02 |
+| [04 - Spawning, signing in and opening are one file](task-04-opening.md) | implemented | 03 |
+| [05 - A prompted turn is one file](task-05-a-prompted-turn.md) | implemented | 04 |
+| [06 - The queue and the shell turn are one file](task-06-the-queue-and-the-shell-turn.md) | implemented | 05 |
 
 Every task edits `session.ts`, so they land in order on one branch; the order puts each area after the ones it calls where the cycle allows, which leaves two temporary wires (`open` for task 02, `startNext` for task 05).
 
@@ -131,17 +131,16 @@ Every task edits `session.ts`, so they land in order on one branch; the order pu
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-shared-state-is-one-context.md](task-01-the-shared-state-is-one-context.md), once host/52 has merged.
-- **Requires:** host/52, which edits `packages/agent-acp` now; this split runs after it merges.
-- **Open questions:**
-  1. The folder `src/session/` or six more files flat in `src/` - proposed: the folder, as in the decisions table, because it mirrors `packages/sdk/src/host/`.
-- **Watch out for:** line numbers are at `b4f1a4b`; find code by symbol; a reassigned field is never copied off the context; the returned `Session` keeps its member order.
+- **Done so far:** all six tasks. `packages/agent-acp/src/session.ts` is 321 lines (was 2,105) and holds only the header comment, the imports, `CLOSE_GRACE_MS`, `acpSession`'s head, the `ctx` literal, `activity`, `modified` and `draft`, the funnel, the five `Object.assign` calls and the returned `Session`, whose area members are named as `ctx.<name>` in today's places. Beside it, `src/session/` holds `common.ts` (9), `context.ts` (123), `config.ts` (398), `handlers.ts` (452), `opening.ts` (372), `turn.ts` (408) and `queue.ts` (264). Each task's *Resume* records what it moved, its gates and its departures.
+- **Next action:** none. The plan is implemented; `git add` and `git commit` are for review.
+- **Requires:** host/52 merged, which it had.
+- **Open questions:** none open. The one this plan asked about - the folder `src/session/` rather than six files flat in `src/` - was answered by the decisions table and built as the folder. Two departures from the plan's wording, both recorded in the tasks' *Resume* and neither a fork: the `ctx` literal is cast `as unknown as SessionContext` (a plain cast is checked before the areas are assigned and rejects the literal), and `setConfig` and `ran` are typed `NonNullable<Session['<name>']>` because they are optional on `Session`.
+- **Watch out for:** the nine open plans and `acp/00-acp.md` that cite `session.ts` by line are stale, as *Risks and tradeoffs* says; find code by symbol. `plans/index.md` was not edited, by the request that ran this plan.
 
 ## Final verification checklist
 
-- [ ] `wc -l packages/agent-acp/src/session.ts packages/agent-acp/src/session/*.ts`: `session.ts` under 1,000 and no file over 700.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-acp` pass after every task.
-- [ ] The pure-move check prints only imports, exports and wiring after every task.
-- [ ] `packages/agent-acp/src/index.ts` and `packages/agent-acp/src/agent.ts` are unchanged.
-- [ ] `plans/index.md` updated.
+- [x] `wc -l packages/agent-acp/src/session.ts packages/agent-acp/src/session/*.ts`: `session.ts` 321, under 1,000; the largest area file is `handlers.ts` at 452, under 700.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-acp` pass after every task, and `pnpm test` passes at the end.
+- [x] The pure-move check prints only imports, exports and wiring after every task: 29, 31, 38, 43, 50 and 55 lines across the six tasks, each recorded in its *Resume*.
+- [x] `packages/agent-acp/src/index.ts` and `packages/agent-acp/src/agent.ts` are unchanged.
+- [ ] `plans/index.md` updated - not done, by the request that ran this plan.
