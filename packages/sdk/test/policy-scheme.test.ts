@@ -176,8 +176,7 @@ it('advertises the manifest a client draws the form from', async () => {
   const { policy } = served();
   const described = policy.describe();
   expect(described).toMatchObject({ title: 'Policies' });
-  // The id is the address, so the description is where a client is told so.
-  expect(described.description).toContain('policy://<id>');
+  expect(described.description).toBe('Who may use which agent, model and computer, and how much.');
 
   const properties = described.manifest?.['properties'] as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['scope', 'kind', 'effect', 'match', 'limits', 'pool', 'cap', 'from', 'until']);

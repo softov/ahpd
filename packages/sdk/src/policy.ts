@@ -72,7 +72,7 @@ const asFile = (data: string): Read =>
   ({ data, encoding: 'utf-8', contentType: 'application/json' });
 
 const TITLE = 'Policies';
-const ABOUT = 'Who may use which agent, model and computer, and how much. One row is one policy, and its id is the URI: `policy://<id>`.';
+const ABOUT = 'Who may use which agent, model and computer, and how much.';
 
 const manifest: Record<string, unknown> = {
   type: 'object',
@@ -93,7 +93,7 @@ const manifest: Record<string, unknown> = {
     },
     limits: {
       title: 'Limits',
-      description: 'How much may be used. A row has room only while every one of its limits has room, and none of them is enforced yet.',
+      description: 'How much may be used. Every limit must have room.',
       type: 'array',
       items: {
         type: 'object',
@@ -106,7 +106,7 @@ const manifest: Record<string, unknown> = {
       },
     },
     pool: line('Pool', 'A name several rows draw from one total under.'),
-    cap: { type: 'boolean', title: 'Cap', description: 'Whether the row counts and never pays. Enforced later; stored now.' },
+    cap: { type: 'boolean', title: 'Cap', description: 'Count usage without charging it.' },
     from: line('From', 'When the row starts, as an ISO 8601 instant or a `YYYY-MM-DD` day.'),
     until: line('Until', 'When the row ends, as an ISO 8601 instant or a `YYYY-MM-DD` day. A bare day includes all of it.'),
   },

@@ -157,16 +157,16 @@ const people = (directory: Users): Records => ({
         default: ['guest'],
       },
       issuer: {
-        ...line('Issuer', 'The authorization server they sign in through, when it is not this host: `github`, or an issuer URL this host may reach. `null` takes the one they have away.'),
+        ...line('Issuer', 'The authorization server they sign in through, when it is not this host: `github`, or an issuer URL this host may reach. Empty removes it.'),
         nullable: true,
       },
       rolesFrom: {
-        ...line('Roles from', 'The claim the issuer\'s answer carries their roles in, such as `groups`. Its values have to be role names too. `null` takes the one they have away.'),
+        ...line('Roles from', 'The claim the issuer\'s answer carries their roles in, such as `groups`. Its values have to be role names too. Empty removes it.'),
         nullable: true,
       },
       memberships: lines('Memberships', 'What their work may be charged to, each written team, team:* or team:project, and each naming something this host holds.'),
       primary: {
-        ...line('Primary', 'The membership their work naming no scope of its own is charged to. `null` takes the one they have away.'),
+        ...line('Primary', 'The membership their work naming no scope of its own is charged to. Empty removes it.'),
         nullable: true,
       },
     },
@@ -218,7 +218,7 @@ const named = (directory: Users, what: 'team' | 'project'): Records => {
     (what === 'team' ? directory.removeTeam(id) : directory.removeProject(id));
   return {
     title: what === 'team' ? 'Teams' : 'Projects',
-    description: `What this install names as a ${what}, and what a membership may be written out of.`,
+    description: what === 'team' ? 'Teams people belong to.' : 'Projects people work on.',
     manifest: {
       type: 'object',
       properties: {
@@ -257,11 +257,11 @@ const roles = (directory: Users): Records => ({
    * `write` are still writable here because they are the two names that group a
    * subject's operations, and `*` is still either half.
    */
-  description: 'What a person holding this role may do, as <subject>:<operation>.',
+  description: 'What a person with this role may do.',
   manifest: {
     type: 'object',
     properties: {
-      grants: lines('Grants', 'What somebody holding this role may do, one <subject>:<operation> each. `read` and `write` name a group of operations rather than one of them, and `*` stands in for either half, as it does in every other role.'),
+      grants: lines('Grants', 'What this role allows, one subject:operation each. read and write cover a group of operations, and * covers all of them.'),
     },
     required: ['grants'],
   },

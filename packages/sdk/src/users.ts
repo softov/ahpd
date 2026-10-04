@@ -75,7 +75,7 @@ export interface SubjectOperations {
  */
 const RESOURCE: SubjectOperations = {
   title: 'Files and resources',
-  description: 'The host\'s own resources, and every scheme beside them: one record is read with get, the whole scheme is listed with list, and anything that changes one is put, delete, mkdir, move, copy or request.',
+  description: 'Files and other resources on this host.',
   operations: ['get', 'list', 'resolve', 'watch', 'put', 'delete', 'mkdir', 'move', 'copy', 'request'],
   groups: {
     read: ['get', 'list', 'resolve', 'watch'],
@@ -102,7 +102,7 @@ const RESOURCE: SubjectOperations = {
 export const OPERATIONS: Record<string, SubjectOperations> = {
   session: {
     title: 'Sessions',
-    description: 'What an agent runs on: listed with list, opened and read with state, and made, closed, titled, configured and marked with the rest of the write group.',
+    description: 'Agent sessions: seeing them, starting them and changing them.',
     operations: [
       'list', 'state',
       'create', 'dispose', 'rename', 'configure', 'folders', 'attach', 'mark', 'review', 'changes', 'worktree', 'artifacts',
@@ -114,7 +114,7 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   },
   chat: {
     title: 'Chats',
-    description: 'A conversation in a session. Its read and write groups are the session\'s: session:read covers chat:turns and session:write covers every operation below, which is what those groups covered before a chat had a subject of its own.',
+    description: 'The conversations inside a session.',
     operations: [
       'turns',
       'create', 'fork', 'dispose', 'move', 'send', 'cancel', 'answer', 'tool', 'draft', 'folders', 'mark', 'truncate',
@@ -126,7 +126,7 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   },
   terminal: {
     title: 'Terminals',
-    description: 'A shell on this machine: its output is read with output, and opening one, typing into it, resizing it, claiming it, titling it and clearing it are the write group.',
+    description: 'Shells on this machine.',
     operations: ['output', 'create', 'dispose', 'input', 'resize', 'claim', 'rename', 'clear'],
     groups: {
       read: ['output'],
@@ -135,7 +135,7 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   },
   automation: {
     title: 'Automations',
-    description: 'What runs without a client asking: the triggers and the runs are listed with list, and making, editing, removing, running and cancelling one are the write group.',
+    description: 'Agent runs that start on a schedule or a trigger.',
     operations: ['list', 'create', 'update', 'remove', 'run', 'cancel'],
     groups: {
       read: ['list'],
@@ -145,19 +145,19 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   file: RESOURCE,
   config: {
     title: 'Host settings',
-    description: 'The daemon\'s own settings, read with settings; changing a host-wide root setting, or replacing the root config, is change.',
+    description: 'This host\'s settings.',
     operations: ['settings', 'change'],
     groups: { read: ['settings'], write: ['change'] },
   },
   diagnostics: {
     title: 'Diagnostics',
-    description: 'What this host is doing and why it stopped: the logs it collects, the network it sees and the diagnostic bundles it fetches. There is nothing here to change.',
+    description: 'Logs and network details for troubleshooting.',
     operations: ['logs', 'network', 'fetch'],
     groups: { read: ['logs', 'network', 'fetch'], write: [] },
   },
   container: {
     title: 'Dev containers',
-    description: 'Connecting this host to a dev container, disconnecting from it and relaying a frame into it. Nothing is read here: a container is reached through what is inside it.',
+    description: 'Connecting to dev containers.',
     operations: ['connect', 'disconnect', 'relay'],
     groups: { read: [], write: ['connect', 'disconnect', 'relay'] },
   },

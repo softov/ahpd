@@ -374,14 +374,14 @@ The subjects the host decides are these eight:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
-| `session` | `list`, `state` | `create`, `dispose`, `rename`, `configure`, `folders`, `attach`, `mark`, `review`, `changes`, `worktree`, `artifacts` | What an agent runs on: listed with `list`, opened and read with `state` |
-| `chat` | `turns` | `create`, `fork`, `dispose`, `move`, `send`, `cancel`, `answer`, `tool`, `draft`, `folders`, `mark`, `truncate` | A conversation in a session. **Its groups are the session's**: `session:read` covers `chat:turns` and `session:write` covers every operation below, which is what those groups covered before a chat had a subject of its own |
-| `terminal` | `output` | `create`, `dispose`, `input`, `resize`, `claim`, `rename`, `clear` | A shell on this machine: its output is read with `output`, and opening one, typing into it, resizing it, claiming it, titling it and clearing it are the write group |
-| `automation` | `list` | `create`, `update`, `remove`, `run`, `cancel` | What runs without a client asking: the triggers and the runs are listed with `list`, and making, editing, removing, running and cancelling one are the write group |
-| `file` | `get`, `list`, `resolve`, `watch` | `put`, `delete`, `mkdir`, `move`, `copy`, `request` | Every scheme a host serves, each under its own name. One record is read with `get`, the whole scheme is listed with `list`, and anything that changes one is `put`, `delete`, `mkdir`, `move`, `copy` or `request` |
-| `config` | `settings` | `change` | The daemon's own settings, read with `settings`; changing a host-wide root setting, or replacing the root config, is `change` |
-| `diagnostics` | `logs`, `network`, `fetch` | - | What this host is doing and why it stopped: the logs it collects, the network it sees and the diagnostic bundles it fetches. There is nothing here to change |
-| `container` | - | `connect`, `disconnect`, `relay` | Connecting this host to a dev container, disconnecting from it and relaying a frame into it. Nothing is read here: a container is reached through what is inside it |
+| `session` | `list`, `state` | `create`, `dispose`, `rename`, `configure`, `folders`, `attach`, `mark`, `review`, `changes`, `worktree`, `artifacts` | Agent sessions: seeing them, starting them and changing them |
+| `chat` | `turns` | `create`, `fork`, `dispose`, `move`, `send`, `cancel`, `answer`, `tool`, `draft`, `folders`, `mark`, `truncate` | The conversations inside a session. A `session:` grant covers them too |
+| `terminal` | `output` | `create`, `dispose`, `input`, `resize`, `claim`, `rename`, `clear` | Shells on this machine |
+| `automation` | `list` | `create`, `update`, `remove`, `run`, `cancel` | Agent runs that start on a schedule or a trigger |
+| `file` | `get`, `list`, `resolve`, `watch` | `put`, `delete`, `mkdir`, `move`, `copy`, `request` | Files and other resources on this host. Every other scheme has the same operations under its own name |
+| `config` | `settings` | `change` | This host's settings |
+| `diagnostics` | `logs`, `network`, `fetch` | - | Logs and network details for troubleshooting |
+| `container` | - | `connect`, `disconnect`, `relay` | Connecting to dev containers |
 
 The rest are the people schemes and any plugin's, which share the `file`
 operations under their own name:
@@ -389,7 +389,7 @@ operations under their own name:
 | Subject | What they cover |
 | --- | --- |
 | `user` | Add, remove and mint for people with `put`, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. `list` answers `user list`, `get` a person's own `user://<id>` record without any grant at all |
-| `team` | The teams this install names, which a membership is written out of. `list` answers `team list`; `put` adds and titles one, `delete` removes it |
+| `team` | Teams people belong to. `list` answers `team list`; `put` adds and titles one, `delete` removes it |
 | `project` | The same for the projects, spelled after a membership's colon |
 | `role` | The roles this install defines. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
