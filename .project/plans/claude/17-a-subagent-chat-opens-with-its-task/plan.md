@@ -1,7 +1,7 @@
 ---
 title: A Claude subagent chat opens with its task's description as title and its prompt as the first message
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -80,6 +80,6 @@ assistant() tool_use Agent -> spawning.set(id, { description, prompt, ... }) -> 
 - [ ] A build session that spawns background `Agent` workers: each worker chat is titled with its description and its first turn holds the prompt.
 - [ ] After a daemon restart, the same chats keep that title and prompt.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.
 
 Not done by hand: the first two. There is no client in this repository to open a session and read the tabs, so both are checked against captures instead - `claude-subagent.jsonl` live with a worker frame delivered ahead of its `tool_use`, and the `.meta.json` fixtures live and restored. What neither can show is the titles in a real session list.
