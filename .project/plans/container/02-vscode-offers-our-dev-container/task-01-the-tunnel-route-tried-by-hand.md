@@ -5,7 +5,7 @@ depends: []
 layer: "manual"
 refs:
   - "[code://packages/tunnel-devtunnel/README.md](../../../../packages/tunnel-devtunnel/README.md) - how the daemon is put behind a Dev Tunnel and how VS Code connects to it"
-  - "[code://packages/sdk/src/host.ts#L7430](../../../../packages/sdk/src/host.ts#L7430) - `containersReady`, which decides whether the capability is advertised"
+  - "[code://packages/sdk/src/host/handshake.ts#L163-L165](../../../../packages/sdk/src/host/handshake.ts#L163-L165) - `containersReady`, which decides whether the capability is advertised"
   - "[code://.project/research/how-vscode-offers-a-dev-container.md](../../../research/how-vscode-offers-a-dev-container.md) - the six checks, in order"
 ---
 

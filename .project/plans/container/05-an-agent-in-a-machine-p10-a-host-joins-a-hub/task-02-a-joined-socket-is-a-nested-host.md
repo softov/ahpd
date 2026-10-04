@@ -6,7 +6,7 @@ layer: "sdk"
 refs:
   - "[code://packages/sdk/src/nested.ts#L47](../../../../packages/sdk/src/nested.ts#L47) - `NestedHost`"
   - "[code://packages/sdk/src/nested.ts#L78](../../../../packages/sdk/src/nested.ts#L78) - `NestedOptions.start`"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - `nestedAgent(agent)`, built with no options today"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - `nestedAgent(agent)`, built with no options today"
   - "[code://packages/sdk/src/listen.ts#L84-L127](../../../../packages/sdk/src/listen.ts#L84-L127) - the door"
 ---
 
@@ -19,7 +19,7 @@ The hub's listener takes a node's control and data sockets at a join path, the n
 - `CREATE: packages/sdk/src/nodes.ts` - the registry: who is connected, `open`, the `NestedHost` wrapper (a line out is one socket message, a message in is a line, `kill` closes, a close is `exit`).
 - `UPDATE: packages/sdk/src/listen.ts:84-127` - a join path whose token is checked against nodes, not people; it does not ask for the deployment token, since a node's own token is that door's credential and opens nothing else (task 03).
 - `UPDATE: packages/sdk/src/types/computers.ts` - `ComputerPort.connect?`.
-- `UPDATE: packages/sdk/src/host.ts:3618-3620` - `nestedAgent(agent, { start })` when the port has `connect`.
+- `UPDATE: packages/sdk/src/host/spawn.ts:332-334` - `nestedAgent(agent, { start })` when the port has `connect`.
 - `CREATE: packages/sdk/test/nodes.test.ts`.
 
 ## Steps

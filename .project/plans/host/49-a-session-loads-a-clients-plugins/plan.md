@@ -4,16 +4,16 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L10273-L10322](../../../../packages/sdk/src/host.ts#L10273-L10322) - `session/activeClientSet`: kept whole in `presence`, but only `tools` is read"
-  - "[code://packages/sdk/src/host.ts#L2445-L2455](../../../../packages/sdk/src/host.ts#L2445-L2455) - `leaves`: `session/activeClientRemoved` once a client watches the session no more"
-  - "[code://packages/sdk/src/host.ts#L6159-L6170](../../../../packages/sdk/src/host.ts#L6159-L6170) - `mcpFor`: \"this host has no client plugin customizations to merge\""
-  - "[code://packages/sdk/src/host.ts#L772-L800](../../../../packages/sdk/src/host.ts#L772-L800) - `clients`: `read` and `list` ask a connected client for its resources"
-  - "[code://packages/sdk/src/host.ts#L11219-L11237](../../../../packages/sdk/src/host.ts#L11219-L11237) - `session/customizationToggled`, handed to the backend today"
-  - "[code://packages/sdk/src/host.ts#L5440-L5462](../../../../packages/sdk/src/host.ts#L5440-L5462) - `restartChat`, the respawn a changed plugin set uses"
+  - "[code://packages/sdk/src/host/actions.ts#L454-L509](../../../../packages/sdk/src/host/actions.ts#L454-L509) - `session/activeClientSet`: kept whole in `presence`, but only `tools` is read"
+  - "[code://packages/sdk/src/host.ts#L658-L679](../../../../packages/sdk/src/host.ts#L658-L679) - `leaves`: `session/activeClientRemoved` once a client watches the session no more"
+  - "[code://packages/sdk/src/host/tooling.ts#L337-L348](../../../../packages/sdk/src/host/tooling.ts#L337-L348) - `mcpFor`: \"this host has no client plugin customizations to merge\""
+  - "[code://packages/sdk/src/host/relay.ts#L65-L93](../../../../packages/sdk/src/host/relay.ts#L65-L93) - `clients`: `read` and `list` ask a connected client for its resources"
+  - "[code://packages/sdk/src/host/chatactions.ts#L870-L889](../../../../packages/sdk/src/host/chatactions.ts#L870-L889) - `session/customizationToggled`, handed to the backend today"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L413-L443](../../../../packages/sdk/src/host/lifecycle.ts#L413-L443) - `restartChat`, the respawn a changed plugin set uses"
   - "[code://packages/sdk/src/types/agent.ts#L155-L170](../../../../packages/sdk/src/types/agent.ts#L155-L170) - `Start.mcpServers`, documented already as the host's servers under the client plugins'"
   - "[code://packages/agent-claude/src/session.ts#L2175-L2220](../../../../packages/agent-claude/src/session.ts#L2175-L2220) - the Claude SDK `query` options, where `plugins` goes"
   - "[code://packages/agent-claude/src/session.ts#L2657-L2694](../../../../packages/agent-claude/src/session.ts#L2657-L2694) - Claude reports the SDK's plugins as customizations"
@@ -43,7 +43,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### Searches performed
 
-- `rg -n "customizations" packages/sdk/src/host.ts` - the host forwards what a backend reports and seeds; nothing reads `activeClient.customizations`.
+- `rg -n "customizations" packages/sdk/src/host` - the host forwards what a backend reports and seeds; nothing reads `activeClient.customizations`.
 - `rg -n "plugins" packages/agent-claude/src/session.ts` - the SDK's plugins are reported, never passed in.
 - `rg -n "clientPlugins|syncCustomizations|_fanOutActiveClient" src/vs/platform/agentHost/node` in the VS Code clone - the flow in the refs.
 
@@ -83,7 +83,7 @@ session/activeClientRemoved -> the client's plugins leave the set -> same restar
 - **Data flow** - `activeClientSet` -> `ClientPlugins.sync(client, plugins)` -> copies -> the session's client-plugin entries -> laid over the backend's customizations wherever they go out -> the enabled set -> `Start.plugins` and `mcpFor` at the next spawn.
 - **State flow** - per session, per client id: the announced plugins, their `load`, and the enabled set the running chat was started with; a send compares the two and restarts on a difference.
 - **Layer responsibilities** - sdk: the port and its file implementation, the host's entries, the restart · agent-claude: `Start.plugins` to the SDK, and dropping its own report of a plugin whose path is a host copy · server: the directory.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/agent-claude/src/session.ts`](../../../../packages/agent-claude/src/session.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts), [`code://packages/sdk/src/host/relay.ts`](../../../../packages/sdk/src/host/relay.ts), [`code://packages/sdk/src/host/tooling.ts`](../../../../packages/sdk/src/host/tooling.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/lifecycle.ts`](../../../../packages/sdk/src/host/lifecycle.ts), [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts) (`leaves`), [`code://packages/agent-claude/src/session.ts`](../../../../packages/agent-claude/src/session.ts)
 
 ## Tasks
 

@@ -4,10 +4,10 @@ status: implemented
 depends: [task-08-a-dispatch-into-a-session-needs-session-write.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L210](../../../../packages/sdk/src/host.ts#L210) - `NEEDS`, where `invokeChangesetOperation` asks only `file:write`"
-  - "[code://packages/sdk/src/host.ts#L2609](../../../../packages/sdk/src/host.ts#L2609) - `changesetAt`, which places a changeset channel under its session"
-  - "[code://packages/sdk/src/host.ts#L6437-L6488](../../../../packages/sdk/src/host.ts#L6437-L6488) - `capabilityFor`, the grants a method asks"
-  - "[code://packages/sdk/src/host.ts#L7672](../../../../packages/sdk/src/host.ts#L7672) - the `invokeChangesetOperation` handler"
+  - "[code://packages/sdk/src/host/gate.ts#L62-L70](../../../../packages/sdk/src/host/gate.ts#L62-L70) - `NEEDS`, where `invokeChangesetOperation` asks only `file:write`"
+  - "[code://packages/sdk/src/host/changesets.ts#L61-L74](../../../../packages/sdk/src/host/changesets.ts#L61-L74) - `changesetAt`, which places a changeset channel under its session"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L104](../../../../packages/sdk/src/host/admission.ts#L35-L104) - `capabilityFor`, the grants a method asks"
+  - "[code://packages/sdk/src/host/resourcemethods.ts#L258](../../../../packages/sdk/src/host/resourcemethods.ts#L258) - the `invokeChangesetOperation` handler"
   - "[code://packages/sdk/test/operations.test.ts#L145](../../../../packages/sdk/test/operations.test.ts#L145) - the operation tests to keep passing"
 ---
 

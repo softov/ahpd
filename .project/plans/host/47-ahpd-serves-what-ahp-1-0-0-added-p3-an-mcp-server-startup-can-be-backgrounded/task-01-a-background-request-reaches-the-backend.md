@@ -5,7 +5,7 @@ depends: []
 layer: "sdk"
 refs:
   - "[code://packages/sdk/src/types/session.ts#L513-L516](../../../../packages/sdk/src/types/session.ts#L513-L516) - where the optional method goes"
-  - "[code://packages/sdk/src/host.ts#L11239-L11248](../../../../packages/sdk/src/host.ts#L11239-L11248) - the case it goes beside"
+  - "[code://packages/sdk/src/host/chatactions.ts#L890-L899](../../../../packages/sdk/src/host/chatactions.ts#L890-L899) - the case it goes beside"
   - "[code://packages/sdk/src/nested.ts#L498-L505](../../../../packages/sdk/src/nested.ts#L498-L505) - the forward it copies"
   - "[code://packages/sdk/test/host.test.ts#L3430-L3530](../../../../packages/sdk/test/host.test.ts#L3430-L3530) - `withServers` and the start and stop case"
   - "[code://packages/sdk/test/nested-proxy.test.ts](../../../../packages/sdk/test/nested-proxy.test.ts) - an inner host behind a nested one"
@@ -21,7 +21,7 @@ refs:
 ## Files
 
 - `UPDATE: packages/sdk/src/types/session.ts:513-516` - `backgroundMcpServerStartup?(id: string): Promise<boolean>`, documented as VS Code's seam: the backend emits `session/mcpServerBackgroundRequested` and the new state when it took the request, and `session/mcpServerStateChanged` restoring `blocking: true` when it could not.
-- `UPDATE: packages/sdk/src/host.ts:11239-11248` - a `session/mcpServerBackgroundRequested` case: `void session.backgroundMcpServerStartup?.(id)`, with no `no(...)` on `false` or absence.
+- `UPDATE: packages/sdk/src/host/chatactions.ts:890-899` - a `session/mcpServerBackgroundRequested` case: `void session.backgroundMcpServerStartup?.(id)`, with no `no(...)` on `false` or absence.
 - `UPDATE: packages/sdk/src/nested.ts:498-505` - `backgroundMcpServerStartup` delivers the action to the inner host and answers `true`.
 - `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/nested-proxy.test.ts`, `packages/sdk/test/users-gate.test.ts`, `packages/agent-claude/test/customizations.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - a `session/mcpServerBackgroundRequested` row: client, served, a no-op on every backend but a nested host, as on VS Code's Claude backend.

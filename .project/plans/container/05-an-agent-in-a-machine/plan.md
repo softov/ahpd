@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/plugin/15-an-agent-says-what-a-machine-needs/plan.md
   - plans/plugin/16-a-disposable-machine/plan.md
@@ -28,7 +28,7 @@ refs:
   - "[code://packages/sdk/src/types/machine.ts#L74-L78](../../../../packages/sdk/src/types/machine.ts#L74-L78) - the four need kinds an agent declares"
   - "[code://packages/agent-claude/src/claude.ts#L373-L398](../../../../packages/agent-claude/src/claude.ts#L373-L398) - Claude's needs: the host's `~/.claude` and its own binary, mounted"
   - "[code://packages/agent-acp/src/plugin.ts#L35-L61](../../../../packages/agent-acp/src/plugin.ts#L35-L61) - an ACP load is one command, args and env, registers one agent, and declares no needs"
-  - "[code://packages/sdk/src/host.ts#L5304-L5334](../../../../packages/sdk/src/host.ts#L5304-L5334) - `placedIn`, which hands the session's folder, already its worktree, and its provider's `machine()` to the machine maker"
+  - "[code://packages/sdk/src/host/machines.ts#L182-L212](../../../../packages/sdk/src/host/machines.ts#L182-L212) - `placedIn`, which hands the session's folder, already its worktree, and its provider's `machine()` to the machine maker"
   - "[code://packages/sdk/src/nested.ts#L95-L129](../../../../packages/sdk/src/nested.ts#L95-L129) - the proxy that relays a host started inside a machine"
   - "git://7552054:.project/ideas/an-image-that-carries-ahpd.md - the image Softov asked for, which the parts answer"
   - "[code://.project/ideas/more-computer-runtimes.md](../../../ideas/more-computer-runtimes.md) - the runtimes not planned, and copying a folder that is not a repository"
@@ -52,7 +52,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - `rg "'-e'|--remote-env" packages/computer/src` - a secret is written into argv as `-e` at `plugin.ts:606` and `runtime.ts:731`, and as `--remote-env` at `plugin.ts:579` and `runtime.ts:674`.
 - `rg "machine\(" packages/*/src` - Claude and cofold declare needs; agent-acp and agent-pi declare none.
 - `rg "PartNeed|StateNeed|gitDir|images/" packages/*/src` - nothing of this plan is built.
-- `rg "isolation" packages/sdk/src/host.ts` - the host already makes a worktree per session and passes it to `placedIn` as the folder.
+- `rg "isolation" packages/sdk/src/host` - the host already makes a worktree per session and passes it to `placedIn` as the folder.
 
 ### Runtime path
 
@@ -91,7 +91,7 @@ session start -> placedIn(folder = worktree, owner, team, project) -> the varian
 | One child plan per package scope, done before more agents and plugins | Softov, 2026-09-26: "clear steps.. separated by scope. package. before we do more agents and plugins" | all |
 | The host-home mounts stay as an explicit opt-in, and stop being the default | the proposal Softov asked to plan, 2026-09-26 | p5, p6 |
 | A remote step (p8 to p12) is planned once its open questions are answered, and is built after the local steps, since it depends on p5's ahpd part | Softov, 2026-10-03, on p11 and p12: "may move from draft to planned" once nothing else is open | p8, p9, p10, p11, p12 |
-| A machine block belongs to a preset, since each preset registers its own agent and the host asks the session's own provider for `machine()` | [code://packages/sdk/src/host.ts#L5321-L5330](../../../../packages/sdk/src/host.ts#L5321-L5330) and the variant decision above | p2, p5, p6 |
+| A machine block belongs to a preset, since each preset registers its own agent and the host asks the session's own provider for `machine()` | [code://packages/sdk/src/host/machines.ts#L201-L209](../../../../packages/sdk/src/host/machines.ts#L201-L209) and the variant decision above | p2, p5, p6 |
 | This plan delivers a secret; the vault plan, [vault/01](../../vault/01-secrets-live-in-a-vault/plan.md), resolves a `{ "$secret" }` and claude/12's `{ "fromEnv" }` stays the cheaper route | Softov, 2026-10-02, asked "What does the vault unlock first?": "Options and machines" | p1, p2 |
 
 ## Proposed architecture

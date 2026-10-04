@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md
   - plans/acp/05-presets/plan.md
@@ -19,7 +19,7 @@ refs:
   - "[code://packages/agent-acp/src/types.ts#L43-L60](../../../../packages/agent-acp/src/types.ts#L43-L60) - `AcpOptions`"
   - "[code://packages/agent-acp/src/session.ts#L615-L638](../../../../packages/agent-acp/src/session.ts#L615-L638) - `placed()`, the spawn in a machine"
   - "[code://packages/sdk/src/types/agent.ts#L353](../../../../packages/sdk/src/types/agent.ts#L353) - `machine()` on the agent contract"
-  - "[code://packages/sdk/src/host.ts#L5321-L5330](../../../../packages/sdk/src/host.ts#L5321-L5330) - the host asks the session's own provider for `machine()`, so each registered variant answers for itself"
+  - "[code://packages/sdk/src/host/machines.ts#L201-L209](../../../../packages/sdk/src/host/machines.ts#L201-L209) - the host asks the session's own provider for `machine()`, so each registered variant answers for itself"
   - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - cofold's `machine()`, the pattern to mirror"
   - "[code://packages/agent-claude/src/options.ts#L96-L105](../../../../packages/agent-claude/src/options.ts#L96-L105) - claude/12's `{ fromEnv }` env value, the shape a secret takes here"
   - "[code://packages/agent-claude/src/options.ts#L225-L229](../../../../packages/agent-claude/src/options.ts#L225-L229) - `fromEnvOf`, the reader to mirror"

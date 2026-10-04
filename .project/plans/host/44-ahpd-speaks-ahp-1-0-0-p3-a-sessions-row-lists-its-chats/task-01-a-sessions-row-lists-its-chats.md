@@ -4,14 +4,14 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L6601-L6615](../../../../packages/sdk/src/host.ts#L6601-L6615) - the session state's `chats`, which becomes one shared function"
-  - "[code://packages/sdk/src/host.ts#L2418-L2436](../../../../packages/sdk/src/host.ts#L2418-L2436) - `summaryOf`"
-  - "[code://packages/sdk/src/host.ts#L2464-L2485](../../../../packages/sdk/src/host.ts#L2464-L2485) - `summaryMoved`, which strips identity fields and sends the rest"
-  - "[code://packages/sdk/src/host.ts#L3511](../../../../packages/sdk/src/host.ts#L3511) - a worker chat added"
-  - "[code://packages/sdk/src/host.ts#L5017](../../../../packages/sdk/src/host.ts#L5017) - a chat removed"
-  - "[code://packages/sdk/src/host.ts#L5975](../../../../packages/sdk/src/host.ts#L5975) - a chat added by a fork"
-  - "[code://packages/sdk/src/host.ts#L9043](../../../../packages/sdk/src/host.ts#L9043) - a chat added by `createChat`"
-  - "[code://packages/sdk/src/host.ts#L9081-L9084](../../../../packages/sdk/src/host.ts#L9081-L9084) - a default chat changed and a chat removed by `disposeChat`"
+  - "[code://packages/sdk/src/host/snapshots.ts#L230-L245](../../../../packages/sdk/src/host/snapshots.ts#L230-L245) - the session state's `chats`, which becomes one shared function"
+  - "[code://packages/sdk/src/host/catalogue.ts#L173-L191](../../../../packages/sdk/src/host/catalogue.ts#L173-L191) - `summaryOf`"
+  - "[code://packages/sdk/src/host/catalogue.ts#L219-L240](../../../../packages/sdk/src/host/catalogue.ts#L219-L240) - `summaryMoved`, which strips identity fields and sends the rest"
+  - "[code://packages/sdk/src/host/spawn.ts#L211](../../../../packages/sdk/src/host/spawn.ts#L211) - a worker chat added"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L121](../../../../packages/sdk/src/host/lifecycle.ts#L121) - a chat removed"
+  - "[code://packages/sdk/src/host/tooling.ts#L305](../../../../packages/sdk/src/host/tooling.ts#L305) - a chat added by a fork"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L676](../../../../packages/sdk/src/host/sessionmethods.ts#L676) - a chat added by `createChat`"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L714-L717](../../../../packages/sdk/src/host/sessionmethods.ts#L714-L717) - a default chat changed and a chat removed by `disposeChat`"
   - "[code://packages/sdk/test/conformance.test.ts](../../../../packages/sdk/test/conformance.test.ts) - replays emitted actions through the protocol's reducers"
 ---
 
@@ -21,9 +21,9 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:6601-6615` - the list moves into `chatCatalogOf(session)`, which the session state calls.
-- `UPDATE: packages/sdk/src/host.ts:2418-2436` - `summaryOf` adds `chats` (each entry cut to `resource`, `title`, `origin`, `interactivity`, `status`) and `defaultChat`.
-- `UPDATE: packages/sdk/src/host.ts` at :3511, :5017, :5975, :9043, :9081-9084 - `summaryMoved` after each, where it is not already called.
+- `UPDATE: packages/sdk/src/host/snapshots.ts:230-245` - the list moves into `chatCatalogOf(session)`, which the session state calls.
+- `UPDATE: packages/sdk/src/host/catalogue.ts:173-191` - `summaryOf` adds `chats` (each entry cut to `resource`, `title`, `origin`, `interactivity`, `status`) and `defaultChat`.
+- `UPDATE: packages/sdk/src/host/spawn.ts:211`, `packages/sdk/src/host/lifecycle.ts:121`, `packages/sdk/src/host/tooling.ts:305`, `packages/sdk/src/host/sessionmethods.ts:676` and `:714-717` - `summaryMoved` after each, where it is not already called.
 - `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/conformance.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - `SessionSummary.chats` and `defaultChat` are served.
 

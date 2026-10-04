@@ -48,11 +48,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The handler classification test reads every file that holds handlers](task-01-the-classification-test-reads-every-file.md) | todo | - |
-| [02 - Introduction and sign-in are one file](task-02-handshake.md) | todo | 01 |
-| [03 - The resource methods are one file](task-03-resource-methods.md) | todo | 01 |
-| [04 - The session methods are one file](task-04-session-methods.md) | todo | 01 |
-| [05 - The vscode, diagnostic, terminal and automation methods move to their files](task-05-vscode-terminal-and-automation-methods.md) | todo | 01 |
+| [01 - The handler classification test reads every file that holds handlers](task-01-the-classification-test-reads-every-file.md) | implemented | - |
+| [02 - Introduction and sign-in are one file](task-02-handshake.md) | implemented | 01 |
+| [03 - The resource methods are one file](task-03-resource-methods.md) | implemented | 01 |
+| [04 - The session methods are one file](task-04-session-methods.md) | implemented | 01 |
+| [05 - The vscode, diagnostic, terminal and automation methods move to their files](task-05-vscode-terminal-and-automation-methods.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -60,14 +60,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-classification-test-reads-every-file.md](task-01-the-classification-test-reads-every-file.md).
+- **Done so far:** all five tasks. `host.ts` is 2,768 lines, from 5,077. The `handlers` literal in `accept` is six spreads and nothing else: `...handshake, ...methods, ...sessionMethods, ...terminalMethods, ...automationMethods, ...vscode`, in the method order the literal had before.
+- **Next action:** none. The plan is finished; p10 takes `applyDispatch` out of `accept`.
 - **Open questions:** none of its own.
-- **Watch out for:** `fetchAutomationRuns` sits between `authenticate` and `createResourceWatch` in the literal; move by method name, not by line range.
+- **Watch out for:** `packages/computer/test/computer-disposable.test.ts` fails its own `afterEach` with `ENOTEMPTY` on `rmSync` of a scratch directory now and then, on a machine with other work running. It is not caused by this plan; re-run the file alone before believing it.
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `users-gate.test.ts` finds the same number of handlers it found before task 01.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 2,400 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `users-gate.test.ts` finds the same number of handlers it found before task 01 - 45, checked after every task.
+- [x] `wc -l packages/sdk/src/host.ts` recorded: 5,077 before p9, 2,768 after.
+- [ ] `plans/index.md` updated - the brief for this session says not to edit it.

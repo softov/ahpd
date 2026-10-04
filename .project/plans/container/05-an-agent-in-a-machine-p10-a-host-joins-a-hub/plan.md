@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: medium
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md
   - plans/container/05-an-agent-in-a-machine-p12-a-machine-off-this-host-reaches-models-through-the-proxy/plan.md
@@ -25,7 +25,7 @@ refs:
   - "[code://packages/sdk/src/nested.ts#L115-L129](../../../../packages/sdk/src/nested.ts#L115-L129) - `startInside`, the default `start` that spawns the port's descriptor"
   - "[code://packages/sdk/src/nested.ts#L138-L203](../../../../packages/sdk/src/nested.ts#L138-L203) - `stdioTransport`, one frame per line over a `NestedHost`"
   - "[code://packages/sdk/src/nested.ts#L340-L393](../../../../packages/sdk/src/nested.ts#L340-L393) - `bringUp`: the outer host is an `AhpClient` over that transport, then `createSession` and two subscriptions"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - where the host builds `nestedAgent` for a session"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - where the host builds `nestedAgent` for a session"
   - "[code://packages/sdk/src/listen.ts#L84-L127](../../../../packages/sdk/src/listen.ts#L84-L127) - the door: the deployment token, then `identify` against the users directory"
   - "[code://packages/server/src/commands/run.ts#L604-L615](../../../../packages/server/src/commands/run.ts#L604-L615) - a stdio connection is admitted as the host itself"
   - "[code://packages/sdk/src/users.ts#L40-L54](../../../../packages/sdk/src/users.ts#L40-L54) - `SUBJECTS`, the grant subjects"

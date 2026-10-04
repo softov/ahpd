@@ -1,6 +1,6 @@
 ---
 title: The vscode, diagnostic, terminal and automation methods move to their files
-status: todo
+status: implemented
 depends: [task-01-the-classification-test-reads-every-file.md]
 layer: "sdk"
 refs:
@@ -36,3 +36,25 @@ refs:
 - `wc -l packages/sdk/src/host.ts` recorded.
 
 ## Resume
+
+Built 2026-10-04. `packages/sdk/src/host/vscodemethods.ts` (494 lines) holds `PROXY_ENV`, `PROBE_TIMEOUT`, `MAX_BODY`, `resolved`, `DETACHED_GRACE`, `CONTAINER_TAIL`, `stateFileOf`, `containerAsk`, `namedContainer` and the seventeen methods. `host/terminals.ts` grew `createTerminalMethods` and `host/automations.ts` grew `createAutomationMethods`, each returning its own table.
+
+`host.ts` is 2,768 lines and its `handlers` literal is six spreads and nothing else:
+
+```
+...handshake, ...methods, ...sessionMethods, ...terminalMethods, ...automationMethods, ...vscode
+```
+
+Three things the Files section did not name moved with their readers, and each is recorded here rather than left to be found later:
+
+- `DETACHED_GRACE` and `CONTAINER_TAIL` are module constants now. Each has exactly one reader, and that reader moved; leaving either in `host.ts` would have left a constant nothing in the file used.
+- `logs` and `detached` became `HostContext` fields. Both are per host, both are read only from `vscodemethods.ts`, and `logs` had to be declared above the `ctx` literal to be one.
+- `stateFileOf` reads nothing per connection, so it is a plain `const` inside `createVscodeMethods` rather than a field on either context. `createAutomationMethods` takes only `HostContext` for the same reason - none of the three methods reads anything of the connection's.
+
+Step 2 is `conn.alive` and `conn.containers`, both on the `ConnectionContext` and both set in the literal `accept` builds. `handle`'s close writes `conn.alive = false` and drains `conn.containers`; `vscode/devContainers/connect` reads both.
+
+`BANG` left `host.ts` here: task 02 moved its only reader, `initialize`, and the import was not dropped then.
+
+Validation: `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` all pass, 176 files and 2,707 tests. `users-gate.test.ts` still finds the 45 task 01 recorded.
+
+One flake, twice, unrelated to this plan: `packages/computer/test/computer-disposable.test.ts` failed its `afterEach` with `ENOTEMPTY` on `rmSync` of its own scratch directory, then passed on a re-run of that file alone and on two subsequent full runs. Nothing in `packages/computer` is touched by this plan.

@@ -4,10 +4,10 @@ status: implemented
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L1623-L1633](../../../../packages/sdk/src/host.ts#L1623-L1633) - `broadcast`, which swaps only `channel` for an alias"
-  - "[code://packages/sdk/src/host.ts#L1484-L1613](../../../../packages/sdk/src/host.ts#L1484-L1613) - `spelledFor`, the rules for which URIs are respelled"
-  - "[code://packages/sdk/src/host.ts#L1908-L1930](../../../../packages/sdk/src/host.ts#L1908-L1930) - `dispatch`, which builds the envelope under the held channel"
-  - "[code://packages/sdk/src/host.ts#L1810-L1816](../../../../packages/sdk/src/host.ts#L1810-L1816) - `withWorkerUri`, which stamps `_meta.subagentChatUri` in the held spelling"
+  - "[code://packages/sdk/src/host.ts#L447-L465](../../../../packages/sdk/src/host.ts#L447-L465) - `broadcast`, which swaps only `channel` for an alias"
+  - "[code://packages/sdk/src/host/routing.ts#L166-L243](../../../../packages/sdk/src/host/routing.ts#L166-L243) - `spelledFor`, the rules for which URIs are respelled"
+  - "[code://packages/sdk/src/host.ts#L548-L560](../../../../packages/sdk/src/host.ts#L548-L560) - `dispatch`, which builds the envelope under the held channel"
+  - "[code://packages/sdk/src/host/spawn.ts#L91-L107](../../../../packages/sdk/src/host/spawn.ts#L91-L107) - `withWorkerUri`, which stamps `_meta.subagentChatUri` in the held spelling"
   - "[code://packages/sdk/test/subagent-chat.test.ts#L534](../../../../packages/sdk/test/subagent-chat.test.ts#L534) - `takes an approval given on a worker chat spelt from a session alias`"
 ---
 
@@ -17,8 +17,8 @@ A connection subscribed to a session or chat under an alias receives each action
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:1484-1613` - split the per-URI respelling in `spelledFor` into a function that takes one value and the pair (held, asked), so a snapshot and an action use the same rules.
-- `UPDATE: packages/sdk/src/host.ts:1623-1633` - for an aliased connection on a session or chat channel, respell the action with that function, not only `channel`.
+- `UPDATE: packages/sdk/src/host/routing.ts:166-243` - split the per-URI respelling in `spelledFor` into a function that takes one value and the pair (held, asked), so a snapshot and an action use the same rules.
+- `UPDATE: packages/sdk/src/host.ts:447-465` - for an aliased connection on a session or chat channel, respell the action with that function, not only `channel`.
 - `UPDATE: packages/sdk/test/host.test.ts` or `packages/sdk/test/subagent-chat.test.ts` - the cases below.
 
 ## Steps

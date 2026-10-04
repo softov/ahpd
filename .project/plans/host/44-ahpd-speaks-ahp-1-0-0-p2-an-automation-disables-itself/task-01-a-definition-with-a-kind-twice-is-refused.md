@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L10035-L10055](../../../../packages/sdk/src/host.ts#L10035-L10055) - where a create or update request is checked and handed to the store"
+  - "[code://packages/sdk/src/host/actions.ts#L403-L423](../../../../packages/sdk/src/host/actions.ts#L403-L423) - where a create or update request is checked and handed to the store"
   - "[code://packages/sdk/test/automations.test.ts#L228-L256](../../../../packages/sdk/test/automations.test.ts#L228-L256) - a create and a patch through a client, the shape the new tests take"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `AutomationAfterRunsCondition`, `AutomationAfterDateCondition` (`channels-automation/state.ts:210-251`)"
 ---
@@ -16,7 +16,7 @@ An `automation/createRequested` whose `definition.disableConditions`, or an `aut
 ## Files
 
 - `UPDATE: packages/sdk/src/automations.ts` - an exported pure `disableConditionsProblem(value: unknown): string | undefined`: absent is fine; otherwise an array of `{ kind: 'afterRuns', max }` with `max` a positive integer or `{ kind: 'afterDate', date }` with `date` an ISO 8601 timestamp `Date.parse` reads, each kind at most once.
-- `UPDATE: packages/sdk/src/host.ts:10035-10055` - call it on the definition or the changes before the store, and `no(...)` with its sentence.
+- `UPDATE: packages/sdk/src/host/actions.ts:403-423` - call it on the definition or the changes before the store, and `no(...)` with its sentence.
 - `UPDATE: packages/sdk/test/automations.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - the automation rows say conditions are checked and a duplicate kind is refused.
 

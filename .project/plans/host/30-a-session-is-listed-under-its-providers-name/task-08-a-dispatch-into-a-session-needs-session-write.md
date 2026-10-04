@@ -4,14 +4,16 @@ status: implemented
 depends: [task-07-a-provider-scheme-session-needs-session-read.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L274-L310](../../../../packages/sdk/src/host.ts#L274-L310) - `dispatchNeeds`, which takes the kind of the channel"
-  - "[code://packages/sdk/src/host.ts#L327-L421](../../../../packages/sdk/src/host.ts#L327-L421) - `ACTION_HOMES`, `spaceOf`, `baseOf` and `Claiming`: where each action belongs, the spaces of names and the maps that claim them"
-  - "[code://packages/sdk/src/host.ts#L577-L589](../../../../packages/sdk/src/host.ts#L577-L589) - `claims`, every name this host holds"
-  - "[code://packages/sdk/src/host.ts#L2057-L2078](../../../../packages/sdk/src/host.ts#L2057-L2078) - `channelKind` and `sessionChannel`, the one answer both gates ask"
-  - "[code://packages/sdk/src/host.ts#L6031-L6050](../../../../packages/sdk/src/host.ts#L6031-L6050) - `claimable`, what every new name is checked against"
-  - "[code://packages/sdk/src/host.ts#L6437-L6488](../../../../packages/sdk/src/host.ts#L6437-L6488) - `capabilityFor`, the subscribe and completions gate"
-  - "[code://packages/sdk/src/host.ts#L6490-L6526](../../../../packages/sdk/src/host.ts#L6490-L6526) - `admit`, the gate every command and every handshake subscription passes"
-  - "[code://packages/sdk/src/host.ts#L8615-L8714](../../../../packages/sdk/src/host.ts#L8615-L8714) - `applyDispatch`, the dispatch gate"
+  - "[code://packages/sdk/src/host/gate.ts#L159-L169](../../../../packages/sdk/src/host/gate.ts#L159-L169) - `dispatchNeeds`, which takes the kind of the channel"
+  - "[code://packages/sdk/src/host/gate.ts#L224-L242](../../../../packages/sdk/src/host/gate.ts#L224-L242) - `ACTION_HOMES`: where each action belongs"
+  - "[code://packages/sdk/src/host/channels.ts#L27-L47](../../../../packages/sdk/src/host/channels.ts#L27-L47) - `spaceOf` and `baseOf`: the spaces of names"
+  - "[code://packages/sdk/src/host/state.ts#L106-L142](../../../../packages/sdk/src/host/state.ts#L106-L142) - `Claiming`: the maps that claim them"
+  - "[code://packages/sdk/src/host.ts#L104-L120](../../../../packages/sdk/src/host.ts#L104-L120) - `claims`, every name this host holds"
+  - "[code://packages/sdk/src/host/routing.ts#L337-L358](../../../../packages/sdk/src/host/routing.ts#L337-L358) - `channelKind` and `sessionChannel`, the one answer both gates ask"
+  - "[code://packages/sdk/src/host/routing.ts#L368-L387](../../../../packages/sdk/src/host/routing.ts#L368-L387) - `claimable`, what every new name is checked against"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L104](../../../../packages/sdk/src/host/admission.ts#L35-L104) - `capabilityFor`, the subscribe and completions gate"
+  - "[code://packages/sdk/src/host/admission.ts#L182-L218](../../../../packages/sdk/src/host/admission.ts#L182-L218) - `admit`, the gate every command and every handshake subscription passes"
+  - "[code://packages/sdk/src/host/actions.ts#L57-L119](../../../../packages/sdk/src/host/actions.ts#L57-L119) - `applyDispatch`, the dispatch gate"
   - "[code://packages/sdk/test/users-gate.test.ts#L383-L415](../../../../packages/sdk/test/users-gate.test.ts#L383-L415) - `classifies a dispatch by its channel`, through the host"
 ---
 

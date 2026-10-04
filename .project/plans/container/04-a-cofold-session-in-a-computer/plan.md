@@ -4,7 +4,7 @@ domain: container
 status: active
 priority: medium
 created: 2026-09-26
-revalidated: 2026-10-02
+revalidated: 2026-10-04
 requires:
   - plans/plugin/14-cofold-runs-its-own-tools/plan.md
   - plans/plugin/15-an-agent-says-what-a-machine-needs/plan.md
@@ -20,7 +20,7 @@ decisions:
 refs:
   - "[code://packages/agent-cofold/src/agent.ts#L673](../../../../packages/agent-cofold/src/agent.ts#L673) - cofold's `runsNested: true`"
   - "[code://packages/sdk/src/nested.ts](../../../../packages/sdk/src/nested.ts) - the proxy: the nested host's stdio, the inner session, the mirror"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - the host gives a `runsNested` backend the proxy when its session names a computer"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - the host gives a `runsNested` backend the proxy when its session names a computer"
   - "[code://packages/computer/src/plugin.ts#L634-L646](../../../../packages/computer/src/plugin.ts#L634-L646) - `nestedHost`, which starts the inner host through `reach`"
   - "[code://packages/sdk/src/types/computers.ts#L19-L143](../../../../packages/sdk/src/types/computers.ts#L19-L143) - `ComputerPort.how` and `Spawn`, a process in a machine"
   - "[code://packages/sdk/src/rpc.ts#L88](../../../../packages/sdk/src/rpc.ts#L88) - `createPeer`, a `Wire` over stdio"

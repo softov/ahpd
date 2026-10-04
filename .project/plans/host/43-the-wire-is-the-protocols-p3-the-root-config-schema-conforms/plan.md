@@ -4,7 +4,7 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
@@ -16,7 +16,7 @@ refs:
   - "[code://packages/server/src/commands/options.ts#L248-L252](../../../../packages/server/src/commands/options.ts#L248-L252) - `port` is `integer` and untitled"
   - "[code://packages/server/src/commands/options.ts#L345-L352](../../../../packages/server/src/commands/options.ts#L345-L352) - `http` is `['object', 'boolean']`, with `minimum`, `maximum` and `pattern` below it"
   - "[code://packages/server/src/commands/options.ts#L588-L600](../../../../packages/server/src/commands/options.ts#L588-L600) - `httpOf`: `true` is `{}`, `false` and absent are off"
-  - "[code://packages/sdk/src/host.ts#L6191-L6192](../../../../packages/sdk/src/host.ts#L6191-L6192) - where the host merges the port's schema into `RootState.config`"
+  - "[code://packages/sdk/src/host/root.ts#L245-L252](../../../../packages/sdk/src/host/root.ts#L245-L252) - where the host merges the port's schema into `RootState.config`"
   - "[code://packages/agent-cofold/src/plugin.ts#L41](../../../../packages/agent-cofold/src/plugin.ts#L41) - a plugin's `writeOnly` key, the kind a mask reads"
   - "[code://packages/agent-claude/src/plugin.ts#L64](../../../../packages/agent-claude/src/plugin.ts#L64) - `type: ['string', 'null']` under `additionalProperties`"
   - "[code://packages/server/test/server-root-config.test.ts](../../../../packages/server/test/server-root-config.test.ts) - root config read and write"

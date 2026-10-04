@@ -40,17 +40,18 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every open plan's host.ts ref names the file that holds the code](task-01-rewrite-the-refs.md) | todo | - |
+| [01 - Every open plan's host.ts ref names the file that holds the code](task-01-rewrite-the-refs.md) | implemented | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-rewrite-the-refs.md](task-01-rewrite-the-refs.md).
+- **Done so far:** task 01 implemented. 32 open folders rewritten, plus plugin/20 and plugin/33; the search re-run, so host/47's children, 49, 50 and 51 were found built since the plan was written and dropped. The two checklist checks below pass.
+- **Next action:** review, then the parent's own checklist.
 - **Open questions:** none.
 - **Watch out for:** other agents edit open plans concurrently; rewrite one plan folder per edit and re-read each file just before editing it.
+- **Watch out for:** `.project/plans/daemon/00-daemon.md` is a research note, not a plan, cites `host.ts`, and is deliberately left.
 
 ## Final verification checklist
 
-- [ ] `rg -n "code://packages/sdk/src/host.ts#L" .project/plans` matches only built or dropped plans, or code still in `host.ts`.
-- [ ] Every rewritten link's target exists.
+- [x] `rg -n "code://packages/sdk/src/host.ts#L" .project/plans` matches only built or dropped plans, or code still in `host.ts`.
+- [x] Every rewritten link's target exists.
 - [ ] `plans/index.md` updated.

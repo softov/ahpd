@@ -5,7 +5,7 @@ depends: [task-02-no-bind-mount-on-another-docker.md]
 layer: "computer | sdk"
 refs:
   - "[code://packages/sdk/src/types/computers.ts#L84-L85](../../../../packages/sdk/src/types/computers.ts#L84-L85) - `MachineSource.folder`, the session's folder on this host"
-  - "[code://packages/sdk/src/worktrees.ts](../../../../packages/sdk/src/worktrees.ts) - the worktrees port, where the session's branch is"
+  - "[code://packages/sdk/src/repo/worktrees.ts](../../../../packages/sdk/src/repo/worktrees.ts) - the worktrees port, where the session's branch is"
 ---
 
 ## Objective

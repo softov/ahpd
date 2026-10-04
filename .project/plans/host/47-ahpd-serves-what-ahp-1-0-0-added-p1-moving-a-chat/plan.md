@@ -4,22 +4,22 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/47-ahpd-serves-what-ahp-1-0-0-added/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
   - plans/host/50-a-peer-chat-is-its-own-conversation/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L11538-L11543](../../../../packages/sdk/src/host.ts#L11538-L11543) - a method with no handler is `-32601`, which is what `moveChat` gets today"
-  - "[code://packages/sdk/src/host.ts#L228-L229](../../../../packages/sdk/src/host.ts#L228-L229) - `createChat` and `disposeChat` in `NEEDS`, where `moveChat` goes"
-  - "[code://packages/sdk/src/host.ts#L950-L978](../../../../packages/sdk/src/host.ts#L950-L978) - `Held`: `chats` in the order they were opened, one agent, config and folder set"
-  - "[code://packages/sdk/src/host.ts#L1057-L1067](../../../../packages/sdk/src/host.ts#L1057-L1067) - `chatSummary`, which carries no `movable`"
-  - "[code://packages/sdk/src/host.ts#L3688-L3700](../../../../packages/sdk/src/host.ts#L3688-L3700) - `spawn`: a running backend `Session` keeps the session URI in its closures, so a chat cannot be re-parented in place"
-  - "[code://packages/sdk/src/host.ts#L5440-L5462](../../../../packages/sdk/src/host.ts#L5440-L5462) - `restartChat`: close, then spawn again with `{ resume: agentId(), seed: allTurns() }`, the move's mechanism"
-  - "[code://packages/sdk/src/host.ts#L6752-L6770](../../../../packages/sdk/src/host.ts#L6752-L6770) - the session state's `chats`: peer chats, then live workers, then restored workers"
-  - "[code://packages/sdk/src/host.ts#L9130](../../../../packages/sdk/src/host.ts#L9130) - the `createChat` handler, the shape a `moveChat` handler copies"
-  - "[code://packages/sdk/src/host.ts#L9243-L9262](../../../../packages/sdk/src/host.ts#L9243-L9262) - `disposeChat`: `session/defaultChatChanged` then `session/chatRemoved`"
-  - "[code://packages/sdk/src/host.ts#L439-L472](../../../../packages/sdk/src/host.ts#L439-L472) - `claims`: each name is claimed for the session it belongs to, and a move re-claims it"
+  - "[code://packages/sdk/src/host.ts#L1021-L1026](../../../../packages/sdk/src/host.ts#L1021-L1026) - a method with no handler is `-32601`, which is what `moveChat` gets today"
+  - "[code://packages/sdk/src/host/gate.ts#L79-L80](../../../../packages/sdk/src/host/gate.ts#L79-L80) - `createChat` and `disposeChat` in `NEEDS`, where `moveChat` goes"
+  - "[code://packages/sdk/src/host/state.ts#L12-L41](../../../../packages/sdk/src/host/state.ts#L12-L41) - `Held`: `chats` in the order they were opened, one agent, config and folder set"
+  - "[code://packages/sdk/src/host/catalogue.ts#L55-L65](../../../../packages/sdk/src/host/catalogue.ts#L55-L65) - `chatSummary`, which carries no `movable`"
+  - "[code://packages/sdk/src/host/spawn.ts#L311-L320](../../../../packages/sdk/src/host/spawn.ts#L311-L320) - `spawn`: a running backend `Session` keeps the session URI in its closures, so a chat cannot be re-parented in place"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L422-L443](../../../../packages/sdk/src/host/lifecycle.ts#L422-L443) - `restartChat`: close, then spawn again with `{ resume: agentId(), seed: allTurns() }`, the move's mechanism"
+  - "[code://packages/sdk/src/host/snapshots.ts#L230-L245](../../../../packages/sdk/src/host/snapshots.ts#L230-L245) - the session state's `chats`: peer chats, then live workers, then restored workers"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L576](../../../../packages/sdk/src/host/sessionmethods.ts#L576) - the `createChat` handler, the shape a `moveChat` handler copies"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L689-L719](../../../../packages/sdk/src/host/sessionmethods.ts#L689-L719) - `disposeChat`: `session/defaultChatChanged` then `session/chatRemoved`"
+  - "[code://packages/sdk/src/host/state.ts#L113-L142](../../../../packages/sdk/src/host/state.ts#L113-L142) - `claims`: each name is claimed for the session it belongs to, and a move re-claims it"
   - "[code://packages/sdk/src/types/sessions.ts#L93-L95](../../../../packages/sdk/src/types/sessions.ts#L93-L95) - `sender`, kept per session id and turn, which moves with the chat"
   - "[code://packages/sdk/src/types/sessions.ts#L143-L145](../../../../packages/sdk/src/types/sessions.ts#L143-L145) - `chatTitle`, kept per session id, which moves with the chat"
   - "[code://packages/sdk/src/nested.ts#L372-L375](../../../../packages/sdk/src/nested.ts#L372-L375) - a nested host starts a fresh inner session and cannot resume a chat by its id"
@@ -68,7 +68,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | A move is accepted only into a session of the same agent provider on the same machine; another provider or another computer is refused with a reason, and those moves are deferred, open for later | Softov, 2026-10-03, asked "Moving a chat between sessions: which destinations does ahpd accept?": "Same agent and machine for now... future case open" | 03 |
 | `movable` is `false` while the chat or any chat it carries runs a turn, `true` again after; the default chat is always `false` | Softov, 2026-10-03, asked "When may a chat be moved?": "Not during a turn" | 04 |
 | `movable` is `false` for a chat whose backend cannot resume it by its own id: every nested chat, and an ACP chat whose server lacks `loadSession` | (defaulted: a move respawns the chat, and a backend that cannot resume would start it empty) | 04 |
-| A move respawns the chat under the destination as `restartChat` does, with `{ resume: <backend id>, seed: allTurns() }`, and its workers with it | [`code://packages/sdk/src/host.ts#L3688-L3700`](../../../../packages/sdk/src/host.ts#L3688-L3700): a running `Session` holds the session URI in its closures | 03 |
+| A move respawns the chat under the destination as `restartChat` does, with `{ resume: <backend id>, seed: allTurns() }`, and its workers with it | [`code://packages/sdk/src/host/spawn.ts#L311-L320`](../../../../packages/sdk/src/host/spawn.ts#L311-L320): a running `Session` holds the session URI in its closures | 03 |
 | A moved chat keeps its own folders, whatever the destination's are | (defaulted: Claude finds a transcript by the working directory, and the chat's folders are its own in AHP) | 03 |
 | `newSession` makes a session whose id is the chat's backend id and whose default chat is the moved chat, under the chat's URI | (defaulted: the session then resumes that conversation by its own id after a restart, and the chat keeps its URI as the spec says) | 03 |
 | `moveChat` asks `session:write` on the source today, and `chat:move` once host/46 lands; the destination session is checked for `session:write` too | host/46 task 02's table, row `moveChat`; (defaulted: a move writes both sessions) | 02, 03 |
@@ -79,7 +79,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Data flow** - `moveChat` -> validate -> same session: reorder `held.chats`, store the order, `session/chatsReordered` -> another or a new session: close the chat and its workers, move store keys and claims, spawn under the destination with `resume` and `seed`, `session/chatRemoved` on the source, `session/chatAdded` and `session/chatsReordered` on the destination -> `root/sessionSummaryChanged` for both.
 - **State flow** - `movable` is computed from the chat's place, its backend and the running turns, and changes go out as `chat/movableChanged` with `session/chatUpdated`.
 - **Layer responsibilities** - sdk host: the handler, `movable`, the respawn · sdk store: the order and the moved keys (host/50's chat list).
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/sessionmethods.ts`](../../../../packages/sdk/src/host/sessionmethods.ts), [`code://packages/sdk/src/host/state.ts`](../../../../packages/sdk/src/host/state.ts), [`code://packages/sdk/src/host/spawn.ts`](../../../../packages/sdk/src/host/spawn.ts), [`code://packages/sdk/src/host/lifecycle.ts`](../../../../packages/sdk/src/host/lifecycle.ts), [`code://packages/sdk/src/host/catalogue.ts`](../../../../packages/sdk/src/host/catalogue.ts), [`code://packages/sdk/src/host/snapshots.ts`](../../../../packages/sdk/src/host/snapshots.ts), [`code://packages/sdk/src/host/gate.ts`](../../../../packages/sdk/src/host/gate.ts)
 
 ## Tasks
 

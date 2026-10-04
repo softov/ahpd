@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/plugin/01-plugins-load-from-configuration/plan.md
   - plans/host/11-a-grant-is-a-subject-and-a-verb/plan.md
@@ -20,7 +20,7 @@ refs:
   - "[code://packages/sdk/src/types/rpc.ts#L34-L59](../../../../packages/sdk/src/types/rpc.ts#L34-L59) - `Peer`, the raw JSON-RPC shape"
   - "[code://packages/sdk/src/types/users.ts#L40-L101](../../../../packages/sdk/src/types/users.ts#L40-L101) - `Principal`, what the plugin's identity is, with `memberships` and `teams`"
   - "[code://packages/sdk/src/users.ts#L79](../../../../packages/sdk/src/users.ts#L79) - `holds`, the `*` matching a role's grants use"
-  - "[code://packages/sdk/src/host.ts#L4507-L4511](../../../../packages/sdk/src/host.ts#L4507-L4511) - `ownerFor`, which makes any principal `user:<id>`"
+  - "[code://packages/sdk/src/host/owners.ts#L47-L51](../../../../packages/sdk/src/host/owners.ts#L47-L51) - `ownerFor`, which makes any principal `user:<id>`"
   - "[code://packages/sdk/src/types/usage.ts#L19](../../../../packages/sdk/src/types/usage.ts#L19) - `Owner`, which has no plugin form"
   - "[code://packages/server/src/commands/options.ts#L408-L416](../../../../packages/server/src/commands/options.ts#L408-L416) - `pluginEntry`, the config schema of one `plugins` entry"
   - "[code://packages/sdk/src/plugins.ts#L299](../../../../packages/sdk/src/plugins.ts#L299) - `pluginHost`, where each plugin's `PluginHost` is built"

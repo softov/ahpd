@@ -6,7 +6,7 @@ layer: "sdk | agent-cofold"
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L439](../../../../packages/sdk/src/types/agent.ts#L439) - `runsNested?: boolean`"
   - "[code://packages/sdk/src/validate.ts#L69](../../../../packages/sdk/src/validate.ts#L69) - `runsNested` checked as a boolean at plugin load"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - the host chooses the proxy when `runsNested === true`"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - the host chooses the proxy when `runsNested === true`"
   - "[code://packages/sdk/src/nested.ts#L95-L103](../../../../packages/sdk/src/nested.ts#L95-L103) - `nestedAgent`, which derives `@ahpd/agent-<provider>`"
   - "[code://packages/sdk/src/nested.ts#L376-L381](../../../../packages/sdk/src/nested.ts#L376-L381) - the inner `createSession`, under the outer provider name"
   - "[code://packages/agent-cofold/src/agent.ts#L673](../../../../packages/agent-cofold/src/agent.ts#L673) - cofold's `runsNested: true`"
@@ -21,7 +21,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/types/agent.ts:439` - `runsNested?: { plugin: string }`, with a doc comment saying what `plugin` names.
 - `UPDATE: packages/sdk/src/validate.ts:69` - an object with a non-empty string `plugin`.
-- `UPDATE: packages/sdk/src/host.ts:3618-3620` - the proxy when `runsNested` is present, handed `runsNested.plugin`.
+- `UPDATE: packages/sdk/src/host/spawn.ts:332-334` - the proxy when `runsNested` is present, handed `runsNested.plugin`.
 - `UPDATE: packages/sdk/src/nested.ts:62-103` - `NestedOptions.plugins` default and its doc comment; the provider-string form of `nestedAgent`.
 - `UPDATE: packages/sdk/src/nested.ts:376-381` - the provider named in the inner `createSession`.
 - `UPDATE: packages/agent-cofold/src/agent.ts:667-673` - `runsNested: { plugin: '@ahpd/agent-cofold' }`, and its comment.

@@ -4,16 +4,16 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L3123](../../../../packages/sdk/src/host.ts#L3123) - `_meta: { owner }` on a session with no directory"
-  - "[code://packages/sdk/src/host.ts#L3141](../../../../packages/sdk/src/host.ts#L3141) - `owner` beside the git facts on the summary and the state"
-  - "[code://packages/sdk/src/host.ts#L2187-L2190](../../../../packages/sdk/src/host.ts#L2187-L2190) - `sender` on a stored turn's `message._meta`"
-  - "[code://packages/sdk/src/host.ts#L3754-L3767](../../../../packages/sdk/src/host.ts#L3754-L3767) - `sender` on a live `chat/turnStarted`"
+  - "[code://packages/sdk/src/host/facts.ts#L160-L161](../../../../packages/sdk/src/host/facts.ts#L160-L161) - `_meta: { owner }` on a session with no directory"
+  - "[code://packages/sdk/src/host/facts.ts#L174-L179](../../../../packages/sdk/src/host/facts.ts#L174-L179) - `owner` beside the git facts on the summary and the state"
+  - "[code://packages/sdk/src/host/spawn.ts#L136-L141](../../../../packages/sdk/src/host/spawn.ts#L136-L141) - `sender` on a stored turn's `message._meta`"
+  - "[code://packages/sdk/src/host/spawn.ts#L472-L476](../../../../packages/sdk/src/host/spawn.ts#L472-L476) - `sender` on a live `chat/turnStarted`"
   - "[code://packages/sdk/src/changes.ts#L634](../../../../packages/sdk/src/changes.ts#L634) - `_meta: { staged, unstaged }` on a changeset file"
   - "[code://packages/sdk/src/changes.ts#L108](../../../../packages/sdk/src/changes.ts#L108) - the host reads its own `staged` and `unstaged` back"
   - "[code://packages/sdk/src/changes.ts#L244](../../../../packages/sdk/src/changes.ts#L244) - and counts them"

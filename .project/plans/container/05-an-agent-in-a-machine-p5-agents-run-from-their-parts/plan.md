@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md
   - plans/container/05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md
@@ -33,7 +33,7 @@ refs:
   - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - cofold's needs: its config file at the host's own path"
   - "[code://packages/agent-cofold/src/agent.ts#L640-L646](../../../../packages/agent-cofold/src/agent.ts#L640-L646) - cofold's `runsNested`"
   - "[code://packages/agent-pi/src/agent.ts#L39-L156](../../../../packages/agent-pi/src/agent.ts#L39-L156) - `piAgent`: no `runsNested`, no `machine()`, so a pi session on a computer is refused today"
-  - "[code://packages/sdk/src/host.ts#L5321-L5330](../../../../packages/sdk/src/host.ts#L5321-L5330) - the host asks the session's own provider for `machine()`, so each variant answers for itself"
+  - "[code://packages/sdk/src/host/machines.ts#L201-L209](../../../../packages/sdk/src/host/machines.ts#L201-L209) - the host asks the session's own provider for `machine()`, so each variant answers for itself"
   - "[code://packages/computer/src/plugin.ts#L43](../../../../packages/computer/src/plugin.ts#L43) - `host: ['ahpd']`, found on the machine's `PATH`"
   - "[code://packages/computer/src/manifest.ts#L64-L73](../../../../packages/computer/src/manifest.ts#L64-L73) - a profile's `host`"
 ---

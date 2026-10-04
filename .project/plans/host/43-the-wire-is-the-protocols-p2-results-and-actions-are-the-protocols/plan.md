@@ -4,22 +4,22 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://packages/sdk/src/rpc.ts#L220](../../../../packages/sdk/src/rpc.ts#L220) - `result ?? {}`, which also turns a handler's `null` into `{}`"
-  - "[code://packages/sdk/src/host.ts#L7667](../../../../packages/sdk/src/host.ts#L7667) - `ping` answers `{}`"
-  - "[code://packages/sdk/src/host.ts#L8457-L8460](../../../../packages/sdk/src/host.ts#L8457-L8460) - `fetchAutomationRuns` answers the store's page"
+  - "[code://packages/sdk/src/host/handshake.ts#L272](../../../../packages/sdk/src/host/handshake.ts#L272) - `ping` answers `{}`"
+  - "[code://packages/sdk/src/host/automations.ts#L306-L310](../../../../packages/sdk/src/host/automations.ts#L306-L310) - `fetchAutomationRuns` answers the store's page"
   - "[code://packages/sdk/src/automations.ts#L51-L60](../../../../packages/sdk/src/automations.ts#L51-L60) - `entry()` always carries the first page of runs"
   - "[code://packages/sdk/src/automations.ts#L260-L269](../../../../packages/sdk/src/automations.ts#L260-L269) - `runs()` answers `items` and `nextCursor`"
   - "[code://packages/sdk/src/types/automations.ts#L208-L209](../../../../packages/sdk/src/types/automations.ts#L208-L209) - the store's `runs` signature"
   - "[code://packages/agent-claude/src/session.ts#L2085](../../../../packages/agent-claude/src/session.ts#L2085) - `chat/inputRequested` with `turnId`"
   - "[code://examples/notes/agent.ts#L271](../../../../examples/notes/agent.ts#L271) - the same in the notes example"
-  - "[code://packages/sdk/src/host.ts#L4762-L4776](../../../../packages/sdk/src/host.ts#L4762-L4776) - `published()`, the one road a backend's session schema leaves by"
-  - "[code://packages/sdk/src/host.ts#L6537-L6540](../../../../packages/sdk/src/host.ts#L6537-L6540) - the session state spreads the backend's whole answer"
+  - "[code://packages/sdk/src/host/sessionconfig.ts#L285-L308](../../../../packages/sdk/src/host/sessionconfig.ts#L285-L308) - `published()`, the one road a backend's session schema leaves by"
+  - "[code://packages/sdk/src/host/snapshots.ts#L209-L212](../../../../packages/sdk/src/host/snapshots.ts#L209-L212) - the session state spreads the backend's whole answer"
   - "[code://docs/AHP.md#L742-L763](../../../../docs/AHP.md#L742-L763) - the bare requests, described and not marked as outside the protocol"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` results `null` (`src/types/common/messages.ts:164-173`); `FetchAutomationRunsResult {}`, delivered by action (`channels-automation/commands.ts:95-125`); `ChatInputRequestedAction` has `type` and `request` (`channels-chat/actions.ts:908-912`); `SessionConfigSchema` requires `type`; `SessionState` declares no `resource`"
 ---

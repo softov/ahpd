@@ -4,15 +4,15 @@ domain: host
 status: planned
 priority: low
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/47-ahpd-serves-what-ahp-1-0-0-added/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L2883](../../../../packages/sdk/src/host.ts#L2883) - `shown`, what every watcher of a changeset was last told, status included"
-  - "[code://packages/sdk/src/host.ts#L2904-L2941](../../../../packages/sdk/src/host.ts#L2904-L2941) - `told`, which sends `changeset/statusChanged` when the status moved and the smallest file update"
-  - "[code://packages/sdk/src/host.ts#L2953-L2967](../../../../packages/sdk/src/host.ts#L2953-L2967) - `contentMoved`: reads the changeset again and says nothing until the read is back"
-  - "[code://packages/sdk/src/host.ts#L3332-L3343](../../../../packages/sdk/src/host.ts#L3332-L3343) - a git change outside the host, one of `contentMoved`'s callers"
+  - "[code://packages/sdk/src/host/changesets.ts#L198](../../../../packages/sdk/src/host/changesets.ts#L198) - `shown`, what every watcher of a changeset was last told, status included"
+  - "[code://packages/sdk/src/host/changesets.ts#L219-L257](../../../../packages/sdk/src/host/changesets.ts#L219-L257) - `told`, which sends `changeset/statusChanged` when the status moved and the smallest file update"
+  - "[code://packages/sdk/src/host/changesets.ts#L268-L282](../../../../packages/sdk/src/host/changesets.ts#L268-L282) - `contentMoved`: reads the changeset again and says nothing until the read is back"
+  - "[code://packages/sdk/src/host/facts.ts#L293-L304](../../../../packages/sdk/src/host/facts.ts#L293-L304) - a git change outside the host, one of `contentMoved`'s callers"
   - "[code://packages/sdk/src/changes.ts#L883-L910](../../../../packages/sdk/src/changes.ts#L883-L910) - `state` answers `ready` with the files, for every scope"
   - "[code://packages/sdk/test/changes-refresh.test.ts#L168-L222](../../../../packages/sdk/test/changes-refresh.test.ts#L168-L222) - a real git repository in a temp directory, re-read on an outside change, a write and a tool call"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `ChangesetStatus.Recomputing`: `files` remains the previous completed result while recomputation runs, an empty one included; `ChangesetStatus` is `@nonexhaustive` (`channels-changeset/state.ts:105-125`); `changeset/statusChanged` covers `recomputing -> ready` (`channels-changeset/actions.ts:18-30`)"

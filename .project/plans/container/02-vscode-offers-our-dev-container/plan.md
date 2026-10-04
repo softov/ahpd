@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-02
+revalidated: 2026-10-04
 requires:
   - plans/container/01-a-session-in-a-dev-container/plan.md
   - plans/container/03-a-dev-container-is-a-computer/plan.md
@@ -15,8 +15,8 @@ decisions:
   - decisions/vscode-reaches-ahpd-through-a-dev-tunnel.md
 refs:
   - "[code://.project/research/how-vscode-offers-a-dev-container.md](../../../research/how-vscode-offers-a-dev-container.md) - the checks VS Code makes, and which ones ahpd fails"
-  - "[code://packages/sdk/src/host.ts#L7526](../../../../packages/sdk/src/host.ts#L7526) - the `vscode.devContainers` key"
-  - "[code://packages/sdk/src/host.ts#L7430](../../../../packages/sdk/src/host.ts#L7430) - `containersReady`, which decides whether the key is advertised"
+  - "[code://packages/sdk/src/host/handshake.ts#L259](../../../../packages/sdk/src/host/handshake.ts#L259) - the `vscode.devContainers` key"
+  - "[code://packages/sdk/src/host/handshake.ts#L163-L165](../../../../packages/sdk/src/host/handshake.ts#L163-L165) - `containersReady`, which decides whether the key is advertised"
   - "[code://packages/tunnel-devtunnel/src/discovery.ts#L33-L69](../../../../packages/tunnel-devtunnel/src/discovery.ts#L33-L69) - the tunnel labels, `vscode-server-launcher`, the protocol label and `_ahpd`"
   - "[code://packages/tunnel-devtunnel/README.md](../../../../packages/tunnel-devtunnel/README.md) - reaching ahpd as a Tunnel entry"
   - "[code://packages/server/src/config.ts#L427](../../../../packages/server/src/config.ts#L427) - where the daemon's `ws://` URL is built"

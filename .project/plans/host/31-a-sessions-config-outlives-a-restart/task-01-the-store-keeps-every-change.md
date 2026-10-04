@@ -4,8 +4,8 @@ status: implemented
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L8380-L8392](../../../../packages/sdk/src/host.ts#L8380-L8392) - the only write today"
-  - "[code://packages/sdk/src/host.ts#L8815-L8841](../../../../packages/sdk/src/host.ts#L8815-L8841) - the live change path"
+  - "[code://packages/sdk/src/host/chatactions.ts#L107-L112](../../../../packages/sdk/src/host/chatactions.ts#L107-L112) - the only write today"
+  - "[code://packages/sdk/src/host/chatactions.ts#L372-L452](../../../../packages/sdk/src/host/chatactions.ts#L372-L452) - the live change path"
 ---
 
 ## Objective

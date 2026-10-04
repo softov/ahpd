@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L8457-L8460](../../../../packages/sdk/src/host.ts#L8457-L8460) - answers the store's page"
+  - "[code://packages/sdk/src/host/automations.ts#L306-L310](../../../../packages/sdk/src/host/automations.ts#L306-L310) - answers the store's page"
   - "[code://packages/sdk/src/automations.ts#L24](../../../../packages/sdk/src/automations.ts#L24) - `PAGE = 20`"
   - "[code://packages/sdk/src/automations.ts#L51-L60](../../../../packages/sdk/src/automations.ts#L51-L60) - `entry()` slices the first page every time"
   - "[code://packages/sdk/src/automations.ts#L260-L269](../../../../packages/sdk/src/automations.ts#L260-L269) - `runs()` answers `items` and `nextCursor`"
@@ -22,7 +22,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/automations.ts` - the store keeps how many runs each automation shows (`PAGE` to start); `entry()` slices that many and offers `runsNextCursor` when more exist; `runs(resource, cursor)` checks the cursor against the entry's own, advances the count, and announces the automation through `said()`.
 - `UPDATE: packages/sdk/src/types/automations.ts:208-209` - `runs` answers nothing the wire carries; its doc says the page arrives on `automation/set`.
-- `UPDATE: packages/sdk/src/host.ts:8457-8460` - answers `{}`; a cursor the store does not recognise is `-32602`.
+- `UPDATE: packages/sdk/src/host/automations.ts:306-310` - answers `{}`; a cursor the store does not recognise is `-32602`.
 - `UPDATE: packages/sdk/test/automations.test.ts` - the paging tests read the entry.
 - `UPDATE: packages/sdk/test/wire.test.ts` - the `FetchAutomationRunsResult` line leaves `KNOWN`.
 - `UPDATE: docs/AHP.md` - the `fetchAutomationRuns` row says what is acknowledged and where the page arrives.

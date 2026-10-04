@@ -1,6 +1,6 @@
 ---
 title: The handler classification test reads every file that holds handlers
-status: todo
+status: implemented
 depends: []
 layer: "sdk test"
 refs:
@@ -28,3 +28,9 @@ refs:
 - Deleting a key from `NEEDS` by hand makes it fail, and is reverted.
 
 ## Resume
+
+Built 2026-10-04. `users-gate.test.ts:135` now reads `host.ts` at its own indent and every `.ts` under `src/host/` at the indent the family tables are written in, through a `handlerKeys(source, indent)` helper that keeps both the bare-key and the quoted-key patterns and the comment that says why the second exists.
+
+Step 1's count is 45, written as `const SERVED = 45`, so a method added raises it: 32 bare keys and 13 quoted `vscode/*` keys. Two of the 47 are still missed on purpose, because they take no params (`ping` and `shutdown`, with `getNetworkDiagnosticsInfo` and `getManagedSettingsDiagnostics` among them); the constant is what the pattern finds today, not the number of keys in the literal.
+
+Validation: the file passes 55 tests. Deleting `listSessions` from `NEEDS` in `host/gate.ts` by hand makes it fail with `['listSessions']`, and the line was put back.

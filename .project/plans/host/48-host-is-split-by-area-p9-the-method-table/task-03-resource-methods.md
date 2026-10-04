@@ -1,6 +1,6 @@
 ---
 title: The resource methods are one file
-status: todo
+status: implemented
 depends: [task-01-the-classification-test-reads-every-file.md]
 layer: "sdk"
 refs:
@@ -30,3 +30,13 @@ refs:
 - `wc -l packages/sdk/src/host.ts` recorded.
 
 ## Resume
+
+Built 2026-10-04. `packages/sdk/src/host/resourcemethods.ts` (356 lines) holds `WRITE_MODES`, `storeFor` and the eleven resource methods, moved by name rather than by line range, so `fetchAutomationRuns` - which sits between `authenticate` and `createResourceWatch` in the literal - stayed where it was for task 05.
+
+`host.ts` is 4,227 lines.
+
+The factory returns `{ storeFor, methods }` rather than one flat table, because `storeFor` is offered to `createAdmission` and must not become a method a client can call. `accept` does `const { storeFor, methods } = createResourceMethods(ctx, conn); conn.storeFor = storeFor;` before the admission factory is built, and spreads `...methods` after `...handshake`.
+
+`notServed`, `schemeOf` and the `WriteMode` type left `host.ts` with the code that used them; `PROXY_ENV`, `PROBE_TIMEOUT` and `MAX_BODY` stay until task 05 takes them, since `resolved` at module level still reads `PROBE_TIMEOUT`.
+
+Validation: `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` all pass, 176 files and 2,707 tests. `users-gate.test.ts` still finds the 45 task 01 recorded.

@@ -9,7 +9,7 @@ refs:
   - "[code://packages/computer/src/plugin.ts#L933-L950](../../../../packages/computer/src/plugin.ts#L933-L950) - the picker's `devcontainer://` row"
   - "[code://packages/computer/src/plugin.ts#L829-L878](../../../../packages/computer/src/plugin.ts#L829-L878) - the relay launcher and its `connect`"
   - "[code://packages/computer/src/manifest.ts#L393](../../../../packages/computer/src/manifest.ts#L393) - `devcontainerOf`, the create body's route"
-  - "[code://packages/sdk/src/host.ts#L8683-L8688](../../../../packages/sdk/src/host.ts#L8683-L8688) - policy/01's `computer:` rows, checked before a session's machine is placed"
+  - "[code://packages/sdk/src/host/machines.ts#L150-L153](../../../../packages/sdk/src/host/machines.ts#L150-L153) - policy/01's `computer:` rows, checked before a session's machine is placed"
 ---
 
 ## Objective

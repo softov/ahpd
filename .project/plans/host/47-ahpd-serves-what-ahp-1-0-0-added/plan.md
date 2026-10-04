@@ -4,14 +4,14 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://UPSTREAM.md](../../../../UPSTREAM.md) - Pass 5's \"The wire, beside the features\", the list these plans take"
-  - "[code://packages/sdk/src/host.ts#L381-L391](../../../../packages/sdk/src/host.ts#L381-L391) - `ACTION_HOMES`, today's grant for a client action, by family"
-  - "[code://packages/sdk/src/host.ts#L11538-L11543](../../../../packages/sdk/src/host.ts#L11538-L11543) - a method with no handler is `-32601`"
-  - "[code://packages/sdk/src/host.ts#L11475-L11476](../../../../packages/sdk/src/host.ts#L11475-L11476) - a client action with no case is refused as `not served yet`"
+  - "[code://packages/sdk/src/host/gate.ts#L232-L242](../../../../packages/sdk/src/host/gate.ts#L232-L242) - `ACTION_HOMES`, today's grant for a client action, by family"
+  - "[code://packages/sdk/src/host.ts#L1021-L1026](../../../../packages/sdk/src/host.ts#L1021-L1026) - a method with no handler is `-32601`"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1126-L1127](../../../../packages/sdk/src/host/chatactions.ts#L1126-L1127) - a client action with no case is refused as `not served yet`"
   - "[code://.project/plans/host/46-built-in-surfaces-are-advertised-for-role-control/task-02-every-method-and-action-needs-one-operation.md](../../../../.project/plans/host/46-built-in-surfaces-are-advertised-for-role-control/task-02-every-method-and-action-needs-one-operation.md) - the operation each method and client action asks once host/46 lands"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `ACTION_INTRODUCED_IN` registers every action these plans emit as `0.9.0` and only `chat/canvasesChanged` and `canvas/stateChanged` as `0.10.0`; `isActionKnownToVersion(action, '0.9.0')` is true for all of them (`src/types/version/registry.ts:21-142`)"
   - "https://github.com/microsoft/vscode/tree/7516b04bc94/src/vs/platform/agentHost - the reference host at UPSTREAM.md's Pass 5 checkpoint, read for each child"

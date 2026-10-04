@@ -4,10 +4,10 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L3123](../../../../packages/sdk/src/host.ts#L3123) - `owner` on a session with no directory"
-  - "[code://packages/sdk/src/host.ts#L3141](../../../../packages/sdk/src/host.ts#L3141) - `owner` beside the git facts"
-  - "[code://packages/sdk/src/host.ts#L2187-L2190](../../../../packages/sdk/src/host.ts#L2187-L2190) - `sender` on a stored turn's message"
-  - "[code://packages/sdk/src/host.ts#L3765-L3767](../../../../packages/sdk/src/host.ts#L3765-L3767) - `sender` on `chat/turnStarted`"
+  - "[code://packages/sdk/src/host/facts.ts#L160-L161](../../../../packages/sdk/src/host/facts.ts#L160-L161) - `owner` on a session with no directory"
+  - "[code://packages/sdk/src/host/facts.ts#L174-L179](../../../../packages/sdk/src/host/facts.ts#L174-L179) - `owner` beside the git facts"
+  - "[code://packages/sdk/src/host/spawn.ts#L136-L141](../../../../packages/sdk/src/host/spawn.ts#L136-L141) - `sender` on a stored turn's message"
+  - "[code://packages/sdk/src/host/spawn.ts#L472-L476](../../../../packages/sdk/src/host/spawn.ts#L472-L476) - `sender` on `chat/turnStarted`"
   - "[code://packages/sdk/src/changes.ts#L634](../../../../packages/sdk/src/changes.ts#L634) - `staged` and `unstaged` on a file"
   - "[code://packages/sdk/src/changes.ts#L108](../../../../packages/sdk/src/changes.ts#L108) - read back for the watch's comparison"
   - "[code://packages/sdk/src/changes.ts#L244](../../../../packages/sdk/src/changes.ts#L244) - counted for the commit"
@@ -20,7 +20,7 @@ A session summary and state carry `_meta['ahpd.owner']`, a live `chat/turnStarte
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:3123, 3141, 2190, 3767` - the new keys; the plugin event fields at :3808 and :3818 are not `_meta` and stay.
+- `UPDATE: packages/sdk/src/host/facts.ts:161, 179` and `packages/sdk/src/host/spawn.ts:140, 474` - the new keys; the plugin event fields at `spawn.ts:515` and `spawn.ts:525` are not `_meta` and stay.
 - `UPDATE: packages/sdk/src/changes.ts:634, 108, 244` - write and read the new keys.
 - `UPDATE: packages/sdk/test/*.test.ts` - `host.test.ts`, `sessions.test.ts`, `plugin-events-fire.test.ts`, `commit.test.ts` and any other that reads the old keys (`rg -n "_meta\??\.(owner|sender|staged|unstaged)" packages/sdk/test`).
 - `UPDATE: packages/sdk/test/wire.test.ts` - `owner` and `sender` leave `PENDING`.

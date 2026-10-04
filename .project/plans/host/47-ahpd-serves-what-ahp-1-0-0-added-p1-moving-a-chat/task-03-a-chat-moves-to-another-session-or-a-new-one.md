@@ -4,13 +4,13 @@ status: todo
 depends: [task-02-a-chat-is-reordered-inside-its-session.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L950-L978](../../../../packages/sdk/src/host.ts#L950-L978) - `Held`: one agent, one config, one folder set for every chat in it"
-  - "[code://packages/sdk/src/host.ts#L3688-L3700](../../../../packages/sdk/src/host.ts#L3688-L3700) - `spawn`, whose closures hold the session URI, so the chat is spawned again under the destination"
-  - "[code://packages/sdk/src/host.ts#L5440-L5462](../../../../packages/sdk/src/host.ts#L5440-L5462) - `restartChat`: close, then spawn with `{ resume: agentId(), seed: allTurns() }`"
-  - "[code://packages/sdk/src/host.ts#L9243-L9262](../../../../packages/sdk/src/host.ts#L9243-L9262) - `disposeChat`, the removal half"
-  - "[code://packages/sdk/src/host.ts#L6119](../../../../packages/sdk/src/host.ts#L6119) - the internal `createChat`, the adding half"
-  - "[code://packages/sdk/src/host.ts#L439-L472](../../../../packages/sdk/src/host.ts#L439-L472) - `claims`, re-claimed for the destination"
-  - "[code://packages/sdk/src/host.ts#L340](../../../../packages/sdk/src/host.ts#L340) - `config.computer`, what names the machine a session runs on"
+  - "[code://packages/sdk/src/host/state.ts#L12-L41](../../../../packages/sdk/src/host/state.ts#L12-L41) - `Held`: one agent, one config, one folder set for every chat in it"
+  - "[code://packages/sdk/src/host/spawn.ts#L311-L320](../../../../packages/sdk/src/host/spawn.ts#L311-L320) - `spawn`, whose closures hold the session URI, so the chat is spawned again under the destination"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L422-L443](../../../../packages/sdk/src/host/lifecycle.ts#L422-L443) - `restartChat`: close, then spawn with `{ resume: agentId(), seed: allTurns() }`"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L689-L719](../../../../packages/sdk/src/host/sessionmethods.ts#L689-L719) - `disposeChat`, the removal half"
+  - "[code://packages/sdk/src/host/tooling.ts#L297-L308](../../../../packages/sdk/src/host/tooling.ts#L297-L308) - the internal `createChat`, the adding half"
+  - "[code://packages/sdk/src/host/state.ts#L113-L142](../../../../packages/sdk/src/host/state.ts#L113-L142) - `claims`, re-claimed for the destination"
+  - "[code://packages/sdk/src/host/gate.ts#L191](../../../../packages/sdk/src/host/gate.ts#L191) - `config.computer`, what names the machine a session runs on"
   - "[code://packages/sdk/src/types/sessions.ts#L93-L95](../../../../packages/sdk/src/types/sessions.ts#L93-L95) - `sender`, kept per session id and turn"
   - "[code://packages/sdk/src/types/sessions.ts#L143-L145](../../../../packages/sdk/src/types/sessions.ts#L143-L145) - `chatTitle`, kept per session id"
   - "[plans/host/50-a-peer-chat-is-its-own-conversation/plan.md](../50-a-peer-chat-is-its-own-conversation/plan.md) - the chat's own backend id and the stored chat list a move rewrites"
@@ -23,7 +23,7 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts` - the two destinations in the `moveChat` handler; a `moveChat` helper that closes the chat and its workers, rewrites `byChat`, the subagent map and the claims, and spawns under the destination with `{ resume: <backend id>, seed: allTurns(), chatId: <backend id> }` and the chat's own folders.
+- `UPDATE: packages/sdk/src/host/sessionmethods.ts` - the two destinations in the `moveChat` handler; a `moveChat` helper that closes the chat and its workers, rewrites `byChat`, the subagent map and the claims, and spawns under the destination with `{ resume: <backend id>, seed: allTurns(), chatId: <backend id> }` and the chat's own folders.
 - `UPDATE: packages/sdk/src/sessions.ts`, `packages/sdk/src/types/sessions.ts` - a `moveChat(from, to, uri)` on both stores that moves the chat's title, senders and its entry in host/50's chat list in one write.
 - `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/sessions.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - the `moveChat` row.

@@ -4,7 +4,7 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
   - plans/host/11-a-grant-is-a-subject-and-a-verb/plan.md
@@ -12,15 +12,15 @@ requires:
 decisions:
   - decisions/a-grant-names-an-operation-and-read-and-write-are-its-groups.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L158-L249](../../../../packages/sdk/src/host.ts#L158-L249) - `NEEDS`, method to `subject:read|write`"
-  - "[code://packages/sdk/src/host.ts#L257-L280](../../../../packages/sdk/src/host.ts#L257-L280) - `UNGATED`, the handshake, `authenticate`, `subscribe`, `dispatchAction`"
-  - "[code://packages/sdk/src/host.ts#L307-L318](../../../../packages/sdk/src/host.ts#L307-L318) - `dispatchNeeds`, a dispatch's grant by channel"
-  - "[code://packages/sdk/src/host.ts#L358-L367](../../../../packages/sdk/src/host.ts#L358-L367) - `ACTION_HOMES`, one grant per action family"
-  - "[code://packages/sdk/src/host.ts#L7347-L7399](../../../../packages/sdk/src/host.ts#L7347-L7399) - `capabilityFor`: `subscribe` by channel, `completions`, `invokeChangesetOperation`, and a resource method's scheme"
-  - "[code://packages/sdk/src/host.ts#L9732-L9757](../../../../packages/sdk/src/host.ts#L9732-L9757) - the dispatch gate, which asks the strictest of the channel's and the family's grants"
-  - "[code://packages/sdk/src/host.ts#L6306-L6321](../../../../packages/sdk/src/host.ts#L6306-L6321) - `advertisedSchemes`, the pattern the new advertisement copies, and its `operations` list named after the provider's methods (`read`, `write`)"
-  - "[code://packages/sdk/src/host.ts#L6337-L6339](../../../../packages/sdk/src/host.ts#L6337-L6339) - `ahpd.resourceProviders` in root state `_meta`"
-  - "[code://packages/sdk/src/host.ts#L7893](../../../../packages/sdk/src/host.ts#L7893) - `ahpd.resourceProviders` in `initialize`'s `_meta`"
+  - "[code://packages/sdk/src/host/gate.ts#L22-L96](../../../../packages/sdk/src/host/gate.ts#L22-L96) - `NEEDS`, method to `subject:read|write`"
+  - "[code://packages/sdk/src/host/gate.ts#L108-L131](../../../../packages/sdk/src/host/gate.ts#L108-L131) - `UNGATED`, the handshake, `authenticate`, `subscribe`, `dispatchAction`"
+  - "[code://packages/sdk/src/host/gate.ts#L159-L169](../../../../packages/sdk/src/host/gate.ts#L159-L169) - `dispatchNeeds`, a dispatch's grant by channel"
+  - "[code://packages/sdk/src/host/gate.ts#L232-L242](../../../../packages/sdk/src/host/gate.ts#L232-L242) - `ACTION_HOMES`, one grant per action family"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L104](../../../../packages/sdk/src/host/admission.ts#L35-L104) - `capabilityFor`: `subscribe` by channel, `completions`, `invokeChangesetOperation`, and a resource method's scheme"
+  - "[code://packages/sdk/src/host/actions.ts#L100-L125](../../../../packages/sdk/src/host/actions.ts#L100-L125) - the dispatch gate, which asks the strictest of the channel's and the family's grants"
+  - "[code://packages/sdk/src/host/root.ts#L171-L186](../../../../packages/sdk/src/host/root.ts#L171-L186) - `advertisedSchemes`, the pattern the new advertisement copies, and its `operations` list named after the provider's methods (`read`, `write`)"
+  - "[code://packages/sdk/src/host/root.ts#L204](../../../../packages/sdk/src/host/root.ts#L204) - `ahpd.resourceProviders` in root state `_meta`"
+  - "[code://packages/sdk/src/host/handshake.ts#L262](../../../../packages/sdk/src/host/handshake.ts#L262) - `ahpd.resourceProviders` in `initialize`'s `_meta`"
   - "[code://packages/sdk/src/users.ts#L24-L88](../../../../packages/sdk/src/users.ts#L24-L88) - the built-in roles, `SUBJECTS`, `GRANT`, `LEGACY` and `holds`"
   - "[code://packages/sdk/src/types/users.ts#L21-L37](../../../../packages/sdk/src/types/users.ts#L21-L37) - `Verb` and `Grant`"
   - "[code://packages/sdk/src/people.ts#L236-L268](../../../../packages/sdk/src/people.ts#L236-L268) - the `role:` scheme, which writes a role's grants"
@@ -60,7 +60,7 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 
 - `Verb` is `read | write`, so no grant can name less than a whole half of a subject.
 - No advertisement of the host's own subjects.
-- `Not found: a table from client action to grant finer than its family - searched "ACTION_HOMES|dispatchNeeds" in packages/sdk/src/host.ts.`
+- `Not found: a table from client action to grant finer than its family - searched "ACTION_HOMES|dispatchNeeds" in packages/sdk/src/host.`
 
 ## Decisions locked in
 
@@ -90,7 +90,7 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 - **Event flow** - unchanged: a refusal names the operation it needed, `-32009` for a request and `rejectionReason` for a dispatch.
 - **State flow** - roles in the `users` file are unchanged; a new role may hold operations.
 - **Layer responsibilities** - sdk: the table, the gate, the advertisement · server: the `role:` write validation through `isGrant`, `bounded` unchanged · docs: USERS.md.
-- **Source-of-truth files** - [`code://packages/sdk/src/users.ts`](../../../../packages/sdk/src/users.ts), [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/users.ts`](../../../../packages/sdk/src/users.ts), [`code://packages/sdk/src/host/gate.ts`](../../../../packages/sdk/src/host/gate.ts), [`code://packages/sdk/src/host/admission.ts`](../../../../packages/sdk/src/host/admission.ts), [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts), [`code://packages/sdk/src/host/root.ts`](../../../../packages/sdk/src/host/root.ts), [`code://packages/sdk/src/host/handshake.ts`](../../../../packages/sdk/src/host/handshake.ts)
 
 ## Tasks
 

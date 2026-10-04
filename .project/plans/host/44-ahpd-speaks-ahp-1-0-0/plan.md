@@ -4,16 +4,16 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires: []
 refs:
   - "[code://package.json#L38](../../../../package.json#L38) - the workspace's `^0.9.0`"
   - "[code://packages/sdk/package.json#L57](../../../../packages/sdk/package.json#L57) - the published sdk's dependency"
   - "[code://packages/agent-claude/package.json#L62-L69](../../../../packages/agent-claude/package.json#L62-L69) - the published plugin's peer and dev ranges"
-  - "[code://packages/sdk/src/host.ts#L7576-L7605](../../../../packages/sdk/src/host.ts#L7576-L7605) - `initialize` takes the first supported version in the client's order"
+  - "[code://packages/sdk/src/host/handshake.ts#L132-L152](../../../../packages/sdk/src/host/handshake.ts#L132-L152) - `initialize` takes the first supported version in the client's order"
   - "[code://packages/sdk/src/nested.ts#L372-L375](../../../../packages/sdk/src/nested.ts#L372-L375) - an inner host must answer exactly `PROTOCOL_VERSION`"
   - "[code://packages/sdk/src/automations.ts#L95-L125](../../../../packages/sdk/src/automations.ts#L95-L125) - a definition is stored as sent, `disableConditions` included"
-  - "[code://packages/sdk/src/host.ts#L2418-L2436](../../../../packages/sdk/src/host.ts#L2418-L2436) - `summaryOf`, a catalogue row with no `chats`"
+  - "[code://packages/sdk/src/host/catalogue.ts#L173-L191](../../../../packages/sdk/src/host/catalogue.ts#L173-L191) - `summaryOf`, a catalogue row with no `chats`"
   - "[code://UPSTREAM.md](../../../../UPSTREAM.md) - Pass 5's \"The wire, beside the features\", where what 1.0.0 adds and this plan does not take waits"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - additive over 0.9.0: nothing removed, renamed or made required; `SUPPORTED_PROTOCOL_VERSIONS` is `['1.0.0', '0.9.0']` and `negotiateProtocolVersion` picks the highest caret-compatible offer (`src/types/version/registry.ts:21-82`)"
   - "file:///home/softov/.local/cache/tmp/claude-1000/-home-softov/f22339a5-d379-4c13-91e4-d62f169fefc8/scratchpad/ahp-1.0.0/ - the two tarballs, `types.diff`, `cmpschema.mjs` and a trial tree with 1.0.0 installed (`v.log`, `v2.log`); scratch, so it may be gone"

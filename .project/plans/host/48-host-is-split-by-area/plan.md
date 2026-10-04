@@ -128,9 +128,9 @@ Estimated at 1,500 to 2,000 lines.
 | [p6 - The catalogue, past sessions and snapshots are files of their own](../48-host-is-split-by-area-p6-catalogue-and-transcripts/plan.md) | done | p3, p5 |
 | [p7 - Starting, restarting and removing a session are files of their own](../48-host-is-split-by-area-p7-session-lifecycle/plan.md) | done | p6 |
 | [p8 - Session tools, terminals and automations are files of their own](../48-host-is-split-by-area-p8-tools-terminals-and-automations/plan.md) | done | p7 |
-| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | planned | p8 |
-| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | planned | p9 |
-| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | planned | p10 |
+| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | implemented | p8 |
+| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | implemented | p9 |
+| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | implemented | p10 |
 
 ## Risks and tradeoffs
 
@@ -143,9 +143,9 @@ Estimated at 1,500 to 2,000 lines.
 
 ## Resume state
 
-- **Done so far:** p1-p8 built 2026-10-03/04 (`host.ts` 11,658 -> 5,077 lines).
+- **Done so far:** p1-p8 built 2026-10-03/04 (`host.ts` 11,658 -> 5,077 lines), in `f1b3bd1`. p9, p10 and p11 built 2026-10-04 in this worktree: `host.ts` 5,077 -> 1,141 lines, `packages/sdk/src/host/` holding 30 files, and 32 open plan folders rewritten to cite them.
 - **p3's dead copies are gone.** The reviewer removed `git.ts`, `github.ts` and `worktrees.ts` from `packages/sdk/src/` when p1-p4 landed; only `packages/sdk/src/repo/` holds them now.
-- **Next action:** p9.
+- **Next action:** review, then merge this worktree.
 - **Requires:** plugin/29, which is in the tree (commit `804a549`).
 - **Blocks:** host/43, host/44 p2, host/44 p3, host/45, host/46 and host/47, which all edit `host.ts` and run after this plan, against the new files.
 - **Open questions:** none.
@@ -153,8 +153,8 @@ Estimated at 1,500 to 2,000 lines.
 
 ## Final verification checklist
 
-- [ ] p1 to p11 built. p1 to p8 are; p9 to p11 have not been started.
-- [ ] `wc -l packages/sdk/src/host.ts` is under 2,000. It is 5,077.
+- [x] p1 to p11 built. p1 to p8 in `f1b3bd1`; p9, p10 and p11 in this worktree, uncommitted.
+- [x] `wc -l packages/sdk/src/host.ts` is under 2,000. It is 1,141.
 - [x] `rg -n "from '\.\./src/host\.js'|from '\.\./\.\./sdk/src/host\.js'" packages` still resolves every import, and `packages/sdk/src/index.ts` is unchanged apart from p3's three re-export lines.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
 - [ ] `plans/index.md` updated - left alone on purpose, because the instructions for this run say not to edit it.

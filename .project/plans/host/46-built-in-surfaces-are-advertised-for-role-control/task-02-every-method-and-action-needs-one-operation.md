@@ -4,12 +4,12 @@ status: todo
 depends: [task-01-operations-and-groups-are-one-table.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L158-L249](../../../../packages/sdk/src/host.ts#L158-L249) - `NEEDS`"
-  - "[code://packages/sdk/src/host.ts#L307-L318](../../../../packages/sdk/src/host.ts#L307-L318) - `dispatchNeeds`"
-  - "[code://packages/sdk/src/host.ts#L341-L367](../../../../packages/sdk/src/host.ts#L341-L367) - `seesConfig` and `ACTION_HOMES`"
-  - "[code://packages/sdk/src/host.ts#L7347-L7399](../../../../packages/sdk/src/host.ts#L7347-L7399) - `capabilityFor`"
-  - "[code://packages/sdk/src/host.ts#L9732-L9757](../../../../packages/sdk/src/host.ts#L9732-L9757) - the dispatch gate"
-  - "[code://packages/sdk/src/host.ts#L8943-L8990](../../../../packages/sdk/src/host.ts#L8943-L8990) - `createChat`, whose `source.kind` is `fork` or `sideChat`"
+  - "[code://packages/sdk/src/host/gate.ts#L22-L96](../../../../packages/sdk/src/host/gate.ts#L22-L96) - `NEEDS`"
+  - "[code://packages/sdk/src/host/gate.ts#L159-L169](../../../../packages/sdk/src/host/gate.ts#L159-L169) - `dispatchNeeds`"
+  - "[code://packages/sdk/src/host/gate.ts#L218-L242](../../../../packages/sdk/src/host/gate.ts#L218-L242) - `seesConfig` and `ACTION_HOMES`"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L104](../../../../packages/sdk/src/host/admission.ts#L35-L104) - `capabilityFor`"
+  - "[code://packages/sdk/src/host/actions.ts#L100-L125](../../../../packages/sdk/src/host/actions.ts#L100-L125) - the dispatch gate"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L617-L649](../../../../packages/sdk/src/host/sessionmethods.ts#L617-L649) - `createChat`, whose `source.kind` is `fork` or `sideChat`"
   - "[code://packages/sdk/test/users-gate.test.ts#L140-L168](../../../../packages/sdk/test/users-gate.test.ts#L140-L168) - the staleness test"
   - npm://@microsoft/agent-host-protocol@1.0.0 - `IS_CLIENT_DISPATCHABLE` (`src/types/action-origin.generated.ts:462`), the 47 actions below
 ---
@@ -20,10 +20,10 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:158-249` - `NEEDS` per the table.
-- `UPDATE: packages/sdk/src/host.ts:307-367` - `dispatchNeeds` keeps only the two channel rules no action type can say (the root's per-connection keys, and `file:watch` for a channel that is neither a session's, a terminal's nor the automations'); `ACTION_HOMES` keeps `home`, which still refuses an action on the wrong kind of channel, and drops `needs`; `ACTION_NEEDS` beside it.
-- `UPDATE: packages/sdk/src/host.ts:7347-7399` - `capabilityFor` answers `subscribe` and `completions` with operations; `createChat` with `source.kind: 'fork'` asks `chat:fork`.
-- `UPDATE: packages/sdk/src/host.ts:9732-9757` - the gate asks `ACTION_NEEDS[action.type]`.
+- `UPDATE: packages/sdk/src/host/gate.ts:22-96` - `NEEDS` per the table.
+- `UPDATE: packages/sdk/src/host/gate.ts:159-242` - `dispatchNeeds` keeps only the two channel rules no action type can say (the root's per-connection keys, and `file:watch` for a channel that is neither a session's, a terminal's nor the automations'); `ACTION_HOMES` keeps `home`, which still refuses an action on the wrong kind of channel, and drops `needs`; `ACTION_NEEDS` beside it.
+- `UPDATE: packages/sdk/src/host/admission.ts:35-104` - `capabilityFor` answers `subscribe` and `completions` with operations; `createChat` with `source.kind: 'fork'` asks `chat:fork`.
+- `UPDATE: packages/sdk/src/host/actions.ts:100-125` - the gate asks `ACTION_NEEDS[action.type]`.
 - `UPDATE: packages/sdk/test/users-gate.test.ts` - the staleness test and the matrix below.
 - Comments citing `a-grant-is-a-subject-and-a-verb` cite `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
 

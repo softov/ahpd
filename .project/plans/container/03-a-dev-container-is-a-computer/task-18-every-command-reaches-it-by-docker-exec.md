@@ -41,7 +41,7 @@ The Dev Container CLI runs only `up` and `--version`; every command in a dev con
 3. A dev container with no kept probe, made before this or by a daemon that lost it, is probed on its first reach and the result kept.
 4. Route `reach`, `exec`, `inside()` and the nested host spawn through the one derivation, so no road spells the `docker exec` flags a second time; `nestedHost` changes only through `reach`.
 5. The relay's nested host gets its container by id, which removes its fall back to the CLI's `devcontainer.local_folder` lookup.
-6. Comments that cite `a-dev-container-is-made-by-the-dev-container-cli` cite `a-dev-container-is-reached-by-docker-exec` and say what the code does: `devcontainer.ts:15` and `:375`, `runtime.ts:652` and `:768`, `plugin.ts:304` and `:827`, `packages/sdk/src/types/containers.ts:12`, `packages/sdk/src/host.ts:7525`.
+6. Comments that cite `a-dev-container-is-made-by-the-dev-container-cli` cite `a-dev-container-is-reached-by-docker-exec` and say what the code does: `devcontainer.ts:15` and `:375`, `runtime.ts:652` and `:768`, `plugin.ts:304` and `:827`, `packages/sdk/src/types/containers.ts:12`, `packages/sdk/src/host/handshake.ts:259`.
 
 ## Validation
 

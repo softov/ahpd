@@ -4,10 +4,10 @@ status: todo
 depends: []
 layer: "sdk | computer"
 refs:
-  - "[code://packages/sdk/src/host.ts#L185-L187](../../../../packages/sdk/src/host.ts#L185-L187) - the `container:write` rows of `NEEDS` for the dev container methods"
-  - "[code://packages/sdk/src/host.ts#L9270-L9384](../../../../packages/sdk/src/host.ts#L9270-L9384) - the `vscode/devContainers/*` handlers, `disconnect` at :9363"
-  - "[code://packages/sdk/src/host.ts#L7473](../../../../packages/sdk/src/host.ts#L7473) - `containers`, one connection's relays"
-  - "[code://packages/sdk/src/host.ts#L1716](../../../../packages/sdk/src/host.ts#L1716) - `sessionMachines`, the sessions placed on each machine"
+  - "[code://packages/sdk/src/host/gate.ts#L36-L38](../../../../packages/sdk/src/host/gate.ts#L36-L38) - the `container:write` rows of `NEEDS` for the dev container methods"
+  - "[code://packages/sdk/src/host/vscodemethods.ts#L380-L493](../../../../packages/sdk/src/host/vscodemethods.ts#L380-L493) - the `vscode/devContainers/*` handlers, `disconnect` at :473"
+  - "[code://packages/sdk/src/host/context.ts#L277-L287](../../../../packages/sdk/src/host/context.ts#L277-L287) - `containers`, one connection's relays"
+  - "[code://packages/sdk/src/host/machines.ts#L47](../../../../packages/sdk/src/host/machines.ts#L47) - `sessionMachines`, the sessions placed on each machine"
   - "[code://packages/sdk/src/types/containers.ts#L87-L122](../../../../packages/sdk/src/types/containers.ts#L87-L122) - `ContainerPort`"
   - "[code://packages/computer/src/plugin.ts#L913-L914](../../../../packages/computer/src/plugin.ts#L913-L914) - `machineFor`, the computer a folder already is"
   - "[code://packages/computer/src/plugin.ts#L930-L952](../../../../packages/computer/src/plugin.ts#L930-L952) - the registered container port"
@@ -25,8 +25,8 @@ The permission this needs beyond `container:write` waits on the open question in
 ## Files
 
 - `UPDATE: packages/sdk/src/types/containers.ts:87-122` - `ContainerPort` gains optional `stop(folder)` and `remove(folder)`, each answering whether it acted.
-- `UPDATE: packages/sdk/src/host.ts:185-187` - both methods need `container:write`, like `connect`; whether they also need `computer:write` (plugin/16) and an owner check waits on the plan's open question.
-- `UPDATE: packages/sdk/src/host.ts:9270-9384` - the two handlers: check `workspaceFolder` is an absolute path; answer `false` when another connection holds a relay for that folder, which needs a view of the relays across connections, or when any session is placed on that folder's computer (`sessionMachines`, `:1716`); otherwise end the asking connection's relays for it and call the port; a port without the member is refused the way an absent launcher is.
+- `UPDATE: packages/sdk/src/host/gate.ts:36-38` - both methods need `container:write`, like `connect`; whether they also need `computer:write` (plugin/16) and an owner check waits on the plan's open question.
+- `UPDATE: packages/sdk/src/host/vscodemethods.ts:380-493` - the two handlers: check `workspaceFolder` is an absolute path; answer `false` when another connection holds a relay for that folder, which needs a view of the relays across connections, or when any session is placed on that folder's computer (`sessionMachines`, `:47`); otherwise end the asking connection's relays for it and call the port; a port without the member is refused the way an absent launcher is.
 - `UPDATE: packages/computer/src/plugin.ts:930-952` - the registered port implements both through `machineFor` (`:913`) and the wrapped `stop` and `remove` (`:485-497`), so a removed computer's up-time and owner entry close as they do for a `computer://` delete.
 - `UPDATE: packages/computer/test/devcontainer.test.ts` and `packages/sdk/test` - the cases below.
 

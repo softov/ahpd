@@ -4,20 +4,20 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L1034-L1044](../../../../packages/sdk/src/host.ts#L1034-L1044) - `chatSummary`, a chat's row with the backend's status and no client flags"
-  - "[code://packages/sdk/src/host.ts#L1081-L1089](../../../../packages/sdk/src/host.ts#L1081-L1089) - `subagentSummary`, a worker chat's row"
-  - "[code://packages/sdk/src/host.ts#L2418-L2436](../../../../packages/sdk/src/host.ts#L2418-L2436) - `summaryOf`, the catalogue row, with no `chats` and no `defaultChat`"
-  - "[code://packages/sdk/src/host.ts#L2464-L2485](../../../../packages/sdk/src/host.ts#L2464-L2485) - `summaryMoved`, every mutable field on each `root/sessionSummaryChanged`"
-  - "[code://packages/sdk/src/host.ts#L3465](../../../../packages/sdk/src/host.ts#L3465) - a worker chat's `session/chatUpdated`"
-  - "[code://packages/sdk/src/host.ts#L3880-L3898](../../../../packages/sdk/src/host.ts#L3880-L3898) - a chat's `session/chatUpdated` on a status change, then `summaryMoved`"
-  - "[code://packages/sdk/src/host.ts#L6601-L6615](../../../../packages/sdk/src/host.ts#L6601-L6615) - the session state's `chats`: peer chats, live workers, restored workers"
-  - "[code://packages/sdk/src/host.ts#L10321-L10337](../../../../packages/sdk/src/host.ts#L10321-L10337) - `session/isReadChanged` and `session/isArchivedChanged`, the pattern a chat's flags mirror"
-  - "[code://packages/sdk/src/host.ts#L11285-L11286](../../../../packages/sdk/src/host.ts#L11285-L11286) - `not served yet`, where `chat/isReadChanged` lands today"
+  - "[code://packages/sdk/src/host/catalogue.ts#L55-L65](../../../../packages/sdk/src/host/catalogue.ts#L55-L65) - `chatSummary`, a chat's row with the backend's status and no client flags"
+  - "[code://packages/sdk/src/host/catalogue.ts#L68-L76](../../../../packages/sdk/src/host/catalogue.ts#L68-L76) - `subagentSummary`, a worker chat's row"
+  - "[code://packages/sdk/src/host/catalogue.ts#L173-L191](../../../../packages/sdk/src/host/catalogue.ts#L173-L191) - `summaryOf`, the catalogue row, with no `chats` and no `defaultChat`"
+  - "[code://packages/sdk/src/host/catalogue.ts#L219-L240](../../../../packages/sdk/src/host/catalogue.ts#L219-L240) - `summaryMoved`, every mutable field on each `root/sessionSummaryChanged`"
+  - "[code://packages/sdk/src/host/spawn.ts#L165](../../../../packages/sdk/src/host/spawn.ts#L165) - a worker chat's `session/chatUpdated`"
+  - "[code://packages/sdk/src/host/spawn.ts#L590-L605](../../../../packages/sdk/src/host/spawn.ts#L590-L605) - a chat's `session/chatUpdated` on a status change, then `summaryMoved`"
+  - "[code://packages/sdk/src/host/snapshots.ts#L230-L245](../../../../packages/sdk/src/host/snapshots.ts#L230-L245) - the session state's `chats`: peer chats, live workers, restored workers"
+  - "[code://packages/sdk/src/host/actions.ts#L511-L528](../../../../packages/sdk/src/host/actions.ts#L511-L528) - `session/isReadChanged` and `session/isArchivedChanged`, the pattern a chat's flags mirror"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1126-L1127](../../../../packages/sdk/src/host/chatactions.ts#L1126-L1127) - `not served yet`, where `chat/isReadChanged` lands today"
   - "[code://packages/sdk/src/types/sessions.ts#L136-L145](../../../../packages/sdk/src/types/sessions.ts#L136-L145) - `chatTitle`, a per-chat value in the session store, keyed by the chat URI"
   - "[code://packages/sdk/test/host.test.ts#L2388-L2390](../../../../packages/sdk/test/host.test.ts#L2388-L2390) - a session marked read through `dispatchAction`"
   - "[code://packages/sdk/test/conformance.test.ts](../../../../packages/sdk/test/conformance.test.ts) - every emitted action replayed through the protocol's reducers"
@@ -35,9 +35,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### Searches performed
 
-- `rg -n "session/chatUpdated" packages/sdk/src/host.ts` - :3465 (workers), :3888 (a chat's title, status or activity moved), :5881 (a rename); each is followed by `summaryMoved`, so the notification already goes out and only `chats` is missing from it.
-- `rg -n "session/chatAdded|session/chatRemoved|session/defaultChatChanged" packages/sdk/src/host.ts` - :3511, :5017, :5975, :9043, :9081, :9084; whether each is followed by `summaryMoved` is checked in task 01.
-- `rg -n "IS_CLIENT_DISPATCHABLE" packages/sdk/src/host.ts` - a client action is gated by the package's table, which in 1.0.0 marks both chat flags dispatchable, so after p1 they reach `not served yet`.
+- `rg -n "session/chatUpdated" packages/sdk/src/host` - `spawn.ts:165` (workers), `spawn.ts:595` (a chat's title, status or activity moved), `tooling.ts:211` (a rename); each is followed by `summaryMoved`, so the notification already goes out and only `chats` is missing from it.
+- `rg -n "session/chatAdded|session/chatRemoved|session/defaultChatChanged" packages/sdk/src/host` - `spawn.ts:211`, `lifecycle.ts:121`, `tooling.ts:305`, `sessionmethods.ts:676`, `sessionmethods.ts:714`, `sessionmethods.ts:717`; whether each is followed by `summaryMoved` is checked in task 01.
+- `rg -n "IS_CLIENT_DISPATCHABLE" packages/sdk/src/host` - a client action is gated by the package's table, which in 1.0.0 marks both chat flags dispatchable, so after p1 they reach `not served yet`.
 
 ### Gaps
 
@@ -59,7 +59,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - **Data flow** - a chat moves -> `session/chatUpdated` -> `summaryMoved` -> `root/sessionSummaryChanged` with `chats` from `chatCatalogOf(session)`; `chat/isReadChanged` -> session store chat flags -> the action on the chat channel, `session/chatUpdated` with the new `status`, `summaryMoved`.
 - **Layer responsibilities** - sdk host: the catalogue and the dispatch · sdk session store: per-chat flags.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/catalogue.ts`](../../../../packages/sdk/src/host/catalogue.ts), [`code://packages/sdk/src/host/snapshots.ts`](../../../../packages/sdk/src/host/snapshots.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
 
 ## Tasks
 

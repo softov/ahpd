@@ -9,7 +9,7 @@ refs:
   - "[code://packages/server/src/plugins.ts#L684](../../../../packages/server/src/plugins.ts#L684) - where the spec reaches `pluginHost`"
   - "[code://packages/sdk/src/types/users.ts#L40-L101](../../../../packages/sdk/src/types/users.ts#L40-L101) - `Principal`"
   - "[code://packages/sdk/src/users.ts#L79](../../../../packages/sdk/src/users.ts#L79) - `holds`"
-  - "[code://packages/sdk/src/host.ts#L4507-L4511](../../../../packages/sdk/src/host.ts#L4507-L4511) - `ownerFor`, which the open question in the plan is about"
+  - "[code://packages/sdk/src/host/owners.ts#L47-L51](../../../../packages/sdk/src/host/owners.ts#L47-L51) - `ownerFor`, which the open question in the plan is about"
   - "[code://packages/server/src/commands/options.ts#L408-L416](../../../../packages/server/src/commands/options.ts#L408-L416) - `pluginEntry`"
   - "[code://packages/sdk/src/users.ts#L545](../../../../packages/sdk/src/users.ts#L545) - `principalOf`, how grants become `can`"
 ---
@@ -24,7 +24,7 @@ A plugin's connection is served as the principal `plugin:<name>`, which can do w
 - `UPDATE: packages/server/src/config.ts:378-392` - `asSpec` keeps `grants` when it is an array of strings.
 - `UPDATE: packages/server/src/commands/options.ts:408-416` - `pluginEntry` gains `grants: { type: 'array', items: { type: 'string' } }`.
 - `UPDATE: packages/server/src/plugins.ts:684` - the loader checks each grant, drops one whose shape is not `<subject>:<verb>` with a line in its `problems` naming `plugins.<name>.grants`, and hands the rest to `pluginHost`.
-- `UPDATE: packages/sdk/src/host.ts:4507-4511` - `ownerFor` as the plan's open question is answered; this waits on it.
+- `UPDATE: packages/sdk/src/host/owners.ts:47-51` - `ownerFor` as the plan's open question is answered; this waits on it.
 - `UPDATE: packages/sdk/src/plugins.ts` - `connect()` passes the principal to `Host.accept`.
 - `UPDATE: packages/server/test/plugin-connect.test.ts` - the cases below.
 

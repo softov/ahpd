@@ -4,8 +4,8 @@ status: blocked
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L8683-L8692](../../../../packages/sdk/src/host.ts#L8683-L8692) - where a session's machine is placed"
-  - "[code://packages/sdk/src/host.ts#L4952-L4960](../../../../packages/sdk/src/host.ts#L4952-L4960) - `removeSession`, where the token is dropped"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L515-L518](../../../../packages/sdk/src/host/sessionmethods.ts#L515-L518) - where a session's machine is placed"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L95-L104](../../../../packages/sdk/src/host/lifecycle.ts#L95-L104) - `removeSession`, where the token is dropped"
   - "[code://packages/sdk/src/nested.ts#L115-L129](../../../../packages/sdk/src/nested.ts#L115-L129) - `startInside`, the nested start every road to a nested session goes through"
   - "[code://packages/sdk/src/listen.ts#L57-L68](../../../../packages/sdk/src/listen.ts#L57-L68) - `same`, the constant-time comparison to reuse"
 ---
@@ -20,7 +20,8 @@ This task is `blocked` until the proxy listener plan exists, since the hook it a
 
 - `CREATE: packages/sdk/src/session-tokens.ts` - `sessionTokens()`: `mint(session, owner, scope)`, `whose(token)`, `drop(session)`.
 - `UPDATE: packages/sdk/src/nested.ts` - the nested start asks the host to mint for the session URI when the port says `remote(id)`; a second start for the same URI replaces the token.
-- `UPDATE: packages/sdk/src/host.ts` - the token table beside the sessions, `drop` in `removeSession` (`:4952`), and `whose` exposed on the handle the proxy listener is given.
+- `UPDATE: packages/sdk/src/host.ts` - the token table beside the sessions, and `whose` exposed on the handle the proxy listener is given.
+- `UPDATE: packages/sdk/src/host/lifecycle.ts:95-104` - `drop` in `removeSession`.
 
 ## Steps
 

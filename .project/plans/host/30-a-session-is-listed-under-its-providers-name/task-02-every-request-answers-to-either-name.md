@@ -4,13 +4,13 @@ status: implemented
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L7292-L7296](../../../../packages/sdk/src/host.ts#L7292-L7296) - `createChat`, which looks the session up by the exact string"
-  - "[code://packages/sdk/src/host.ts#L7429-L7431](../../../../packages/sdk/src/host.ts#L7429-L7431) - `disposeSession`, which passes the exact string to `removeSession`"
-  - "[code://packages/sdk/src/host.ts#L4003-L4006](../../../../packages/sdk/src/host.ts#L4003-L4006) - `removeSession`, `sessions.get(uri)`"
-  - "[code://packages/sdk/src/host.ts#L6080-L6097](../../../../packages/sdk/src/host.ts#L6080-L6097) - `initialize`, whose `initialSubscriptions` call `snapshotOf` without `meantBy`"
-  - "[code://packages/sdk/src/host.ts#L6228-L6240](../../../../packages/sdk/src/host.ts#L6228-L6240) - `reconnect`, which sets the alias but does not apply `spelledFor`"
-  - "[code://packages/sdk/src/host.ts#L6306-L6347](../../../../packages/sdk/src/host.ts#L6306-L6347) - `subscribe`, the pattern the other three follow"
-  - "[code://packages/sdk/src/host.ts#L9258-L9277](../../../../packages/sdk/src/host.ts#L9258-L9277) - `unsubscribe`"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L576-L579](../../../../packages/sdk/src/host/sessionmethods.ts#L576-L579) - `createChat`, which looks the session up by the exact string"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L720-L723](../../../../packages/sdk/src/host/sessionmethods.ts#L720-L723) - `disposeSession`, which passes the exact string to `removeSession`"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L95-L98](../../../../packages/sdk/src/host/lifecycle.ts#L95-L98) - `removeSession`, `sessions.get(uri)`"
+  - "[code://packages/sdk/src/host/handshake.ts#L173-L194](../../../../packages/sdk/src/host/handshake.ts#L173-L194) - `initialize`, whose `initialSubscriptions` call `snapshotOf` without `meantBy`"
+  - "[code://packages/sdk/src/host/handshake.ts#L344-L368](../../../../packages/sdk/src/host/handshake.ts#L344-L368) - `reconnect`, which sets the alias but does not apply `spelledFor`"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L101-L148](../../../../packages/sdk/src/host/sessionmethods.ts#L101-L148) - `subscribe`, the pattern the other three follow"
+  - "[code://packages/sdk/src/host.ts#L964-L983](../../../../packages/sdk/src/host.ts#L964-L983) - `unsubscribe`"
 ---
 
 ## Objective
@@ -19,11 +19,11 @@ A client that created a session as `ahp-session:/<uuid>` can fork a chat in it, 
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:7292-7296` - `createChat` resolves the session with `heldAs`.
-- `UPDATE: packages/sdk/src/host.ts:7429-7431` - `disposeSession` resolves the channel with `heldAs` before `removeSession`; `root/sessionRemoved` still names the held name.
-- `UPDATE: packages/sdk/src/host.ts:6080-6097` - `initialSubscriptions` go through `meantBy`, record the alias and apply `spelledFor`, as `subscribe` does.
-- `UPDATE: packages/sdk/src/host.ts:6228-6240` - `reconnect` applies `spelledFor` to the snapshots it returns under an alias.
-- `UPDATE: packages/sdk/src/host.ts:9258-9277` - check that `unsubscribe` under the alias drops the alias and the watch; change only if it does not.
+- `UPDATE: packages/sdk/src/host/sessionmethods.ts:576-579` - `createChat` resolves the session with `heldAs`.
+- `UPDATE: packages/sdk/src/host/sessionmethods.ts:720-723` - `disposeSession` resolves the channel with `heldAs` before `removeSession`; `root/sessionRemoved` still names the held name.
+- `UPDATE: packages/sdk/src/host/handshake.ts:173-194` - `initialSubscriptions` go through `meantBy`, record the alias and apply `spelledFor`, as `subscribe` does.
+- `UPDATE: packages/sdk/src/host/handshake.ts:344-368` - `reconnect` applies `spelledFor` to the snapshots it returns under an alias.
+- `UPDATE: packages/sdk/src/host.ts:964-983` - check that `unsubscribe` under the alias drops the alias and the watch; change only if it does not.
 
 ## Steps
 

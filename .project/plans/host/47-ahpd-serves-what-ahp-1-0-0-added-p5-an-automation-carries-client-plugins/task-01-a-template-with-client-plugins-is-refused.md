@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L10222-L10241](../../../../packages/sdk/src/host.ts#L10222-L10241) - where a create or update is handed to the store"
-  - "[code://packages/sdk/src/host.ts#L7871](../../../../packages/sdk/src/host.ts#L7871) - the advertised automation capabilities"
+  - "[code://packages/sdk/src/host/actions.ts#L403-L423](../../../../packages/sdk/src/host/actions.ts#L403-L423) - where a create or update is handed to the store"
+  - "[code://packages/sdk/src/host/handshake.ts#L231](../../../../packages/sdk/src/host/handshake.ts#L231) - the advertised automation capabilities"
   - "[code://packages/sdk/test/automations.test.ts#L228-L256](../../../../packages/sdk/test/automations.test.ts#L228-L256) - a create and a patch through a client"
 ---
 
@@ -15,7 +15,7 @@ An `automation/createRequested` whose `definition.session.customizations`, or an
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:10222-10241` - the check before `store.create` and `store.update`.
+- `UPDATE: packages/sdk/src/host/actions.ts:403-423` - the check before `store.create` and `store.update`.
 - `UPDATE: packages/sdk/test/automations.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - the automation rows: client plugins on a template are refused, and `customizations` is not advertised.
 

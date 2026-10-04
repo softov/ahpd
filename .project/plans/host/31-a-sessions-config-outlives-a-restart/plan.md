@@ -4,14 +4,14 @@ domain: host
 status: active
 priority: high
 created: 2026-09-29
-revalidated: 2026-09-29
+revalidated: 2026-10-04
 requires: []
 refs:
-  - "[code://packages/sdk/src/host.ts#L8380-L8392](../../../../packages/sdk/src/host.ts#L8380-L8392) - the one `kept.setConfig`: a session with no running agent, each value written through `String()`"
-  - "[code://packages/sdk/src/host.ts#L8815-L8841](../../../../packages/sdk/src/host.ts#L8815-L8841) - a live `session/configChanged`, which never reaches the store"
-  - "[code://packages/sdk/src/host.ts#L8431](../../../../packages/sdk/src/host.ts#L8431) - a resume spawns with `kept.config(id)`"
-  - "[code://packages/sdk/src/host.ts#L5530](../../../../packages/sdk/src/host.ts#L5530) - a browsed row shows defaults under `kept.config(id)`"
-  - "[code://packages/sdk/src/host.ts#L3164-L3222](../../../../packages/sdk/src/host.ts#L3164-L3222) - `spawn`, which merges the config over `agent.defaults()`"
+  - "[code://packages/sdk/src/host/chatactions.ts#L107-L112](../../../../packages/sdk/src/host/chatactions.ts#L107-L112) - the one `kept.setConfig`: a session with no running agent, each value written through `String()`"
+  - "[code://packages/sdk/src/host/chatactions.ts#L372-L452](../../../../packages/sdk/src/host/chatactions.ts#L372-L452) - a live `session/configChanged`, which never reaches the store"
+  - "[code://packages/sdk/src/host/chatactions.ts#L196-L200](../../../../packages/sdk/src/host/chatactions.ts#L196-L200) - a resume spawns with `kept.config(id)`"
+  - "[code://packages/sdk/src/host/snapshots.ts#L396-L399](../../../../packages/sdk/src/host/snapshots.ts#L396-L399) - a browsed row shows defaults under `kept.config(id)`"
+  - "[code://packages/sdk/src/host/spawn.ts#L422](../../../../packages/sdk/src/host/spawn.ts#L422) - `spawn`, which merges the config over `agent.defaults()`"
   - "[code://packages/sdk/src/sessions.ts#L76-L207](../../../../packages/sdk/src/sessions.ts#L76-L207) - `fileSessions` and the saved shape"
 ---
 
@@ -56,7 +56,7 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 
 - **State flow** - `createSession` and every accepted `session/configChanged` write `kept.setConfig(id, values)`; resume and a browsed row read it through one `storedConfig(owner, id)` that drops what the schema refuses.
 - **Layer responsibilities** - sdk only.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/sessionconfig.ts`](../../../../packages/sdk/src/host/sessionconfig.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
 
 ## Tasks
 

@@ -8,7 +8,7 @@ refs:
   - "[code://packages/agent-claude/src/session.ts#L2090-L2152](../../../../packages/agent-claude/src/session.ts#L2090-L2152) - a permission ask becomes `pending-confirmation` and `chat/toolCallReady`, with no `edits`"
   - "[code://packages/agent-claude/src/session.ts#L3636](../../../../packages/agent-claude/src/session.ts#L3636) - `chat/toolCallConfirmed`, where an ask is settled"
   - "[code://packages/sdk/src/types/agent.ts#L272](../../../../packages/sdk/src/types/agent.ts#L272) - `Start.onFileEdit`, the seam a backend already uses to hand the host a file's sides"
-  - "[code://packages/sdk/src/host.ts#L4009-L4013](../../../../packages/sdk/src/host.ts#L4009-L4013) - the host passes `onFileEdit` to the changes port's `observe`"
+  - "[code://packages/sdk/src/host/spawn.ts#L639-L643](../../../../packages/sdk/src/host/spawn.ts#L639-L643) - the host passes `onFileEdit` to the changes port's `observe`"
   - "[code://packages/sdk/src/types/changes.ts#L260-L320](../../../../packages/sdk/src/types/changes.ts#L260-L320) - `ChangesetSource`: `read` and `observe`"
   - "[code://packages/sdk/src/changes.ts#L190-L196](../../../../packages/sdk/src/changes.ts#L190-L196) - `ahp-edit:`, the scheme for a captured side the host holds and serves"
   - "[code://packages/sdk/src/changes.ts#L399-L407](../../../../packages/sdk/src/changes.ts#L399-L407) - `capturedUri`, the URI shape a pending side copies"
@@ -25,7 +25,7 @@ When the Claude backend asks a person to approve `Write`, `Edit` or `MultiEdit`,
 
 - `UPDATE: packages/sdk/src/types/changes.ts` - `ChangesetSource.propose?(dir, session, toolCallId, path, apply: (current: string | undefined) => string | undefined): Promise<FileEdit | undefined>` and `settle?(session, toolCallId): void`.
 - `UPDATE: packages/sdk/src/changes.ts` - `propose` reads the file, calls `apply`, holds the result under `ahp-edit://pending/<session base64url>/<toolCallId>/<path>` and answers the `FileEdit`; `read` serves it; `settle` drops it, and forgetting a session drops its pending sides.
-- `UPDATE: packages/sdk/src/types/agent.ts`, `packages/sdk/src/types/session.ts`, `packages/sdk/src/host.ts` - `Start.onEditProposed?(toolCallId, path, apply)` and `Start.onEditSettled?(toolCallId)`, wired to the port beside `onFileEdit`.
+- `UPDATE: packages/sdk/src/types/agent.ts`, `packages/sdk/src/types/session.ts`, `packages/sdk/src/host/spawn.ts` - `Start.onEditProposed?(toolCallId, path, apply)` and `Start.onEditSettled?(toolCallId)`, wired to the port beside `onFileEdit`.
 - `UPDATE: packages/agent-claude/src/claude.ts`, `packages/agent-claude/src/session.ts` - pass the seams through; before `chat/toolCallReady` for those three tools, ask for the preview and put `{ items: [edit] }` on the action and on the call as `edits`; settle on confirm, deny, cancel and turn end.
 - `CREATE: packages/agent-claude/test/agent-claude-edit-preview.test.ts` - the backend cases, on the fake SDK feed from `agent-claude-subagent.test.ts`.
 - `UPDATE: packages/sdk/test/changes-uris.test.ts` - the port cases, in a temp directory.

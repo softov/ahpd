@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -132,30 +132,43 @@ const call = async (client: ReturnType<ReturnType<typeof createHost>['accept']>,
     (error: { code: number; message: string; data?: unknown }) => error,
   );
 
+/**
+ * Every handler key in `source`, whose table is written at `indent` spaces.
+ *
+ * The second pattern is the quoted ones, which are the reference client's
+ * extension methods. They were served and classified nowhere: the pattern above
+ * reads a bare identifier, and every `vscode/*` handler is a string key, so
+ * nine methods nobody decided about passed this test. The pattern for them
+ * takes any parameter list, because a method that ignores its params is still
+ * a method - and only quoted keys, because inside a handler's own body there
+ * are object literals whose members look exactly like this and are not
+ * methods of this host.
+ */
+const handlerKeys = (source: string, indent: number): string[] => {
+  const bare = new RegExp(`^ {${indent}}([a-zA-Z][A-Za-z0-9]*): (?:async )?\\(params\\)`, 'gm');
+  const quoted = new RegExp(`^ {${indent}}'([^']+)': (?:async )?\\([^)]*\\)\\s*=>`, 'gm');
+  return [...source.matchAll(bare), ...source.matchAll(quoted)].map((one) => one[1] as string);
+};
+
+/** How many methods the host serves. A method added is a number raised here. */
+const SERVED = 45;
+
 it('classifies every handler the host serves', () => {
   /*
    * Read out of the source, because the literal is rebuilt per connection and
    * there is no other list. A handler added and classified nowhere is a method
    * nobody decided about, and this fails on the next run rather than serving it
    * to anybody - which is the property `needsWrite` did not have.
-   */
-  const source = readFileSync(join(REPO, 'packages/sdk/src/host.ts'), 'utf8');
-  const served = [...source.matchAll(/^ {8}([a-zA-Z][A-Za-z0-9]*): (?:async )?\(params\)/gm)].map((one) => one[1] as string);
-  /*
-   * And the quoted ones, which are the reference client's extension methods.
    *
-   * They were served and classified nowhere: the pattern above reads a bare
-   * identifier, and every `vscode/*` handler is a string key, so nine methods
-   * nobody decided about passed this test. The pattern for them takes any
-   * parameter list, because a method that ignores its params is still a
-   * method - and only quoted keys, because inside a handler's own body there
-   * are object literals whose members look exactly like this and are not
-   * methods of this host.
+   * The methods are in `host.ts` and in the families beside it under `host/`,
+   * and each table is read at the indent it is written in.
    */
-  const quoted = [...source.matchAll(/^ {8}'([^']+)': (?:async )?\([^)]*\)\s*=>/gm)].map((one) => one[1] as string);
-  expect(quoted.length).toBeGreaterThan(5);
-  served.push(...quoted);
-  expect(served.length).toBeGreaterThan(30);
+  const family = join(REPO, 'packages/sdk/src/host');
+  const served = [
+    ...handlerKeys(readFileSync(join(REPO, 'packages/sdk/src/host.ts'), 'utf8'), 8),
+    ...readdirSync(family).flatMap((name) => handlerKeys(readFileSync(join(family, name), 'utf8'), 4)),
+  ];
+  expect(served.length).toBe(SERVED);
 
   const classified = new Set([...Object.keys(GATE.NEEDS), ...GATE.UNGATED]);
   expect(served.filter((one) => !classified.has(one))).toEqual([]);

@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: medium
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/04-a-cofold-session-in-a-computer/plan.md
 changes: []
@@ -41,8 +41,8 @@ refs:
   - "[code://packages/sdk/src/types/computers.ts#L143](../../../../packages/sdk/src/types/computers.ts#L143) - `nested`"
   - "[code://packages/sdk/src/plugins.ts#L393](../../../../packages/sdk/src/plugins.ts#L393) - `registerComputers` is one port per host, so every runtime lives inside this plugin"
   - "[code://packages/sdk/src/computers.ts#L103-L129](../../../../packages/sdk/src/computers.ts#L103-L129) - `computersFor`, the agents gate around `how` and `nested`"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - a session runs nested only when its backend says `runsNested`"
-  - "[code://packages/sdk/src/host.ts#L7094-L7096](../../../../packages/sdk/src/host.ts#L7094-L7096) - `Host.close` closes every chat, which for a nested session sends `disposeSession` inside"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - a session runs nested only when its backend says `runsNested`"
+  - "[code://packages/sdk/src/host.ts#L844-L846](../../../../packages/sdk/src/host.ts#L844-L846) - `Host.close` closes every chat, which for a nested session sends `disposeSession` inside"
   - "[code://packages/sdk/src/nested.ts#L511-L524](../../../../packages/sdk/src/nested.ts#L511-L524) - the nested `close`"
   - "[code://packages/sdk/src/decide.ts#L68-L71](../../../../packages/sdk/src/decide.ts#L68-L71) - a policy value is a whole-value glob, `*` the only special character"
   - git://c81ebe0:.project/ideas/more-computer-runtimes.md - the idea this plan takes `ssh` and several runtimes on one host from

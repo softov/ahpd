@@ -4,10 +4,10 @@ status: todo
 depends: [task-04-a-chat-says-when-it-can-move.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L950-L978](../../../../packages/sdk/src/host.ts#L950-L978) - `Held.chats`, the order to change"
-  - "[code://packages/sdk/src/host.ts#L6752-L6770](../../../../packages/sdk/src/host.ts#L6752-L6770) - the state's `chats`, the list `session/chatsReordered` must name in full"
-  - "[code://packages/sdk/src/host.ts#L9130](../../../../packages/sdk/src/host.ts#L9130) - `createChat`, the handler shape"
-  - "[code://packages/sdk/src/host.ts#L228-L229](../../../../packages/sdk/src/host.ts#L228-L229) - `NEEDS`, where `moveChat` gets its grant"
+  - "[code://packages/sdk/src/host/state.ts#L12-L41](../../../../packages/sdk/src/host/state.ts#L12-L41) - `Held.chats`, the order to change"
+  - "[code://packages/sdk/src/host/snapshots.ts#L230-L245](../../../../packages/sdk/src/host/snapshots.ts#L230-L245) - the state's `chats`, the list `session/chatsReordered` must name in full"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L576](../../../../packages/sdk/src/host/sessionmethods.ts#L576) - `createChat`, the handler shape"
+  - "[code://packages/sdk/src/host/gate.ts#L79-L80](../../../../packages/sdk/src/host/gate.ts#L79-L80) - `NEEDS`, where `moveChat` gets its grant"
   - "[plans/host/50-a-peer-chat-is-its-own-conversation/task-02-the-store-records-a-sessions-chats.md](../50-a-peer-chat-is-its-own-conversation/task-02-the-store-records-a-sessions-chats.md) - `chats(id)` and `setChats(id, list)`, whose list order is the stored order"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `moveChat` with a `session` destination naming the source's own session repositions only the requested entry; `after` absent places it first; the host MUST reject a missing source, a source not `movable`, an unresolved anchor and a source anchoring itself, leaving everything unchanged (`channels-chat/commands.ts:164-199`)"
 ---
@@ -18,8 +18,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:228-229` - `moveChat: 'session:write'` in `NEEDS` (`chat:move` once host/46 lands).
-- `UPDATE: packages/sdk/src/host.ts` - a `moveChat` handler beside `createChat`; the reorder writes host/50's chat list in the new order.
+- `UPDATE: packages/sdk/src/host/gate.ts:79-80` - `moveChat: 'session:write'` in `NEEDS` (`chat:move` once host/46 lands).
+- `UPDATE: packages/sdk/src/host/sessionmethods.ts` - a `moveChat` handler beside `createChat`; the reorder writes host/50's chat list in the new order.
 - `UPDATE: packages/sdk/test/host.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - the `moveChat` and `session/chatsReordered` rows.
 

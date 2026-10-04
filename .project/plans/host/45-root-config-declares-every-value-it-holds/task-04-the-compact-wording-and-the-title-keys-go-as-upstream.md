@@ -4,12 +4,12 @@ status: todo
 depends: [task-01-the-root-config-declares-the-keys-vscode-pushes.md, task-02-a-pushed-key-nobody-declares-is-refused.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L5906-L5918](../../../../packages/sdk/src/host.ts#L5906-L5918) - `compactPrompts()`, `strategies` and `strategyOf`, which read `artifactToolsCompactPrompts` and `deferredTitleGeneration` off `rootConfig`"
-  - "[code://packages/sdk/src/host.ts#L5919-L5932](../../../../packages/sdk/src/host.ts#L5919-L5932) - `shapedDefinition`, which merges the compact wording before the strategy's"
-  - "[code://packages/sdk/src/host.ts#L6217-L6222](../../../../packages/sdk/src/host.ts#L6217-L6222) - `instructions`, which picks the compact instruction"
-  - "[code://packages/sdk/src/host.ts#L6240-L6268](../../../../packages/sdk/src/host.ts#L6240-L6268) - `ROOT_CONFIG_SCHEMA` and the comment above it, which declare both keys as a promise of behaviour"
-  - "[code://packages/sdk/src/host.ts#L7118-L7121](../../../../packages/sdk/src/host.ts#L7118-L7121) - the strategy snapshot taken before `spawn`"
-  - "[code://packages/sdk/src/host.ts#L10089-L10100](../../../../packages/sdk/src/host.ts#L10089-L10100) - the re-dispatch of every session's tools when the compact key moves"
+  - "[code://packages/sdk/src/host/tooling.ts#L92-L103](../../../../packages/sdk/src/host/tooling.ts#L92-L103) - `compactPrompts()`, `strategies` and `strategyOf`, which read `artifactToolsCompactPrompts` and `deferredTitleGeneration` off `rootConfig`"
+  - "[code://packages/sdk/src/host/tooling.ts#L111-L118](../../../../packages/sdk/src/host/tooling.ts#L111-L118) - `shapedDefinition`, which merges the compact wording before the strategy's"
+  - "[code://packages/sdk/src/host/tooling.ts#L403-L407](../../../../packages/sdk/src/host/tooling.ts#L403-L407) - `instructions`, which picks the compact instruction"
+  - "[code://packages/sdk/src/host/root.ts#L114-L142](../../../../packages/sdk/src/host/root.ts#L114-L142) - `ROOT_CONFIG_SCHEMA` and the comment above it, which declare both keys as a promise of behaviour"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L744-L747](../../../../packages/sdk/src/host/lifecycle.ts#L744-L747) - the strategy snapshot taken before `spawn`"
+  - "[code://packages/sdk/src/host/actions.ts#L285-L290](../../../../packages/sdk/src/host/actions.ts#L285-L290) - the re-dispatch of every session's tools when the compact key moves"
   - "[code://packages/sdk/src/artifacttools.ts#L186-L200](../../../../packages/sdk/src/artifacttools.ts#L186-L200) - the long instruction, `COMPACT_ARTIFACT_TOOLS_INSTRUCTION` and `COMPACT_ADD_DESCRIPTION`"
   - "[code://packages/sdk/src/artifacttools.ts#L217-L221](../../../../packages/sdk/src/artifacttools.ts#L217-L221) - the ADD tool's `compact` member"
   - "[code://packages/sdk/src/types/host.ts#L412-L417](../../../../packages/sdk/src/types/host.ts#L412-L417) - `TitleStrategy`, which keeps its three values"
@@ -32,11 +32,11 @@ A client older than 1.140 that still pushes any of the three has that key refuse
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:6240-6268` - `ROOT_CONFIG_SCHEMA` declares `defaultShell` and task 01's properties only; the comment above it no longer names the two keys.
-- `UPDATE: packages/sdk/src/host.ts:5906-5932` - `compactPrompts()` goes; `shapedDefinition` applies only `forSession`; `strategies` goes and `strategyOf` answers `'deferred'`.
-- `UPDATE: packages/sdk/src/host.ts:6217-6222` - `instructions` takes `one.instruction` only.
-- `UPDATE: packages/sdk/src/host.ts:7118-7121` - the snapshot and its comment go, since nothing can move the strategy.
-- `UPDATE: packages/sdk/src/host.ts:10089-10100` - the compact re-dispatch and its comment go.
+- `UPDATE: packages/sdk/src/host/root.ts:114-142` - `ROOT_CONFIG_SCHEMA` declares `defaultShell` and task 01's properties only; the comment above it no longer names the two keys.
+- `UPDATE: packages/sdk/src/host/tooling.ts:92-118` - `compactPrompts()` goes; `shapedDefinition` applies only `forSession`; `strategies` goes and `strategyOf` answers `'deferred'`.
+- `UPDATE: packages/sdk/src/host/tooling.ts:403-407` - `instructions` takes `one.instruction` only.
+- `UPDATE: packages/sdk/src/host/lifecycle.ts:744-747` - the snapshot and its comment go, since nothing can move the strategy.
+- `UPDATE: packages/sdk/src/host/actions.ts:285-290` - the compact re-dispatch and its comment go.
 - `UPDATE: packages/sdk/src/artifacttools.ts:189-200, 217-221` - `COMPACT_ARTIFACT_TOOLS_INSTRUCTION`, `COMPACT_ADD_DESCRIPTION` and the ADD tool's `compact` go; the long instruction and description stay as they are.
 - `UPDATE: packages/sdk/src/types/host.ts:462-469` - `HostTool.compact` goes; `TitleStrategy` keeps `activeAgent`, `utility` and `deferred`, and `forSession` stays.
 - `UPDATE: packages/sdk/src/validate.ts:101` - `compact` leaves `TOOL_OPTIONAL`; `checkTool` does not look at a member the table does not list, so a plugin tool still carrying `compact` registers and the member is ignored.
@@ -48,7 +48,7 @@ A client older than 1.140 that still pushes any of the three has that key refuse
 
 1. Take the two keys out of `ROOT_CONFIG_SCHEMA`; `activeAgentTitleGeneration` was never declared and stays out.
 2. Remove the compact path end to end: `compactPrompts()`, the merge in `shapedDefinition`, the choice in `instructions`, the re-dispatch in the `root/configChanged` handler, the `compact` member on the ADD tool, the two constants, `HostTool.compact` and its `validate.ts` entry.
-3. Make `strategyOf(uri)` answer `'deferred'` for every session, and remove `strategies` and the snapshot at :7121. A resumed or browsed session is `'deferred'` too: ahpd never recorded a strategy, so it has no legacy session to tell apart, which is why upstream's `'utility'` fallback for a session with no persisted strategy is not copied.
+3. Make `strategyOf(uri)` answer `'deferred'` for every session, and remove `strategies` and the snapshot at `lifecycle.ts:747`. A resumed or browsed session is `'deferred'` too: ahpd never recorded a strategy, so it has no legacy session to tell apart, which is why upstream's `'utility'` fallback for a session with no persisted strategy is not copied.
 4. Give `rename_chat` `deferLoading: true`, as upstream does in the same commit.
 5. Move the tests that used the removed keys: the users-gate tests push `telemetryLevel` (a host-wide key task 01 declares) in place of `artifactToolsCompactPrompts`; the root-config key lists drop the two keys; the conformance case checks `defaultShell` and one of task 01's keys; the host artifact cases lose the compact variant; the artifacttools compact case is deleted; the host deferred case stops pushing `deferredTitleGeneration`.
 

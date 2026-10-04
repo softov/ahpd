@@ -5,13 +5,13 @@ depends: []
 layer: "sdk"
 refs:
   - "[code://packages/sdk/src/rpc.ts#L220](../../../../packages/sdk/src/rpc.ts#L220) - `result ?? {}`"
-  - "[code://packages/sdk/src/host.ts#L7667](../../../../packages/sdk/src/host.ts#L7667) - `ping: async () => ({})`"
-  - "[code://packages/sdk/src/host.ts#L8231](../../../../packages/sdk/src/host.ts#L8231) - `createTerminal`'s `return {}`"
-  - "[code://packages/sdk/src/host.ts#L8242](../../../../packages/sdk/src/host.ts#L8242) - `disposeTerminal`'s"
-  - "[code://packages/sdk/src/host.ts#L8867](../../../../packages/sdk/src/host.ts#L8867) - `createSession`'s"
-  - "[code://packages/sdk/src/host.ts#L8991](../../../../packages/sdk/src/host.ts#L8991) - `createChat`'s"
-  - "[code://packages/sdk/src/host.ts#L9022](../../../../packages/sdk/src/host.ts#L9022) - `disposeChat`'s"
-  - "[code://packages/sdk/src/host.ts#L9026](../../../../packages/sdk/src/host.ts#L9026) - `disposeSession`'s"
+  - "[code://packages/sdk/src/host/handshake.ts#L272](../../../../packages/sdk/src/host/handshake.ts#L272) - `ping: async () => ({})`"
+  - "[code://packages/sdk/src/host/terminals.ts#L322](../../../../packages/sdk/src/host/terminals.ts#L322) - `createTerminal`'s `return {}`"
+  - "[code://packages/sdk/src/host/terminals.ts#L333](../../../../packages/sdk/src/host/terminals.ts#L333) - `disposeTerminal`'s"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L563](../../../../packages/sdk/src/host/sessionmethods.ts#L563) - `createSession`'s"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L687](../../../../packages/sdk/src/host/sessionmethods.ts#L687) - `createChat`'s"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L718](../../../../packages/sdk/src/host/sessionmethods.ts#L718) - `disposeChat`'s"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L722](../../../../packages/sdk/src/host/sessionmethods.ts#L722) - `disposeSession`'s"
   - "[code://packages/sdk/test/rpc.test.ts](../../../../packages/sdk/test/rpc.test.ts) - the peer's own tests"
 ---
 
@@ -22,7 +22,7 @@ refs:
 ## Files
 
 - `UPDATE: packages/sdk/src/rpc.ts:220` - the shared result function p1 exported sends `null` as `null` and `undefined` as `{}`.
-- `UPDATE: packages/sdk/src/host.ts:7667, 8231, 8242, 8867, 8991, 9022, 9026` - each returns `null`; any other path in those handlers that answers is read and made `null` too (a `return` inside a nested callback, such as `along` at :8805, is not an answer).
+- `UPDATE: packages/sdk/src/host/handshake.ts:272` and `packages/sdk/src/host/terminals.ts:322, 333` and `packages/sdk/src/host/sessionmethods.ts:563, 687, 718, 722` - each returns `null`; any other path in those handlers that answers is read and made `null` too (a `return` inside a nested callback, such as `along` at `sessionmethods.ts:500`, is not an answer).
 - `UPDATE: packages/sdk/test/wire.test.ts` - the seven `result is {}` lines leave `KNOWN`.
 - `UPDATE: docs/AHP.md` - wherever a row says one of the seven answers `{}` (`rg -n "answers \`\{\}\`" docs/AHP.md`); `shutdown` keeps `{}`, being outside `CommandMap`.
 

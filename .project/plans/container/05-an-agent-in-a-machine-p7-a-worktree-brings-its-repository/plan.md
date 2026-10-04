@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-09-26
-revalidated: 2026-10-02
+revalidated: 2026-10-04
 requires:
   - plans/plugin/16-a-disposable-machine/plan.md
   - plans/container/03-a-dev-container-is-a-computer/plan.md
@@ -13,9 +13,9 @@ creates: []
 decisions:
   - decisions/a-session-folder-reaches-a-machine-only-where-its-profile-allows.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L5372-L5402](../../../../packages/sdk/src/host.ts#L5372-L5402) - `placedIn`, which hands the folder, already the worktree, to the machine maker beside the owner, team and project"
-  - "[code://packages/sdk/src/host.ts#L5223](../../../../packages/sdk/src/host.ts#L5223) - `isolated`, which makes the worktree"
-  - "[code://packages/sdk/src/worktrees.ts#L58-L64](../../../../packages/sdk/src/worktrees.ts#L58-L64) - `gitWorktrees`, whose `repository` already asks git with `rev-parse` under a five-second limit"
+  - "[code://packages/sdk/src/host/machines.ts#L182-L212](../../../../packages/sdk/src/host/machines.ts#L182-L212) - `placedIn`, which hands the folder, already the worktree, to the machine maker beside the owner, team and project"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L457-L459](../../../../packages/sdk/src/host/lifecycle.ts#L457-L459) - `isolated`, which makes the worktree"
+  - "[code://packages/sdk/src/repo/worktrees.ts#L58-L64](../../../../packages/sdk/src/repo/worktrees.ts#L58-L64) - `gitWorktrees`, whose `repository` already asks git with `rev-parse` under a five-second limit"
   - "[code://packages/sdk/src/types/worktrees.ts#L73-L112](../../../../packages/sdk/src/types/worktrees.ts#L73-L112) - the `Worktrees` port"
   - "[code://packages/sdk/src/changes.ts#L1196-L1200](../../../../packages/sdk/src/changes.ts#L1196-L1200) - the same `rev-parse --path-format=absolute --git-common-dir` call, already made to watch a worktree's refs"
   - "[code://packages/sdk/src/types/computers.ts#L84-L85](../../../../packages/sdk/src/types/computers.ts#L84-L85) - `folder` on what a machine maker is asked"
@@ -34,7 +34,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ### Searches performed
 
 - `rg "gitDir" packages/sdk/src packages/computer/src` - only a local variable in `changes.ts`; no port method, no field on `MachineSource`, no mount.
-- `rg "placedIn" packages/sdk/src/host.ts` - one maker call, `host.ts:5323-5331`, which passes `owner`, `team`, `project`, `folder` and `needs`; `gitDir` goes beside `folder`.
+- `rg "placedIn" packages/sdk/src/host` - one maker call, `machines.ts:201-209`, which passes `owner`, `team`, `project`, `folder` and `needs`; `gitDir` goes beside `folder`.
 
 ### Runtime path
 

@@ -4,9 +4,9 @@ status: implemented
 depends: [task-08-a-dispatch-into-a-session-needs-session-write.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L2057-L2078](../../../../packages/sdk/src/host.ts#L2057-L2078) - `channelKind`, which reads a terminal the host holds as a terminal"
-  - "[code://packages/sdk/src/host.ts#L274-L310](../../../../packages/sdk/src/host.ts#L274-L310) - `dispatchNeeds`, which asks `terminal:write` of a terminal"
-  - "[code://packages/sdk/src/host.ts#L6437-L6488](../../../../packages/sdk/src/host.ts#L6437-L6488) - `capabilityFor`, which asks `terminal:read` of a terminal"
+  - "[code://packages/sdk/src/host/routing.ts#L337-L358](../../../../packages/sdk/src/host/routing.ts#L337-L358) - `channelKind`, which reads a terminal the host holds as a terminal"
+  - "[code://packages/sdk/src/host/gate.ts#L159-L169](../../../../packages/sdk/src/host/gate.ts#L159-L169) - `dispatchNeeds`, which asks `terminal:write` of a terminal"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L49](../../../../packages/sdk/src/host/admission.ts#L35-L49) - `capabilityFor`, which asks `terminal:read` of a terminal"
   - "[code://packages/sdk/test/users-gate.test.ts#L917-L935](../../../../packages/sdk/test/users-gate.test.ts#L917-L935) - the test"
 ---
 

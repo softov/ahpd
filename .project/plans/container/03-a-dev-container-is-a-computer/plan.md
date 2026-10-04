@@ -4,7 +4,7 @@ domain: container
 status: active
 priority: medium
 created: 2026-09-26
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/01-a-session-in-a-dev-container/plan.md
   - plans/plugin/15-an-agent-says-what-a-machine-needs/plan.md
@@ -31,7 +31,7 @@ refs:
   - "[code://packages/computer/src/plugin.ts#L683-L721](../../../../packages/computer/src/plugin.ts#L683-L721) - the `devcontainer://<folder>` session-time create"
   - "[code://packages/computer/src/plugin.ts#L903-L975](../../../../packages/computer/src/plugin.ts#L903-L975) - the `computer` key and its picker, the `devcontainer://` row at :933-950"
   - "[code://packages/computer/src/owners.ts#L1-L20](../../../../packages/computer/src/owners.ts#L1-L20) - why an extra id label would give a folder a second container"
-  - "[code://packages/sdk/src/host.ts#L7353](../../../../packages/sdk/src/host.ts#L7353) - `containers`, the relays a connection opened, dropped with the socket"
+  - "[code://packages/sdk/src/host/context.ts#L277-L287](../../../../packages/sdk/src/host/context.ts#L277-L287) - `containers`, the relays a connection opened, dropped with the socket"
   - "[code://packages/computer/test/fixtures/devcontainer.mjs](../../../../packages/computer/test/fixtures/devcontainer.mjs) - the fake CLI"
   - "[code://packages/computer/test/fixtures/docker.mjs](../../../../packages/computer/test/fixtures/docker.mjs) - the fake Docker"
   - npm://@devcontainers/cli@0.89.0 - `up` makes the container; its `exec` is the reference the switch is checked against
@@ -71,7 +71,7 @@ vscode/devContainers/connect  -> find the computer for F or make it -> [new] pro
 - `MANIFEST_SCHEMA` has no `source`, so the form cannot offer a folder.
 - `existing` ignores whether the container is running.
 - `reach` drops a caller's `cwd` for a dev container, and the picker strips `file://` instead of decoding the URI ([`code://packages/computer/src/plugin.ts#L942`](../../../../packages/computer/src/plugin.ts#L942)).
-- policy/01's `computer:` rows gate `devcontainer://F` before placement ([`code://packages/sdk/src/host.ts#L8683-L8688`](../../../../packages/sdk/src/host.ts#L8683-L8688)), but not the form create or the relay's `connect`.
+- policy/01's `computer:` rows gate `devcontainer://F` before placement ([`code://packages/sdk/src/host/machines.ts#L150-L153`](../../../../packages/sdk/src/host/machines.ts#L150-L153)), but not the form create or the relay's `connect`.
 - `computer:write` is not in the SDK yet; plugin/16 task 09 adds it.
 
 ## Decisions locked in

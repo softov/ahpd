@@ -6,8 +6,8 @@ layer: "sdk"
 refs:
   - "[code://packages/sdk/src/sessions.ts#L42-L52](../../../../packages/sdk/src/sessions.ts#L42-L52) - `chatTitle` and `setChatTitle`, by the exact chat URI"
   - "[code://packages/sdk/src/types/sessions.ts#L84](../../../../packages/sdk/src/types/sessions.ts#L84) - the port's `chatTitle(id, chatUri)`"
-  - "[code://packages/sdk/src/host.ts#L3364-L3365](../../../../packages/sdk/src/host.ts#L3364-L3365) - `spawn`, which reads a title back"
-  - "[code://packages/sdk/src/host.ts#L1258-L1271](../../../../packages/sdk/src/host.ts#L1258-L1271) - `chatUriFor` and `subagentChatUri`, which embed the session URI"
+  - "[code://packages/sdk/src/host/spawn.ts#L693-L694](../../../../packages/sdk/src/host/spawn.ts#L693-L694) - `spawn`, which reads a title back"
+  - "[code://packages/sdk/src/host/channels.ts#L109-L122](../../../../packages/sdk/src/host/channels.ts#L109-L122) - `chatUriFor` and `subagentChatUri`, which embed the session URI"
 ---
 
 ## Objective
@@ -16,7 +16,7 @@ A chat renamed while its session was held as `ahp-session:/<uuid>` keeps that ti
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:3364-3365` and the writes near 4777, 4867 and 5664 - read a title under the held chat URI, and when there is none, under the same chat built from `uriFor(id)`; write under the held chat URI.
+- `UPDATE: packages/sdk/src/host/spawn.ts:693-694` and the writes near `packages/sdk/src/host/tooling.ts:209`, `packages/sdk/src/host/lifecycle.ts:754` and `packages/sdk/src/host/tooling.ts:304` - read a title under the held chat URI, and when there is none, under the same chat built from `uriFor(id)`; write under the held chat URI.
 - `UPDATE: packages/sdk/test/host.test.ts` - the case below, next to `brings a renamed peer chat back with its title after a restart on the same file` (3068).
 
 ## Steps

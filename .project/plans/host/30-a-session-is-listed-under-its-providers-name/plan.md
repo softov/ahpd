@@ -4,22 +4,23 @@ domain: host
 status: active
 priority: high
 created: 2026-09-29
-revalidated: 2026-09-30
+revalidated: 2026-10-04
 decisions:
   - decisions/a-session-is-held-under-its-providers-name.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L7187-L7281](../../../../packages/sdk/src/host.ts#L7187-L7281) - `createSession`, which opens the session under the channel the client sent"
-  - "[code://packages/sdk/src/host.ts#L408-L422](../../../../packages/sdk/src/host.ts#L408-L422) - `named`, which checks the client's URI and returns it unchanged"
-  - "[code://packages/sdk/src/host.ts#L3164-L3382](../../../../packages/sdk/src/host.ts#L3164-L3382) - `spawn`, which keys `sessions`, `byChat`, `owners`, `births` by that URI and records `names.set(idOf(uri), uri)`"
-  - "[code://packages/sdk/src/host.ts#L942-L958](../../../../packages/sdk/src/host.ts#L942-L958) - `names` and `nameOf`, the name a session is published under"
-  - "[code://packages/sdk/src/host.ts#L3472-L3544](../../../../packages/sdk/src/host.ts#L3472-L3544) - `listing`, which names a disk row `<provider>:/<id>` and a live session by its held key"
-  - "[code://packages/sdk/src/host.ts#L2055-L2122](../../../../packages/sdk/src/host.ts#L2055-L2122) - `summaryOf`, `root/sessionAdded` and `root/sessionSummaryChanged`, all under the held key"
-  - "[code://packages/sdk/src/host.ts#L909-L941](../../../../packages/sdk/src/host.ts#L909-L941) - `heldAs`, which resolves any spelling of a session to the held one"
-  - "[code://packages/sdk/src/host.ts#L1293-L1380](../../../../packages/sdk/src/host.ts#L1293-L1380) - `sessionOfChat`, `chatOf` and `meantBy`, the same for chat URIs"
-  - "[code://packages/sdk/src/host.ts#L1484-L1613](../../../../packages/sdk/src/host.ts#L1484-L1613) - `spelledFor`, which respells a session snapshot into the name it was asked under"
-  - "[code://packages/sdk/src/host.ts#L1623-L1633](../../../../packages/sdk/src/host.ts#L1623-L1633) - `broadcast`, which swaps only the envelope's channel for an aliased subscriber"
-  - "[code://packages/sdk/src/host.ts#L6306-L6347](../../../../packages/sdk/src/host.ts#L6306-L6347) - `subscribe`, which records the alias and applies `spelledFor`"
-  - "[code://packages/sdk/src/host.ts#L8401-L8434](../../../../packages/sdk/src/host.ts#L8401-L8434) - resuming a listed session, which already spawns it under `nameOf(id)`: the pattern task 01 mirrors"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L442-L566](../../../../packages/sdk/src/host/sessionmethods.ts#L442-L566) - `createSession`, which opens the session under the channel the client sent"
+  - "[code://packages/sdk/src/host/channels.ts#L67-L81](../../../../packages/sdk/src/host/channels.ts#L67-L81) - `named`, which checks the client's URI and returns it unchanged"
+  - "[code://packages/sdk/src/host/spawn.ts#L680-L712](../../../../packages/sdk/src/host/spawn.ts#L680-L712) - `spawn`, which keys `sessions`, `byChat`, `owners`, `births` by that URI and records `names.set(idOf(uri), uri)`"
+  - "[code://packages/sdk/src/host.ts#L263](../../../../packages/sdk/src/host.ts#L263) - `names`, the name a session is published under"
+  - "[code://packages/sdk/src/host/routing.ts#L57-L66](../../../../packages/sdk/src/host/routing.ts#L57-L66) - `nameOf`, the name a session is published under"
+  - "[code://packages/sdk/src/host/catalogue.ts#L266-L425](../../../../packages/sdk/src/host/catalogue.ts#L266-L425) - `listing`, which names a disk row `<provider>:/<id>` and a live session by its held key"
+  - "[code://packages/sdk/src/host/catalogue.ts#L173-L240](../../../../packages/sdk/src/host/catalogue.ts#L173-L240) - `summaryOf`, `root/sessionAdded` and `root/sessionSummaryChanged`, all under the held key"
+  - "[code://packages/sdk/src/host/routing.ts#L40-L56](../../../../packages/sdk/src/host/routing.ts#L40-L56) - `heldAs`, which resolves any spelling of a session to the held one"
+  - "[code://packages/sdk/src/host/routing.ts#L81-L164](../../../../packages/sdk/src/host/routing.ts#L81-L164) - `sessionOfChat`, `chatOf` and `meantBy`, the same for chat URIs"
+  - "[code://packages/sdk/src/host/routing.ts#L166-L243](../../../../packages/sdk/src/host/routing.ts#L166-L243) - `spelledFor`, which respells a session snapshot into the name it was asked under"
+  - "[code://packages/sdk/src/host.ts#L447-L465](../../../../packages/sdk/src/host.ts#L447-L465) - `broadcast`, which swaps only the envelope's channel for an aliased subscriber"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L101-L148](../../../../packages/sdk/src/host/sessionmethods.ts#L101-L148) - `subscribe`, which records the alias and applies `spelledFor`"
+  - "[code://packages/sdk/src/host/chatactions.ts#L140-L204](../../../../packages/sdk/src/host/chatactions.ts#L140-L204) - resuming a listed session, which already spawns it under `nameOf(id)`: the pattern task 01 mirrors"
   - "[code://packages/sdk/src/sessions.ts#L42-L52](../../../../packages/sdk/src/sessions.ts#L42-L52) - chat titles, kept by the exact chat URI"
   - "[code://packages/sdk/test/host.test.ts#L6387-L6520](../../../../packages/sdk/test/host.test.ts#L6387-L6520) - `a session asked for by the name a client computed`, the tests for the other spelling of a listed session"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/session-channel.md - the provider is not in the session URI's scheme
@@ -99,7 +100,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 - **Event flow** - `dispatch` and `broadcast` keep addressing the held channel; a connection with an alias gets the envelope and, after task 03, the URIs inside the action respelled into its name.
 - **State flow** - `sessions`, `byChat`, `owners`, `births`, `names` and every URI minted from the session use the held name; `kept` rows are by id and unchanged, except chat titles.
 - **Layer responsibilities** - `packages/sdk`: all of it; no backend changes, since a backend is handed the id through `idOf`.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/catalogue.ts`](../../../../packages/sdk/src/host/catalogue.ts), [`code://packages/sdk/src/host/sessionmethods.ts`](../../../../packages/sdk/src/host/sessionmethods.ts), [`code://packages/sdk/src/host/routing.ts`](../../../../packages/sdk/src/host/routing.ts)
 
 ## Tasks
 
@@ -130,7 +131,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 - **Done so far:** tasks 01 to 04 and 07 to 10 implemented, a `reconnect` replay included in 03, and the findings of seven passes of the 2026-09-30 review fixed in 01, 03, 08 and 09, among them one registry of names (`claims`) that the gate and every creation read, client ids bound to people, and each family of action kept to its kind of channel; task 05's automated case passes and its checks by hand are left for Softov; task 06 is the planner's; task 10, from the final review, is implemented, and a watch or terminal named like a session's marks stays what it is (task 08).
 - **Next action:** the by-hand checks in [task-05-vs-code-opens-a-session-another-client-created.md](task-05-vs-code-opens-a-session-another-client-created.md), then review.
 - **Open questions:** none.
-- **Watch out for:** `idOf` is exported and used by `agent-claude` and `agent-pi` as the backend session id, so the id must never change, only the scheme; the resume path (`host.ts` 9129-9177) already re-keys under `nameOf(id)` and must end up with the same name as a newly created session.
+- **Watch out for:** `idOf` is exported and used by `agent-claude` and `agent-pi` as the backend session id, so the id must never change, only the scheme; the resume path (`host/chatactions.ts` 140-204) already re-keys under `nameOf(id)` and must end up with the same name as a newly created session.
 
 ## Final verification checklist
 

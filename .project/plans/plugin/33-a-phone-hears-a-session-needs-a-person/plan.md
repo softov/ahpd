@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: high
 created: 2026-10-02
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/plugin/17-a-plugin-hears-a-session-needs-a-person/plan.md
 changes: []
@@ -13,7 +13,7 @@ decisions:
   - decisions/a-device-registers-for-push-by-writing-a-resource.md
 refs:
   - "[code://packages/sdk/src/types/events.ts#L105-L116](../../../../packages/sdk/src/types/events.ts#L105-L116) - `InputNeededSetEvent`: session, chat, id, kind"
-  - "[code://packages/sdk/src/host.ts#L5555-L5572](../../../../packages/sdk/src/host.ts#L5555-L5572) - `advertisedSchemes`, which advertises `push` once it is registered"
+  - "[code://packages/sdk/src/host/root.ts#L171-L185](../../../../packages/sdk/src/host/root.ts#L171-L185) - `advertisedSchemes`, which advertises `push` once it is registered"
   - "[code://packages/computer/src/plugin.ts#L582](../../../../packages/computer/src/plugin.ts#L582) - the pattern: a package that registers a resource provider"
   - "[code://docs/PLUGINS.md#L868-L914](../../../../docs/PLUGINS.md#L868-L914) - a host-owned URI scheme and its write half"
   - "[code://packages/sdk/src/types/plugin.ts#L98-L105](../../../../packages/sdk/src/types/plugin.ts#L98-L105) - `configDir`, where a plugin keeps a record of its own"

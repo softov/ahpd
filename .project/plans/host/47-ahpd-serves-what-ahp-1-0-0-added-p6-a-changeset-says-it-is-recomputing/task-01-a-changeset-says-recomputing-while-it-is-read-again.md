@@ -4,9 +4,9 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L2883](../../../../packages/sdk/src/host.ts#L2883) - `shown`"
-  - "[code://packages/sdk/src/host.ts#L2904-L2941](../../../../packages/sdk/src/host.ts#L2904-L2941) - `told`"
-  - "[code://packages/sdk/src/host.ts#L2953-L2967](../../../../packages/sdk/src/host.ts#L2953-L2967) - `contentMoved`, where the mark goes"
+  - "[code://packages/sdk/src/host/changesets.ts#L198](../../../../packages/sdk/src/host/changesets.ts#L198) - `shown`"
+  - "[code://packages/sdk/src/host/changesets.ts#L219-L257](../../../../packages/sdk/src/host/changesets.ts#L219-L257) - `told`"
+  - "[code://packages/sdk/src/host/changesets.ts#L268-L282](../../../../packages/sdk/src/host/changesets.ts#L268-L282) - `contentMoved`, where the mark goes"
   - "[code://packages/sdk/test/changes-refresh.test.ts#L168-L183](../../../../packages/sdk/test/changes-refresh.test.ts#L168-L183) - `re-reads a changeset when git is changed outside the host`, the case the new ones copy"
   - "[code://docs/AHP.md#L266](../../../../docs/AHP.md#L266) - the `changeset/statusChanged` row"
 ---
@@ -17,14 +17,14 @@ When `contentMoved` re-reads a changeset whose watchers were last told `ready` o
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:2953-2967` - in `contentMoved`, before `options.changes?.state(...)`: when `shown.get(channel)` exists and its status is neither `computing` nor `recomputing`, dispatch `{ type: 'changeset/statusChanged', status: 'recomputing' }` and record `recomputing` in `shown`, remembering the previous status; after the read, `told` as today, or, when the read gave nothing or threw, dispatch the previous status and record it.
+- `UPDATE: packages/sdk/src/host/changesets.ts:268-282` - in `contentMoved`, before `options.changes?.state(...)`: when `shown.get(channel)` exists and its status is neither `computing` nor `recomputing`, dispatch `{ type: 'changeset/statusChanged', status: 'recomputing' }` and record `recomputing` in `shown`, remembering the previous status; after the read, `told` as today, or, when the read gave nothing or threw, dispatch the previous status and record it.
 - `UPDATE: packages/sdk/test/changes-refresh.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md:266` - the row says `recomputing` is sent before a re-read and `ready` after.
 
 ## Steps
 
 1. Add the mark and the restore in `contentMoved`; `told` is unchanged.
-2. Restore in a `finally` that lets the error go on, so the caller's `catch` at `host.ts:3340` still sees the failure.
+2. Restore in a `finally` that lets the error go on, so the caller's `catch` at `packages/sdk/src/host/facts.ts:301` still sees the failure.
 
 ## Validation
 

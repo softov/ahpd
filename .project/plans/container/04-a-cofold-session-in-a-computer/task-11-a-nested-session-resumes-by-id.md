@@ -6,7 +6,7 @@ layer: "sdk"
 refs:
   - "[code://packages/sdk/src/nested.ts#L232](../../../../packages/sdk/src/nested.ts#L232) - `innerSession`, a random URI"
   - "[code://packages/sdk/src/nested.ts#L376-L381](../../../../packages/sdk/src/nested.ts#L376-L381) - the inner `createSession`"
-  - "[code://packages/sdk/src/host.ts#L10086-L10160](../../../../packages/sdk/src/host.ts#L10086-L10160) - how a host resumes a session it is not running: a turn on its channel"
+  - "[code://packages/sdk/src/host/chatactions.ts#L139-L219](../../../../packages/sdk/src/host/chatactions.ts#L139-L219) - how a host resumes a session it is not running: a turn on its channel"
 ---
 
 ## Objective

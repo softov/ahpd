@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L6095-L6116](../../../../packages/sdk/src/host.ts#L6095-L6116) - `ROOT_CONFIG_SCHEMA`, which spreads the new properties"
+  - "[code://packages/sdk/src/host/root.ts#L121-L142](../../../../packages/sdk/src/host/root.ts#L121-L142) - `ROOT_CONFIG_SCHEMA`, which spreads the new properties"
   - "[code://packages/sdk/test/root-config.test.ts](../../../../packages/sdk/test/root-config.test.ts) - where the schema cases go"
   - git://7516b04bc94 - VS Code, read from the clone at `/github/externals/vscode` (`git -C /github/externals/vscode show 7516b04bc94:<path>`), never from the network
 ---
@@ -16,7 +16,7 @@ Root state's `config.schema.properties` holds the 43 keys below beside the host'
 ## Files
 
 - `CREATE: packages/sdk/src/vscoderootconfig.ts` - `vscodeRootProperties`, one entry per key below, each with a comment naming its upstream file and line.
-- `UPDATE: packages/sdk/src/host.ts:6095-6116` - `ROOT_CONFIG_SCHEMA.properties` spreads `vscodeRootProperties` before the host's own keys, so the host's own win a clash (there is none today); task 04 takes `artifactToolsCompactPrompts` and `deferredTitleGeneration` out.
+- `UPDATE: packages/sdk/src/host/root.ts:121-142` - `ROOT_CONFIG_SCHEMA.properties` spreads `vscodeRootProperties` before the host's own keys, so the host's own win a clash (there is none today); task 04 takes `artifactToolsCompactPrompts` and `deferredTitleGeneration` out.
 - `UPDATE: packages/sdk/test/root-config.test.ts` - the schema cases.
 - `UPDATE: docs/AHP.md` - one paragraph: the root config declares what VS Code pushes, ahpd acts on `defaultShell` and the daemon's keys, and the rest are declared so a client can draw them.
 

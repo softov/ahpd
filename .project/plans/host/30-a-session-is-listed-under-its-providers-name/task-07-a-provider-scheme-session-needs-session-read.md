@@ -4,7 +4,7 @@ status: implemented
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L6437-L6488](../../../../packages/sdk/src/host.ts#L6437-L6488) - `capabilityFor`, the subscribe gate"
+  - "[code://packages/sdk/src/host/admission.ts#L35-L49](../../../../packages/sdk/src/host/admission.ts#L35-L49) - `capabilityFor`, the subscribe gate"
 ---
 
 ## Objective

@@ -1,11 +1,13 @@
 import { ROOT } from './channels.js';
-import { CLOSING } from './common.js';
+import { INTERNAL_ERROR, RpcError } from '../rpc.js';
+import { CLOSING, need } from './common.js';
+import { named } from './channels.js';
 import type { Bag } from '../types/common.js';
 import type { Claim, StartTerminals, TerminalStore } from '../types/terminals.js';
 import type { Ran } from '../types/session.js';
 import type { OnWire } from '../types/wire.js';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
-import type { HostContext } from './context.js';
+import type { ConnectionContext, HostContext } from './context.js';
 
 /**
  * The host's own terminals.
@@ -226,4 +228,109 @@ export function createTerminals(ctx: HostContext): Terminals {
   });
 
   return { commanded, terminalInfo, heldTerminals };
+}
+
+/**
+ * The two commands a client opens and closes a shell with.
+ */
+export interface TerminalMethods {
+  createTerminal: (params: Record<string, unknown>) => Promise<unknown>;
+  disposeTerminal: (params: Record<string, unknown>) => Promise<unknown>;
+}
+
+export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext): TerminalMethods {
+  const { connection } = conn;
+  const {
+    claimable, dir, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
+  } = ctx;
+
+  return {
+    /**
+     * A shell on this machine.
+     *
+     * The client picks the URI, as it does for a session, so it can
+     * subscribe without a round trip in between. `cwd` is checked against
+     * the directories this host serves - a terminal is arbitrary code on
+     * the machine, and one that started anywhere would be a host that
+     * hands out a shell wherever it is asked.
+     */
+    createTerminal: async (params) => {
+      // Before the URI is looked at. A host that opens no shells at all
+      // should say that, not complain about the argument to a request it
+      // was never going to answer.
+      const shells = need(options.terminals, 'createTerminal');
+      const uri = named(String(params.channel ?? ''), 'terminal');
+      if (terminals.has(uri))
+        throw new RpcError(-32003, `${uri} already exists`);
+      claimable(uri, 'terminal');
+      const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
+      /*
+       * Whose terminal this is, checked rather than taken.
+       *
+       * A claim used to be a `Bag` and anything at all was accepted, so a
+       * client could take a terminal with `{}` and the channel then said
+       * so to everyone watching. Absent is this connection, which is the
+       * ordinary case; present and malformed is a refusal, because a
+       * client that meant to name a session and got it wrong should hear
+       * about it rather than quietly become the owner.
+       */
+      const claim = params.claim === undefined
+        ? { kind: 'client' as const, clientId: connection.clientId }
+        : claimOf(params.claim);
+      if (!claim) throw new RpcError(-32602, 'That is not a terminal claim');
+      if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
+      const terminal = shells.create({
+        uri,
+        cwd: asked,
+        claim,
+        // This connection's own shell, if it pushed one. Per connection
+        // rather than per host: two people on one daemon each get theirs,
+        // and neither can name the binary the other's terminal opens.
+        ...(typeof connection.config?.defaultShell === 'string'
+          ? { shell: connection.config.defaultShell }
+          : {}),
+        ...(typeof params.name === 'string' ? { name: params.name } : {}),
+        ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
+        ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
+        emit: (_channel, action) => {
+          dispatch(uri, action);
+          /*
+           * A terminal that exited is a different row on the root channel
+           * as well, and that list only moved when one was created or
+           * disposed - so the catalogue went on describing a dead shell as
+           * running until somebody closed it.
+           *
+           * Worse since 0.9.0 rather than new: the old shape said nothing
+           * about a terminal that had not exited, and this one says
+           * `{ status: 'running' }` out loud. A stale silence is a client
+           * with less to go on; a stale assertion is a client that has
+           * been told something untrue.
+           */
+          if ((action as Bag).type === 'terminal/exited') {
+            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+            // A command that ran in this session's directory may have moved
+            // it: a commit, a checkout, or anything that wrote a file.
+            const ranIn = dirOfFile(asked);
+            if (ranIn !== undefined) void refreshWatched(ranIn);
+          }
+        },
+      });
+      terminals.set(uri, terminal);
+      void fire({ type: 'terminal_open', terminal: uri, cwd: asked });
+      log(`opened ${uri} in ${asked}`);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+      return {};
+    },
+    disposeTerminal: async (params) => {
+      const uri = String(params.channel ?? '');
+      const terminal = terminals.get(uri);
+      if (!terminal)
+        throw new RpcError(-32008, `No terminal at ${uri}`);
+      terminal.close();
+      terminals.delete(uri);
+      log(`closed ${uri}`);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+      return {};
+    },
+  };
 }

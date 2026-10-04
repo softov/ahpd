@@ -4,18 +4,18 @@ domain: host
 status: planned
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires: []
 refs:
-  - "[code://packages/sdk/src/host.ts#L950-L978](../../../../packages/sdk/src/host.ts#L950-L978) - `Held.chats`, in memory only"
-  - "[code://packages/sdk/src/host.ts#L6119-L6130](../../../../packages/sdk/src/host.ts#L6119-L6130) - the internal `createChat`: a peer chat is `spawn(held.agent, <session uri>, ahp-chat:/<uuid>, ...)` with no resume and no id of its own"
-  - "[code://packages/sdk/src/host.ts#L3688-L3700](../../../../packages/sdk/src/host.ts#L3688-L3700) - `spawn`, whose `Start.uri` is the session's URI for every chat"
-  - "[code://packages/sdk/src/host.ts#L5287-L5347](../../../../packages/sdk/src/host.ts#L5287-L5347) - the in-process restart, which rebuilds only `held.defaultChat`"
-  - "[code://packages/sdk/src/host.ts#L5440-L5462](../../../../packages/sdk/src/host.ts#L5440-L5462) - `restartChat`: `{ resume: agentId(), seed: allTurns() }`, the respawn every rebuild here copies"
-  - "[code://packages/sdk/src/host.ts#L10540-L10552](../../../../packages/sdk/src/host.ts#L10540-L10552) - resuming a listed session spawns only `chatUriFor(named)`"
-  - "[code://packages/sdk/src/host.ts#L1512-L1513](../../../../packages/sdk/src/host.ts#L1512-L1513) - `chatUriFor`, the default chat's name"
-  - "[code://packages/sdk/src/host.ts#L1597](../../../../packages/sdk/src/host.ts#L1597) - `chatOf`, which after a restart resolves `ahp-chat:/<uuid>` to a session named by that uuid and is refused"
-  - "[code://packages/sdk/src/host.ts#L4228-L4235](../../../../packages/sdk/src/host.ts#L4228-L4235) - the catalogue skips a backend row whose id is `claimed`"
+  - "[code://packages/sdk/src/host/state.ts#L12-L41](../../../../packages/sdk/src/host/state.ts#L12-L41) - `Held.chats`, in memory only"
+  - "[code://packages/sdk/src/host/tooling.ts#L297-L308](../../../../packages/sdk/src/host/tooling.ts#L297-L308) - the internal `createChat`: a peer chat is `spawn(held.agent, <session uri>, ahp-chat:/<uuid>, ...)` with no resume and no id of its own"
+  - "[code://packages/sdk/src/host/spawn.ts#L311-L320](../../../../packages/sdk/src/host/spawn.ts#L311-L320) - `spawn`, whose `Start.uri` is the session's URI for every chat"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L243-L330](../../../../packages/sdk/src/host/lifecycle.ts#L243-L330) - the in-process restart, which rebuilds only `held.defaultChat`"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L413-L443](../../../../packages/sdk/src/host/lifecycle.ts#L413-L443) - `restartChat`: `{ resume: agentId(), seed: allTurns() }`, the respawn every rebuild here copies"
+  - "[code://packages/sdk/src/host/chatactions.ts#L200-L203](../../../../packages/sdk/src/host/chatactions.ts#L200-L203) - resuming a listed session spawns only `chatUriFor(named)`"
+  - "[code://packages/sdk/src/host/channels.ts#L109-L110](../../../../packages/sdk/src/host/channels.ts#L109-L110) - `chatUriFor`, the default chat's name"
+  - "[code://packages/sdk/src/host/routing.ts#L124-L142](../../../../packages/sdk/src/host/routing.ts#L124-L142) - `chatOf`, which after a restart resolves `ahp-chat:/<uuid>` to a session named by that uuid and is refused"
+  - "[code://packages/sdk/src/host/catalogue.ts#L308-L310](../../../../packages/sdk/src/host/catalogue.ts#L308-L310) - the catalogue skips a backend row whose id is `claimed`"
   - "[code://packages/sdk/src/types/sessions.ts#L50-L153](../../../../packages/sdk/src/types/sessions.ts#L50-L153) - `SessionStore`: flags, config, scope, owner, senders, provider, artifacts, pull requests, chat titles; no list of chats"
   - "[code://packages/sdk/src/sessions.ts#L39-L42](../../../../packages/sdk/src/sessions.ts#L39-L42) - `chatTitles`, the per-chat map the chat list sits beside"
   - "[code://packages/agent-claude/src/session.ts#L2308](../../../../packages/agent-claude/src/session.ts#L2308) - Claude asks for `sessionId: idOf(<session uri>)`, so a peer chat asks for the session's own id"
@@ -37,7 +37,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ### Searches performed
 
 - `rg -n "sessionId|id: idFor|sessionIdOf" packages/agent-*/src/session.ts` - Claude, pi and cofold derive the backend id from `Start.uri`, the session URI, so every chat of a session asks for one id; ACP gets an id from its server per chat.
-- `rg -n "held.chats.set|spawn\(" packages/sdk/src/host.ts` - the resume at :10549 and the in-process restart at :5287-5347 spawn only the default chat.
+- `rg -n "held.chats.set|spawn\(" packages/sdk/src/host` - the resume at `chatactions.ts:200` and the in-process restart at `lifecycle.ts:321-330` spawn only the default chat.
 - `rg -n "^\s+[a-zA-Z]+\(" packages/sdk/src/types/sessions.ts` - nothing in the store names a session's chats.
 
 ### Runtime path
@@ -58,15 +58,15 @@ restart -> resume session -> spawn(chatUriFor(session)) only -> peer chat gone; 
 | --- | --- | --- |
 | A peer chat's backend id is the uuid of its `ahp-chat:/<uuid>`, handed to the backend as `Start.chatId`; the default chat keeps the session's id | (defaulted: one name for one conversation, and the uuid is already minted for the URI) | 01 |
 | The store records each session's chats: URI, backend id, title, origin, and which is the default | the defect: the store keeps no list of chats, so nothing can rebuild them | 02 |
-| Resume and the in-process restart rebuild every recorded chat with `{ resume: <backend id>, seed: <its transcript> }`, as `restartChat` does | the defect: only the default chat is rebuilt (`host.ts:5287-5347`, `:10549`) | 03 |
-| A recorded peer chat's backend id is claimed, so the catalogue does not list it as a session of its own | [`code://packages/sdk/src/host.ts#L4228-L4235`](../../../../packages/sdk/src/host.ts#L4228-L4235), the existing `claimed` skip | 03 |
+| Resume and the in-process restart rebuild every recorded chat with `{ resume: <backend id>, seed: <its transcript> }`, as `restartChat` does | the defect: only the default chat is rebuilt (`lifecycle.ts:321-330`, `chatactions.ts:200`) | 03 |
+| A recorded peer chat's backend id is claimed, so the catalogue does not list it as a session of its own | [`code://packages/sdk/src/host/catalogue.ts#L308-L310`](../../../../packages/sdk/src/host/catalogue.ts#L308-L310), the existing `claimed` skip | 03 |
 | A nested session's chats are recorded and not rebuilt, as its default chat is not resumed today | [`code://packages/sdk/src/nested.ts#L372-L375`](../../../../packages/sdk/src/nested.ts#L372-L375): a fresh inner session each start | 03 |
 
 ## Proposed architecture
 
 - **Data flow** - `createChat` -> `chatId = uuid of the chat URI` -> `Start.chatId` -> backend runs under it -> store `setChats(session, [...])`; restart -> `chats(session)` -> spawn each with `resume` and `seed` -> claims.
 - **Layer responsibilities** - sdk types: `Start.chatId`, `StoredChat` · sdk store: the list · sdk host: record, rebuild, claim · agent-claude, agent-pi, agent-cofold: use `chatId` · agent-acp, nested: unchanged.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/state.ts`](../../../../packages/sdk/src/host/state.ts), [`code://packages/sdk/src/host/tooling.ts`](../../../../packages/sdk/src/host/tooling.ts), [`code://packages/sdk/src/host/spawn.ts`](../../../../packages/sdk/src/host/spawn.ts), [`code://packages/sdk/src/host/lifecycle.ts`](../../../../packages/sdk/src/host/lifecycle.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/routing.ts`](../../../../packages/sdk/src/host/routing.ts), [`code://packages/sdk/src/host/catalogue.ts`](../../../../packages/sdk/src/host/catalogue.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
 
 ## Tasks
 

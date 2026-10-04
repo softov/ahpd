@@ -4,14 +4,14 @@ domain: host
 status: planned
 priority: low
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/47-ahpd-serves-what-ahp-1-0-0-added/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L11239-L11248](../../../../packages/sdk/src/host.ts#L11239-L11248) - `session/mcpServerStartRequested` and `StopRequested`, handed to the session's backend"
-  - "[code://packages/sdk/src/host.ts#L11475-L11476](../../../../packages/sdk/src/host.ts#L11475-L11476) - where `session/mcpServerBackgroundRequested` lands today: `is not served yet`"
-  - "[code://packages/sdk/src/host.ts#L381-L391](../../../../packages/sdk/src/host.ts#L381-L391) - `ACTION_HOMES`: a `session/` action needs `session:write`"
+  - "[code://packages/sdk/src/host/chatactions.ts#L890-L899](../../../../packages/sdk/src/host/chatactions.ts#L890-L899) - `session/mcpServerStartRequested` and `StopRequested`, handed to the session's backend"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1126-L1127](../../../../packages/sdk/src/host/chatactions.ts#L1126-L1127) - where `session/mcpServerBackgroundRequested` lands today: `is not served yet`"
+  - "[code://packages/sdk/src/host/gate.ts#L232-L242](../../../../packages/sdk/src/host/gate.ts#L232-L242) - `ACTION_HOMES`: a `session/` action needs `session:write`"
   - "[code://packages/sdk/src/types/session.ts#L513-L516](../../../../packages/sdk/src/types/session.ts#L513-L516) - `startMcpServer` and `stopMcpServer` on `Session`"
   - "[code://packages/sdk/src/nested.ts#L498-L505](../../../../packages/sdk/src/nested.ts#L498-L505) - a nested host forwards start and stop to its inner host"
   - "[code://packages/agent-claude/src/session.ts#L405-L428](../../../../packages/agent-claude/src/session.ts#L405-L428) - the CLI's MCP status as a protocol state, `{ kind: 'starting' }` with no `blocking`"
@@ -60,7 +60,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - **Event flow** - `dispatchAction session/mcpServerBackgroundRequested` -> gate -> `session.backgroundMcpServerStartup?.(id)` -> the backend's own `session/mcpServerBackgroundRequested` and `session/mcpServerStateChanged` -> subscribers.
 - **Layer responsibilities** - sdk: the `Session` method, the host case, the nested forward · agent-claude: nothing · docs: the action row.
-- **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/types/session.ts`](../../../../packages/sdk/src/types/session.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/gate.ts`](../../../../packages/sdk/src/host/gate.ts), [`code://packages/sdk/src/types/session.ts`](../../../../packages/sdk/src/types/session.ts)
 
 ## Tasks
 

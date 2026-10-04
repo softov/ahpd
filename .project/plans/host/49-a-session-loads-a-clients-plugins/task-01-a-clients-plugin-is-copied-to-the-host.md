@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: "sdk, server"
 refs:
-  - "[code://packages/sdk/src/host.ts#L772-L800](../../../../packages/sdk/src/host.ts#L772-L800) - `clients.list` and `clients.read`, the two calls a copy makes"
+  - "[code://packages/sdk/src/host/relay.ts#L65-L93](../../../../packages/sdk/src/host/relay.ts#L65-L93) - `clients.list` and `clients.read`, the two calls a copy makes"
   - "[code://packages/sdk/src/types/host.ts#L68-L276](../../../../packages/sdk/src/types/host.ts#L68-L276) - `HostOptions`, where the port goes beside `changes` and `computers`"
   - "[code://packages/server/src/config.ts#L379](../../../../packages/server/src/config.ts#L379) - `sessionsDir`, the shape of `agentPluginsDir`"
   - "[code://packages/server/src/commands/run.ts#L420](../../../../packages/server/src/commands/run.ts#L420) - where the server hands the host its ports"

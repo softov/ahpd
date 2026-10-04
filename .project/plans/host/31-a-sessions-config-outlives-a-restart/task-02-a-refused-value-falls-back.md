@@ -4,8 +4,8 @@ status: implemented
 depends: [task-01-the-store-keeps-every-change.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L8431](../../../../packages/sdk/src/host.ts#L8431) - resume"
-  - "[code://packages/sdk/src/host.ts#L5530](../../../../packages/sdk/src/host.ts#L5530) - a browsed row"
+  - "[code://packages/sdk/src/host/chatactions.ts#L196-L200](../../../../packages/sdk/src/host/chatactions.ts#L196-L200) - resume"
+  - "[code://packages/sdk/src/host/snapshots.ts#L396-L399](../../../../packages/sdk/src/host/snapshots.ts#L396-L399) - a browsed row"
 ---
 
 ## Objective

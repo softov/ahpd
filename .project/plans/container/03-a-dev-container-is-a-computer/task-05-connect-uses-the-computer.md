@@ -4,7 +4,7 @@ status: implemented
 depends: [task-02-reached-through-devcontainer-exec.md]
 layer: "sdk | computer"
 refs:
-  - "[code://packages/sdk/src/host.ts#L9156](../../../../packages/sdk/src/host.ts#L9156) - the `vscode/devContainers/connect` handler"
+  - "[code://packages/sdk/src/host/vscodemethods.ts#L382-L472](../../../../packages/sdk/src/host/vscodemethods.ts#L382-L472) - the `vscode/devContainers/connect` handler"
 ---
 
 ## Objective
@@ -13,7 +13,7 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts` - the handler.
+- `UPDATE: packages/sdk/src/host/vscodemethods.ts` - the handler.
 - `UPDATE: packages/computer/src/devcontainer.ts` - up only when no computer exists.
 
 ## Steps

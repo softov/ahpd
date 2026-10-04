@@ -4,7 +4,7 @@ status: blocked
 depends: [task-01-a-template-with-client-plugins-is-refused.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L762-L800](../../../../packages/sdk/src/host.ts#L762-L800) - `clients.read` and `clients.list`, the dispatching client's resources"
+  - "[code://packages/sdk/src/host/relay.ts#L72-L93](../../../../packages/sdk/src/host/relay.ts#L72-L93) - `clients.read` and `clients.list`, the dispatching client's resources"
   - "[code://packages/sdk/src/automations.ts#L95-L125](../../../../packages/sdk/src/automations.ts#L95-L125) - the store, where `customizations` copies sit on the entry"
   - "[code://packages/sdk/src/automations.ts#L139-L178](../../../../packages/sdk/src/automations.ts#L139-L178) - a run's session options"
   - "https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L37-L108 - the capture and the run hand-off to mirror"
@@ -18,7 +18,7 @@ Then: task 01's refusal goes, ahpd advertises `customizations: {}`; a create or 
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts` - the capability; the capture before the store; the run's active client.
+- `UPDATE: packages/sdk/src/host/handshake.ts`, `packages/sdk/src/host/actions.ts` - the capability; the capture before the store; the run's active client.
 - `UPDATE: packages/sdk/src/automations.ts`, `packages/sdk/src/scheduled.ts` - `customizations` on the entry, kept across a restart; copies no automation names are removed.
 - `UPDATE: packages/sdk/test/automations.test.ts` - the cases below, with a fake client answering `resourceList` and `resourceRead` from a temp directory.
 

@@ -4,7 +4,7 @@ status: dropped
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L11538-L11543](../../../../packages/sdk/src/host.ts#L11538-L11543) - the unknown-method answer `moveChat` reaches"
+  - "[code://packages/sdk/src/host.ts#L1021-L1026](../../../../packages/sdk/src/host.ts#L1021-L1026) - the unknown-method answer `moveChat` reaches"
   - "[code://packages/sdk/test/host.test.ts#L428-L438](../../../../packages/sdk/test/host.test.ts#L428-L438) - `what it will not pretend`, the describe the new case joins"
   - "[code://docs/AHP.md#L75-L76](../../../../docs/AHP.md#L75-L76) - the `createChat` and `disposeChat` rows the `moveChat` row goes beside"
   - "https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1720-L1722 - `MethodNotFound` for `moveChat`"

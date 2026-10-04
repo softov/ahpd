@@ -6,7 +6,7 @@ layer: "computer | sdk"
 refs:
   - "[code://packages/sdk/src/types/computers.ts#L110-L143](../../../../packages/sdk/src/types/computers.ts#L110-L143) - `how` and `nested` on the port"
   - "[code://packages/sdk/src/computers.ts#L103-L129](../../../../packages/sdk/src/computers.ts#L103-L129) - `computersFor`, which spreads the port"
-  - "[code://packages/sdk/src/host.ts#L3618-L3620](../../../../packages/sdk/src/host.ts#L3618-L3620) - the nested route, chosen by `runsNested` alone"
+  - "[code://packages/sdk/src/host/spawn.ts#L332-L334](../../../../packages/sdk/src/host/spawn.ts#L332-L334) - the nested route, chosen by `runsNested` alone"
   - "[code://.project/plans/container/04-a-cofold-session-in-a-computer/task-17-a-backend-names-its-nested-plugin.md](../04-a-cofold-session-in-a-computer/task-17-a-backend-names-its-nested-plugin.md) - removes the `@ahpd/agent-<provider>` default this task would otherwise lean on"
   - "[code://packages/sdk/src/nested.ts#L115-L129](../../../../packages/sdk/src/nested.ts#L115-L129) - `startInside`, which spawns what `nested` answers"
   - "[code://packages/computer/src/plugin.ts#L210-L224](../../../../packages/computer/src/plugin.ts#L210-L224) - `within`, which has nothing to read for an ssh machine"
@@ -21,7 +21,7 @@ refs:
 - `UPDATE: packages/computer/src/ssh.ts` - `how(id, asked)` and `hostCommand(id)`.
 - `UPDATE: packages/sdk/src/types/computers.ts:118-143` - `remote?(id: string): boolean`, whether a machine is on another host.
 - `UPDATE: packages/computer/src/plugin.ts:648-662` - `remote` answers the routed runtime's `remote` for the id's prefix.
-- `UPDATE: packages/sdk/src/host.ts:3618-3620` - nested when the backend says `runsNested` or the port says `remote(id)`.
+- `UPDATE: packages/sdk/src/host/spawn.ts:332-334` - nested when the backend says `runsNested` or the port says `remote(id)`.
 - `UPDATE: packages/sdk/test/nested-start.test.ts`.
 
 ## Steps

@@ -4,13 +4,13 @@ domain: host
 status: planned
 priority: high
 created: 2026-09-30
-revalidated: 2026-09-30
+revalidated: 2026-10-04
 requires:
   - plans/host/30-a-session-is-listed-under-its-providers-name/plan.md
 refs:
   - "[code://packages/sdk/src/sessiontools.ts](../../../../packages/sdk/src/sessiontools.ts) - the nine session tools, VS Code's by name and schema; `delete_session` refuses only the current session"
   - "[code://packages/sdk/src/tools.ts#L24-L27](../../../../packages/sdk/src/tools.ts#L24-L27) - `hostTools`, the session and artifact tools every session is offered"
-  - "[code://packages/sdk/src/host.ts#L4797](../../../../packages/sdk/src/host.ts#L4797) - `toolContext`, what a tool may see and do: it carries no person"
+  - "[code://packages/sdk/src/host/tooling.ts#L229](../../../../packages/sdk/src/host/tooling.ts#L229) - `toolContext`, what a tool may see and do: it carries no person"
   - "[code://packages/sdk/src/types/host.ts#L374-L380](../../../../packages/sdk/src/types/host.ts#L374-L380) - `ToolCall`"
   - "[code://packages/sdk/src/users.ts#L22-L31](../../../../packages/sdk/src/users.ts#L22-L31) - the built-in roles; sessions are reached by role, and none is any one person's"
   - "[code://packages/server/src/commands/run.ts#L285](../../../../packages/server/src/commands/run.ts#L285) - the daemon passes `hostTools()` to every session"

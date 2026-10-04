@@ -2,7 +2,7 @@ import { computerSource } from '../computers.js';
 import { Status } from '../catalog.js';
 import { RpcError } from '../rpc.js';
 import { AUTOMATIONS, chatUriFor } from './channels.js';
-import { CLOSING } from './common.js';
+import { CLOSING, need } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
 import type { AutomationRun, AutomationRunState, RunEnding, StartSession } from '../types/automations.js';
@@ -246,4 +246,67 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   return { linked, settleRun, changed, beginAutomation, startForAutomation, due };
+}
+
+/**
+ * The three commands a client draws the automation form from, and presses.
+ */
+export interface AutomationMethods {
+  listAutomationTriggerDefinitions: (params: Record<string, unknown>) => Promise<unknown>;
+  runAutomation: (params: Record<string, unknown>) => Promise<unknown>;
+  fetchAutomationRuns: (params: Record<string, unknown>) => Promise<unknown>;
+}
+
+export function createAutomationMethods(ctx: HostContext): AutomationMethods {
+  const { options, startForAutomation } = ctx;
+
+  return {
+    /**
+     * What kinds of trigger this host understands.
+     *
+     * Asked before any automation exists, because it is what a client
+     * needs to draw the form. A store that schedules nothing answers with
+     * no schedule trigger, and the client then offers no cron box - which
+     * is better than a box that takes an expression nothing will ever act
+     * on.
+     */
+    listAutomationTriggerDefinitions: async (params) => ({
+      items: need(options.automations, 'listAutomationTriggerDefinitions').triggers({
+        ...(typeof params.provider === 'string' ? { provider: params.provider } : {}),
+        ...(Array.isArray(params.workingDirectories)
+          ? { workingDirectories: params.workingDirectories.filter((one): one is string => typeof one === 'string') }
+          : {}),
+      }),
+    }),
+    /**
+     * Start one now.
+     *
+     * The session is created here rather than in the store, because only
+     * this file knows what a session is - the store is handed a function
+     * and gets a URI back. `requestId` is echoed nowhere: the protocol has
+     * it so a client can match its own request to the run it gets, and the
+     * run URI in the result is that match.
+     *
+     * The origin is `{ kind: 'manual' }` and nothing else, because that is
+     * the whole of `AutomationManualRunOrigin` - it carries no room for
+     * who asked, and a run's origin goes on the wire in every catalogue
+     * row the automation appears in.
+     *
+     * Which is why a run pressed here is the automation maker's work and
+     * not the presser's: the owner rides on the automation and travels
+     * with the run, and this origin says only that a person pressed it.
+     */
+    runAutomation: async (params) => {
+      const store = need(options.automations, 'runAutomation');
+      const automation = String(params.automation ?? '');
+      const run = await store.run(automation, { kind: 'manual' }, startForAutomation);
+      if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
+      return { resource: run.resource };
+    },
+    /** A page of what one automation has done, newest first. */
+    fetchAutomationRuns: async (params) => need(options.automations, 'fetchAutomationRuns').runs(
+      String(params.automation ?? ''),
+      typeof params.cursor === 'string' ? params.cursor : undefined,
+    ),
+  };
 }

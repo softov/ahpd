@@ -5,7 +5,7 @@ depends: [task-01-the-claude-backend-lists-its-background-work.md]
 layer: "sdk"
 refs:
   - "[code://packages/sdk/test/conformance.test.ts](../../../../packages/sdk/test/conformance.test.ts) - the Claude backend on a fake SDK through the host, replayed with the package's reducers"
-  - "[code://packages/sdk/src/host.ts#L1127-L1134](../../../../packages/sdk/src/host.ts#L1127-L1134) - a worker chat's state, reduced from what the backend emitted"
+  - "[code://packages/sdk/src/host/spawn.ts#L79-L85](../../../../packages/sdk/src/host/spawn.ts#L79-L85) - a worker chat's state, reduced from what the backend emitted"
   - "[code://packages/sdk/src/nested.ts#L305-L312](../../../../packages/sdk/src/nested.ts#L305-L312) - a nested host reduces what its inner host sends"
   - "[code://packages/sdk/src/nested.ts#L427](../../../../packages/sdk/src/nested.ts#L427) - and answers it as `chatState`"
   - "[code://packages/sdk/test/nested-proxy.test.ts](../../../../packages/sdk/test/nested-proxy.test.ts) - an inner host behind a nested one"

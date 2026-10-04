@@ -4,9 +4,9 @@ status: todo
 depends: [task-01-operations-and-groups-are-one-table.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L6306-L6321](../../../../packages/sdk/src/host.ts#L6306-L6321) - `advertisedSchemes`, the function this one sits beside, whose `order` at :6311 names operations after the provider's methods"
-  - "[code://packages/sdk/src/host.ts#L6337-L6339](../../../../packages/sdk/src/host.ts#L6337-L6339) - root state `_meta`"
-  - "[code://packages/sdk/src/host.ts#L7893](../../../../packages/sdk/src/host.ts#L7893) - `initialize` `_meta`"
+  - "[code://packages/sdk/src/host/root.ts#L171-L186](../../../../packages/sdk/src/host/root.ts#L171-L186) - `advertisedSchemes`, the function this one sits beside, whose `order` at :176 names operations after the provider's methods"
+  - "[code://packages/sdk/src/host/root.ts#L204](../../../../packages/sdk/src/host/root.ts#L204) - root state `_meta`"
+  - "[code://packages/sdk/src/host/handshake.ts#L262](../../../../packages/sdk/src/host/handshake.ts#L262) - `initialize` `_meta`"
   - "[code://docs/COMPUTER.md#L92-L104](../../../../docs/COMPUTER.md#L92-L104) - the `ahpd.resourceProviders` example, with `read` and `write`"
   - "[code://docs/PLUGINS.md#L250-L274](../../../../docs/PLUGINS.md#L250-L274) - where a plugin author is told the host adds `operations`"
   - "[code://docs/USERS.md#L471-L473](../../../../docs/USERS.md#L471-L473) - the people schemes' advertisement"
@@ -21,8 +21,8 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:6306-6321` - `advertisedGrants()` beside `advertisedSchemes()`; `advertisedSchemes()`' `order` becomes `['get', 'list', 'resolve', 'put', 'delete', 'mkdir', 'move', 'copy']`, each looked up on the provider by its method (`get` -> `read`, `put` -> `write`, `delete` -> `remove`).
-- `UPDATE: packages/sdk/src/host.ts:6337-6339` and `:7893` - the key beside `ahpd.resourceProviders`.
+- `UPDATE: packages/sdk/src/host/root.ts:171-186` - `advertisedGrants()` beside `advertisedSchemes()`; `advertisedSchemes()`' `order` becomes `['get', 'list', 'resolve', 'put', 'delete', 'mkdir', 'move', 'copy']`, each looked up on the provider by its method (`get` -> `read`, `put` -> `write`, `delete` -> `remove`).
+- `UPDATE: packages/sdk/src/host/root.ts:204` and `packages/sdk/src/host/handshake.ts:262` - the key beside `ahpd.resourceProviders`.
 - `UPDATE: packages/computer/test/computer-plugin.test.ts:180`, `packages/sdk/test/people.test.ts:243`, `packages/sdk/test/plugin-host.test.ts:384, 418`, `packages/sdk/test/policy-scheme.test.ts:230` - the advertised lists read `get` and `put`.
 - `UPDATE: docs/COMPUTER.md:100` - the example's `operations` is `["get", "list", "resolve", "put", "delete"]`.
 - `UPDATE: docs/PLUGINS.md:270-274` - the operations the host adds are the grant's operation words, `get` for a provider's `read` and `put` for its `write`, and they changed from `read` and `write` with this plan.

@@ -4,17 +4,17 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/host.ts#L10035-L10055](../../../../packages/sdk/src/host.ts#L10035-L10055) - `automation/createRequested` and `automation/updateRequested`, which check the resource and nothing in the definition"
+  - "[code://packages/sdk/src/host/actions.ts#L403-L423](../../../../packages/sdk/src/host/actions.ts#L403-L423) - `automation/createRequested` and `automation/updateRequested`, which check the resource and nothing in the definition"
   - "[code://packages/sdk/src/automations.ts#L52-L75](../../../../packages/sdk/src/automations.ts#L52-L75) - `entry()`, which builds what a client reads"
   - "[code://packages/sdk/src/automations.ts#L95-L125](../../../../packages/sdk/src/automations.ts#L95-L125) - `create` keeps the definition as sent, `update` merges a patch"
   - "[code://packages/sdk/src/automations.ts#L135-L138](../../../../packages/sdk/src/automations.ts#L135-L138) - `run()` refuses a disabled automation, whatever started it"
   - "[code://packages/sdk/src/automations.ts#L60-L64](../../../../packages/sdk/src/automations.ts#L60-L64) - `entry()` drops `run` from `operations` when `enabled` is `false`"
-  - "[code://packages/sdk/src/host.ts#L8539-L8545](../../../../packages/sdk/src/host.ts#L8539-L8545) - `runAutomation`, a manual run, answered `-32001` \"or it is switched off\" when `run()` refuses"
+  - "[code://packages/sdk/src/host/automations.ts#L299-L305](../../../../packages/sdk/src/host/automations.ts#L299-L305) - `runAutomation`, a manual run, answered `-32001` \"or it is switched off\" when `run()` refuses"
   - "[code://packages/sdk/src/scheduled.ts#L36-L48](../../../../packages/sdk/src/scheduled.ts#L36-L48) - the saved file's shape"
   - "[code://packages/sdk/src/scheduled.ts#L179-L196](../../../../packages/sdk/src/scheduled.ts#L179-L196) - `save()` writes what `inner.list()` answers"
   - "[code://packages/sdk/src/scheduled.ts#L234-L276](../../../../packages/sdk/src/scheduled.ts#L234-L276) - `fire()` and `catchUp()`, the only places a scheduled run is admitted"
@@ -37,8 +37,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ### Searches performed
 
 - `rg -n "disableConditions|runCount" packages/*/src` - nothing; the definition is stored and echoed as sent.
-- `rg -n "onDue|origin" packages/sdk/src/host.ts packages/sdk/src/scheduled.ts` - a scheduled run reaches `run()` with `origin.kind: 'trigger'`; a manual one with `{ kind: 'manual' }`.
-- `rg -n "no\(" packages/sdk/src/host.ts` near :10035 - a refused client action is answered through `no(...)`, as a bad resource is today.
+- `rg -n "onDue|origin" packages/sdk/src/host/automations.ts packages/sdk/src/scheduled.ts` - a scheduled run reaches `run()` with `origin.kind: 'trigger'`; a manual one with `{ kind: 'manual' }`.
+- `rg -n "no\(" packages/sdk/src/host/actions.ts` near :403 - a refused client action is answered through `no(...)`, as a bad resource is today.
 
 ### Gaps
 

@@ -4,9 +4,9 @@ status: todo
 depends: [task-01-the-root-config-declares-the-keys-vscode-pushes.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L9852-L9990](../../../../packages/sdk/src/host.ts#L9852-L9990) - the `root/configChanged` handler: `config`, `apply`, the daemon half"
-  - "[code://packages/sdk/src/host.ts#L6080-L6087](../../../../packages/sdk/src/host.ts#L6080-L6087) - the comment saying everything pushed is kept, which this task makes untrue"
-  - "[code://packages/sdk/src/host.ts#L6131-L6137](../../../../packages/sdk/src/host.ts#L6131-L6137) - `daemonProperties` and `daemonKey`"
+  - "[code://packages/sdk/src/host/actions.ts#L220-L359](../../../../packages/sdk/src/host/actions.ts#L220-L359) - the `root/configChanged` handler: `config`, `apply`, the daemon half"
+  - "[code://packages/sdk/src/host/root.ts#L108-L113](../../../../packages/sdk/src/host/root.ts#L108-L113) - the comment saying everything pushed is kept, which this task makes untrue"
+  - "[code://packages/sdk/src/host/root.ts#L157-L162](../../../../packages/sdk/src/host/root.ts#L157-L162) - `daemonProperties` and `daemonKey`"
   - "[code://packages/sdk/test/root-config.test.ts#L203-L213](../../../../packages/sdk/test/root-config.test.ts#L203-L213) - 'refuses what the daemon would not take, naming the key', the rejection this one mirrors"
   - "[code://packages/sdk/test/conformance.test.ts#L486-L501](../../../../packages/sdk/test/conformance.test.ts#L486-L501) - the test that pushes `a` and `b`"
 ---
@@ -17,8 +17,8 @@ A `root/configChanged` key that neither `ROOT_CONFIG_SCHEMA` nor the daemon's sc
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts:9852-9990` - split `config` into declared and refused before the daemon half is asked; the rest of the handler reads only the declared part.
-- `UPDATE: packages/sdk/src/host.ts:6080-6087` - the `rootConfig` comment says it holds only declared keys.
+- `UPDATE: packages/sdk/src/host/actions.ts:220-359` - split `config` into declared and refused before the daemon half is asked; the rest of the handler reads only the declared part.
+- `UPDATE: packages/sdk/src/host/root.ts:108-113` - the `rootConfig` comment says it holds only declared keys.
 - `UPDATE: packages/sdk/test/root-config.test.ts` - the refusal cases.
 - `UPDATE: packages/sdk/test/conformance.test.ts:486-501` - push declared keys (`telemetryLevel`, `autoReplyEnabled`) in place of `a` and `b`; the test's point, taking a key back with `null` and `replace`, is unchanged.
 

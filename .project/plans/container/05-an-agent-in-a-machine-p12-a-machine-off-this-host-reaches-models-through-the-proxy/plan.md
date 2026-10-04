@@ -4,7 +4,7 @@ domain: container
 status: planned
 priority: high
 created: 2026-10-02
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md
   - plans/proxy/01-the-proxy-knows-its-providers-and-models/plan.md
@@ -21,7 +21,7 @@ refs:
   - "[code://packages/sdk/src/types/computers.ts#L38-L48](../../../../packages/sdk/src/types/computers.ts#L38-L48) - `NestedStart`, which carries no environment today"
   - "[code://packages/sdk/src/types/machine.ts#L60-L64](../../../../packages/sdk/src/types/machine.ts#L60-L64) - `EnvNeed`, the variable an agent says its machine needs"
   - "[code://packages/sdk/src/nested.ts#L115-L129](../../../../packages/sdk/src/nested.ts#L115-L129) - `startInside`, where the inner host's environment is set"
-  - "[code://packages/sdk/src/host.ts#L8683-L8692](../../../../packages/sdk/src/host.ts#L8683-L8692) - the session's checks, then `placedIn`, where a machine is made or picked"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L508-L518](../../../../packages/sdk/src/host/sessionmethods.ts#L508-L518) - the session's checks, then `placedIn`, where a machine is made or picked"
   - "[code://.project/plans/container/05-an-agent-in-a-machine/deferred.md](../05-an-agent-in-a-machine/deferred.md) - the host proxy this plan takes from the parent's deferred list"
 ---
 

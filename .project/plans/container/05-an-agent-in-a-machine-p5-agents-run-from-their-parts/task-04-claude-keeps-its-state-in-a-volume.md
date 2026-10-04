@@ -5,7 +5,7 @@ depends: [task-01-claude-runs-from-its-part.md]
 layer: "agent-claude"
 refs:
   - "[code://packages/agent-claude/src/claude.ts#L373-L387](../../../../packages/agent-claude/src/claude.ts#L373-L387) - the config dir and `.claude.json` needs"
-  - "[code://packages/sdk/src/host.ts#L5321-L5330](../../../../packages/sdk/src/host.ts#L5321-L5330) - `machine()` is asked of the session's own variant"
+  - "[code://packages/sdk/src/host/machines.ts#L201-L209](../../../../packages/sdk/src/host/machines.ts#L201-L209) - `machine()` is asked of the session's own variant"
 ---
 
 ## Objective

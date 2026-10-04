@@ -4,8 +4,8 @@ status: todo
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/worktrees.ts#L58-L72](../../../../packages/sdk/src/worktrees.ts#L58-L72) - `gitWorktrees`, `repository` at L60-L64"
-  - "[code://packages/sdk/src/host.ts#L5372-L5402](../../../../packages/sdk/src/host.ts#L5372-L5402) - `placedIn`; the maker call at L5391-L5398"
+  - "[code://packages/sdk/src/repo/worktrees.ts#L58-L72](../../../../packages/sdk/src/repo/worktrees.ts#L58-L72) - `gitWorktrees`, `repository` at L60-L64"
+  - "[code://packages/sdk/src/host/machines.ts#L182-L212](../../../../packages/sdk/src/host/machines.ts#L182-L212) - `placedIn`; the maker call at L201-L209"
   - "[code://packages/sdk/src/types/computers.ts#L84-L85](../../../../packages/sdk/src/types/computers.ts#L84-L85) - `folder`"
   - "[code://packages/sdk/src/types/worktrees.ts#L73-L112](../../../../packages/sdk/src/types/worktrees.ts#L73-L112) - the `Worktrees` port"
 ---
@@ -17,9 +17,9 @@ refs:
 ## Files
 
 - `UPDATE: packages/sdk/src/types/worktrees.ts` - `gitDir?(dir)`, optional so other ports need not have it.
-- `UPDATE: packages/sdk/src/worktrees.ts` - the git call.
+- `UPDATE: packages/sdk/src/repo/worktrees.ts` - the git call.
 - `UPDATE: packages/sdk/src/types/computers.ts:84-85` - `gitDir?` and `repository?` beside `folder`.
-- `UPDATE: packages/sdk/src/host.ts:5372-5402` - ask and pass, beside `folder` in the maker call, after `owner`, `team` and `project`.
+- `UPDATE: packages/sdk/src/host/machines.ts:182-212` - ask and pass, beside `folder` in the maker call, after `owner`, `team` and `project`.
 - `UPDATE: packages/sdk/test/worktrees.test.ts` - the git call.
 - `UPDATE: packages/sdk/test/host.test.ts` - what `placedIn` passes.
 

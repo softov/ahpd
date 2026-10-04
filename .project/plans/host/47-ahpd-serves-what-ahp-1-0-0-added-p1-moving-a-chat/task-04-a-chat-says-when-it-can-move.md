@@ -4,9 +4,9 @@ status: todo
 depends: []
 layer: "sdk, agent-acp"
 refs:
-  - "[code://packages/sdk/src/host.ts#L1057-L1067](../../../../packages/sdk/src/host.ts#L1057-L1067) - `chatSummary`, where `movable` goes"
-  - "[code://packages/sdk/src/host.ts#L3985-L3986](../../../../packages/sdk/src/host.ts#L3985-L3986) - a turn starting or ending, already the moment `operationsMoved` is said"
-  - "[code://packages/sdk/src/host.ts#L9243-L9262](../../../../packages/sdk/src/host.ts#L9243-L9262) - `disposeChat`, where another chat becomes the default"
+  - "[code://packages/sdk/src/host/catalogue.ts#L55-L65](../../../../packages/sdk/src/host/catalogue.ts#L55-L65) - `chatSummary`, where `movable` goes"
+  - "[code://packages/sdk/src/host/spawn.ts#L615-L616](../../../../packages/sdk/src/host/spawn.ts#L615-L616) - a turn starting or ending, already the moment `operationsMoved` is said"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L689-L719](../../../../packages/sdk/src/host/sessionmethods.ts#L689-L719) - `disposeChat`, where another chat becomes the default"
   - "[code://packages/sdk/src/types/session.ts#L236-L243](../../../../packages/sdk/src/types/session.ts#L236-L243) - `agentId()`, beside which `resumable()` goes"
   - "[code://packages/sdk/src/nested.ts#L412](../../../../packages/sdk/src/nested.ts#L412) - the nested host answers an `agentId()` it cannot resume, so `agentId()` alone does not say a chat can be picked up again"
   - "[code://packages/agent-acp/src/session.ts#L1088-L1093](../../../../packages/agent-acp/src/session.ts#L1088-L1093) - an ACP server without `loadSession` refuses a resume"
@@ -22,7 +22,7 @@ A peer chat carries `movable: true` in its `ChatState` and `ChatSummary` exactly
 - `UPDATE: packages/sdk/src/types/session.ts` - `resumable?(): boolean` beside `agentId()`, documented: absent means `agentId()` can be resumed.
 - `UPDATE: packages/sdk/src/nested.ts` - `resumable: () => false`.
 - `UPDATE: packages/agent-acp/src/session.ts` - `resumable` answers whether the handshake advertised `loadSession`.
-- `UPDATE: packages/sdk/src/host.ts` - a `movable(chatUri)` function; `movable` in `chatSummary` and a peer chat's state; a `movableMoved(chatUri)` that dispatches the two actions when the answer changed, called at a turn's start and end (:3985), when a worker of the chat starts or ends a turn, and when the default chat changes in `disposeChat`.
+- `UPDATE: packages/sdk/src/host/catalogue.ts`, `packages/sdk/src/host/spawn.ts`, `packages/sdk/src/host/sessionmethods.ts` - a `movable(chatUri)` function; `movable` in `chatSummary` and a peer chat's state; a `movableMoved(chatUri)` that dispatches the two actions when the answer changed, called at a turn's start and end (`packages/sdk/src/host/spawn.ts:615`), when a worker of the chat starts or ends a turn, and when the default chat changes in `disposeChat`.
 - `UPDATE: packages/sdk/test/host.test.ts`, `packages/agent-acp/test/agent-acp.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - the `chat/movableChanged` row.
 

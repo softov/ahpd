@@ -4,7 +4,7 @@ status: doing
 depends: [task-02-every-request-answers-to-either-name.md, task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md, task-04-a-chat-title-survives-the-new-name.md]
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host.ts#L7187-L7281](../../../../packages/sdk/src/host.ts#L7187-L7281) - `createSession`, the path under test"
+  - "[code://packages/sdk/src/host/sessionmethods.ts#L442-L566](../../../../packages/sdk/src/host/sessionmethods.ts#L442-L566) - `createSession`, the path under test"
 ---
 
 ## Objective

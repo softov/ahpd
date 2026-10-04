@@ -4,7 +4,7 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/host/47-ahpd-serves-what-ahp-1-0-0-added/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
@@ -16,7 +16,7 @@ refs:
   - "[code://packages/agent-claude/src/session.ts#L3790-L3795](../../../../packages/agent-claude/src/session.ts#L3790-L3795) - `close`, which clears `background`"
   - "[code://packages/agent-claude/test/fixtures/claude-subagent-background.jsonl](../../../../packages/agent-claude/test/fixtures/claude-subagent-background.jsonl) - a real capture: `background_tasks_changed` before `task_started`, and an empty one before the `task_notification`"
   - "[code://packages/agent-claude/test/agent-claude-subagent.test.ts#L20-L90](../../../../packages/agent-claude/test/agent-claude-subagent.test.ts#L20-L90) - the fake SDK feed the new tests reuse"
-  - "[code://packages/sdk/src/host.ts#L1127-L1134](../../../../packages/sdk/src/host.ts#L1127-L1134) - a worker chat's state is the package's `chatReducer` over what the backend emitted, so it needs no change"
+  - "[code://packages/sdk/src/host/spawn.ts#L79-L85](../../../../packages/sdk/src/host/spawn.ts#L79-L85) - a worker chat's state is the package's `chatReducer` over what the backend emitted, so it needs no change"
   - "[code://packages/sdk/src/nested.ts#L305-L312](../../../../packages/sdk/src/nested.ts#L305-L312) - a nested host reduces its inner host's chat actions with `chatReducer`"
   - "[code://packages/sdk/src/nested.ts#L427](../../../../packages/sdk/src/nested.ts#L427) - and answers that reduced state as its `chatState`"
   - "[code://packages/sdk/test/conformance.test.ts](../../../../packages/sdk/test/conformance.test.ts) - the Claude backend through the host, every action replayed through the package's reducers"
