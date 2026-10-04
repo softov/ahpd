@@ -58,8 +58,15 @@ interface Reading {
   endedAt: string;
 }
 
-/** An event, as the mapping reads it. */
-const raise = (turn: PiTurn, event: Bag): void => { mapEvent(turn, event as unknown as AgentSessionEvent); };
+/**
+ * An event, as the mapping reads it.
+ *
+ * `at` is the time of the entry that carried it, so a rebuilt call carries the
+ * time it ran rather than the time this process read the file.
+ */
+const raise = (turn: PiTurn, event: Bag, at?: number): void => {
+  mapEvent(turn, event as unknown as AgentSessionEvent, at);
+};
 
 /**
  * The entries of one branch, root first, as turns.
@@ -142,6 +149,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
     if (message.role === 'assistant') {
       const answer = message as unknown as AssistantMessage;
       const turn = open.mapping;
+      const at = Date.parse(entry.timestamp);
       raise(turn, { type: 'message_start', message: answer });
       (answer.content ?? []).forEach((block, contentIndex) => {
         const update = (inner: Bag): void => {
@@ -158,7 +166,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         else if (block.type === 'toolCall') {
           const input = (block.arguments ?? {}) as Bag;
           update({ type: 'toolcall_start' });
-          raise(turn, { type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: input });
+          raise(turn, { type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: input }, at);
           const row = turn.parts.find((one) => one.id === block.id)?.toolCall as Bag | undefined;
           if (row !== undefined) readyRow(row, block.name, input, { confirmed: 'not-needed' });
         }
@@ -176,7 +184,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
         toolName: String(message.toolName),
         result: { content: message.content, details: message.details },
         isError: message.isError === true,
-      });
+      }, Date.parse(entry.timestamp));
       open.end = entry.id;
       open.endedAt = entry.timestamp;
     }

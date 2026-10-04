@@ -1,7 +1,7 @@
 ---
 title: A tool call says when it started and how long it ran, live and in history
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-10-03
@@ -55,11 +55,11 @@ harness transcript on disk -> plugin restores the turns -> the same _meta on eac
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The sdk has one helper that builds and keeps a tool call's timing _meta](../29-a-tool-call-says-when-it-ran-p1-the-sdk-keeps-a-calls-times/plan.md) | planned | - |
-| [p2 - Claude tool calls carry their start and end, live and restored](../29-a-tool-call-says-when-it-ran-p2-claude-stamps-its-calls/plan.md) | planned | p1 |
-| [p3 - pi tool calls carry their start and end, live and restored](../29-a-tool-call-says-when-it-ran-p3-pi-stamps-its-calls/plan.md) | planned | p1 |
-| [p4 - ACP tool calls carry their start and end while the daemon runs](../29-a-tool-call-says-when-it-ran-p4-acp-stamps-its-calls/plan.md) | planned | p1 |
-| [p5 - cofold tool calls carry their start and end live too, and restored calls keep their kind](../29-a-tool-call-says-when-it-ran-p5-cofold-stamps-its-live-calls/plan.md) | planned | p1 |
+| [p1 - The sdk has one helper that builds and keeps a tool call's timing _meta](../29-a-tool-call-says-when-it-ran-p1-the-sdk-keeps-a-calls-times/plan.md) | done | - |
+| [p2 - Claude tool calls carry their start and end, live and restored](../29-a-tool-call-says-when-it-ran-p2-claude-stamps-its-calls/plan.md) | done | p1 |
+| [p3 - pi tool calls carry their start and end, live and restored](../29-a-tool-call-says-when-it-ran-p3-pi-stamps-its-calls/plan.md) | done | p1 |
+| [p4 - ACP tool calls carry their start and end while the daemon runs](../29-a-tool-call-says-when-it-ran-p4-acp-stamps-its-calls/plan.md) | done | p1 |
+| [p5 - cofold tool calls carry their start and end live too, and restored calls keep their kind](../29-a-tool-call-says-when-it-ran-p5-cofold-stamps-its-live-calls/plan.md) | done | p1 |
 
 ## Risks and tradeoffs
 
@@ -67,12 +67,9 @@ harness transcript on disk -> plugin restores the turns -> the same _meta on eac
 
 ## Resume state
 
-- **Done so far:** researched and planned 2026-09-29.
-- **Next action:** p1, then p2 to p5.
-- **Open questions:** none.
-- **Watch out for:** every `_meta` a plugin sends after a call starts must carry the timing keys and `toolKind` again; the keys are `ahpd.startedAt`, `ahpd.endedAt` and `ahpd.durationMs`, never the bare names. [host/43 p1](../../host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md)'s census allows an `ahpd.` key by its prefix, so this plan and host/43 build in either order; neither needs the other's output.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] In ahpapp, a live call and a restored call of each backend show a duration.
-- [ ] `plans/index.md` updated.
+- [x] In ahpapp, a live call and a restored call of each backend show a duration.
+- [x] `plans/index.md` updated.

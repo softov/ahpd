@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { Bag } from '@ahpd/sdk';
+import type { Bag, Session } from '@ahpd/sdk';
 
 /*
  * A tool call's `toolInput`, live and read back.
@@ -21,6 +21,8 @@ import type { Bag } from '@ahpd/sdk';
 
 const sdk = vi.hoisted(() => ({
   frames: [] as Record<string, unknown>[],
+  /** Frames queued after the stream was held, which it reads on waking. */
+  pushed: [] as Record<string, unknown>[],
   /** What the stream waits on after its frames, so a test can keep it open. */
   hold: Promise.resolve() as Promise<void>,
   canUseTool: undefined as undefined | ((name: string, input: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
@@ -34,6 +36,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
       for (const frame of sdk.frames) yield frame;
       await sdk.hold;
+      while (sdk.pushed.length > 0) yield sdk.pushed.shift() as Record<string, unknown>;
     },
     interrupt: async () => {},
     setPermissionMode: async () => {},
@@ -97,8 +100,9 @@ const settle = async (times = 30): Promise<void> => {
 async function live(frames: Record<string, unknown>[] = [{
   type: 'assistant', parent_tool_use_id: null, uuid: 'a1',
   message: { id: 'msg_1', role: 'assistant', content: calls },
-}], asking?: () => void): Promise<{ held: Map<string, Bag>; ready: Map<string, Bag> }> {
+}], asking?: () => void): Promise<{ held: Map<string, Bag>; ready: Map<string, Bag>; sent: Bag[]; session: Session }> {
   sdk.frames = frames;
+  sdk.pushed = [];
   const sent: Bag[] = [];
   const session = createSession({
     uri: 'ahp-session:/input',
@@ -124,8 +128,23 @@ async function live(frames: Record<string, unknown>[] = [{
       held.set(call.toolCallId as string, call);
     }
   }
-  return { held, ready };
+  return { held, ready, sent, session };
 }
+
+/** The `_meta` an action carries, or an empty bag for one that carries none. */
+const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
+
+/** The one action of a call's kind that a session sent, or nothing. */
+const actionOf = (sent: Bag[], type: string, id: string): Bag | undefined =>
+  sent.find((one) => one.type === type && one.toolCallId === id);
+
+/** Whether an action carries a call's start, its end and how long it took. */
+const timed = (action: Bag | undefined): boolean => {
+  const meta = metaOf(action);
+  return typeof meta['ahpd.startedAt'] === 'string'
+    && typeof meta['ahpd.endedAt'] === 'string'
+    && typeof meta['ahpd.durationMs'] === 'number';
+};
 
 /** The same calls read back from a transcript, with any frames that follow them. */
 async function restored(content: Bag[] = calls, after: Record<string, unknown>[] = []): Promise<Map<string, Bag>> {
@@ -319,4 +338,137 @@ it('gives a confirmation card the row line, not the CLI\'s title', async () => {
   expect(ready.get('toolu_card')?.invocationMessage).toBe('Clear scratch directory');
   expect(held.get('toolu_card')?.confirmationTitle).toBe('Claude wants to run rm -rf /tmp/scratch');
   expect(held.get('toolu_card')?.toolInput).toBe('rm -rf /tmp/scratch');
+});
+
+/*
+ * When a tool call ran, live and restored.
+ *
+ * The protocol gives a call no time of its own, so the times ride in its
+ * `_meta` and this plugin's clock stamps them: the ready for a call nobody is
+ * asked about, the approval for one that is, and the result for the end. An
+ * action carrying a `_meta` replaces the call's whole bag, so every action
+ * after the start has to carry them again.
+ */
+
+const bash = { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls -la', description: 'List files' } };
+const opened = [{ type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [bash] } }];
+const result = (id: string, uuid: string): Record<string, unknown> => ({
+  type: 'user', parent_tool_use_id: null, uuid, timestamp: '2020-01-01T00:00:00.000Z',
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'a b c' }] },
+});
+
+it('says when a live call started, and when it ended', async () => {
+  const { held, ready, sent } = await live([...opened, result('toolu_bash', 'u2')]);
+  const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
+  // The start is said at the ready, before there is any end to say.
+  expect(metaOf(ready.get('toolu_bash'))['ahpd.startedAt']).toEqual(expect.any(String));
+  expect(metaOf(ready.get('toolu_bash'))['ahpd.endedAt']).toBeUndefined();
+  // And both, with how long it took, on the completion and on the call itself.
+  expect(timed(complete)).toBe(true);
+  expect(timed(held.get('toolu_bash'))).toBe(true);
+  expect(metaOf(complete)).toMatchObject({
+    'ahpd.startedAt': metaOf(complete)['ahpd.startedAt'],
+    'ahpd.durationMs': expect.any(Number),
+  });
+  expect(Date.parse(metaOf(complete)['ahpd.endedAt'] as string))
+    .toBeGreaterThanOrEqual(Date.parse(metaOf(complete)['ahpd.startedAt'] as string));
+  // The kind a shell call carries rides along rather than being replaced.
+  expect(metaOf(complete).toolKind).toBe('terminal');
+});
+
+it('carries the times on the progress a running call says', async () => {
+  const frames = [
+    ...opened,
+    { type: 'system', parent_tool_use_id: null, uuid: 's1', subtype: 'task_progress', tool_use_id: 'toolu_bash', summary: 'Listing files' },
+    result('toolu_bash', 'u2'),
+  ];
+  const { sent } = await live(frames);
+  const progress = actionOf(sent, 'chat/toolCallContentChanged', 'toolu_bash');
+  expect(metaOf(progress).progressMessage).toBe('Listing files');
+  expect(metaOf(progress)['ahpd.startedAt']).toEqual(expect.any(String));
+  // And the progress line is gone with the completion, which keeps the times.
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash')).progressMessage).toBeUndefined();
+});
+
+it('starts an approved call when it was approved, not at the ready before the question', async () => {
+  let now = 1_700_000_000_000;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const openedAt = new Date(now).toISOString();
+  let held: (() => void) | undefined;
+  sdk.hold = new Promise<void>((resolve) => { held = resolve; });
+  const { sent, session } = await live(opened, () => {
+    now += 5000;
+    void sdk.canUseTool?.('Bash', bash.input, { toolUseID: 'toolu_bash' });
+  });
+  now += 30_000;
+  const approvedAt = new Date(now).toISOString();
+  session.confirm('toolu_bash', true);
+  await settle();
+  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
+  expect(metaOf(sent.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === 'toolu_bash'))['ahpd.startedAt']).toBe(openedAt);
+  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(approvedAt);
+  // The completion measures from the approval, not from the ready.
+  sdk.pushed.push(result('toolu_bash', 'u2'));
+  now += 1000;
+  held?.();
+  await settle();
+  expect(metaOf(actionOf(sent, 'chat/toolCallComplete', 'toolu_bash'))['ahpd.durationMs']).toBe(1000);
+  clock.mockRestore();
+  sdk.hold = Promise.resolve();
+});
+
+it('says no times for a call a person denied', async () => {
+  let held: (() => void) | undefined;
+  sdk.hold = new Promise<void>((resolve) => { held = resolve; });
+  const { held: calls, sent, session } = await live(opened, () => {
+    void sdk.canUseTool?.('Bash', bash.input, { toolUseID: 'toolu_bash' });
+  });
+  session.confirm('toolu_bash', false);
+  await settle();
+  const confirmed = actionOf(sent, 'chat/toolCallConfirmed', 'toolu_bash');
+  expect(metaOf(confirmed)['ahpd.startedAt']).toBeUndefined();
+  expect(metaOf(confirmed)['ahpd.endedAt']).toBeUndefined();
+  expect(metaOf(confirmed)['ahpd.durationMs']).toBeUndefined();
+  // The kind it was announced with is all a call that never ran has left.
+  expect(metaOf(confirmed).toolKind).toBe('terminal');
+  expect(metaOf(calls.get('toolu_bash'))['ahpd.startedAt']).toBeUndefined();
+  // And the result the harness sends for it carries none either.
+  sdk.pushed.push(result('toolu_bash', 'u2'));
+  held?.();
+  await settle();
+  const complete = actionOf(sent, 'chat/toolCallComplete', 'toolu_bash');
+  expect(complete).toBeDefined();
+  expect(metaOf(complete)['ahpd.startedAt']).toBeUndefined();
+  expect(metaOf(complete)['ahpd.durationMs']).toBeUndefined();
+  sdk.hold = Promise.resolve();
+});
+
+it('says when a command of the person\'s own ran', async () => {
+  const sent: Bag[] = [];
+  const session = createSession({
+    uri: 'ahp-session:/input',
+    chatUri: 'ahp-chat:/input',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-input-')),
+    emit: (_channel, action) => { sent.push(action as Bag); },
+  });
+  session.ran?.('t1', 'ls -la', async (toolCallId: string) => ({
+    success: true, said: 'Listed files', output: 'a b c', terminal: `ahp-terminal:/${toolCallId}`,
+  }));
+  await settle();
+  const ready = actionOf(sent, 'chat/toolCallReady', 't1:command');
+  const complete = actionOf(sent, 'chat/toolCallComplete', 't1:command');
+  expect(timed(complete)).toBe(true);
+  expect(metaOf(complete).toolKind).toBe('terminal');
+  expect(metaOf(ready)['ahpd.startedAt']).toEqual(expect.any(String));
+  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
+});
+
+it('never writes a bare timing key on a tool call', async () => {
+  const { sent } = await live([...opened, result('toolu_bash', 'u2')]);
+  for (const action of sent) {
+    const meta = metaOf(action);
+    expect(Object.keys(meta), action.type as string).not.toContain('startedAt');
+    expect(Object.keys(meta), action.type as string).not.toContain('endedAt');
+    expect(Object.keys(meta), action.type as string).not.toContain('durationMs');
+  }
 });

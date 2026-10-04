@@ -3,12 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
+import type { RunEvent } from '@cofold/agents';
 import { createFileStore } from '@cofold/store-file';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import {
   DEFAULT_TOOLS,
   PERMISSION_MODES,
   cofoldAgent,
+  mapTurn,
   toolsOf,
 } from '../src/index.js';
 import type { CofoldOptions, ToolsConfig } from '../src/index.js';
@@ -485,11 +487,76 @@ it('draws a shell call as a terminal, with its command as the intention', async 
 
   const turn = (session.chatState().turns as Bag[])[0] as Bag;
   const part = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1');
-  expect((part?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
+  expect((part?.toolCall as Bag)._meta).toEqual({
+    toolKind: 'terminal',
+    'ahpd.startedAt': expect.any(String),
+    'ahpd.endedAt': expect.any(String),
+    'ahpd.durationMs': expect.any(Number),
+  });
   expect((part?.toolCall as Bag).intention).toBe('echo hi');
   expect((part?.toolCall as Bag).toolInput).toBe('echo hi');
   expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
   rmSync(dir, { recursive: true, force: true });
+});
+
+it('says when a call started and ended, on its ready and its complete', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('shell_exec', { command: 'echo hi' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'run it');
+  await when(() => ended(v));
+
+  const ready = v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === 'c1');
+  const started = (ready?._meta as Bag | undefined)?.['ahpd.startedAt'];
+  expect(typeof started).toBe('string');
+  expect((ready?._meta as Bag)['ahpd.endedAt']).toBeUndefined();
+  // The kind a shell call is drawn by has to survive: an action's `_meta`
+  // replaces the whole bag rather than adding to it.
+  expect((ready?._meta as Bag).toolKind).toBe('terminal');
+
+  const complete = completeFor(v, 'c1');
+  expect(complete?._meta).toMatchObject({
+    toolKind: 'terminal',
+    'ahpd.startedAt': started,
+    'ahpd.endedAt': expect.any(String),
+    'ahpd.durationMs': expect.any(Number),
+  });
+  // cofold measured the call itself, so the duration is its own rather than
+  // the span between the two events, which also carries what it did around the
+  // call. It still fits inside them.
+  const times = complete?._meta as Bag;
+  const span = Date.parse(times['ahpd.endedAt'] as string) - Date.parse(times['ahpd.startedAt'] as string);
+  expect(times['ahpd.durationMs']).toBeLessThanOrEqual(span);
+
+  // And no call says its times under a name of its own.
+  const bare = ['startedAt', 'endedAt', 'durationMs'];
+  expect(v.notes.every((note) => bare.every((key) => ((note.action._meta ?? {}) as Bag)[key] === undefined))).toBe(true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+it('says no times for a call the run refused before it ran', () => {
+  const parts: Bag[] = [];
+  const turn = mapTurn({
+    turnId: 't1',
+    chatUri: 'ahp-chat:/tools',
+    parts,
+    startedAt: Date.now(),
+    displayNameOf: (name) => name,
+    ownerOf: () => undefined,
+    cancelled: () => false,
+  });
+  turn.actions({ type: 'tool.proposed', callId: 'c1', name: 'shell_exec', input: { command: 'echo hi' } } as RunEvent);
+  const refused = turn.actions({ type: 'tool.denied', callId: 'c1', name: 'shell_exec', reason: 'the policy refused it' } as RunEvent);
+
+  expect(refused.actions.map((one) => one.type)).toEqual(['chat/toolCallReady', 'chat/toolCallComplete']);
+  expect(refused.actions.every((one) => (one._meta as Bag | undefined)?.['ahpd.startedAt'] === undefined)).toBe(true);
+  // The kind is still there: it is what the call is drawn as, and it was never
+  // a time.
+  expect((parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
 });
 
 it('asks before a shell command and sends its bare command on the request', async () => {

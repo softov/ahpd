@@ -1,7 +1,7 @@
 ---
 title: cofold tool calls carry their start and end live too, and restored calls keep their kind
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-10-03
@@ -42,11 +42,11 @@ Restored, a call keeps its `toolKind` beside its times, and the times it already
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - cofold tool calls carry their start and end live too, and restored calls keep their kind](task-01-stamp.md) | todo | p1 |
+| [01 - cofold tool calls carry their start and end live too, and restored calls keep their kind](task-01-stamp.md) | done | p1 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-stamp.md](task-01-stamp.md).
+- **Done so far:** task 01, 2026-10-03.
+- **Next action:** none; plugin/29 p1 through p5 are implemented.
 - **Open questions:** none.
 - **Watch out for:** a `_meta` sent after the start replaces the whole `_meta`: it must carry the `ahpd.` times and `toolKind` again. If host/43 p4 renamed the restored keys first, the rename here is already done and only the move to the helper is left.

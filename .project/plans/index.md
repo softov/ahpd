@@ -196,7 +196,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [28 - A test that ends a session waits for its cleanup to finish before removing its folder](plugin/28-a-closed-session-test-waits-for-its-run/plan.md) | high | built 2026-09-29 ([implemented.md](plugin/28-a-closed-session-test-waits-for-its-run/implemented.md)) | plugin 27 | - |
 
-| [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | planned 2026-09-29; p1-p5 todo | - | - |
+| [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | built 2026-10-03 ([implemented.md](plugin/29-a-tool-call-says-when-it-ran/implemented.md)) | - | - |
 
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
 | [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 implemented | - | - |

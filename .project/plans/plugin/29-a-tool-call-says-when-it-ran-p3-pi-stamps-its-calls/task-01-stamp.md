@@ -1,6 +1,6 @@
 ---
 title: pi tool calls carry their start and end, live and restored
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:

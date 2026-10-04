@@ -21,7 +21,8 @@
 import { textOf } from '@cofold/agents';
 import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { describe } from './tools.js';
+import { callTimes } from '@ahpd/sdk';
+import { describe, toolMetaOf } from './tools.js';
 
 /**
  * The turns `Agent.transcript` answers with.
@@ -97,6 +98,21 @@ const inputOf = (call: ToolCallPart): string | undefined => {
 };
 
 /**
+ * The times a restored call ran at, in the `ahpd.` names.
+ *
+ * A run that recorded a result but no `tool.started` still says how long the
+ * call took, so its start is its end less that; a call with only a start keeps
+ * that alone, and one with neither says nothing.
+ */
+const timesOf = (timing: Timing | undefined): Bag => {
+  if (timing === undefined) return {};
+  const end = timing.endedAt;
+  if (end === undefined) return timing.startedAt === undefined ? {} : callTimes(timing.startedAt);
+  const start = timing.startedAt ?? (timing.durationMs === undefined ? undefined : Date.parse(end) - timing.durationMs);
+  return callTimes(start ?? end, end, timing.durationMs);
+};
+
+/**
  * The part a tool call holds between its proposal and its result.
  *
  * A call with no result and no open request is left `running`: nothing in the
@@ -106,20 +122,20 @@ const inputOf = (call: ToolCallPart): string | undefined => {
  */
 const callPartOf = (call: ToolCallPart, timing: Timing | undefined, waiting: Waiting | undefined): Bag => {
   const written = inputOf(call);
-  const meta: Bag = {
-    ...(timing?.durationMs !== undefined ? { durationMs: timing.durationMs } : {}),
-    ...(timing?.startedAt !== undefined ? { startedAt: timing.startedAt } : {}),
-    ...(timing?.endedAt !== undefined ? { endedAt: timing.endedAt } : {}),
-  };
+  const meta: Bag = { ...toolMetaOf(call.name), ...timesOf(timing) };
   const held: Bag = {
     toolCallId: call.callId,
     toolName: call.name,
     displayName: call.name,
     invocationMessage: invocationOf(call, waiting),
     ...(written !== undefined ? { toolInput: written } : {}),
-    // AHP's tool-call states have no field for how long a call took, and the
-    // events measured it, so it rides the provider metadata rather than being
-    // dropped or flattened into a field that means something else.
+    /*
+     * AHP's tool-call states have no field for when a call ran or how long it
+     * took, and the events measured both, so they ride the provider metadata
+     * rather than being dropped or flattened into a field that means something
+     * else. The kind goes with them: an action's `_meta` replaces the whole
+     * bag, so a restored call that lost it would draw as a generic tool.
+     */
     ...(Object.keys(meta).length > 0 ? { _meta: meta } : {}),
   };
   if (waiting !== undefined) {

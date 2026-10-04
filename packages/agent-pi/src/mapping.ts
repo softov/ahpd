@@ -24,12 +24,43 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
+import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** The part this turn already holds under an id. */
 const partOf = (turn: PiTurn, id: string): Bag | undefined => turn.parts.find((held) => held.id === id);
+
+/** A tool call's row, which is where the times are kept between the events. */
+const rowOf = (turn: PiTurn, id: string): Bag | undefined => bag(partOf(turn, id)?.toolCall);
+
+/**
+ * A call's bag with its start stamped, which is when pi began running it.
+ *
+ * Written on the row rather than onto the action that announced it, because
+ * the model's stream opens a call before pi runs it and the action that
+ * carries the times then is the one the hook sends. Answers the bag, for the
+ * action that goes out with it.
+ */
+const stampStart = (row: Bag | undefined, at: number): Bag | undefined => {
+  if (row === undefined) return undefined;
+  row._meta = withCallTimes(bag(row._meta), callTimes(at));
+  return bag(row._meta);
+};
+
+/** A call's bag with its end stamped, measured from the start it holds. */
+const stampEnd = (row: Bag | undefined, at: number): void => {
+  if (row === undefined) return;
+  row._meta = withCallTimes(bag(row._meta), callTimes(startOf(row._meta) ?? at, at));
+};
+
+/** A call's bag with the times taken off, for a call that never ran. */
+export const untime = (row: Bag): Bag => {
+  const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(row._meta);
+  row._meta = Object.keys(rest).length > 0 ? rest : undefined;
+  return bag(row._meta);
+};
 
 /** Everything a tool result says, as the one string a client shows. */
 export function resultText(result: unknown): string {
@@ -82,11 +113,14 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
  * A call's row, opened and announced once, whichever event names it first.
  *
  * Nothing for a call already open, so the model's `toolcall_start` and pi's
- * `tool_execution_start` for the same call start one row.
+ * `tool_execution_start` for the same call start one row. `at` is when pi
+ * began running the call, and only `tool_execution_start` has one: a call the
+ * model named is not running yet.
  */
-function startCall(turn: PiTurn, toolCallId: string, toolName: string): Bag[] {
+function startCall(turn: PiTurn, toolCallId: string, toolName: string, at?: number): Bag[] {
   if (turn.calls.has(toolCallId)) return [];
   const call = openCall(turn, toolCallId, toolName);
+  const meta = at === undefined ? undefined : stampStart(rowOf(turn, toolCallId), at);
   /*
    * A client-owned tool is that client's to run, so the call is reported
    * against it and not as the host's own. The host's own tools and pi's
@@ -100,6 +134,7 @@ function startCall(turn: PiTurn, toolCallId: string, toolName: string): Bag[] {
     toolName: call.toolName,
     displayName: call.displayName,
     ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+    ...(meta === undefined ? {} : { _meta: meta }),
   }];
 }
 
@@ -247,8 +282,12 @@ export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag):
  * is most of pi's union: the retry and summarization events are pi telling its
  * own terminal what it is doing, and the activity line carries that better
  * than a turn part would.
+ *
+ * `at` is when the event happened, as epoch milliseconds, and is given only by
+ * a replay reading pi's own file: live, an event arrives as it happens and the
+ * plugin's clock is the truer time.
  */
-export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
+export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): Bag[] {
   switch (event.type) {
     /** A new assistant message, whose blocks are numbered from zero again. */
     case 'message_start': {
@@ -325,9 +364,14 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
      * `pending-confirmation`, both from the hook, which sees the same id.
      */
     case 'tool_execution_start': {
-      const opened = startCall(turn, event.toolCallId, event.toolName);
+      const when = at ?? Date.now();
+      const opened = startCall(turn, event.toolCallId, event.toolName, when);
       const call = turn.calls.get(event.toolCallId);
       if (call !== undefined) call.said = describe(event.toolName, bag(event.args));
+      // A row the model's stream opened was announced there, so the start has
+      // no action of its own here: it rides on the held row, and the hook's
+      // ready carries it when the hook moves that row.
+      if (opened.length === 0) stampStart(rowOf(turn, event.toolCallId), when);
       return opened;
     }
 
@@ -346,6 +390,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
 
     /** The row closed, which is the only action carrying a result. */
     case 'tool_execution_end': {
+      const when = at ?? Date.now();
       const call = callOf(turn, event.toolCallId, event.toolName);
       const success = !event.isError;
       const text = resultText(event.result);
@@ -373,7 +418,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
           held.invocationMessage = said;
           held.confirmed = 'not-needed';
         }
+        stampEnd(held, when);
       }
+      // The whole bag on both, because an action's `_meta` replaces the call's.
+      const meta = held._meta === undefined ? {} : { _meta: bag(held._meta) };
       return [...(unreadied ? [{
         type: 'chat/toolCallReady',
         turnId: turn.turnId,
@@ -381,6 +429,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
         invocationMessage: said,
         confirmed: 'not-needed' as const,
         ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+        ...meta,
       }] : []), {
         type: 'chat/toolCallComplete',
         turnId: turn.turnId,
@@ -391,6 +440,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent): Bag[] {
           ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
           ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
         },
+        ...meta,
       }];
     }
 

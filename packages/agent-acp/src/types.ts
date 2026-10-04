@@ -245,6 +245,14 @@ export interface AcpCall {
    * the agent has begun from one it is only holding.
    */
   status?: ToolCallStatus;
+  /**
+   * When the first update about this call arrived, as epoch milliseconds.
+   *
+   * ACP carries no time of its own, so this is the receive time on this
+   * plugin's clock. A call whose row a permission request opened has none until
+   * its first update says anything about it.
+   */
+  startedAt?: number;
 }
 
 /**
@@ -331,8 +339,14 @@ export interface WatchedTurn {
    * there to be counted.
    */
   usage?: Bag;
-  /** Every update the server sent while this turn ran. */
-  updates: SessionUpdate[];
+  /**
+   * Every update the server sent while this turn ran, each with the time it
+   * was received.
+   *
+   * The time is absent on the updates a `session/load` replayed: they carry no
+   * time of their own and the replay's own would be wrong.
+   */
+  updates: { update: SessionUpdate; at?: number }[];
 }
 
 /**

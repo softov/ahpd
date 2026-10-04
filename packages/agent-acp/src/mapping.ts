@@ -15,6 +15,7 @@
  */
 
 import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
+import { callTimes, withCallTimes } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
@@ -159,7 +160,55 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
     invocationMessage: call.displayName,
     confirmed: 'not-needed',
     ...(input === undefined ? {} : { toolInput: input }),
+    ...metaOf(turn, call),
   };
+};
+
+/**
+ * The tool-call part held in the snapshot, opened lazily for an update that arrived first.
+ */
+const callPartOf = (turn: AcpTurn, callId: string): Bag | undefined =>
+  partOf(turn, callId);
+
+/**
+ * A call's times, as the `_meta` an action about it carries.
+ *
+ * The start is the receive time of the first update about the call and the end
+ * the receive time of the one that finished it, both on this plugin's clock:
+ * ACP carries no time of its own. An action's `_meta` replaces the call's whole
+ * bag, so every action sent after the start carries them again.
+ */
+const metaOf = (turn: AcpTurn, call: AcpCall): Bag => {
+  const held = callPartOf(turn, call.toolCallId);
+  if (held === undefined) return {};
+  const meta = bag(bag(held.toolCall)._meta);
+  return Object.keys(meta).length === 0 ? {} : { _meta: meta };
+};
+
+/**
+ * The start a call's first update about it gives it.
+ *
+ * The first word about a call is what starts it, whichever update that is: a
+ * `tool_call` holding the agent still deciding has started it, and so has the
+ * `tool_call_update` of a call whose `tool_call` went missing. A row a
+ * permission request opened is no different, and the request itself stamps
+ * nothing. A call that arrives already finished is stamped twice over by the
+ * one update that carries both.
+ */
+const stampStart = (turn: AcpTurn, call: AcpCall, at?: number): void => {
+  if (at === undefined || call.startedAt !== undefined) return;
+  call.startedAt = at;
+  const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
+  held._meta = withCallTimes(bag(held._meta), callTimes(at));
+};
+
+/**
+ * The end a call's finishing update gives it, kept beside the start.
+ */
+const stampEnd = (turn: AcpTurn, call: AcpCall, at?: number): void => {
+  if (at === undefined) return;
+  const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
+  held._meta = withCallTimes(bag(held._meta), callTimes(call.startedAt ?? at, at));
 };
 
 /**
@@ -176,6 +225,7 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
   toolCallId: call.toolCallId,
   toolName: call.toolName,
   displayName: call.displayName,
+  ...metaOf(turn, call),
 }];
 
 /**
@@ -185,7 +235,8 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
  * lands here as well as a `tool_call_update`: a row closed without ever being
  * opened is a completion for a call nobody drew.
  */
-const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] => {
+const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] => {
+  stampEnd(turn, call, at);
   const success = call.status === 'completed';
   const part = callPartOf(turn, call.toolCallId);
   const held = part === undefined ? undefined : bag(part.toolCall);
@@ -205,6 +256,7 @@ const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): B
       ...(content.length === 0 ? {} : { content }),
       ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
     },
+    ...metaOf(turn, call),
   }];
 };
 
@@ -220,15 +272,12 @@ const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Ba
     turnId: turn.turnId,
     toolCallId: call.toolCallId,
     content,
+    ...metaOf(turn, call),
   }];
 
 /** A call's content, as the actions that carry it on whichever update brought it. */
-const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] =>
-  call.status === 'completed' || call.status === 'failed' ? closed(turn, call, content, actions) : shown(turn, call, content, actions);
-
-/** The tool-call part held in the snapshot, opened lazily for an update that arrived first. */
-const callPartOf = (turn: AcpTurn, callId: string): Bag | undefined =>
-  partOf(turn, callId);
+const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] =>
+  call.status === 'completed' || call.status === 'failed' ? closed(turn, call, content, actions, at) : shown(turn, call, content, actions);
 
 /** The content a call's held part carries, which is what its completion repeats. */
 const heldContent = (part: Bag | undefined): Bag[] => {
@@ -330,8 +379,15 @@ export function closePlan(turn: AcpTurn): Bag[] {
   return closed(turn, call, heldContent(callPartOf(turn, call.toolCallId)), []);
 }
 
-/** One update's actions, in the order they must be sent. */
-export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
+/**
+ * One update's actions, in the order they must be sent.
+ *
+ * `at` is the time the update was received, and only the tool cases stamp from
+ * it: a call's times are when this plugin heard about it, and an update that
+ * carries no time of its own - one a `session/load` replayed - leaves the calls
+ * it mentions untimed rather than timing them with the replay's own clock.
+ */
+export function mapUpdate(turn: AcpTurn, update: SessionUpdate, at?: number): Bag[] {
   switch (update.sessionUpdate) {
     /*
      * Prose and thinking, each appended to the run it continues.
@@ -363,10 +419,11 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
     case 'tool_call': {
       const call = callOf(turn, update);
       call.status = update.status ?? 'pending';
+      stampStart(turn, call, at);
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(ready(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions);
+      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
     }
 
     /*
@@ -381,11 +438,12 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate): Bag[] {
       const call = callOf(turn, update);
       if (update.status !== undefined && update.status !== null) call.status = update.status;
       const input = inputOf(call, update);
+      stampStart(turn, call, at);
       const actions = known ? [] : opened(turn, call);
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
       if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(ready(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, update.content), actions);
+      return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
     }
 
     /*

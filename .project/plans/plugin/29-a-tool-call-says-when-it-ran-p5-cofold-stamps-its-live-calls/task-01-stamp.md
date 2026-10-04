@@ -1,6 +1,6 @@
 ---
 title: cofold tool calls carry their start and end live too, and restored calls keep their kind
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

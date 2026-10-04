@@ -337,7 +337,11 @@ it('describes the spawning call in its _meta, on its start and its ready action'
   const call = 'toolu_01SvkwpPC6azWzz1jZ8nEtV6';
   const lead = main.map((one) => one.action);
   const described = { toolKind: 'subagent', subagentDescription: 'List files in folder', subagentAgentName: 'Explore' };
-  expect(lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta).toEqual(described);
+  // The ready also says when the call started, which is the only place a live
+  // call's start is stamped; the start action is sent before there is one.
+  const ready = lead.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === call)?._meta as Bag;
+  expect({ ...ready, 'ahpd.startedAt': undefined }).toEqual({ ...described, 'ahpd.startedAt': undefined });
+  expect(ready['ahpd.startedAt']).toEqual(expect.any(String));
   expect(lead.find((one) => one.type === 'chat/toolCallStart' && one.toolCallId === call)?._meta).toEqual(described);
 });
 

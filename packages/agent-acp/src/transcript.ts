@@ -47,7 +47,7 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       parts: [],
       calls: new Map(),
     };
-    for (const update of watched.updates) mapUpdate(replay, update);
+    for (const { update, at } of watched.updates) mapUpdate(replay, update, at);
     // The plan is closed by the turn ending rather than by an update of its own,
     // so the replay ends it the way the live turn did.
     closePlan(replay);
@@ -116,7 +116,7 @@ export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn
     if (asked && update.content.type === 'text') {
       open.message.text = `${open.message.text}${update.content.text}`;
     }
-    open.updates.push(update);
+    open.updates.push({ update });
     answered = answered || !asked;
   }
   return turns;

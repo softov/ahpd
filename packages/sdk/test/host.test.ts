@@ -762,24 +762,30 @@ describe('driving a turn', () => {
       // stamped at the start ride along, because an action carrying `_meta`
       // replaces the bag whole.
       const worker = { toolKind: 'subagent', subagentDescription: 'look', subagentChatUri: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/) };
+      // The times ride with them: the plugin stamped the call's start when it
+      // began running and the completion adds the end.
+      const started = { ...worker, 'ahpd.startedAt': expect.any(String) };
+      const ended = {
+        ...started, 'ahpd.endedAt': expect.any(String), 'ahpd.durationMs': expect.any(Number),
+      };
       expect(changed).toEqual([
-        { ...worker, progressMessage: 'Reading the tests' },
-        { ...worker, progressMessage: 'Running Grep' },
+        { ...started, progressMessage: 'Reading the tests' },
+        { ...started, progressMessage: 'Running Grep' },
       ]);
       const mid = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
         snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
       }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
-      expect(mid).toEqual({ ...worker, progressMessage: 'Running Grep' });
+      expect(mid).toEqual({ ...started, progressMessage: 'Running Grep' });
 
       await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'found it' }] } });
       // Gone with the running state it described: a completed row that still
       // says "Running Grep" is a row saying two things.
       const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
-      expect(done?.action._meta).toEqual(worker);
+      expect(done?.action._meta).toEqual(ended);
       const after = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
         snapshot: { state: { activeTurn: { responseParts: { toolCall?: { _meta?: Record<string, unknown> } }[] } } };
       }).snapshot.state.activeTurn.responseParts[0]?.toolCall?._meta;
-      expect(after).toEqual(worker);
+      expect(after).toEqual(ended);
     });
 
     it('says nothing for a tool it has no kind for', async () => {

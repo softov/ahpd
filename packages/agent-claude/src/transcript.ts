@@ -1,6 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
+import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -210,6 +211,11 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
    * counted once however many frames carry it.
    */
   const spentBy = new Map<WireTurn<Turn>, Map<string, Bag>>();
+  /*
+   * The last frame each turn was built from, so a restored turn can say how
+   * long it took: the frames carry a time each and the turn does not.
+   */
+  const lastAt = new Map<WireTurn<Turn>, number>();
 
   for (const entry of messages) {
     const frame = bag(entry);
@@ -251,13 +257,19 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         if (text !== undefined)
           call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
         if (!ok) call.error = { message: text ?? 'The tool failed' };
+        // When it ended, on the frame that carries its result.
+        call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
       }
+      // A frame of tool results is part of the turn the prompt opened, so the
+      // turn ends when the last of them was written.
+      const open = built[built.length - 1];
+      if (open !== undefined) lastAt.set(open, Date.parse(at));
       if (!said) continue;
       // Written by the CLI rather than said by anybody: it neither shows as a
       // prompt nor ends the exchange it sits in.
       if (frame.isCompactSummary === true || isCliEcho(message.content)) continue;
 
-      built.push({
+      const opened: WireTurn<Turn> = {
         id: str(frame.uuid) ?? `u${built.length}`,
         startedAt: at,
         // Who produced it, which `Message` requires and this never sent.
@@ -270,7 +282,9 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         // Required too, and meaning "not measured" rather than "none" until
         // an assistant frame answering it records what it cost.
         usage: undefined,
-      });
+      };
+      built.push(opened);
+      lastAt.set(opened, Date.parse(at));
       continue;
     }
 
@@ -309,7 +323,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
         const input = toolInputOf(name, bag(block.input));
-        const meta = toolMetaOf(name);
+        const meta = withCallTimes(toolMetaOf(name), callTimes(at));
         /*
          * Checked against the state it claims to be in, at the moment it is
          * built.
@@ -328,8 +342,9 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
           // a call still reading `running` would be a spinner that never stops.
           status: 'completed',
           ...(input !== undefined ? { toolInput: input } : {}),
-          // The same hint a live call carries, so a transcript read back off
-          // disk draws its shell commands as shell commands.
+          // The kind a live call carries, so a transcript read back off
+          // disk draws its shell commands as shell commands, and when the call
+          // started, which its own `tool_use` frame says.
           ...(meta ? { _meta: meta } : {}),
           /*
            * Required on a completed call, all four of them, and this builder
@@ -375,6 +390,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
       built.push(turn);
     }
     turn.responseParts = [...(turn.responseParts as Bag[]), ...parts];
+    lastAt.set(turn, Date.parse(at));
 
     if (Object.keys(spent).length > 0) {
       const byMessage = spentBy.get(turn) ?? new Map<string, Bag>();
@@ -383,6 +399,16 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
       byMessage.set(str(message.id) ?? `frame:${byMessage.size}:${str(frame.uuid) ?? ''}`, spent);
       turn.usage = summed([...byMessage.values()]) as WireTurn<Turn>['usage'];
     }
+  }
+
+  /*
+   * How long each restored turn took, from its own frames: the last one it was
+   * built from, less the one that opened it. A turn a single frame opened and
+   * answered took no time at all, and says so.
+   */
+  for (const turn of built) {
+    const ended = lastAt.get(turn);
+    if (ended !== undefined) turn.duration = ended - Date.parse(turn.startedAt as string);
   }
 
   return built;

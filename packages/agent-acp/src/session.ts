@@ -56,7 +56,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { machineAsked, Status } from '@ahpd/sdk';
+import { callTimes, machineAsked, Status, withCallTimes } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, OpenedTerminal, Ran, Session, Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
 import { watchSession } from './catalog.js';
 import { connectAcp } from './connection.js';
@@ -601,6 +601,12 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   const receivedUpdate = (sessionId: string, update: SessionUpdate): void => {
     if (closed) return;
     if (acpSessionId !== undefined && sessionId !== acpSessionId) return;
+    /*
+     * When this arrived, which is what a tool call's start and end are: ACP
+     * carries no time of its own, so the times are the ones this plugin read
+     * the updates at. Taken once, so every use of it is the same moment.
+     */
+    const at = Date.now();
 
     if (update.sessionUpdate === 'session_info_update') {
       const said = update.title;
@@ -666,13 +672,13 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     if (current === undefined) return;
     // Kept before it is mapped, so a transcript rebuilt later sees the same
     // notifications the live client did, in the same order.
-    watchedTurn?.updates.push(update);
+    watchedTurn?.updates.push({ update, at });
     /*
      * A usage is the turn's own total, held on the turn as well as sent, so a
      * client reading the snapshot mid-turn reads the same number the stream
      * last carried.
      */
-    for (const action of mapUpdate(current, update)) {
+    for (const action of mapUpdate(current, update, at)) {
       if (action.type === 'chat/usage' && active !== undefined) active.usage = bag(action.usage);
       emit('chat', action);
     }
@@ -1578,6 +1584,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       toolInput: command,
       confirmed: 'not-needed',
       status: 'running',
+      _meta: callTimes(began),
     };
     const part: Bag = { id: toolCallId, kind: 'toolCall', toolCall: call };
     active = {
@@ -1598,6 +1605,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     });
     emit('chat', {
       type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, confirmed: 'not-needed', toolInput: command,
+      _meta: callTimes(began),
     });
     doing('Running');
     touch();
@@ -1631,8 +1639,12 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       };
       // Into the part as well, so the snapshot a late subscriber reads holds
       // the finished call rather than the `running` one it was opened with.
-      Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
-      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      Object.assign(call, result, {
+        status: 'completed',
+        confirmed: 'not-needed',
+        _meta: withCallTimes(bag(call._meta), callTimes(began, Date.now())),
+      });
+      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: bag(call._meta) });
       const turn = active;
       const duration = Date.now() - began;
       turn.state = done.success ? 'complete' : 'error';

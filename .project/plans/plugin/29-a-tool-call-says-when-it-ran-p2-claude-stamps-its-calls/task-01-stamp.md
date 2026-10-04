@@ -1,6 +1,6 @@
 ---
 title: Claude tool calls carry their start and end, live and restored
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

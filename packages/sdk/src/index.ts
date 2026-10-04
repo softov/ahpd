@@ -75,5 +75,6 @@ export type { SessionStore } from './types/sessions.js';
 export type { ScheduledOptions } from './scheduled.js';
 export { uriFor, idFor, idOf, Status } from './catalog.js';
 export { tail, older, PAGE } from './paging.js';
+export { callTimes, withCallTimes, startOf } from './timing.js';
 
 export type * from './types/index.js';

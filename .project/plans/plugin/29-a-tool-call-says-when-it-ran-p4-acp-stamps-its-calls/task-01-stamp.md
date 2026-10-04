@@ -1,6 +1,6 @@
 ---
 title: ACP tool calls carry their start and end while the daemon runs
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

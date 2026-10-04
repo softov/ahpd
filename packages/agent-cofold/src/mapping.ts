@@ -17,6 +17,7 @@
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
+import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
@@ -128,6 +129,8 @@ const failurePart = (message: string): Bag => ({
   kind: 'error',
   error: { errorType: 'turnFailed', message },
 });
+
+const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** One tool call as it is held between its proposal and its result. */
 interface OpenCall {
@@ -525,6 +528,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const written = toolInputOf(held.name, held.input);
           if (written !== undefined) call.toolInput = written;
           /*
+           * The call starts when cofold says it started, which for a call a
+           * person was asked about is after they allowed it.
+           */
+          call._meta = withCallTimes(bag(call._meta), callTimes(event.at));
+          /*
            * Built here rather than through `toolReadyAction`, because an
            * approved call has to keep saying a person allowed it: the same
            * action with `not-needed` would draw the approval as one nobody
@@ -538,12 +546,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
+            _meta: bag(call._meta),
           }]);
         }
 
         case 'tool.completed': {
           const held = open.get(event.callId);
           open.delete(event.callId);
+          let meta: Bag | undefined;
           if (held !== undefined) {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
@@ -551,8 +561,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             call.pastTenseMessage = describe(held.name, held.input);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
+            call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? event.at, event.at, event.durationMs));
+            meta = bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.input)]);
+          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.input, meta)]);
         }
 
         /*

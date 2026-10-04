@@ -25,14 +25,14 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, idFor } from '@ahpd/sdk';
+import { Status, callTimes, idFor, startOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf, addUsage, describe, mapEvent, readyRow } from './mapping.js';
+import { activityOf, addUsage, describe, mapEvent, readyRow, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -238,7 +238,12 @@ export function piSession(
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
       const part = mapping?.parts.find((one) => one.id === id);
-      if (part !== undefined) bag(part.toolCall).status = 'cancelled';
+      if (part !== undefined) {
+        bag(part.toolCall).status = 'cancelled';
+        // The question was cancelled, so the call never ran: the start
+        // `tool_execution_start` stamped is taken off with it.
+        untime(bag(part.toolCall));
+      }
       emit('chat', {
         type: 'chat/toolCallConfirmed',
         turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
@@ -397,6 +402,9 @@ export function piSession(
         toolInput: JSON.stringify(input),
         ...contributor,
         ...extra,
+        // The whole bag, because an action's `_meta` replaces the call's: the
+        // start `tool_execution_start` stamped is what the row holds.
+        ...(row?._meta === undefined ? {} : { _meta: row._meta }),
       });
     };
 
@@ -892,6 +900,8 @@ export function piSession(
     emit('chat', {
       type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'shell', displayName: command,
     });
+    const held = bag(part.toolCall);
+    held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
     emit('chat', {
       type: 'chat/toolCallReady',
       turnId,
@@ -899,18 +909,20 @@ export function piSession(
       invocationMessage: command,
       confirmed: 'not-needed',
       toolInput: JSON.stringify({ command }),
+      _meta: held._meta,
     });
     doing(`Running ${command}`);
 
     void run(toolCallId).then((ran) => {
-      const held = bag(part.toolCall);
       held.status = 'completed';
       held.success = ran.success;
       held.pastTenseMessage = ran.said;
+      held._meta = withCallTimes(bag(held._meta), callTimes(startOf(held._meta) ?? Date.now(), Date.now()));
       emit('chat', {
         type: 'chat/toolCallComplete',
         turnId,
         toolCallId,
+        _meta: held._meta,
         result: {
           success: ran.success,
           pastTenseMessage: ran.said,
@@ -1102,10 +1114,20 @@ export function piSession(
       emit('session', { type: 'session/inputNeededRemoved', id: held.id });
       const toolCall = bag(held.entry.toolCall);
       const part = mapping?.parts.find((one) => one.id === toolCallId);
+      let times: Bag | undefined;
       if (part !== undefined) {
         const row = bag(part.toolCall);
         row.status = approved ? 'running' : 'cancelled';
         if (approved) row.confirmed = 'user-action';
+        /*
+         * A call starts running now, and not at the `tool_execution_start`
+         * that came before the question: the wait for a person is not work. A
+         * call refused never runs, so it loses the start it was given.
+         */
+        times = approved
+          ? withCallTimes(bag(row._meta), callTimes(Date.now()))
+          : untime(row);
+        row._meta = times;
       }
       emit('chat', {
         type: 'chat/toolCallConfirmed',
@@ -1113,6 +1135,8 @@ export function piSession(
         toolCallId,
         approved,
         ...(approved ? { confirmed: 'user-action' as const } : { reason: 'denied' as const }),
+        // The whole bag, because an action's `_meta` replaces the call's.
+        ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
       });
       // Said back like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here would stay

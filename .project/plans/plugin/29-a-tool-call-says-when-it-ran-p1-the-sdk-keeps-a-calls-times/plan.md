@@ -1,7 +1,7 @@
 ---
 title: The sdk has one helper that builds and keeps a tool call's timing _meta
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-10-03
@@ -35,11 +35,11 @@ A helper in the sdk builds `{ 'ahpd.startedAt', 'ahpd.endedAt', 'ahpd.durationMs
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The sdk has one helper that builds and keeps a tool call's timing _meta](task-01-stamp.md) | todo | - |
+| [01 - The sdk has one helper that builds and keeps a tool call's timing _meta](task-01-stamp.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-stamp.md](task-01-stamp.md).
+- **Done so far:** task 01, 2026-10-03.
+- **Next action:** p2.
 - **Open questions:** none.
 - **Watch out for:** a `_meta` sent after the start replaces the whole `_meta`: it must carry the `ahpd.` times and `toolKind` again.

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -334,8 +334,55 @@ it('rebuilds a turn with its text, its reasoning and its tool call in order', as
   expect(call.pastTenseMessage).toBe('lookup');
   expect(call.content).toEqual([{ type: 'text', text: 'found x' }]);
   // The timing rides `_meta`: AHP's tool-call states have no duration field.
-  expect((call._meta as Bag).durationMs).toEqual(expect.any(Number));
+  expect(call._meta).toMatchObject({
+    'ahpd.startedAt': expect.any(String),
+    'ahpd.endedAt': expect.any(String),
+    'ahpd.durationMs': expect.any(Number),
+  });
   expect(parts[3]?.content).toBe('found it');
+});
+
+it('rebuilds a call whose run recorded a result but no start, with a start it worked back', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({
+    script: [
+      {
+        reasoning: 'weighing it up',
+        text: 'let me look',
+        toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'call-1' }],
+      },
+      { text: 'found it' },
+    ],
+    stream: true,
+  });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep, { tools: [] });
+  one.session.begin('t1', 'hello there');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  // A run that lost its `tool.started`, which is what a store written by a
+  // version that recorded no start - or a truncated one - looks like.
+  const events = readdirSync(root, { recursive: true }).map(String)
+    .filter((one) => one.endsWith('events.jsonl'));
+  expect(events).toHaveLength(1);
+  const file = join(root, events[0] as string);
+  writeFileSync(file, readFileSync(file, 'utf8')
+    .split('\n').filter((line) => line === '' || !line.includes('"tool.started"')).join('\n'));
+
+  const parts = ((await agent.transcript?.('one'))?.[0]?.responseParts ?? []) as Bag[];
+  const call = parts.find((one) => one.kind === 'toolCall')?.toolCall as Bag;
+  // The end and the duration are both on file, so the start is the end less
+  // the duration: three times rather than two and a gap.
+  expect(call._meta).toMatchObject({
+    toolKind: 'terminal',
+    'ahpd.startedAt': expect.any(String),
+    'ahpd.endedAt': expect.any(String),
+    'ahpd.durationMs': expect.any(Number),
+  });
+  const meta = call._meta as Bag;
+  expect(Date.parse(meta['ahpd.endedAt'] as string) - Date.parse(meta['ahpd.startedAt'] as string))
+    .toBe(meta['ahpd.durationMs']);
 });
 
 it('answers undefined for a session the store does not know and empty for one with nothing said', async () => {

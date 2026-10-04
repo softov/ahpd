@@ -1,7 +1,7 @@
 ---
 title: pi tool calls carry their start and end, live and restored
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-10-03
@@ -46,11 +46,11 @@ Restored, the entry times reach the replayed events so the live mapping stamps b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi tool calls carry their start and end, live and restored](task-01-stamp.md) | todo | p1 |
+| [01 - pi tool calls carry their start and end, live and restored](task-01-stamp.md) | done | p1 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-stamp.md](task-01-stamp.md).
+- **Done so far:** task 01, 2026-10-03.
+- **Next action:** p4.
 - **Open questions:** none.
 - **Watch out for:** a `_meta` sent after the start replaces the whole `_meta`: it must carry the `ahpd.` times and `toolKind` again.

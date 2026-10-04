@@ -144,3 +144,65 @@ it('reads a compact summary as no prompt', async () => {
   expect(turns).toHaveLength(1);
   expect(turns[0]?.message).toMatchObject({ text: 'keep going' });
 });
+
+/*
+ * When a past turn and its calls ran, off the frames.
+ *
+ * The CLI writes a time on every frame and the protocol has nowhere to put a
+ * call's own, so the frames are what the times come from: a call starts at its
+ * `tool_use` and ends at its `tool_result`, and a turn lasts from the frame
+ * that opened it to the last one that answered it.
+ */
+
+/** The same frame, at a time of its own. */
+const when = (at: string, one: Record<string, unknown>): Record<string, unknown> => ({ ...one, timestamp: at });
+
+it('gives a restored call the times of the frames that ran it', async () => {
+  const turns = await read([
+    prompt('u1', 'look around'),
+    when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }])),
+    when('2020-01-01T00:00:09.500Z', results('u2', 'toolu_1', 'a b c')),
+  ]);
+  const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
+  expect(call._meta).toMatchObject({
+    toolKind: 'terminal',
+    'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
+    'ahpd.endedAt': '2020-01-01T00:00:09.500Z',
+    'ahpd.durationMs': 4500,
+  });
+});
+
+it('gives a restored call with no result only its start', async () => {
+  const turns = await read([
+    prompt('u1', 'look around'),
+    when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }])),
+  ]);
+  const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
+  expect(call._meta).toMatchObject({ 'ahpd.startedAt': '2020-01-01T00:00:05.000Z' });
+  expect(call._meta).not.toHaveProperty('ahpd.endedAt');
+  expect(call._meta).not.toHaveProperty('ahpd.durationMs');
+});
+
+it('gives a restored turn how long it took', async () => {
+  const turns = await read([
+    when('2020-01-01T00:00:00.000Z', prompt('u1', 'look around')),
+    when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'text', text: 'Looking.' }])),
+    when('2020-01-01T00:00:09.500Z', results('u2', 'toolu_1', 'a b c')),
+  ]);
+  expect(turns[0]?.duration).toBe(9500);
+});
+
+it('gives a turn a single frame answered no time at all', async () => {
+  const turns = await read([prompt('u1', 'hello')]);
+  expect(turns[0]?.duration).toBe(0);
+});
+
+it('never writes a bare timing key on a restored call', async () => {
+  const turns = await read([
+    prompt('u1', 'look around'),
+    when('2020-01-01T00:00:05.000Z', said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'TodoWrite', input: { todos: [] } }])),
+    when('2020-01-01T00:00:09.500Z', results('u2', 'toolu_1', 'ok')),
+  ]);
+  const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
+  expect(Object.keys(call._meta as Bag)).toEqual(['ahpd.startedAt', 'ahpd.endedAt', 'ahpd.durationMs']);
+});

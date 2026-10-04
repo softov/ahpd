@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { Status } from '../../sdk/src/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
@@ -1813,6 +1813,12 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         confirmed: 'not-needed',
         success: true,
         pastTenseMessage: 'a.ts',
+        // The times pi's own entries carry for it, off the file.
+        _meta: {
+          'ahpd.startedAt': expect.any(String),
+          'ahpd.endedAt': expect.any(String),
+          'ahpd.durationMs': expect.any(Number),
+        },
       },
     },
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },
@@ -1848,7 +1854,16 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
   pi.raise({ type: 'agent_settled' });
   await settled();
   const live = (session.allTurns()[0] as Bag).responseParts;
-  expect(JSON.parse(JSON.stringify(live).replaceAll('t1:', `${disk.first}:`))).toEqual(turns?.[0]?.responseParts);
+  // The times are the one thing the two do not share: live they are this
+  // clock's and replayed they are pi's own entries', so they are taken off
+  // both sides before the rest of the parts are compared.
+  const back = (turns?.[0]?.responseParts ?? []) as Bag[];
+  for (const parts of [live as Bag[], back]) {
+    for (const part of parts) {
+      if (part.kind === 'toolCall') delete (part.toolCall as Bag)._meta;
+    }
+  }
+  expect(JSON.parse(JSON.stringify(live).replaceAll('t1:', `${disk.first}:`))).toEqual(back);
 });
 
 it('answers where a turn from pi file ended, once the session is resumed', async () => {
@@ -1999,6 +2014,143 @@ it('refuses a fork it cannot make rather than starting a conversation that is no
 it('lists an empty directory as no sessions rather than failing', async () => {
   const agent = piAgent({ sessionDir: join(root, 'pi') }, [root]);
   expect(await agent.list?.()).toEqual([]);
+});
+
+// When a call ran ----------------------------------------------------------
+
+/*
+ * When a pi tool call started and ended, live and replayed.
+ *
+ * The protocol gives a call no time of its own, so the times ride in its
+ * `_meta`, stamped from this plugin's clock live and from pi's own entries on a
+ * replay. An action carrying a `_meta` replaces the call's whole bag, so the
+ * ready, the approval and the completion each carry them again.
+ */
+
+/** The `_meta` an action carries, or an empty bag for one that carries none. */
+const metaOf = (action: Bag | undefined): Bag => (action?._meta ?? {}) as Bag;
+
+/** Whether an action carries a call's start, its end and how long it took. */
+const timed = (action: Bag | undefined): boolean => {
+  const meta = metaOf(action);
+  return typeof meta['ahpd.startedAt'] === 'string'
+    && typeof meta['ahpd.endedAt'] === 'string'
+    && typeof meta['ahpd.durationMs'] === 'number';
+};
+
+it('says when a live call started and ended, on its ready and its complete', async () => {
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
+  const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 'c1')?.action;
+  const ready = for1('chat/toolCallReady');
+  const complete = for1('chat/toolCallComplete');
+  expect(metaOf(ready)['ahpd.startedAt']).toEqual(expect.any(String));
+  expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
+  expect(timed(complete)).toBe(true);
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect(timed(parts.find((one) => one.id === 'c1')?.toolCall as Bag)).toBe(true);
+});
+
+it('says when a call started, on the start pi opened the row for', async () => {
+  const one = turn();
+  const message = { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } }] };
+  mapEvent(one, { type: 'message_update', message, assistantMessageEvent: { contentIndex: 0, partial: message, type: 'toolcall_start' } } as unknown as AgentSessionEvent);
+  // The model's stream names the call; pi runs it afterwards, which is when the
+  // start is stamped - the start action has been sent by then and cannot say.
+  const opened_ = mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} }, 1_700_000_000_000);
+  expect(opened_).toEqual([]);
+  expect(metaOf(one.parts[0]?.toolCall as Bag)['ahpd.startedAt']).toBe('2023-11-14T22:13:20.000Z');
+});
+
+it('starts an approved call when it was approved, and says none for a denied one', async () => {
+  let now = 1_700_000_000_000;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  const asked = now;
+  const waiting = driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  await settled();
+  now += 30_000;
+  const approved = now;
+  session.confirm('c1', true);
+  await waiting;
+  const confirmed = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c1')?.action;
+  // The question waited for a person, which is not work: the start is the
+  // approval's, not the one the asked ready already carried.
+  expect(metaOf(sent.find((one) => one.action.type === 'chat/toolCallReady' && one.action.toolCallId === 'c1')?.action)['ahpd.startedAt'])
+    .toBe(new Date(asked).toISOString());
+  expect(metaOf(confirmed)['ahpd.startedAt']).toBe(new Date(approved).toISOString());
+
+  session.begin('t2', 'again');
+  await settled();
+  const refused = driveCall(pi, 'c2', 'bash', { command: 'rm -rf /' });
+  await settled();
+  session.confirm('c2', false);
+  await refused;
+  const denied = sent.find((one) => one.action.type === 'chat/toolCallConfirmed' && one.action.toolCallId === 'c2')?.action;
+  expect(metaOf(denied)['ahpd.startedAt']).toBeUndefined();
+  expect(metaOf(denied)['ahpd.durationMs']).toBeUndefined();
+  // And the snapshot the person would read says the same.
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  expect((parts.find((one) => one.id === 'c2')?.toolCall as Bag)._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
+  clock.mockRestore();
+});
+
+it('says when a command of the person\'s own ran', async () => {
+  const { session, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  session.ran?.('t1', 'ls -la', async () => ({ success: true, said: 'Listed files', output: 'a b c' }));
+  await settled();
+  const for1 = (type: string) => sent.find((one) => one.action.type === type && one.action.toolCallId === 't1:shell')?.action;
+  expect(metaOf(for1('chat/toolCallReady'))['ahpd.startedAt']).toEqual(expect.any(String));
+  expect(timed(for1('chat/toolCallComplete'))).toBe(true);
+});
+
+it('gives a replayed call the times of the entries that ran it', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const call = { type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'ls' } };
+  const entries: Bag[] = [
+    { type: 'message', id: 'u1', parentId: null, timestamp: '2020-01-01T00:00:00.000Z', message: { role: 'user', content: 'go', timestamp: 0 } },
+    { type: 'message', id: 'a0', parentId: 'u1', timestamp: '2020-01-01T00:00:05.000Z', message: answer([call], 'toolUse') },
+    {
+      type: 'message',
+      id: 'r0',
+      parentId: 'a0',
+      timestamp: '2020-01-01T00:00:09.500Z',
+      message: { role: 'toolResult', toolCallId: 'c1', toolName: 'bash', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 0 },
+    },
+  ];
+  const { turns } = replayEntries(entries as never);
+  const row = turns[0]!.parts.find((one) => one.id === 'c1')?.toolCall as Bag;
+  // pi's own times, not the moment this process read the file.
+  expect(row._meta).toMatchObject({
+    'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
+    'ahpd.endedAt': '2020-01-01T00:00:09.500Z',
+    'ahpd.durationMs': 4500,
+  });
+});
+
+it('never writes a bare timing key on a pi tool call', async () => {
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'bypassPermissions' } } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'bash', { command: 'ls' });
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'ok', isError: false });
+  const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
+  for (const { action } of sent) {
+    const keys = Object.keys(metaOf(action));
+    expect(keys, String(action.type)).not.toContain('startedAt');
+    expect(keys, String(action.type)).not.toContain('endedAt');
+    expect(keys, String(action.type)).not.toContain('durationMs');
+  }
+  const keys = Object.keys((parts.find((one) => one.id === 'c1')?.toolCall as Bag)._meta as Bag);
+  expect(keys).not.toContain('startedAt');
 });
 
 // The plugin --------------------------------------------------------------

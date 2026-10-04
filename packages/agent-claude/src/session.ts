@@ -9,7 +9,7 @@ import { lineOf, pastLineOf, summarize, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 import { flagSettingsOf, optionDefaults, queryOptionsOf } from './options.js';
 import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
-import { Status, idOf, tail } from '@ahpd/sdk';
+import { Status, callTimes, idOf, startOf, tail, withCallTimes } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, OnWire, Ran, Session, SessionOptions, SubagentChat, SubagentRequest, WireTurn } from '@ahpd/sdk';
 import type { Asked, Spawned } from './spawn.js';
 
@@ -1456,6 +1456,32 @@ export function createSession(options: ClaudeSessionOptions): Session {
   };
 
   /**
+   * A call's bag with its start stamped, when it began running.
+   *
+   * The plugin's own clock, and stamped onto the call rather than onto the
+   * action announcing it: an action carrying a `_meta` replaces the call's
+   * whole bag, so a call that is asked about after this one is stamped again
+   * at its approval and every later action has to carry the times again.
+   */
+  const stampStart = (call: Bag, at = Date.now()): Bag => {
+    call._meta = withCallTimes(bag(call._meta), callTimes(at));
+    return bag(call._meta);
+  };
+
+  /** A call's bag with its end stamped, measured from the start it holds. */
+  const stampEnd = (call: Bag, at = Date.now()): Bag => {
+    call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
+    return bag(call._meta);
+  };
+
+  /** A call's bag with the times taken off, for a call that never ran. */
+  const untimed = (call: Bag): Bag => {
+    const { 'ahpd.startedAt': _started, 'ahpd.endedAt': _ended, 'ahpd.durationMs': _duration, ...rest } = bag(call._meta);
+    call._meta = Object.keys(rest).length > 0 ? rest : undefined;
+    return bag(call._meta);
+  };
+
+  /**
    * Why a turn stopped, as a part of it.
    *
    * 0.9.0 took `error` off `Turn` and gave the reason a response part instead,
@@ -1827,6 +1853,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
             ...(meta ? { _meta: meta } : {}),
           });
         }
+        /*
+         * When it starts running, on this plugin's clock, which is the ready
+         * for a call nobody is asked about. A call `canUseTool` asks about is
+         * stamped again when it is approved, so the wait is not counted.
+         */
+        stampStart(call);
         emitOn(scope, {
           type: 'chat/toolCallReady',
           turnId: turn.id,
@@ -1841,7 +1873,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           confirmed: 'not-needed',
           ...(input !== undefined ? { toolInput: input } : {}),
           // The whole bag, because an action's `_meta` replaces the call's.
-          ...(spawned !== undefined ? { _meta: bag(call._meta) } : {}),
+          _meta: bag(call._meta),
         });
       }
     }
@@ -1866,6 +1898,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * `result.error`, which is also the only place a client looks for it.
        */
       const ok = block.is_error !== true;
+      // A call a person declined is already `cancelled`, and it never ran, so
+      // its completion carries no times.
+      const ran = call.status !== 'cancelled';
       call.status = 'completed';
       // Finished, so it is no longer waiting on anything - including a
       // sign-in nobody ever did.
@@ -1928,18 +1963,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * The progress line goes with the running state it described.
        *
        * Meaningful only while the call runs, and a completed row that still
-       * carries "Running Grep" is a row that says two things. Sent on the
-       * completion only when there was one to take off, because an action
-       * carrying `_meta` replaces the bag whole and an absent one leaves
-       * the kind stamped at the start alone.
+       * carries "Running Grep" is a row that says two things.
        */
       const meta = bag(call._meta);
       const progressed = meta.progressMessage !== undefined;
       if (progressed) {
         const { progressMessage: _gone, ...rest } = meta;
-        if (Object.keys(rest).length > 0) call._meta = rest;
-        else delete call._meta;
+        call._meta = rest;
       }
+      // When it ended, measured from the start the call holds. A call a person
+      // declined never ran, so it keeps none.
+      if (ran) stampEnd(call);
       // And as it is now the tool has run. Paired with the `before` above by
       // the call's own id, which is the only thing that survives the gap.
       const changed = id === undefined ? undefined : editing.get(id);
@@ -1952,7 +1986,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         turnId: scope.turn?.id,
         toolCallId: id,
         result,
-        ...(progressed ? { _meta: call._meta ?? {} } : {}),
+        // The whole bag: an action's `_meta` replaces the call's, so the
+        // times and the kind have to be said again here or they are gone.
+        ...(call._meta === undefined ? {} : { _meta: call._meta }),
       });
       /*
        * A spawning call's result ends the worker it ran when the call did not
@@ -3020,6 +3056,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     emit('chat', {
       type: 'chat/toolCallReady', turnId, toolCallId,
       invocationMessage: command, toolInput: command, confirmed: 'not-needed',
+      _meta: stampStart(call),
     });
     void run(toolCallId).then((done) => {
       if (active !== turn) return;
@@ -3054,7 +3091,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ...(done.success ? {} : { error: { message: done.said } }),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;
       Object.assign(call, result, { status: 'completed', confirmed: 'not-needed' });
-      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
+      emit('chat', {
+        type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: stampEnd(call),
+      });
       turn.state = done.success ? 'complete' : 'error';
       turn.duration = Date.now() - startedAt;
       turns.push(turn);
@@ -3618,6 +3657,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // answer's kind; anything else is a plain approve or deny.
       const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = scope.parts.get(toolCallId);
+      let times: Bag | undefined;
       if (part) {
         const call = bag(part.toolCall);
         call.status = approved ? 'running' : 'cancelled';
@@ -3626,6 +3666,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
         if (approved) call.confirmed = 'user-action';
         delete call.options;
         if (picked !== undefined) call.selectedOption = picked;
+        /*
+         * A call starts running now, and not at the ready that came before the
+         * question: the wait for a person is not work. A call refused never
+         * runs, so it loses the start it was given and says none.
+         */
+        times = approved ? stampStart(call) : untimed(call);
       }
       if (scope === mainScope) doing(approved ? busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
       // Said back, like every other action a client originates. Nothing in a
@@ -3639,6 +3685,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
         approved,
         ...(approved ? { confirmed: 'user-action' } : {}),
         ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
+        // The whole bag, because an action's `_meta` replaces the call's.
+        ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
       });
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
