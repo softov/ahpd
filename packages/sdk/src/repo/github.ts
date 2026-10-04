@@ -1,7 +1,7 @@
 /** Pull requests, asked of GitHub. */
 
 import { execFile } from 'node:child_process';
-import type { NewPullRequest, PullRequest, PullRequests } from './types/github.js';
+import type { NewPullRequest, PullRequest, PullRequests } from '../types/github.js';
 
 /** The reference host's resource for a github.com token, verbatim. */
 const RESOURCE = {

@@ -1,6 +1,6 @@
 ---
 title: The git, GitHub and worktree ports live in repo/
-status: todo
+status: done
 depends: [task-02-facts.md]
 layer: "sdk"
 refs:

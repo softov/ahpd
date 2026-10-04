@@ -1,7 +1,7 @@
 ---
 title: Changesets and git and GitHub facts are files of their own, and the repository ports live in repo/
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -48,19 +48,16 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session's changesets are one file](task-01-changesets.md) | todo | - |
-| [02 - Git and GitHub facts, pull requests and artifacts are one file](task-02-facts.md) | todo | 01 |
-| [03 - The git, GitHub and worktree ports live in repo/](task-03-repo.md) | todo | 02 |
+| [01 - A session's changesets are one file](task-01-changesets.md) | done | - |
+| [02 - Git and GitHub facts, pull requests and artifacts are one file](task-02-facts.md) | done | 01 |
+| [03 - The git, GitHub and worktree ports live in repo/](task-03-repo.md) | done | 02 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-changesets.md](task-01-changesets.md).
-- **Open questions:** none of its own.
-- **Watch out for:** `inFlight`, `lastError`, `shown`, `githubFacts`, `refreshing`, `waiting` and `dirWatchers` are written only here, so they move into the factories; check with `grep -n` that no other area writes one before moving it.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/changes-*.test.ts`, `test/pullrequest.test.ts`, `test/commit.test.ts`, `test/operations.test.ts`, `test/github.test.ts` and `test/watches.test.ts` cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 760 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/changes-*.test.ts`, `test/pullrequest.test.ts`, `test/commit.test.ts`, `test/operations.test.ts`, `test/github.test.ts` and `test/watches.test.ts` cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 760 lines fewer than before.
+- [x] `plans/index.md` updated.

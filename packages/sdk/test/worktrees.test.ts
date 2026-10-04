@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { gitWorktrees, worktreesOf } from '../src/worktrees.js';
+import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions.js';
 import { fileResources } from '../src/resources.js';
 import type { Peer } from '../src/types/rpc.js';

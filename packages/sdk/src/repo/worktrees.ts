@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import type { Worktree, Worktrees } from './types/worktrees.js';
+import type { Worktree, Worktrees } from '../types/worktrees.js';
 
 /**
  * Run git, and answer what it said. Rejects with git's own words.

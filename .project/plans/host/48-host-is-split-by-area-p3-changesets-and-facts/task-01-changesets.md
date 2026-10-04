@@ -1,6 +1,6 @@
 ---
 title: A session's changesets are one file
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { gitBranches } from '../src/git.js';
+import { gitBranches } from '../src/repo/git.js';
 
 /*
  * The git that `gitBranches` runs in the background takes no optional lock.

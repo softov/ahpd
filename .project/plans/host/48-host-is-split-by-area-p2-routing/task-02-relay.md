@@ -1,6 +1,6 @@
 ---
 title: A URI a client published is routed by one file
-status: todo
+status: done
 depends: [task-01-routing.md]
 layer: "sdk"
 refs:

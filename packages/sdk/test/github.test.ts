@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { githubPullRequests } from '../src/github.js';
+import { githubPullRequests } from '../src/repo/github.js';
 
 /*
  * The pull request of a branch, asked two ways.

@@ -32,7 +32,7 @@ export {
   createPeer, receive, RpcError, RpcTimeout, RpcClosed, ANSWER_TIMEOUT,
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
 } from './rpc.js';
-export { gitBranches } from './git.js';
+export { gitBranches } from './repo/git.js';
 export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { shellTerminals } from './terminals.js';
@@ -46,8 +46,8 @@ export { resolveNeeds, expandHome } from './machine.js';
 export type { NeedSources } from './machine.js';
 export { sessionTools } from './sessiontools.js';
 export { artifactTools, ARTIFACTS_META } from './artifacttools.js';
-export { gitWorktrees, worktreesOf, worktreeFor } from './worktrees.js';
-export { githubPullRequests } from './github.js';
+export { gitWorktrees, worktreesOf, worktreeFor } from './repo/worktrees.js';
+export { githubPullRequests } from './repo/github.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
 export { fileSessions, memorySessions, migrateSessions } from './sessions.js';

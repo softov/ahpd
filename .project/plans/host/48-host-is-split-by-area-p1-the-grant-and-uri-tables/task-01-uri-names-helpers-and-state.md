@@ -1,6 +1,6 @@
 ---
 title: The URI names, the shared helpers and the state's interfaces are their own files
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

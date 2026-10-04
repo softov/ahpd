@@ -1,6 +1,6 @@
 ---
 title: Git and GitHub facts, pull requests and artifacts are one file
-status: todo
+status: done
 depends: [task-01-changesets.md]
 layer: "sdk"
 refs:

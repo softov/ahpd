@@ -1,6 +1,6 @@
 ---
 title: The grant tables are their own file
-status: todo
+status: done
 depends: [task-01-uri-names-helpers-and-state.md]
 layer: "sdk"
 refs:

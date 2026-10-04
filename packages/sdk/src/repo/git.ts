@@ -1,7 +1,7 @@
 /** What git can say about a directory the host serves. */
 
 import { execFile } from 'node:child_process';
-import type { DirectoryFacts } from './types/host.js';
+import type { DirectoryFacts } from '../types/host.js';
 
 /**
  * The environment every `git` here runs with: the inherited one, with

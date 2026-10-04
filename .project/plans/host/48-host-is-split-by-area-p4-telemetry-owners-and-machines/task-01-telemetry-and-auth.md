@@ -1,6 +1,6 @@
 ---
 title: Telemetry and sign-in requirements are their own files
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

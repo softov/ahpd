@@ -1,6 +1,6 @@
 ---
 title: The machine a session runs in is one file
-status: todo
+status: done
 depends: [task-02-owners.md]
 layer: "sdk"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: The URI routing, the client relay and the connection gate are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -59,9 +59,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Which channel a URI means is one file](task-01-routing.md) | todo | - |
-| [02 - A URI a client published is routed by one file](task-02-relay.md) | todo | 01 |
-| [03 - A connection's gate is one file](task-03-admission.md) | todo | 01 |
+| [01 - Which channel a URI means is one file](task-01-routing.md) | done | - |
+| [02 - A URI a client published is routed by one file](task-02-relay.md) | done | 01 |
+| [03 - A connection's gate is one file](task-03-admission.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -70,13 +70,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-routing.md](task-01-routing.md).
-- **Open questions:** none of its own.
-- **Watch out for:** `respelledIn` reads `URI_KEYS`, which p1 moved to `host/channels.ts`.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 800 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 800 lines fewer than before.
+- [x] `plans/index.md` updated.

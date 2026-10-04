@@ -1,6 +1,6 @@
 ---
 title: A connection's gate is one file
-status: todo
+status: done
 depends: [task-01-routing.md]
 layer: "sdk"
 refs:

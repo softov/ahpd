@@ -139,7 +139,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createHost } = await import('../src/host.js');
 const { fileResources, list, read, resolve, complete } = await import('../src/resources.js');
 const { shellTerminals } = await import('../src/terminals.js');
-const { gitBranches } = await import('../src/git.js');
+const { gitBranches } = await import('../src/repo/git.js');
 /*
  * What the daemon hands its host, handed here too.
  *
@@ -3893,7 +3893,8 @@ describe('completing an at-sign', () => {
     expect(found.items[0]?.rangeStart).toBe(8);
     // A reference rather than the bytes: a completion that carried the file
     // would carry it per keystroke.
-    expect(found.items[0]?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/sdk/src/host.ts` });
+    const file = found.items.find((i) => i.insertText === '@packages/sdk/src/host.ts');
+    expect(file?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/sdk/src/host.ts` });
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {

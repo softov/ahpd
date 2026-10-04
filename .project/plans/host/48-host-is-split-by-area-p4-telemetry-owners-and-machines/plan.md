@@ -1,7 +1,7 @@
 ---
 title: Telemetry, sign-in requirements, owners and machines are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -50,19 +50,16 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Telemetry and sign-in requirements are their own files](task-01-telemetry-and-auth.md) | todo | - |
-| [02 - Owners and charging are one file](task-02-owners.md) | todo | 01 |
-| [03 - The machine a session runs in is one file](task-03-machines.md) | todo | 02 |
+| [01 - Telemetry and sign-in requirements are their own files](task-01-telemetry-and-auth.md) | done | - |
+| [02 - Owners and charging are one file](task-02-owners.md) | done | 01 |
+| [03 - The machine a session runs in is one file](task-03-machines.md) | done | 02 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-telemetry-and-auth.md](task-01-telemetry-and-auth.md).
-- **Open questions:** none of its own.
-- **Watch out for:** `turnsRun`, `toolsRun` and `logging` are `let`s; they move into the telemetry factory with their only writers, and nothing else reads them.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/otlp.test.ts`, `test/usage-meter.test.ts`, `test/session-scope.test.ts`, `test/machine-*.test.ts`, `test/policy-checks.test.ts` and `test/users-host.test.ts` cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 650 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/otlp.test.ts`, `test/usage-meter.test.ts`, `test/session-scope.test.ts`, `test/machine-*.test.ts`, `test/policy-checks.test.ts` and `test/users-host.test.ts` cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in each task's Resume, 9,622 to 8,871, so 751 lines fewer.
+- [x] `plans/index.md` updated - left alone on purpose, because the instructions for this run say not to edit it.

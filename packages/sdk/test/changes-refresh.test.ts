@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { gitChanges } from '../src/changes.js';
-import { gitBranches } from '../src/git.js';
+import { gitBranches } from '../src/repo/git.js';
 import { createHost } from '../src/host.js';
 import { fileResources } from '../src/resources.js';
 import { shellTerminals } from '../src/terminals.js';

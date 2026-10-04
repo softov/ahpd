@@ -1,6 +1,6 @@
 ---
 title: Owners and charging are one file
-status: todo
+status: done
 depends: [task-01-telemetry-and-auth.md]
 layer: "sdk"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: The grant tables and the URI names are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -62,8 +62,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The URI names, the shared helpers and the state's interfaces are their own files](task-01-uri-names-helpers-and-state.md) | todo | - |
-| [02 - The grant tables are their own file](task-02-the-grant-tables.md) | todo | 01 |
+| [01 - The URI names, the shared helpers and the state's interfaces are their own files](task-01-uri-names-helpers-and-state.md) | done | - |
+| [02 - The grant tables are their own file](task-02-the-grant-tables.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -71,13 +71,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-uri-names-helpers-and-state.md](task-01-uri-names-helpers-and-state.md), once plugin/29 has merged.
-- **Open questions:** none of its own.
-- **Watch out for:** the inner functions that move here capture nothing from the closure; check each one's body for a closure name before moving it, and leave it if it reads one.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 450 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 450 lines fewer than before.
+- [x] `plans/index.md` updated.
