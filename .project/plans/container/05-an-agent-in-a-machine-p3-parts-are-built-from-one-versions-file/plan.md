@@ -1,7 +1,7 @@
 ---
 title: Parts are built from one versions file, and the joined image from the same file
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-03
