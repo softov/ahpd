@@ -70,6 +70,6 @@ The files read are the `refs` above.
 
 ## Final verification checklist
 
-- [ ] A live and a replayed answered AskUserQuestion carry the same answers, in the place the open question settles, and the same answered `inputRequest` part.
+- [ ] A live and a replayed answered AskUserQuestion carry the same answers in `result.structuredContent`, and the same answered `inputRequest` part.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 - [ ] `plans/index.md` updated.
