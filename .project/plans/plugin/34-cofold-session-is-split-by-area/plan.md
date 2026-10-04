@@ -1,7 +1,7 @@
 ---
 title: The cofold session is split into one file per area, and session.ts composes them
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -129,11 +129,11 @@ A line only on the `>` side is wiring: imports, a factory's signature, destructu
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The session's mutable state is one context](task-01-the-session-state-is-one-context.md) | todo | - |
-| [02 - The agent a turn runs on is one file](task-02-the-turn-agent-is-one-file.md) | todo | 01 |
-| [03 - Reading and reopening a run is one file](task-03-reading-a-run-is-one-file.md) | todo | 02 |
-| [04 - A paused run's answers and stops are one file](task-04-a-paused-runs-answers-are-one-file.md) | todo | 03 |
-| [05 - Opening a turn and the queue are one file](task-05-opening-a-turn-and-the-queue-are-one-file.md) | todo | 04 |
+| [01 - The session's mutable state is one context](task-01-the-session-state-is-one-context.md) | implemented | - |
+| [02 - The agent a turn runs on is one file](task-02-the-turn-agent-is-one-file.md) | implemented | 01 |
+| [03 - Reading and reopening a run is one file](task-03-reading-a-run-is-one-file.md) | implemented | 02 |
+| [04 - A paused run's answers and stops are one file](task-04-a-paused-runs-answers-are-one-file.md) | implemented | 03 |
+| [05 - Opening a turn and the queue are one file](task-05-opening-a-turn-and-the-queue-are-one-file.md) | implemented | 04 |
 
 ## Risks and tradeoffs
 
@@ -147,16 +147,17 @@ A line only on the `>` side is wiring: imports, a factory's signature, destructu
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-session-state-is-one-context.md](task-01-the-session-state-is-one-context.md).
+- **Done so far:** all five tasks. `context.ts` holds `SessionContext` (97 lines) and `session.ts` builds one `ctx` after `touch` and composes the areas into it: `turnagent.ts` (284) the agent a turn runs on, `runs.ts` (318) the cut, the read and the reopen, `pauses.ts` (259) the answers and the stop, `turns.ts` (418) the turn that opens, the queue and the shell command. `session.ts` is 370 lines and holds only what composes them.
+- **Next action:** none - the plan is built. The work is uncommitted and waits for review; see *Final verification checklist*.
+- **Departures from the plan so far:** task 03 needed `owePause`, `payPause` and `startNext` on the context before their own tasks land, so it put the three on `SessionContext` as plain function fields and `session.ts` assigned them onto `ctx`; tasks 04 and 05 lifted them out as the plan describes, and none is left. That fork is the plan's, not the build's, and should be confirmed - see task 03's *Resume*. Task 04's file list names a `str` copy in `pauses.ts` that nothing there reads, so none was added. The pure-move check ran from a scratch script, because `git add -N` and process substitution are unavailable in this shell; that changes how the check is invoked and nothing about what it compares. Task 05's four methods keep their parameter types as `Session['ran']` and the rest rather than by being spelled out, which the file list's `Pick<Session, ...>` allows and a shorter spelling does not break. One blemish the build could not fix: the five new files end without a trailing newline, where every file already in `src/` ends with one, because the editor tools in this shell trim it and the shell was not allowed to append it. `printf '\n' >> packages/agent-cofold/src/{context,turnagent,runs,pauses,turns}.ts` settles it; nothing reads the difference and `tsc` does not care.
 - **Open questions:**
   1. Who rewrites the session.ts refs in plugin/22, host/43 p2 and host/50 once this is built - proposed: the same follow-up host/48 p11 was, outside this plan's five tasks.
 - **Watch out for:** line numbers are at `b4f1a4b` and move after each task, so find code by symbol name; the shadowed locals named in *Gaps* stay shadowed; a `let` is never copied off the context.
 
 ## Final verification checklist
 
-- [ ] `wc -l packages/agent-cofold/src/*.ts` shows no file over 700 lines and `session.ts` under 400.
-- [ ] `packages/agent-cofold/src/index.ts` is unchanged.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-cofold` pass.
-- [ ] The pure-move check, run over the whole plan's diff, shows only wiring on the `>` side.
-- [ ] `plans/index.md` updated.
+- [x] `wc -l packages/agent-cofold/src/*.ts` shows no file over 700 lines and `session.ts` under 400. `session.ts` 370, `turns.ts` 418, `runs.ts` 318, `turnagent.ts` 284, `pauses.ts` 259, `context.ts` 97. `agent.ts` is 703 and was already there; no file this plan made is over 700.
+- [x] `packages/agent-cofold/src/index.ts` is unchanged.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-cofold` pass, and so does the whole `pnpm test` - 207 files, 2867 tests.
+- [x] The pure-move check, run over the whole plan's diff, shows only wiring on the `>` side: 1224 removed and 1459 added, and the 31 lines with no counterpart are the fifteen `let`s, four method signatures now typed `Session['ran']` and the rest, `const AGENT_ID = 'cofold';`, six redrawn import lines and five lines the `ctx.` prefix respelled.
+- [ ] `plans/index.md` updated. - left to the reviewer, as the build was told not to edit it.

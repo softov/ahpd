@@ -18,115 +18,22 @@
  *   `responseParts` is what the agent answered.
  */
 
-import { resolve } from 'node:path';
-import { createAgent, policyOf, resume, run, textOf } from '@cofold/agents';
-import type { Agent as CofoldAgent, PermissionMode, RunCommand, RunEvent, RunHandle, Store, Tool } from '@cofold/agents';
-import { resolveWithin } from '@cofold/tools';
-import { idOf, Status } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start } from '@ahpd/sdk';
-import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
-import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf, storeOf } from './agent.js';
+import type { Store } from '@cofold/agents';
+import { idOf } from '@ahpd/sdk';
+import type { Bag, Session, Start } from '@ahpd/sdk';
+import { storeOf } from './agent.js';
 import type { CofoldOptions } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
-import { mapTurn } from './mapping.js';
-import type { OpenRequest, TurnMapping } from './mapping.js';
-import { cofoldTools, toolCallPart, toolReadyAction, toolStartAction } from './tools.js';
-import type { ClientToolRelay } from './tools.js';
-
-/**
- * Whether a path a tool names stays inside the directory the session works in.
- *
- * `resolveWithin` is `@cofold/tools`' own resolver, which its file tools resolve
- * every path with and refuse nothing by, so this host judges a path where they
- * will touch it: a symlink out of the workspace is outside, and a link whose
- * target does not exist yet is judged by the target it names, not the link.
- *
- * The workspace boundary is a host fact, which is why the harness takes it as
- * a predicate rather than a directory: this host's tools are the daemon's and
- * a client's, and a path is either under the directory the session was opened
- * in or it is not.
- */
-const insideDirectory = (workspace: string, path: string): boolean =>
-  resolveWithin(workspace, path).inside;
-
-/**
- * The tools whose calls change a file, by the names `@cofold/tools` gives them.
- *
- * The two file-writing tools of the files capability. Nothing else reports an
- * edit: a shell writes without naming a file and a memory file lives outside
- * the workspace, so a changeset is only told about the files it can read.
- */
-const EDITS = new Set(['write_file', 'edit_file']);
-
-/**
- * The file a call is about to change, resolved the way the files capability
- * resolves it, or nothing for a tool that does not write a named file.
- */
-const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): string | undefined => {
-  if (tool.effects.writes !== true || !EDITS.has(tool.name)) return undefined;
-  const path = (input as { path?: unknown } | undefined)?.path;
-  return typeof path === 'string' && path !== '' ? resolve(workspace, path) : undefined;
-};
-
-/** The mode a session's settings name, or this backend's own default when they name none. */
-const modeOf = (values: Record<string, unknown>): PermissionMode => {
-  const named = values.permissionMode;
-  return typeof named === 'string' && (PERMISSION_MODES as readonly string[]).includes(named)
-    ? named as PermissionMode
-    : 'auto';
-};
-
-/**
- * The cofold agent id.
- *
- * A constant rather than the AHP provider: cofold requires an id matching its
- * own pattern, and the provider is a registration name a host is free to
- * spell with characters cofold would refuse. One backend serves one store, so
- * two sessions of it are two conversations rather than two agents.
- */
-const AGENT_ID = 'cofold';
-
-/** What the model is told when neither the package nor the session named a prompt. */
-const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.';
+import type { OpenRequest } from './mapping.js';
+import type { SessionContext } from './context.js';
+import { createTurnAgent } from './turnagent.js';
+import { createRuns } from './runs.js';
+import { createPauses } from './pauses.js';
+import { createTurns } from './turns.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-
-/** What a person is told the model was told when they turn a tool down. */
-const DECLINED = 'The person declined this action';
-
-/**
- * The answers a client sent, in the shape cofold's questions want.
- *
- * AHP carries each answer as `{ state, value: { kind, value } }` and cofold
- * wants the value itself, keyed by question id and a list only where the
- * question allows many. The value sits two levels in, and a value that is
- * already a string or a list is taken as it is, so a caller that hands over
- * cofold's own shape is not unwrapped into nothing.
- */
-const answersOf = (answers: Bag): Record<string, string | string[]> => {
-  /** One value as cofold reads it, or nothing for a shape it would refuse. */
-  const valueOf = (value: unknown): string | string[] | undefined => {
-    const strings = (list: unknown[]): string[] => list.filter((one): one is string => typeof one === 'string');
-    if (typeof value === 'string') return value;
-    if (Array.isArray(value)) return strings(value);
-    const answer = bag(value);
-    const inner = bag(answer.value);
-    const raw = inner.value ?? answer.value;
-    if (typeof raw === 'string') return raw;
-    if (Array.isArray(raw)) return strings(raw);
-    return undefined;
-  };
-  const said: Record<string, string | string[]> = {};
-  for (const [id, value] of Object.entries(answers)) {
-    const one = valueOf(value);
-    // A skipped or shapeless answer is left out rather than sent empty, which
-    // cofold's own validation would refuse the whole form for.
-    if (one !== undefined) said[id] = one;
-  }
-  return said;
-};
 
 /**
  * The cofold session id an AHP session URI names.
@@ -138,23 +45,6 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
  * stripped of its scheme is left alone, which is what a `resume` carries.
  */
 export const sessionIdOf = (uri: string): string => idOf(uri);
-
-/**
- * A tool call a connected client is running, as the session holds it.
- *
- * The owner is what `completeToolCall` checks a result against and what
- * `clientGone` matches on; the name is what a call failed by a lost client
- * says it was. `resolve` and `reject` are the two halves of the promise the
- * owner-bound tool's `execute` awaits, and exactly one of them must run for
- * every entry, or the turn waits on a promise nothing can settle.
- */
-interface WaitingCall {
-  owner: string;
-  name: string;
-  input: unknown;
-  resolve(text: string): void;
-  reject(reason: Error): void;
-}
 
 /**
  * One conversation over a cofold agent.
@@ -203,51 +93,8 @@ export function cofoldSession(
    */
   const store = sharedStore ?? storeOf(options);
 
-  /**
-   * The cut this session was asked for, made before it runs a turn.
-   *
-   * AHP gives a fork and a rewind the same job - the conversation the host
-   * named, ending at the point it named - and the difference is only where the
-   * result lives: a fork copies it into this session's new id and leaves the
-   * source whole, a rewind drops what followed the point in place. Both are
-   * one store call, and both are refused when the store cannot make the cut,
-   * because a fork that quietly continued would append to the conversation it
-   * was told to preserve and a rewind that did nothing would keep the turns it
-   * was told to drop.
-   */
-  const cut = async (): Promise<void> => {
-    if (start.forkAt !== undefined && start.rewindAt !== undefined) {
-      throw new Error(`${provider}: a session cannot fork and rewind at once`);
-    }
-    if (start.forkAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a fork needs the conversation it copies`);
-      await store.sessions.fork({ fromSessionId: start.resume, throughMessageId: start.forkAt, sessionId });
-      return;
-    }
-    if (start.rewindAt !== undefined) {
-      if (start.resume === undefined) throw new Error(`${provider}: a rewind needs the conversation it cuts`);
-      await store.sessions.truncate({ sessionId, throughMessageId: start.rewindAt });
-    }
-  };
-  /**
-   * The tools the model is offered.
-   *
-   * Mutable because a client announces what it provides after the session is
-   * built, and the host re-declares the whole set through `setTools`. An
-   * agent is built per turn from this, so a tool announced mid-turn is
-   * offered from the turn after it.
-   */
-  let offered: BoundTool[] = start.tools ?? [];
-
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
-  let active: Bag | undefined;
-  /** The run behind `active`, so a cancel has something to stop. */
-  let handle: RunHandle | undefined;
-  /** The agent the active run was built from, so a rejoin continues on the same one. */
-  let liveAgent: CofoldAgent | undefined;
-  /** The active turn's mapping, so an answer can settle the entries it opened. */
-  let activeMapping: TurnMapping | undefined;
   /**
    * The file each open writing call named, by the model's own call id.
    *
@@ -258,25 +105,6 @@ export function cofoldSession(
    */
   const editing = new Map<string, string>();
 
-  /** A writing call is about to run: report the file as it is now. */
-  const announceEdit = (callId: string, path: string): void => {
-    editing.set(callId, path);
-    start.onFileEdit?.(String(active?.id ?? ''), path, 'before');
-  };
-
-  /**
-   * The `after` a call owes, once.
-   *
-   * Sent from the tool's own result and, for a call that will never have one,
-   * from the refusal or the end of the run - so a client never holds a file as
-   * changing for a turn that is over.
-   */
-  const settleEdit = (callId: string): void => {
-    const path = editing.get(callId);
-    if (path === undefined) return;
-    editing.delete(callId);
-    start.onFileEdit?.(String(active?.id ?? ''), path, 'after');
-  };
   /**
    * What a client is being asked about, by the run's own request id.
    *
@@ -285,64 +113,6 @@ export function cofoldSession(
    * first while it is still open.
    */
   const pending = new Map<string, OpenRequest>();
-  /**
-   * Where the run stopped waiting, when it is paused rather than finished.
-   *
-   * A paused run closes the handle that started it, so the answer has to
-   * rejoin the run from this sequence rather than submit to a handle with
-   * nothing left to receive it.
-   */
-  let paused: { runId: string; seq: number } | undefined;
-  /**
-   * The pause a live run owes once it has announced a request, until the run
-   * says how it ended.
-   *
-   * cofold announces a request before it records the run as waiting, and the
-   * handle of a run that has not paused takes no answer, so an answer or a
-   * stop that arrives in between waits on `settled`: true once the run has
-   * paused, false when it ended any other way.
-   */
-  let pausing: { settled: Promise<boolean>; resolve: (didPause: boolean) => void } | undefined;
-  /** Start owing a pause, unless one is already owed. */
-  const owePause = (): void => {
-    if (pausing !== undefined) return;
-    let resolve: (didPause: boolean) => void = () => {};
-    const settled = new Promise<boolean>((done) => { resolve = done; });
-    pausing = { settled, resolve };
-  };
-  /** Settle the owed pause, if there is one, with whether the run paused. */
-  const payPause = (didPause: boolean): void => {
-    const owed = pausing;
-    pausing = undefined;
-    owed?.resolve(didPause);
-  };
-  /** Whether a client asked to stop, read by the mapping when the run ends. */
-  let cancelRequested = false;
-  /** What the last turn failed with, or nothing. Cleared when a turn starts. */
-  let failed: string | undefined;
-  let title = 'Cofold session';
-  let modified = new Date().toISOString();
-  let closed = false;
-  /**
-   * Whether the conversation the host resumed is still being looked up.
-   *
-   * A run paused before the restart still holds the session's writer claim, so
-   * a turn that started before the lookup finished would fight it for the
-   * claim and lose. Everything that would begin a turn waits on this instead,
-   * so it sees either an empty conversation or the reopened one. A fork or a
-   * rewind rides the same chain, because the cut has to land before the first
-   * turn reads the session.
-   */
-  let opening: Promise<void> | undefined;
-  /**
-   * Why the cut this session was asked for did not happen.
-   *
-   * A session whose fork or rewind failed does not fall back to an ordinary
-   * continue: every turn it is asked for is answered with this, so a client
-   * sees the cut it asked for not happen rather than a conversation quietly
-   * carrying on from the wrong place.
-   */
-  let refused: Error | undefined;
   /**
    * Where each watched turn ended, in cofold's own message ids.
    *
@@ -353,8 +123,6 @@ export function cofoldSession(
    * cut at it: a point nobody can name is worse than none.
    */
   const points = new Map<string, string>();
-  /** What it is doing, or nothing while it is idle. */
-  let activity: string | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
   /** What somebody is part-way through typing. */
@@ -368,712 +136,48 @@ export function cofoldSession(
    */
   const settings: Record<string, unknown> = { ...start.settings };
 
-  /**
-   * The calls a connected client is running, by the id of the model's call.
-   *
-   * Nothing on this host executes an owner-bound tool, so this map is the
-   * whole of its execution: a call is held here from the moment cofold tries
-   * to run the tool until the owning client settles it through
-   * `completeToolCall`, or goes away and `clientGone` fails it. Every path
-   * that takes an entry out also settles its promise, because a run waiting
-   * on one nothing can settle is a turn that hangs for ever.
-   */
-  const waiting = new Map<string, WaitingCall>();
+  const touch = (): void => { ctx.modified = new Date().toISOString(); };
 
-  /** Fail every held call, or one client's, and forget each one's promise. */
-  const releaseCalls = (why: string, whose?: string): void => {
-    for (const [callId, held] of [...waiting.entries()]) {
-      if (whose !== undefined && held.owner !== whose) continue;
-      waiting.delete(callId);
-      held.reject(new Error(why));
-    }
-  };
-
-  /**
-   * The session side of a client-run call, used by `cofoldTool`.
-   *
-   * The entry is registered synchronously, in the promise executor, so a
-   * client's answer that arrives on a later turn of the loop always finds
-   * something to settle even though the model's step was only opened a
-   * moment before.
-   */
-  const relay: ClientToolRelay = {
-    call: (call) => new Promise<string>((resolve, reject) => {
-      waiting.set(call.callId, { owner: call.owner, name: call.name, input: call.input, resolve, reject });
-    }),
-  };
-
-  const touch = (): void => { modified = new Date().toISOString(); };
-
-  /**
-   * The system prompt for a turn.
-   *
-   * The session's own prompt, then what the host wants the model told beside
-   * it: the instruction behind each host tool, which is what makes a tool
-   * nothing asks for worth calling.
-   */
-  const instructionsOf = (values: Record<string, unknown>): string => {
-    const own = str(values.instructions) ?? options.instructions ?? harness.instructions ?? DEFAULT_INSTRUCTIONS;
-    const fromHost = (start.instructions ?? []).filter((one) => one.trim() !== '');
-    return [own, ...fromHost].join('\n\n');
-  };
-
-  /**
-   * The cofold agent a turn runs on, built fresh so the config in force is
-   * the config that runs. `createAgent` is a value, not an actor, so building
-   * it per turn costs nothing the store does not already hold.
-   *
-   * The policy is the mode's, unless the plugin configured one of its own: an
-   * embedder's policy is the run-level authority, and the mode is not offered
-   * as a control when it is there. What counts as an edit is a tool that says
-   * it writes - this host's tools are the daemon's and a client's, so their
-   * names are not a list this backend can keep.
-   */
-  const agentOf = (values: Record<string, unknown>): CofoldAgent => createAgent({
-    id: AGENT_ID,
-    instructions: instructionsOf(values),
-    model: modelOf(options, values, start.credentials ?? {}, harness),
-    tools: cofoldTools(offered, relay),
-    /*
-     * The four capabilities cofold runs itself, in cofold's own process.
-     *
-     * Memory goes under the store root, beside the sessions; a session whose
-     * store is deliberately in memory has no directory to keep memory files
-     * in, so it gets the other three rather than files under somebody's home.
-     * A tool the host already offers keeps its name, because cofold refuses a
-     * run two contributors give one name to.
-     */
-    capabilities: capabilitiesOf(options.tools ?? DEFAULT_TOOLS, {
-      storeRoot: options.memory === true ? undefined : options.store ?? defaultStoreRoot(),
-      workspace: where,
-    }, offered.map((one) => one.definition.name)),
-    /*
-     * The edits a cofold tool makes, on their way to the changeset.
-     *
-     * The hooks are where a call is known before and after it runs, which is
-     * what the `before`/`after` pair needs: the path is resolved against the
-     * run's workspace the way the files capability resolves it, so the two
-     * halves name one file even when the model wrote a relative path.
-     */
-    hooks: {
-      beforeTool: ({ call, tool }) => {
-        const path = editPathOf(where, tool, call.input);
-        if (path !== undefined) announceEdit(call.callId, path);
-        return { decision: 'allow' };
-      },
-      afterTool: ({ call, output }) => {
-        settleEdit(call.callId);
-        return { output };
-      },
-    },
-    store,
-    policy: options.policy ?? {
-      decide: policyOf(modeOf(values), {
-        inside: (path) => insideDirectory(where, path),
-        isEdit: (tool) => tool.effects.writes === true,
-      }),
-    },
-  });
-
-  /** Say what it is doing, on both channels, the way a session mirrors its chat. */
-  const doing = (said: string | undefined): void => {
-    if (activity === said) return;
-    activity = said;
-    start.emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-    start.emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-  };
-
-  /**
-   * `SessionStatus`: 8 is in progress, 1 is idle, 2 is a last turn that
-   * failed, and 24 is waiting on a person and carries the 8.
-   */
-  const status = (): number => (pending.size > 0 ? Status.InputNeeded
-    : active !== undefined ? Status.InProgress
-      : failed !== undefined ? Status.Error
-        : Status.Idle);
-
-  /**
-   * Move the running turn into the history, once the stream has ended.
-   *
-   * Called before the ending action goes out: the host reads `status()` as it
-   * passes that action on, and a turn still active there reads as running.
-   * Answers whether there was a turn to settle. `why` is what an `error`
-   * ending failed with.
-   */
-  const settleTurn = (ending: 'complete' | 'cancelled' | 'error', why?: string): boolean => {
-    const turn = active;
-    if (turn === undefined) return false;
-    if (ending === 'error') failed = why === undefined || why === '' ? 'The turn failed' : why;
-    turn.state = ending;
-    turn.duration = Date.now() - Date.parse(String(turn.startedAt));
-    turns.push(turn);
-    active = undefined;
-    handle = undefined;
-    liveAgent = undefined;
-    activeMapping = undefined;
-    paused = undefined;
-    payPause(false);
-    // An ending turn cannot still be waiting on an answer; a request left
-    // here would keep the session reporting `InputNeeded` over nothing.
-    pending.clear();
-    cancelRequested = false;
-    touch();
-    return true;
-  };
-
-  /**
-   * Keep where this turn ended, for the two cut methods.
-   *
-   * Read from the run record rather than from the events, because the last
-   * thing a run wrote is a message no event names - a tool result, a steer, the
-   * marker a cancel leaves - and a cut at a guessed point would drop a turn's
-   * log for a point it did not really have. The store advances the run's
-   * `lastMessageId` with every message it appends, so the record is exact.
-   */
-  const rememberPoints = async (turnId: string, runId: string): Promise<void> => {
-    const record = await store.runs.get({ sessionId, runId });
-    if (record?.lastMessageId !== undefined) points.set(turnId, record.lastMessageId);
-  };
-
-  /**
-   * One event's actions, through the mapping, and what it did to the session.
-   *
-   * `replaying` is for a run history read back on a resume: the awaiting
-   * `run.finished` that ends it is not a pause to rejoin, because the rejoin
-   * is what is reading it and its handle is still open. Answers whether this
-   * run has now said how it ended.
-   */
-  const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent, replaying: boolean): Promise<boolean> => {
-    if (event.type === 'run.finished') doing(undefined);
-    /*
-     * A call that will never have a result still owes its `after`.
-     *
-     * A denial from the run ends the call without the tool running and a
-     * stopped run can cut one off mid-flight; either way the file was announced
-     * as changing, so the `after` goes out here when the tool's own result will
-     * not carry it. The sweep is idempotent: `settleEdit` forgets the call it
-     * answers, so a call settled where it ended is not settled again.
-     */
-    if (event.type === 'tool.denied') settleEdit(event.callId);
-    if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
-      for (const callId of [...editing.keys()]) settleEdit(callId);
-    }
-    /*
-     * A finished turn's span is recorded before the client is told it ended,
-     * so a fork or a rewind asked for the moment the turn appears has a point
-     * to cut at. A pause is not an ending and is not recorded: `endPoint` is
-     * where a turn ended, and a run waiting on a person has not ended.
-     */
-    if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
-      await rememberPoints(turnId, event.runId);
-    }
-    let settled = false;
-    const mapped = mapping.actions(event);
-    /*
-     * A request is held before it is announced, so a client that answers
-     * inside the emit that carries it finds it; a live run that announced one
-     * owes the pause its answer waits for.
-     */
-    const hold = (): void => {
-      if (mapped.opened === undefined) return;
-      pending.set(mapped.opened.requestId, mapped.opened);
-      if (!replaying) owePause();
-    };
-    for (const action of mapped.actions) {
-      const type = str(action.type) ?? '';
-      if (type === 'session/inputNeededSet') hold();
-      const ending = type === 'chat/turnComplete' ? 'complete'
-        : type === 'chat/turnCancelled' ? 'cancelled'
-          : type === 'chat/error' ? 'error'
-            : undefined;
-      const why = ending === 'error' ? str(bag(bag(action.part).error).message) : undefined;
-      const ended = ending !== undefined && settleTurn(ending, why);
-      /*
-       * A pause lives on the session channel and a turn on the chat channel;
-       * the action's own name is what says which, so a client watching the
-       * catalogue alone still learns somebody is being asked.
-       */
-      start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
-      if (ending !== undefined) settled = true;
-      // Somebody stopping a turn is stopping this conversation; a queued
-      // message behind it is the opposite of what they asked for. After the
-      // ending, so the next turn starts after the last one ended.
-      if (ended && ending !== 'cancelled') startNext();
-    }
-    hold();
-    if (mapped.settled !== undefined) pending.delete(mapped.settled);
-    /*
-     * The awaiting outcome is a pause, not an ending: the handle is closed
-     * and the turn stays open until somebody answers. This read is over, so
-     * the fallback below must not report the pause as a turn that ended, and
-     * the sequence is kept so the answer rejoins rather than replays.
-     */
-    if (!replaying && event.type === 'run.finished' && event.outcome.status === 'awaiting') {
-      settled = true;
-      paused = { runId: event.runId, seq: event.seq };
-    }
-    if (!replaying && event.type === 'run.finished') payPause(event.outcome.status === 'awaiting');
-    return settled;
-  };
-
-  /**
-   * Read a run to its end.
-   *
-   * Every action comes from `mapping.ts`, including the one that ends the
-   * turn. A pause is not an ending: the awaiting outcome leaves the turn open
-   * and records where the run stopped, so an answer can rejoin it.
-   */
-  const read = (live: RunHandle, mapping: TurnMapping, turnId: string): void => {
-    /** Whether this run has already said how it ended. */
-    let settled = false;
-    void (async () => {
-      for await (const event of live.events) {
-        if (await apply(mapping, turnId, event, false)) settled = true;
-      }
-      /*
-       * A run that failed before it could publish anything ends its stream
-       * with the handle's outcome and no `run.finished`. The turn is still
-       * open, so the outcome is mapped as the event the stream should have
-       * carried. That goes through `mapping.ts` with every other event, so
-       * the decision about what it means stays in one place.
-       */
-      if (!settled) {
-        const outcome = await live.outcome;
-        await apply(mapping, turnId, {
-          seq: 0,
-          runId: live.runId,
-          sessionId: live.sessionId,
-          agentId: AGENT_ID,
-          at: new Date().toISOString(),
-          type: 'run.finished',
-          outcome,
-        }, false);
-      }
-    })();
-  };
-
-  /**
-   * Rejoin a run this process paused, so it can take a command again.
-   *
-   * cofold's `run()` returns a handle with no command channel; only `resume()`
-   * installs one. The sequence the pause ended at is passed so the rejoined
-   * stream carries what happens next rather than everything the client has
-   * already seen.
-   */
-  const rejoin = (): RunHandle | undefined => {
-    const waiting = paused;
-    const agent = liveAgent;
-    if (waiting === undefined || agent === undefined) return undefined;
-    paused = undefined;
-    const rejoined = resume({ agent, sessionId, runId: waiting.runId, afterSeq: waiting.seq });
-    handle = rejoined;
-    if (activeMapping !== undefined) read(rejoined, activeMapping, active === undefined ? waiting.runId : String(active.id));
-    return rejoined;
-  };
-
-  /**
-   * Send a decision back into the run that is waiting on it.
-   *
-   * A run that has not paused still holds a live handle and takes the command
-   * directly; one that paused is rejoined first, and one that has announced a
-   * request but not yet paused is waited for and then rejoined. The answer is
-   * fire and forget, the way a steer is: whether it was taken is known here,
-   * and a refusal is cofold's to log rather than a turn to fail.
-   */
-  const route = (command: RunCommand): void => {
-    const owed = pausing;
-    if (owed !== undefined && paused === undefined) {
-      void owed.settled.then((didPause) => { if (didPause) route(command); });
-      return;
-    }
-    const live = paused === undefined ? handle : rejoin();
-    if (live !== undefined) {
-      void live.submit(command).catch(() => {});
-      return;
-    }
-    /*
-     * An answer can arrive while a resume is still opening.
-     *
-     * The replay a `start.resume` does announces the request the run is waiting
-     * on before it attaches the handle that takes commands - the awaiting
-     * `run.finished` it reads is history, not a live pause - so a person
-     * answering the moment the form appears would have the decision dropped and
-     * the run left waiting for ever. The answer waits for the same opening
-     * every turn waits for, then goes to whatever handle that left behind.
-     */
-    const waiting = opening;
-    if (waiting === undefined) return;
-    void waiting.then(() => {
-      const later = paused === undefined ? handle : rejoin();
-      if (later !== undefined) void later.submit(command).catch(() => {});
-    }, () => {});
-  };
-
-  /**
-   * Stop the run, answering anything it is waiting on.
-   *
-   * A paused run has already closed its handle, so stopping it means
-   * rejoining it and cancelling that: cofold's own cancel denies the open
-   * request and ends the run, which is the one path that leaves no promise
-   * nobody can settle. A run that has announced a request but not yet paused
-   * is waited for, and then stopped the same way.
-   */
-  /** The half of `stop` that needs a handle, once the opening has settled. */
-  const stopNow = (reason: string): void => {
-    const owed = pausing;
-    if (owed !== undefined && paused === undefined) {
-      void owed.settled.then((didPause) => { if (didPause) stopNow(reason); });
-      return;
-    }
-    if (paused !== undefined) {
-      for (const held of [...pending.values()]) {
-        const removal = activeMapping?.settle(held.requestId);
-        if (removal !== undefined) start.emit('session', removal);
-      }
-      pending.clear();
-      const rejoined = rejoin();
-      rejoined?.cancel({ reason });
-      return;
-    }
-    handle?.cancel({ reason });
-  };
-
-  const stop = (reason: string): void => {
-    /*
-     * A client-run call is settled here too, even though a stopped turn's
-     * abort means the model will not read the result: the entry must not
-     * outlive the turn, or `toolCallOwner` keeps claiming a call that is over
-     * and a later answer would settle a promise nobody is waiting on.
-     */
-    releaseCalls(reason);
-    /*
-     * A stop can arrive while a resume is still opening.
-     *
-     * `active` is rebuilt by the replay before the handle that takes a cancel
-     * exists, so a stop in that window would find neither a paused run nor a
-     * handle and quietly do nothing. It waits for the same opening every turn
-     * waits for and then stops whatever handle that left behind.
-     */
-    const waiting = opening;
-    if (waiting !== undefined) {
-      void waiting.then(() => stopNow(reason), () => stopNow(reason));
-      return;
-    }
-    stopNow(reason);
-  };
-
-  /**
-   * Open a turn on the wire, before anything runs it.
-   *
-   * `chat/turnStarted` is emitted here, before `run()` is called, because the
-   * host has already dispatched that action and AHP requires the order
-   * turnStarted, then an opened part, then deltas. cofold's own `run.started`
-   * therefore means nothing on the wire and is dropped in `mapping.ts`.
-   *
-   * `queuedMessageId` names the waiting message it came from; a client's
-   * reducer takes it out of the queue on that word.
-   *
-   * Answers nothing for a session that is closed or already running a turn.
-   * Both a turn with a run behind it and one that has to be failed before it
-   * starts share this opening, so a client sees the same turn either way.
-   */
-  const openTurn = (
-    turnId: string,
-    text: string,
-    model?: Chosen,
-    from?: MessageFrom,
-    queuedMessageId?: string,
-  ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
-    if (closed || active !== undefined) return undefined;
-    cancelRequested = false;
-    failed = undefined;
-    if (title === 'Cofold session' && text !== '') {
-      title = text.slice(0, 60);
-      // Said, because a client that opened the session holds the old one.
-      start.emit('session', { type: 'session/titleChanged', title });
-    }
-    // A model named on the turn wins over the session's, and is what the
-    // usage report names; it is applied before the agent is built.
-    const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
-    // The reference the turn runs on, by the one rule `connectionOf` resolves:
-    // the values in force, then the plugin option, then the harness file.
-    const reference = modelReferenceOf(options, values, harness);
-    const began = Date.now();
-    // No part yet: each is opened when the model starts writing the block it holds.
-    active = {
-      id: turnId,
-      startedAt: new Date(began).toISOString(),
-      message: {
-        text,
-        ...(from?.origin !== undefined ? { origin: from.origin } : {}),
-        ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
-        // The protocol's `Message.model`: the model this turn runs on, so a
-        // client that reconnects shows it. The client's own `config` travels
-        // with it, as a claude turn's does.
-        ...(reference !== undefined
-          ? { model: { id: reference, ...(model?.config === undefined ? {} : { config: model.config }) } }
-          : {}),
-      },
-      responseParts: [],
-    };
-    start.emit('chat', {
-      type: 'chat/turnStarted',
-      turnId,
-      startedAt: active.startedAt,
-      message: active.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
-    doing('Thinking');
-
-    const mapping = mapTurn({
-      turnId,
-      chatUri: start.chatUri,
-      parts: active.responseParts as Bag[],
-      startedAt: began,
-      displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
-      ownerOf: (name) => offered.find((one) => one.definition.name === name)?.owner,
-      cancelled: () => cancelRequested,
-      ...(reference !== undefined ? { model: reference } : {}),
-    });
-    activeMapping = mapping;
-    return { mapping, values, reference };
-  };
-
-  /**
-   * Start a turn, whoever asked for it.
-   */
-  const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId);
-    if (opened === undefined) return;
-    /*
-     * A turn that cannot start fails that turn, not the process.
-     *
-     * Building the agent resolves the model, and a session with none chosen,
-     * no default and a harness file that names none has nothing to run on.
-     * Thrown from here it would escape every handler and take the daemon and
-     * every other session with it; answered, it is one failed turn with the
-     * reason on it.
-     */
-    let live: ReturnType<typeof run>;
-    try {
-      const agent = agentOf(opened.values);
-      liveAgent = agent;
-      live = run({
-        agent,
-        session: sessionId,
-        workspace: where,
-        input: text,
-        // Kept on the run record, which is where a rebuilt turn reads its model.
-        ...(opened.reference !== undefined ? { model: opened.reference } : {}),
-      });
-    }
-    catch (error) {
-      void apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error), false);
-      return;
-    }
-    handle = live;
-    read(live, opened.mapping, turnId);
-    touch();
-  };
-
-  /** The `run.finished` a turn that never ran ends with. */
-  const refusal = (turnId: string, code: string, why: unknown) => ({
-    seq: 0,
-    runId: `${turnId}:refused`,
+  const ctx = {
+    options,
+    start,
+    harness,
+    provider,
     sessionId,
-    agentId: AGENT_ID,
-    at: new Date().toISOString(),
-    type: 'run.finished' as const,
-    outcome: {
-      status: 'failed' as const,
-      error: { code, message: why instanceof Error ? why.message : String(why) },
-      usage: { inputTokens: 0, outputTokens: 0 },
-      steps: 0,
-      denials: [],
-    },
-  });
+    where,
+    store,
+    turns,
+    editing,
+    pending,
+    points,
+    queued,
+    settings,
+    touch,
+    offered: start.tools ?? [],
+    active: undefined,
+    handle: undefined,
+    liveAgent: undefined,
+    activeMapping: undefined,
+    paused: undefined,
+    pausing: undefined,
+    cancelRequested: false,
+    failed: undefined,
+    title: 'Cofold session',
+    modified: new Date().toISOString(),
+    closed: false,
+    opening: undefined,
+    refused: undefined,
+    activity: undefined,
+  } as SessionContext;
 
-  /**
-   * A turn that cannot run, answered with the reason.
-   *
-   * The client has already dispatched its own `chat/turnStarted`, so the turn
-   * exists whether or not a run does, and leaving it open would be a spinner
-   * nothing can settle. The failure goes through the mapping like every other
-   * ending, so a client draws the same `chat/error` a failed run produces.
-   *
-   * This is the path a session whose fork or rewind could not be cut takes: the
-   * honest answer to "carry on from there" is that there is no there.
-   */
-  const failTurn = (
-    turnId: string,
-    text: string,
-    model: Chosen | undefined,
-    from: MessageFrom | undefined,
-    queuedMessageId: string | undefined,
-    why: unknown,
-  ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId);
-    if (opened === undefined) return;
-    void apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why), false);
-  };
+  const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
+  Object.assign(ctx, turnAgent);
 
-  /**
-   * Begin a turn, once the resume lookup has settled.
-   *
-   * A resumed session may already have an open turn waiting on a person, so a
-   * second run would fight the paused one for the session's writer claim and
-   * fail `writer_busy`. Waiting for the lookup is what tells the two apart,
-   * and it costs an ordinary session nothing: `opening` is only set when the
-   * host named a conversation to continue and when a fork or a rewind is being
-   * cut.
-   *
-   * A chain that ended in a refusal - a cut the store would not make - leaves
-   * every turn on the failure path rather than on the ordinary one: the client
-   * asked to carry on from a point, and carrying on from somewhere else
-   * without saying so is the one answer that is worse than an error.
-   */
-  const beginTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
-    const start = (): void => {
-      if (refused !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, refused);
-        return;
-      }
-      startTurn(turnId, text, model, from, queuedMessageId);
-    };
-    if (refused !== undefined) {
-      start();
-      return;
-    }
-    const waiting = opening;
-    if (waiting === undefined) {
-      start();
-      return;
-    }
-    void waiting.then(start, start);
-  };
-
-  /** The head of the queue, once there is nothing running. */
-  const startNext = (): void => {
-    if (opening !== undefined) {
-      // A paused run decides whether anything may be taken off the queue, so
-      // the queue waits for the same lookup every turn does.
-      void opening.then(startNext, startNext);
-      return;
-    }
-    if (active !== undefined || closed) return;
-    const next = queued.shift();
-    if (next === undefined) return;
-    /*
-     * A command somebody typed is run, not asked.
-     *
-     * `ran` queued it as text so a client could see it waiting, and handing
-     * that text to the run loop is the one thing `!` exists not to do. It runs
-     * under a fresh turn id with the waiting row named, which is how a queued
-     * message of any other kind becomes a turn.
-     */
-    const held = bag(next.command);
-    const typed = str(held.text);
-    if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, str(next.id));
-      return;
-    }
-    const message = bag(next.message);
-    beginTurn(
-      crypto.randomUUID(),
-      String(message.text ?? ''),
-      next.model as Chosen | undefined,
-      next.from as MessageFrom | undefined,
-      String(next.id),
-    );
-  };
-
-  /**
-   * Rejoin the run a restart left paused.
-   *
-   * A paused cofold run still holds the session's writer claim, so a new run
-   * under this id would be refused `writer_busy`, and no answer could reach it
-   * either: `resume()` is the only call that installs a command channel. The
-   * run's own events are replayed through the same mapping a live turn uses,
-   * so the request reaches the client by the path that put it there rather
-   * than a second path written here.
-   *
-   * A conversation whose newest run already finished, or that the store has
-   * never seen, is left alone: the next turn appends a new run under the same
-   * cofold session, which is what continuing a finished conversation means.
-   */
-  const reopen = async (): Promise<void> => {
-    if (closed) return;
-    const record = await store.sessions.get({ sessionId });
-    if (record === undefined || closed) return;
-    const runs = await store.runs.list({ sessionId });
-    const newest = runs[0];
-    if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
-
-    const agent = agentOf(settings);
-    liveAgent = agent;
-    const messages = await store.sessions.listMessages({ sessionId });
-    const input = messages.find((one) => one.id === newest.inputMessageId);
-    const turnId = input?.id ?? newest.runId;
-    const began = input === undefined ? Date.now() : Date.parse(input.createdAt);
-    const startedAt = new Date(Number.isFinite(began) ? began : Date.now()).toISOString();
-    /*
-     * The seed gives way to the replay.
-     *
-     * The host seeds `transcript(id)` into `start.seed`, and that transcript
-     * already carries this run's open turn as a finished one, because AHP's
-     * turn states have no `awaiting`. The replay below rebuilds the very same
-     * turn as the live `active` one, with the parts the next deltas append to,
-     * so keeping the seeded copy would show the open turn twice in every
-     * subscription snapshot - once in `turns` and once as `activeTurn`. The
-     * seed is the side that gives way, because only this session knows the run
-     * is about to be replayed; the transcript still carries the turn for the
-     * catalogue row a client browses without continuing it.
-     */
-    const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
-    if (seeded >= 0) turns.splice(seeded, 1);
-    /*
-     * The same opening as a live turn, with no part: the replayed events open
-     * each part as they did when the turn first ran.
-     */
-    active = {
-      id: turnId,
-      startedAt,
-      message: { text: input === undefined ? '' : textOf(input) },
-      responseParts: [],
-    };
-    start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message: active.message });
-    const mapping = mapTurn({
-      turnId,
-      chatUri: start.chatUri,
-      parts: active.responseParts as Bag[],
-      startedAt: Number.isFinite(began) ? began : Date.now(),
-      displayNameOf: (name) => offered.find((one) => one.definition.name === name)?.definition.title ?? name,
-      ownerOf: (name) => offered.find((one) => one.definition.name === name)?.owner,
-      cancelled: () => false,
-    });
-    activeMapping = mapping;
-
-    /*
-     * What the run already wrote, in the order cofold persisted it, before the
-     * live handle is read: the paused call and the request it waits on are
-     * rebuilt by the events that carry them.
-     */
-    const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
-    const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
-    for (const event of events) await apply(mapping, turnId, event, true);
-
-    // Everything up to `lastSeq` has just been replayed, so the live stream
-    // carries only what happens next rather than the conversation again.
-    const live = resume({ agent, sessionId, runId: newest.runId, afterSeq: lastSeq });
-    if (closed) {
-      live.cancel({ reason: 'the session closed' });
-      return;
-    }
-    handle = live;
-    read(live, mapping, turnId);
-    doing('Waiting on you');
-    touch();
-  };
+  const { methods: queueMethods, ...turnOffers } = createTurns(ctx);
+  Object.assign(ctx, turnOffers);
+  Object.assign(ctx, createRuns(ctx));
+  const { methods: answerMethods, ...pauses } = createPauses(ctx);
+  Object.assign(ctx, pauses);
 
   /*
    * A resumed conversation may be paused, and a fork or a rewind has a cut to
@@ -1081,119 +185,20 @@ export function cofoldSession(
    * Nothing else in the session reads the store first, so this is the one
    * deferral for all three.
    */
-  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !closed) {
+  if ((start.resume !== undefined || start.forkAt !== undefined || start.rewindAt !== undefined) && !ctx.closed) {
     const pending = (async (): Promise<void> => {
-      await cut();
-      if (start.resume !== undefined) await reopen();
+      await ctx.cut();
+      if (start.resume !== undefined) await ctx.reopen();
     })();
-    opening = pending;
-    const settledOpening = (): void => { if (opening === pending) opening = undefined; };
+    ctx.opening = pending;
+    const settledOpening = (): void => { if (ctx.opening === pending) ctx.opening = undefined; };
     void pending.then(settledOpening, (why: unknown) => {
       // The refusal is kept rather than thrown into an unhandled rejection:
       // the turn paths read it and answer the client with it.
-      refused = why instanceof Error ? why : new Error(String(why));
+      ctx.refused = why instanceof Error ? why : new Error(String(why));
       settledOpening();
     });
   }
-
-  /**
-   * One shell command as a turn of this chat's.
-   *
-   * The whole of what `!command` means, and one function because it is reached
-   * two ways: immediately from `ran`, and later from `startNext` when the
-   * command was typed while a turn was already running. The host runs it in one
-   * of its own terminals and hands back what happened, so nothing here reaches
-   * cofold's run loop - which is the whole difference from `beginTurn`, and why
-   * a person's shell command never becomes a question to a model.
-   *
-   * `queuedMessageId` names the waiting row it came from, so a client clears it
-   * the way it clears any other.
-   */
-  const runCommand = (
-    turnId: string,
-    command: string,
-    run: (toolCallId: string) => Promise<Ran>,
-    queuedMessageId?: string,
-  ): void => {
-    if (closed || active !== undefined) return;
-    cancelRequested = false;
-    failed = undefined;
-    if (title === 'Cofold session' && command !== '') {
-      title = command.slice(0, 60);
-      start.emit('session', { type: 'session/titleChanged', title });
-    }
-    const began = Date.now();
-    const toolCallId = `${turnId}:command`;
-    // The call as a part, because a client that subscribes after the command
-    // ran reads the snapshot rather than the actions it missed.
-    const part = toolCallPart(toolCallId, 'terminal', 'Terminal');
-    active = {
-      id: turnId,
-      startedAt: new Date(began).toISOString(),
-      message: { text: `!${command}`, origin: { kind: 'user' } },
-      responseParts: [part],
-    };
-    start.emit('chat', {
-      type: 'chat/turnStarted', turnId, startedAt: active.startedAt, message: active.message,
-      ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
-    });
-    start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal'));
-    start.emit('chat', toolReadyAction(turnId, toolCallId, 'terminal', command));
-    doing('Running');
-    touch();
-    void run(toolCallId).then((done) => {
-      if (active === undefined || String(active.id) !== turnId) return;
-      /*
-       * The terminal first, so a client can watch the output arrive.
-       *
-       * `content` is replaced rather than appended to, so the terminal
-       * reference and the text it produced go out together at the end - and
-       * the reference alone goes out as soon as there is one, which is what a
-       * client needs to start streaming.
-       */
-      const content: Bag[] = [
-        ...(done.terminal === undefined ? [] : [{
-          type: 'terminal',
-          resource: done.terminal,
-          title: 'Terminal',
-          // Pipes, not a pseudoterminal: a client reads this to decide whether
-          // the preview needs VT parsing.
-          isPty: false,
-          result: {
-            ...(done.code !== undefined ? { exitCode: done.code } : {}),
-            ...(done.output === '' ? {} : { preview: done.output }),
-          },
-        }]),
-        ...(done.output === '' ? [] : [{ type: 'text', text: done.output }]),
-      ];
-      const result: Bag = {
-        success: done.success,
-        pastTenseMessage: done.said,
-        content,
-        ...(done.success ? {} : { error: { message: done.said } }),
-      };
-      // Into the part as well, so the snapshot a late subscriber reads holds
-      // the finished call rather than the `streaming` one it was opened with.
-      Object.assign(bag(part.toolCall), result, { status: 'completed', confirmed: 'not-needed' });
-      start.emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
-      const duration = Date.now() - began;
-      active.state = done.success ? 'complete' : 'error';
-      active.duration = duration;
-      turns.push(active);
-      active = undefined;
-      /*
-       * The turn closes like any other.
-       *
-       * A shell command is a turn of this chat, so a client that watched it
-       * needs the same completion a model's answer gets; without it the row
-       * stays open on screen while the session already counts it as done.
-       */
-      start.emit('chat', { type: 'chat/turnComplete', turnId, duration });
-      doing(undefined);
-      touch();
-      startNext();
-    });
-  };
 
   return {
     uri: start.uri,
@@ -1229,23 +234,23 @@ export function cofoldSession(
     endPoint: (turnId) => points.get(turnId),
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
-    status,
-    activity: () => activity,
-    title: () => title,
-    modifiedAt: () => modified,
+    status: ctx.status,
+    activity: () => ctx.activity,
+    title: () => ctx.title,
+    modifiedAt: () => ctx.modified,
     workingDirectories: () => [`file://${where}`],
 
     sessionState: () => ({
       resource: start.uri,
       provider,
-      title,
-      status: status(),
+      title: ctx.title,
+      status: ctx.status(),
       lifecycle: 'ready',
       defaultChat: start.chatUri,
-      chats: [{ resource: start.chatUri, title }],
+      chats: [{ resource: start.chatUri, title: ctx.title }],
       workingDirectories: [`file://${where}`],
       customizations: start.seedCustomizations ?? [],
-      ...(activity !== undefined ? { activity } : {}),
+      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
       /*
        * What a client is being asked, so a session channel a client
        * subscribed to before the pause still shows the form and the status
@@ -1260,43 +265,21 @@ export function cofoldSession(
 
     chatState: () => ({
       resource: start.chatUri,
-      title,
-      status: status(),
-      modifiedAt: modified,
+      title: ctx.title,
+      status: ctx.status(),
+      modifiedAt: ctx.modified,
       turns,
-      ...(active !== undefined ? { activeTurn: active } : {}),
-      ...(activity !== undefined ? { activity } : {}),
+      ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
+      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
       ...(draft !== undefined ? { draft } : {}),
       // The protocol's `PendingMessage` is `{ id, message }` and nothing else,
       // so the model a queued turn will run on stays in this session.
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from) => beginTurn(turnId, text, model, from),
+    begin: (turnId, text, model, from) => ctx.beginTurn(turnId, text, model, from),
 
-    /**
-     * A turn the host answered itself, with a shell rather than the agent.
-     *
-     * `!command` means "run this", and the host owns the shell, so what comes
-     * back is the same shape as any other turn: it opens, carries one tool
-     * call, and completes. What waits on a busy session is the command itself
-     * and not the text of it, so when its turn comes `startNext` runs it
-     * rather than handing `!ping` to a model.
-     */
-    ran: (turnId, command, run, queuedAs) => {
-      if (active !== undefined || opening !== undefined || (queuedAs !== undefined && queued.length > 0)) {
-        const id = queuedAs ?? turnId;
-        const message = { text: `!${command}`, origin: { kind: 'user' } };
-        const entry = { id, command: { text: command, run }, message };
-        const at = queued.findIndex((held) => String(held.id) === id);
-        if (at >= 0) queued[at] = entry;
-        else queued.push(entry);
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
-        touch();
-        return;
-      }
-      runCommand(turnId, command, run, queuedAs);
-    },
+    ...queueMethods,
 
     /**
      * Stop the running turn.
@@ -1306,11 +289,11 @@ export function cofoldSession(
      * exactly once. This must not send one of its own, or a client sees two.
      */
     cancel: (turnId) => {
-      const turn = active;
+      const turn = ctx.active;
       if (turn === undefined) return;
       if (turnId !== String(turn.id)) return;
-      cancelRequested = true;
-      stop('the client stopped the turn');
+      ctx.cancelRequested = true;
+      ctx.stop('the client stopped the turn');
     },
 
     /**
@@ -1322,58 +305,12 @@ export function cofoldSession(
      * into.
      */
     steer: (_id, text) => {
-      const live = handle;
+      const live = ctx.handle;
       if (live === undefined) return false;
       // Fire and forget: the answer is whether a turn was running, which is
       // known here, and the submit settles when the transcript takes it.
       void live.submit({ type: 'steer', text }).catch(() => {});
       return true;
-    },
-
-    queue: (id, text, model, from) => {
-      const message: Bag = {
-        text,
-        ...(from?.origin !== undefined ? { origin: from.origin } : {}),
-        ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
-      };
-      const entry: Bag = {
-        id,
-        message,
-        ...(model !== undefined ? { model } : {}),
-        ...(from !== undefined ? { from } : {}),
-      };
-      const at = queued.findIndex((held) => held.id === id);
-      if (at >= 0) queued[at] = entry;
-      else queued.push(entry);
-      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
-      touch();
-      startNext();
-    },
-
-    unqueue: (id) => {
-      const at = queued.findIndex((held) => held.id === id);
-      if (at < 0) return;
-      queued.splice(at, 1);
-      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
-      touch();
-    },
-
-    reorder: (order) => {
-      const byId = new Map(queued.map((held) => [String(held.id), held]));
-      const seen = new Set<string>();
-      const moved: Bag[] = [];
-      for (const id of order) {
-        const held = byId.get(id);
-        if (held === undefined || seen.has(id)) continue;
-        seen.add(id);
-        moved.push(held);
-      }
-      // Anything the order did not name keeps its place behind what it did.
-      for (const held of queued) if (!seen.has(String(held.id))) moved.push(held);
-      queued.length = 0;
-      queued.push(...moved);
-      start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
-      touch();
     },
 
     // Held by the session, so two people on one chat see each other's.
@@ -1383,79 +320,7 @@ export function cofoldSession(
       start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
     },
 
-    /**
-     * Answer a tool call the run is waiting on.
-     *
-     * Found by the call's own id rather than assumed to be the only request:
-     * with two open, comparing against whichever was held last is a person
-     * pressing Approve and nothing at all happening. The entry leaves by the
-     * same id it arrived with, the decision is said back because nothing in a
-     * client applies its own dispatch, and the answer goes into the run. An
-     * approval that picked `allow-session` is sent with `alwaysApprove`, which
-     * cofold keeps for this session and tool.
-     */
-    confirm: (toolCallId, approved, optionId) => {
-      const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
-      if (held === undefined) return;
-      const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
-      /*
-       * A decline ends the call without a result, so the file it announced as
-       * changing is settled here, where the call id is still known: the run's
-       * own `approval.resolved` arrives after this entry is gone, and a run
-       * paused on the next question never reaches the end-of-run sweep.
-       */
-      if (!approved && held.callId !== undefined) settleEdit(held.callId);
-      pending.delete(held.requestId);
-      const removal = activeMapping?.settle(held.requestId);
-      if (removal !== undefined) start.emit('session', removal);
-
-      /*
-       * The row in this session's own snapshot moves with the decision.
-       *
-       * Nothing applies what a client dispatched, so a call approved here
-       * would stay `pending-confirmation` for anybody who subscribes next.
-       */
-      const part = (active?.responseParts as Bag[] | undefined)?.find((one) => one.id === held.callId);
-      if (part !== undefined) {
-        const call = bag(part.toolCall);
-        call.status = approved ? 'running' : 'cancelled';
-        if (approved) call.confirmed = 'user-action';
-        delete call.options;
-        if (picked !== undefined) call.selectedOption = picked;
-        part.toolCall = call;
-      }
-      start.emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        turnId: active?.id,
-        toolCallId,
-        approved,
-        ...(approved ? { confirmed: 'user-action' } : { reason: DECLINED }),
-        ...(picked === undefined ? {} : { selectedOptionId: picked.id }),
-      });
-      route(approved
-        ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' ? { alwaysApprove: true } : {}) }
-        : { type: 'deny', requestId: held.requestId, reason: DECLINED });
-      touch();
-    },
-
-    /**
-     * Answer a question the run is waiting on.
-     *
-     * A declined question is a deny rather than an empty answer, because
-     * cofold's own validation refuses a form with nothing in it and the model
-     * is owed the reason either way.
-     */
-    answer: (requestId, accepted, answers) => {
-      const held = pending.get(requestId);
-      if (held === undefined || held.kind !== 'input') return;
-      pending.delete(requestId);
-      const removal = activeMapping?.settle(requestId);
-      if (removal !== undefined) start.emit('session', removal);
-      route(accepted
-        ? { type: 'answer', requestId, answers: answersOf(answers) }
-        : { type: 'deny', requestId, reason: DECLINED });
-      touch();
-    },
+    ...answerMethods,
 
     /**
      * The tools on offer, replaced whole.
@@ -1468,64 +333,11 @@ export function cofoldSession(
      * the new one.
      */
     setTools: async (tools) => {
-      offered = [...tools];
+      ctx.offered = [...tools];
       return true;
     },
 
-    /**
-     * The client running a tool call, for a call that is one client's to run.
-     *
-     * Nothing for a call this host is running itself, which is what the host
-     * checks before letting a client stream into one.
-     */
-    toolCallOwner: (toolCallId) => waiting.get(toolCallId)?.owner,
-
-    /**
-     * What a client says one of its own tool calls did.
-     *
-     * Only the client the call was reported against may settle it: the
-     * protocol makes that one responsible for the call, and a result from
-     * anybody else is a client answering for work it did not do. False either
-     * way - for a call nobody is waiting on and for a client that does not
-     * own it - because both are a client out of step and the host says which.
-     *
-     * Nothing is emitted here. The result goes back into cofold, which writes
-     * the tool result, and the run's own `tool.completed` reports the
-     * completion to every client from that - the same path every other tool
-     * call takes. A completion emitted here as well would be the same row
-     * finished twice.
-     */
-    completeToolCall: (toolCallId, clientId, result) => {
-      const held = waiting.get(toolCallId);
-      if (held === undefined || held.owner !== clientId) return false;
-      waiting.delete(toolCallId);
-      /*
-       * The client's word is the tool's result: its text when it worked and
-       * its message when it did not. A failure is thrown rather than
-       * returned, which is what cofold records as a failed `tool.completed`
-       * and what makes the model read the message as the reason.
-       */
-      if (result.ok) held.resolve(result.text);
-      else held.reject(new Error(result.text === '' ? 'The tool failed' : result.text));
-      return true;
-    },
-
-    /**
-     * A client that was running tool calls here has gone.
-     *
-     * Its outstanding calls are failed rather than left open: the run is
-     * awaiting a promise that nothing can settle any more, and a turn that
-     * hangs for ever is worse than a tool that says the client went. The
-     * message is the tool result the model reads, which is why it names the
-     * tool as well as the client.
-     */
-    clientGone: (clientId) => {
-      for (const [callId, held] of [...waiting.entries()]) {
-        if (held.owner !== clientId) continue;
-        waiting.delete(callId);
-        held.reject(new Error(`The client ${clientId} that was running ${held.name} is no longer here`));
-      }
-    },
+    ...toolMethods,
 
     /*
      * Take a config value. A key in the schema is kept and applied to the
@@ -1551,8 +363,8 @@ export function cofoldSession(
     settings: () => ({ ...settings }),
 
     close: () => {
-      closed = true;
-      stop('the session closed');
+      ctx.closed = true;
+      ctx.stop('the session closed');
     },
   };
 }

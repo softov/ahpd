@@ -1,6 +1,6 @@
 ---
 title: Reading and reopening a run is one file
-status: todo
+status: implemented
 depends: [task-02-the-turn-agent-is-one-file.md]
 layer: "agent-cofold"
 refs:
@@ -35,3 +35,15 @@ refs:
 - `wc -l` of `session.ts` and `runs.ts` recorded.
 
 ## Resume
+
+Implemented, with one departure the plan's tables do not decide.
+
+`runs.ts` holds `bag`, `str`, and `createRuns(ctx)` with `cut`, `doing`, `status`, `settleTurn`, `rememberPoints`, `apply`, `read` and `reopen`, returning `Runs` (`cut`, `doing`, `status`, `apply`, `read`, `reopen`). `settleTurn` and `rememberPoints` are locals of the factory. `AGENT_ID` is imported from `turnagent.ts`; `context.ts` has `SessionContext extends TurnAgent, Runs`; the opening block stays in `session.ts` after every `Object.assign` and calls `ctx.cut` and `ctx.reopen`.
+
+**Departure.** `apply` calls `owePause`, `payPause` and `startNext`, which are `Pauses` offers in task 04 and a `Turns` offer in task 05, so at the end of this task they are not yet on `SessionContext` and `ctx.owePause()` does not compile - yet this task's own validation requires `pnpm exec tsc --noEmit` to pass. Three shapes were possible: put the three on the context early, pass them as a second factory argument, or leave the tree red until task 05. The first was taken: `SessionContext` gains `owePause`, `payPause` and `startNext` as plain function fields, `session.ts` puts them on with one `Object.assign(ctx, { owePause, payPause, startNext })` after `startNext` is declared, and tasks 04 and 05 lift them out of the closure exactly as this plan describes. It keeps every task green and every area reaching its neighbours as `ctx.<name>`, which is the architecture *Proposed architecture* locks in. **This was a fork the plan does not decide and it should be confirmed against the plan before the branch lands**; the ask could not be put to the reviewer from the build, so it is recorded here instead. To undo it, the alternative is `createRuns(ctx, { owePause, payPause, startNext })` and dropping the three fields in task 04 and 05.
+
+Gates, all green: `pnpm exec tsc --noEmit`, `pnpm boundary` (5 declared, none undeclared), `pnpm exec vitest run packages/agent-cofold` - 14 files, 166 tests, including `agent-cofold-fork.test.ts`, `agent-cofold-store.test.ts` and `agent-cofold-turn.test.ts`.
+
+Pure-move check (scratch script, see task 01): 684 removed, 845 added. The `<` side holds the fifteen `let`s and the five `ctx.`-forced spellings from task 01, the nine import lines that changed across tasks 01 to 03, `const AGENT_ID = 'cofold';` (now `export const`), and `status,` in the returned object (now `status: ctx.status,`). Nothing was dropped.
+
+`wc -l`: `session.ts` 990, `context.ts` 101, `turnagent.ts` 284, `runs.ts` 318.

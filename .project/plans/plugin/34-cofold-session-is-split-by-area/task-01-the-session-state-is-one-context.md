@@ -1,6 +1,6 @@
 ---
 title: The session's mutable state is one context
-status: todo
+status: implemented
 depends: []
 layer: "agent-cofold"
 refs:
@@ -36,3 +36,13 @@ refs:
 - `wc -l packages/agent-cofold/src/session.ts packages/agent-cofold/src/context.ts` recorded.
 
 ## Resume
+
+Implemented.
+
+`context.ts` holds `SessionContext` with the constants, the maps and the fifteen `let`s as fields; `session.ts` builds one `ctx` after `touch` with the `as SessionContext` idiom and reaches every moved `let` as `ctx.<name>`. `draft` stayed a local of `cofoldSession`, and the six shadowed locals kept their names.
+
+Gates, all green: `pnpm exec tsc --noEmit`, `pnpm boundary` (5 declared, none undeclared for `@ahpd/agent-cofold`), `pnpm exec vitest run packages/agent-cofold` - 14 files, 166 tests. The generated `tools/ahp.strict.schema.json` has to exist before the suite runs, so run `node tools/schema.mjs` (or `pnpm test`) first; a bare `pnpm exec vitest run` fails `agent-cofold-approval.test.ts` on a missing schema.
+
+Pure-move check: `git add -N` and process substitution are unavailable in this shell, so the check was run from a scratch script that reads `git diff` for the tracked file and the new file whole. Removed 173 lines, added 236. The `<` side holds the fifteen `let` declarations and five lines the `ctx.` prefix forced into a different spelling: the two `{ activity }` shorthands and the two `title` shorthands in `sessionState`, `start.emit('session', { type: 'session/titleChanged', title })`, and the `@ahpd/sdk` type import losing `BoundTool`. Nothing else was dropped.
+
+`wc -l`: `session.ts` 1527, `context.ts` 93.

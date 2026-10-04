@@ -1,6 +1,6 @@
 ---
 title: The agent a turn runs on is one file
-status: todo
+status: implemented
 depends: [task-01-the-session-state-is-one-context.md]
 layer: "agent-cofold"
 refs:
@@ -37,3 +37,17 @@ refs:
 - `wc -l` of `session.ts` and `turnagent.ts` recorded.
 
 ## Resume
+
+Implemented.
+
+`turnagent.ts` holds the six module-level helpers, its own `str`, `WaitingCall`, and `createTurnAgent(ctx)`, which returns `agentOf`, `settleEdit` and `releaseCalls` beside `methods` (the three client-tool methods typed `Pick<Session, 'toolCallOwner' | 'completeToolCall' | 'clientGone'>`). `waiting`, `relay`, `announceEdit` and `instructionsOf` are locals of the factory. `SessionContext extends TurnAgent`, and `session.ts` builds the area with `const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx)` then `Object.assign(ctx, turnAgent)`, spreading `...toolMethods` where `toolCallOwner` sat.
+
+`AGENT_ID` is exported for tasks 03 and 05. `Bag` is not copied into `turnagent.ts` - nothing that moved here reads it - and `session.ts` keeps its own `bag` and `str`. The imports `resolve`, `createAgent`, `policyOf`, `resolveWithin`, `DEFAULT_TOOLS`, `capabilitiesOf`, `PERMISSION_MODES`, `defaultStoreRoot`, `modelOf`, `cofoldTools` and the types `CofoldAgent`, `PermissionMode`, `Tool`, `ClientToolRelay` moved; `RunHandle` and `Store` stayed.
+
+The return type is spelled `TurnAgent & { methods: Pick<Session, ...> }` on the factory rather than a second exported interface, so `SessionContext extends TurnAgent` does not carry a `methods` field the context never has.
+
+Gates, all green: `pnpm exec tsc --noEmit`, `pnpm boundary` (5 declared, none undeclared), `pnpm exec vitest run packages/agent-cofold` - 14 files, 166 tests.
+
+Pure-move check (scratch script, see task 01): 418 removed, 531 added. The `<` side holds the fifteen `let`s and the five `ctx.`-forced spellings from task 01, plus the seven import lines that changed and `const AGENT_ID = 'cofold';`, which is now `export const AGENT_ID = 'cofold';` in `turnagent.ts`. Nothing was dropped.
+
+`wc -l`: `session.ts` 1277, `context.ts` 94, `turnagent.ts` 284.
