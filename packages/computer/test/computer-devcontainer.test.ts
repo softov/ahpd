@@ -520,7 +520,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
         plugins: ['@ahpd/agent-cofold'],
       },
     }) }],
-    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.8.77' },
+    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.9.77' },
   );
   expect(problems).toEqual([]);
   const closed: (string | undefined)[] = [];
@@ -529,7 +529,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
     { connectionId: 'a', workspaceFolder: workspace(root), name: 'Box' },
     { message: (t) => { said.push(t); }, output: () => {}, close: (why) => { closed.push(why); } },
   );
-  expect(devHeld(devState).commands[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
+  expect(devHeld(devState).commands[1]).toBe('npm i -g @ahpd/server@0.9.77 --allow-scripts=node-pty');
   for (let i = 0; i < 600 && said.length === 0 && closed.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
   await answered(join(root, 'docker.json'), 2);
 });

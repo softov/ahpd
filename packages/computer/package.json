@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/computer",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "type": "module",
   "description": "Disposable Docker machines for the ahpd daemon: a computer: resource provider and the tools that make, use and release one",
   "keywords": [
@@ -55,7 +55,7 @@
     "test": "cd ../.. && vitest run packages/computer/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.8"
+    "@ahpd/sdk": ">=0.9"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"

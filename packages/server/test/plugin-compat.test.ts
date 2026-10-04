@@ -62,7 +62,7 @@ describe('a plugin that declares a range', () => {
 
     expect(loaded).toEqual([]);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('^0.9.0');
+    expect(problems[0]).toContain('^0.10.0');
     expect(problems[0]).toContain(sdkVersion());
     expect((globalThis as Record<string, unknown>).__pluginIncompatibleImported).toBeUndefined();
   });
@@ -108,13 +108,21 @@ describe('a plugin that names the oldest sdk it needs', () => {
     expect(problems).toEqual(['plugin oldest-sdk needs @ahpd/sdk >=0.9, this is 0.8.0']);
   });
 
-  it.each(['agent-acp', 'agent-claude', 'agent-cofold', 'agent-pi', 'computer', 'tunnel-devtunnel'])(
-    'declares @ahpd/%s as taking any sdk from 0.8 on',
-    (name) => {
+  /*
+   * Each package's floor is the first sdk that exports what it imports: the
+   * agents and the computer read `callTimes`, `startOf`, `withCallTimes` or
+   * `secretRef`, which 0.9 added, and the tunnel reads nothing newer than 0.8.
+   */
+  it.each([
+    ['agent-acp', '>=0.9'], ['agent-claude', '>=0.9'], ['agent-cofold', '>=0.9'], ['agent-pi', '>=0.9'],
+    ['computer', '>=0.9'], ['tunnel-devtunnel', '>=0.8'],
+  ])(
+    'declares @ahpd/%s as taking any sdk from %s on',
+    (name, floor) => {
       const manifest = JSON.parse(readFileSync(join(here, '../..', name, 'package.json'), 'utf8')) as {
         peerDependencies: Record<string, string>;
       };
-      expect(manifest.peerDependencies['@ahpd/sdk']).toBe('>=0.8');
+      expect(manifest.peerDependencies['@ahpd/sdk']).toBe(floor);
       expect(satisfies('0.9.0', manifest.peerDependencies['@ahpd/sdk'] as string)).toBe(true);
     },
   );

@@ -479,7 +479,7 @@ else. There is no `manifest.json`.
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": "./dist/index.js" },
-  "peerDependencies": { "@ahpd/sdk": ">=0.8" },
+  "peerDependencies": { "@ahpd/sdk": ">=0.9" },
   "ahpd": { "entry": "./dist/index.js", "title": "Mine" }
 }
 ```
