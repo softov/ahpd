@@ -1,7 +1,7 @@
 ---
 title: ahpd.grants lists every subject a role can name, the schemes included
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -86,7 +86,7 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 ## Resume state
 
 - **Done so far:** tasks 01 and 02, implemented 2026-10-04 and uncommitted in `build/agents/9e279e09`: `schemeOperations` at module scope in `root.ts` with `advertisedSchemes` and the new `schemeGrants` both reading it, `advertisedGrants` the eight of `OPERATIONS` plus one entry per registered scheme, and the descriptions passed through with the `chat` and `file` suffixes removed.
-- **Next action:** Softov's review, which moves the tasks from `implemented` to `done` and updates `plans/index.md`.
+- **Next action:** Softov's review; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** ahpapp's people/01 role editor reads this key; tell its session the schemes moved in once this lands. `docs/COMPUTER.md` was changed as well as the two files task 02 names, because it sent a client to the `file` entry for a scheme's groups too.
 
@@ -96,5 +96,5 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 - [x] A plugin's scheme (`notes:` in a fixture) is listed with the operations its provider implements.
 - [x] Without any resource provider, `ahpd.grants` is the eight built-in subjects, as before.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.
 
