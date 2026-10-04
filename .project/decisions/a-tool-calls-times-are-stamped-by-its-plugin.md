@@ -1,6 +1,7 @@
 ---
 title: A tool call's start and end are stamped by the plugin that runs it, as _meta startedAt, endedAt and durationMs
-status: accepted
+status: superseded
+superseded-by: decisions/a-tool-calls-times-are-stamped-as-ahpd-keys.md
 date: 2026-09-29
 refs:
   - "[code://packages/agent-cofold/src/transcript.ts#L106-217](../../packages/agent-cofold/src/transcript.ts#L106-217) - already emits `_meta.startedAt`, `endedAt` and `durationMs` on restored tool calls"

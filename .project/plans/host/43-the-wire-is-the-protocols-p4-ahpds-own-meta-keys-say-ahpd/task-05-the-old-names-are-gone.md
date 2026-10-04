@@ -23,7 +23,7 @@ ahpd reads no `ahp.commit`, the wire test's `PENDING` list is empty and gone, an
 ## Steps
 
 1. Confirm ahpapp's release sends `ahpd.commit`; do not merge before.
-2. If open question 1 is answered yes, the timing keys are renamed here too, after a superseding decision exists and plugin/29 is amended.
+2. The tool-call timing keys are [plugin/29 p5](../../plugin/29-a-tool-call-says-when-it-ran-p5-cofold-stamps-its-live-calls/plan.md)'s to rename. If p5 is not built yet, rename `startedAt`, `endedAt` and `durationMs` in [`code://packages/agent-cofold/src/transcript.ts`](../../../../packages/agent-cofold/src/transcript.ts) `callPartOf` to `ahpd.startedAt`, `ahpd.endedAt` and `ahpd.durationMs` here, with `packages/agent-cofold/test/agent-cofold-store.test.ts`; p5 then finds them prefixed. No client reads them, so nothing waits on a client.
 
 ## Validation
 

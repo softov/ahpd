@@ -28,7 +28,7 @@ refs:
   - "[code://packages/agent-pi/src/mapping.ts#L185-L208](../../../../packages/agent-pi/src/mapping.ts#L185-L208) - sums its own previous `cacheWriteTokens` and `cost`"
   - "[code://packages/agent-cofold/src/mapping.ts#L104-L123](../../../../packages/agent-cofold/src/mapping.ts#L104-L123) - `cacheWriteTokens`, `reasoningTokens`, `cost`, live; not in the audit"
   - "[code://packages/agent-cofold/src/transcript.ts#L63-L74](../../../../packages/agent-cofold/src/transcript.ts#L63-L74) - the same two token keys, restored; not in the audit"
-  - "[code://packages/agent-cofold/src/transcript.ts#L106-L123](../../../../packages/agent-cofold/src/transcript.ts#L106-L123) - `startedAt`, `endedAt`, `durationMs` on a restored tool call; not in the audit"
+  - "[code://packages/agent-cofold/src/transcript.ts#L107-L113](../../../../packages/agent-cofold/src/transcript.ts#L107-L113) - `startedAt`, `endedAt`, `durationMs` on a restored tool call; not in the audit, and renamed by plugin/29 p5, or by task 05 if it builds first"
   - "[code://packages/sdk/src/meter.ts#L99-L147](../../../../packages/sdk/src/meter.ts#L99-L147) - the meter reads `cost` and `cacheWriteTokens` off every usage"
   - "[code://docs/AHP.md](../../../../docs/AHP.md) - lines 217, 246, 349, 633, 661, 675 name the old keys"
   - "[code://UPSTREAM.md](../../../../UPSTREAM.md) - the reference's own keys, which stay"
@@ -54,11 +54,12 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - `rg -n "argumentHint" docs/AHP.md /github/ahpapp/src` - on a completion item it is the reference client's (`docs/AHP.md:556-569`) and stays; ahpapp `src/commands.ts:42` reads that one, not the skill's, so it does not change.
 - `rg -n "meta.cost" /github/ahpc/src` - ahpc `src/ahp/live.ts:1171-1187` reads the reference host's `_meta.cost` as a plain number in credits; ahpd sends `{ amount, currency }` under the same name, which no client reads as cost today.
 - `rg -n "sender|owner" /github/ahpapp/.project` - ahpapp `chat/02` task 02 (todo) will read `_meta.sender` and `_meta.owner`.
-- `rg -ln "_meta" .project/decisions` - `a-tool-calls-times-are-stamped-by-its-plugin` (accepted) chose `startedAt`, `endedAt`, `durationMs` unprefixed and named `ahpd.*` as the rejected option.
+- `rg -ln "_meta" .project/decisions` - `a-tool-calls-times-are-stamped-by-its-plugin` chose `startedAt`, `endedAt`, `durationMs` unprefixed; it is superseded by [`a-tool-calls-times-are-stamped-as-ahpd-keys`](../../../decisions/a-tool-calls-times-are-stamped-as-ahpd-keys.md), which names them `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`.
 
 ### Gaps
 
 - `cacheWriteTokens`, `reasoningTokens` and `cost` are also written by agent-cofold, and `startedAt`, `endedAt`, `durationMs` by its transcript; the audit missed both.
+- The three timing keys are [plugin/29 p5](../../plugin/29-a-tool-call-says-when-it-ran-p5-cofold-stamps-its-live-calls/plan.md)'s to rename, through plugin/29 p1's helper; task 05 renames them only if plugin/29 p5 has not been built when it runs. No client reads them, so they need no read-both step.
 
 ## Decisions locked in
 
@@ -96,7 +97,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - **Done so far:** nothing.
 - **Next action:** p1 first; then [task-01-the-commit-message-is-read-as-ahpd-commit.md](task-01-the-commit-message-is-read-as-ahpd-commit.md), which needs no client; hand the clients the list in the session's scratch `client-changes-for-protocol.md`.
-- **Answered:** the tool-call timing keys are prefixed too, as `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`: Softov, 2026-10-03, asked "Does \"Rename all + clients\" also cover the tool-call timing keys?": "We will prefix all.. then after I will see about that to remove the prefixes.. So its not a decision to rule.. Its to organize all that is not ahp protocol and to avoid breaking the protocol." The prefix marks what is not the protocol's, for now; it is not a standing rule. The decision `a-tool-calls-times-are-stamped-by-its-plugin` gets a superseding one for the names only, and plugin/29 is amended before it is built.
+- **Answered:** the tool-call timing keys are prefixed too, as `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`: Softov, 2026-10-03, asked "Does \"Rename all + clients\" also cover the tool-call timing keys?": "We will prefix all.. then after I will see about that to remove the prefixes.. So its not a decision to rule.. Its to organize all that is not ahp protocol and to avoid breaking the protocol." The prefix marks what is not the protocol's, for now; it is not a standing rule. The decision `a-tool-calls-times-are-stamped-by-its-plugin` is superseded for the names only by [`a-tool-calls-times-are-stamped-as-ahpd-keys`](../../../decisions/a-tool-calls-times-are-stamped-as-ahpd-keys.md), and plugin/29 is amended to stamp the prefixed names, cofold's restored calls included (p5).
 - **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package.
 - **Watch out for:** `argumentHint` is renamed on a skill customization only, never on a completion item; and `_meta.cost` must not come back as a number in dollars, which would read as credits in the reference.
 
