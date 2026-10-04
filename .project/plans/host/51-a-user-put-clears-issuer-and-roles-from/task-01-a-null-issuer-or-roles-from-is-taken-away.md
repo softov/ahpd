@@ -1,6 +1,6 @@
 ---
 title: A null issuer or roles-from is taken away
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

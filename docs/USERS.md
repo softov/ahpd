@@ -460,9 +460,12 @@ The root lists what the file holds, a read answers the record as JSON, and a
 write to `<scheme>://<id>` makes it or edits it; `write` covers the removal as
 well. A record is written whole: a field a body does not name is the one the
 record already had, so a client that reads a record and writes it back has
-changed nothing. A removal is refused while something still names it - a
-membership naming a team, a record holding a role - and it says who, which is the
-refusal `ahpd team rm` makes.
+changed nothing. `null` is the one value that takes a field away rather than
+setting it, and a person's `issuer`, `rolesFrom` and `primary` are the three
+that answer to it, each named on its own. A blank string is not named, so it
+leaves the record as it found it. A removal is refused while something still
+names it - a membership naming a team, a record holding a role - and it says
+who, which is the refusal `ahpd team rm` makes.
 
 No answer carries a credential. The hash is in the file and the secret behind it
 was shown once by `ahpd user token`, and a person's record here is everything

@@ -155,8 +155,14 @@ const people = (directory: Users): Records => ({
         ...lines('Roles', 'What they hold. Every one has to be a role this host defines.'),
         default: ['guest'],
       },
-      issuer: line('Issuer', 'The authorization server they sign in through, when it is not this host: `github`, or an issuer URL this host may reach.'),
-      rolesFrom: line('Roles from', 'The claim the issuer\'s answer carries their roles in, such as `groups`. Its values have to be role names too.'),
+      issuer: {
+        ...line('Issuer', 'The authorization server they sign in through, when it is not this host: `github`, or an issuer URL this host may reach. `null` takes the one they have away.'),
+        nullable: true,
+      },
+      rolesFrom: {
+        ...line('Roles from', 'The claim the issuer\'s answer carries their roles in, such as `groups`. Its values have to be role names too. `null` takes the one they have away.'),
+        nullable: true,
+      },
       memberships: lines('Memberships', 'What their work may be charged to, each written team, team:* or team:project, and each naming something this host holds.'),
       primary: {
         ...line('Primary', 'The membership their work naming no scope of its own is charged to. `null` takes the one they have away.'),
@@ -173,9 +179,10 @@ const people = (directory: Users): Records => ({
     const was = (await directory.list()).find((one) => one.id === id);
     const roles = listOf(body, 'roles', 'person');
     const memberships = listOf(body, 'memberships', 'person');
-    const issuer = textOf(body, 'issuer');
-    const rolesFrom = textOf(body, 'rolesFrom');
-    // `null` is how a primary is taken away, which leaving a team is not.
+    // `null` is how an issuer, a roles-from and a primary are taken away, and
+    // how leaving a team is not.
+    const issuer = body['issuer'] === null ? null : textOf(body, 'issuer');
+    const rolesFrom = body['rolesFrom'] === null ? null : textOf(body, 'rolesFrom');
     const primary = body['primary'] === null ? null : textOf(body, 'primary');
     /*
      * A field the body does not name is the one the record already had.

@@ -105,6 +105,36 @@ it('creates and edits a person, and a body naming no field keeps what was there'
   expect(await directory.list()).not.toContainEqual(expect.objectContaining({ id: 'eve' }));
 });
 
+it('takes an issuer and a roles-from away when a body says null', async () => {
+  const { schemes } = served();
+  await schemes.user!.write('user://ana', body({ issuer: 'github', rolesFrom: 'groups' }));
+  expect(await read('user', 'ana')).toMatchObject({ issuer: 'github', rolesFrom: 'groups' });
+
+  // A `null` takes one away and leaves the other, which a body naming neither
+  // keeps.
+  await schemes.user!.write('user://ana', body({ issuer: null }));
+  const withoutIssuer = await read('user', 'ana');
+  expect(withoutIssuer).not.toHaveProperty('issuer');
+  expect(withoutIssuer).toMatchObject({ rolesFrom: 'groups' });
+  await schemes.user!.write('user://ana', body({ rolesFrom: null }));
+  const without = await read('user', 'ana');
+  expect(without).not.toHaveProperty('rolesFrom');
+  expect(without).not.toHaveProperty('issuer');
+
+  // A blank string is not named, so it is the one the record already had.
+  await schemes.user!.write('user://ana', body({ issuer: 'github', rolesFrom: 'groups' }));
+  await schemes.user!.write('user://ana', body({ issuer: '', rolesFrom: '' }));
+  expect(await read('user', 'ana')).toMatchObject({ issuer: 'github', rolesFrom: 'groups' });
+  await schemes.user!.write('user://ana', body({ roles: ['guest'] }));
+  expect(await read('user', 'ana')).toMatchObject({ issuer: 'github', rolesFrom: 'groups', roles: ['guest'] });
+
+  // Somebody made with a `null` holds neither.
+  await schemes.user!.write('user://sam', body({ issuer: null, rolesFrom: null }));
+  const made = await read('user', 'sam');
+  expect(made).not.toHaveProperty('issuer');
+  expect(made).not.toHaveProperty('rolesFrom');
+});
+
 it('creates and edits a team and a project from their own title', async () => {
   const { directory, schemes } = served();
   await schemes.team!.write('team://backend', body({ title: 'Backend' }));

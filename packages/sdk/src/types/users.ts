@@ -273,14 +273,20 @@ export interface Users {
    * Add a person, or set the roles of one who is already there.
    *
    * `memberships` replaces what they hold and `primary` sets where their work is
-   * charged to, `null` taking the primary away. Each is left alone when the
-   * options name none, the way `issuer` is, so setting a role does not quietly
-   * move somebody off their team. Only what the options name is checked.
+   * charged to, `null` taking the primary away. `null` takes an `issuer` and a
+   * `rolesFrom` away the same way. Each is left alone when the options name none,
+   * so setting a role does not quietly move somebody off their team. Only what
+   * the options name is checked.
    */
   add(
     id: string,
     roles: string[],
-    options?: { issuer?: string; rolesFrom?: string; memberships?: string[]; primary?: string | null },
+    options?: {
+      issuer?: string | null;
+      rolesFrom?: string | null;
+      memberships?: string[];
+      primary?: string | null;
+    },
   ): Promise<void>;
   /**
    * The roles this file defines, and the grants each holds.

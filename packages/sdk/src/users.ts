@@ -742,7 +742,7 @@ export function fileUsers(options: FileUserOptions): Users {
         // A provider nothing can resolve is refused here for the same reason:
         // a record that names one can only ever be reached by a minted secret,
         // which looks like a sign-in that never arrives.
-        if (issuer !== undefined && !knows(issuer)) {
+        if (typeof issuer === 'string' && !knows(issuer)) {
           throw new Error(`no issuer called ${issuer}; this host takes github or an issuer URL it may reach`);
         }
         // What the record will hold, so a primary is checked against what it
@@ -767,13 +767,13 @@ export function fileUsers(options: FileUserOptions): Users {
           }
         }
       }
-      // Each left alone when the verb names none, the way `issuer` is: setting a
-      // role must not quietly move somebody off their team.
+      // Each left alone when the verb names none: setting a role must not
+      // quietly move somebody off their team.
       const membershipFields = memberships === undefined ? {} : { memberships: [...memberships] };
       const primaryField = typeof primary === 'string' ? { primary } : {};
       const issuerFields = {
-        ...(issuer === undefined ? {} : { issuer }),
-        ...(rolesFrom === undefined ? {} : { rolesFrom }),
+        ...(typeof issuer === 'string' ? { issuer } : {}),
+        ...(typeof rolesFrom === 'string' ? { rolesFrom } : {}),
       };
       if (held === undefined) users.push({ id, roles: [...roles], token: '', ...issuerFields, ...membershipFields, ...primaryField });
       else {
@@ -781,8 +781,10 @@ export function fileUsers(options: FileUserOptions): Users {
         Object.assign(held, issuerFields);
         Object.assign(held, membershipFields);
         Object.assign(held, primaryField);
-        // `null` is how a primary is taken away, which leaving a team is not:
-        // that goes with the memberships below.
+        // `null` is how an issuer, a roles-from and a primary are taken away,
+        // which leaving a team is not: that goes with the memberships below.
+        if (issuer === null) delete held.issuer;
+        if (rolesFrom === null) delete held.rolesFrom;
         if (primary === null) delete held.primary;
         /*
          * A primary the memberships no longer cover goes with them.

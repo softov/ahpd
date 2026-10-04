@@ -119,7 +119,7 @@ Reference: [00-host.md](host/00-host.md)
 | [48 p11 - Open plans cite the new files](host/48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | medium | planned 2026-10-03; task 01 todo | host 48 p10 | - |
 | [49 - A session loads the plugins a client hands it](host/49-a-session-loads-a-clients-plugins/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo, 30 s disconnect grace per Softov | host 44 p1 | host 47 p5 |
 | [50 - A peer chat is its own conversation, and survives a restart](host/50-a-peer-chat-is-its-own-conversation/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | - | host 47 p1 |
-| [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | planned 2026-10-03; task 01 todo | host 36 | - |
+| [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | built 2026-10-03 ([implemented.md](host/51-a-user-put-clears-issuer-and-roles-from/implemented.md)) | host 36 | - |
 
 Next free number in `host`: `52`.
 

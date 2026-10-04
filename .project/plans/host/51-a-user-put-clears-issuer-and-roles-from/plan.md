@@ -1,7 +1,7 @@
 ---
 title: A user put clears its issuer and roles-from when it says null
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -48,7 +48,7 @@ resourceWrite user://<id> -> people.ts put -> Users.add(options) -> users file r
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A null issuer or roles-from is taken away](task-01-a-null-issuer-or-roles-from-is-taken-away.md) | todo | - |
+| [01 - A null issuer or roles-from is taken away](task-01-a-null-issuer-or-roles-from-is-taken-away.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -56,12 +56,9 @@ resourceWrite user://<id> -> people.ts put -> Users.add(options) -> users file r
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-null-issuer-or-roles-from-is-taken-away.md](task-01-a-null-issuer-or-roles-from-is-taken-away.md).
-- **Open questions:** none.
-- **Watch out for:** a blank string stays "not named", as today; only `null` clears.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.
