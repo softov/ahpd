@@ -1,6 +1,7 @@
 ---
 title: The root config grows the artifact prompt switch and deferred title generation
-status: accepted
+status: superseded
+superseded-by: decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md
 date: 2026-09-19
 refs:
   - code://packages/sdk/src/host.ts#L3358-L3372 - `ROOT_CONFIG_SCHEMA`, which declares `defaultShell` and nothing else

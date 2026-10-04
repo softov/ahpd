@@ -6,7 +6,7 @@ layer: "tools"
 refs:
   - "[code://tools/wire.mjs#L167-L205](../../../../tools/wire.mjs#L167-L205) - `frame()`, which routes snapshots, a resolved config and `action` only"
   - "[code://tools/validate.mjs](../../../../tools/validate.mjs) - runs the checker over a capture, where a request and its answer are two frames sharing an `id`"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `CommandMap` (`src/types/common/messages.ts:160-191`), `ServerNotificationMap` (`:244-254`)"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` (`src/types/common/messages.ts:162-194`), `ServerNotificationMap` (`:247-257`)"
 ---
 
 ## Objective

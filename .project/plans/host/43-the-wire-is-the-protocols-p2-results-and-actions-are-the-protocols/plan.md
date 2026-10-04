@@ -8,6 +8,7 @@ revalidated: 2026-10-03
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
+  - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://packages/sdk/src/rpc.ts#L220](../../../../packages/sdk/src/rpc.ts#L220) - `result ?? {}`, which also turns a handler's `null` into `{}`"
   - "[code://packages/sdk/src/host.ts#L7667](../../../../packages/sdk/src/host.ts#L7667) - `ping` answers `{}`"
@@ -20,7 +21,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L4762-L4776](../../../../packages/sdk/src/host.ts#L4762-L4776) - `published()`, the one road a backend's session schema leaves by"
   - "[code://packages/sdk/src/host.ts#L6537-L6540](../../../../packages/sdk/src/host.ts#L6537-L6540) - the session state spreads the backend's whole answer"
   - "[code://docs/AHP.md#L742-L763](../../../../docs/AHP.md#L742-L763) - the bare requests, described and not marked as outside the protocol"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `CommandMap` results `null` (`src/types/common/messages.ts:162-170`); `FetchAutomationRunsResult {}`, delivered by action (`channels-automation/commands.ts:95-125`); `ChatInputRequestedAction` has `type` and `request` (`channels-chat/actions.ts:789-793`); `SessionConfigSchema` requires `type`; `SessionState` declares no `resource`"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` results `null` (`src/types/common/messages.ts:164-173`); `FetchAutomationRunsResult {}`, delivered by action (`channels-automation/commands.ts:95-125`); `ChatInputRequestedAction` has `type` and `request` (`channels-chat/actions.ts:908-912`); `SessionConfigSchema` requires `type`; `SessionState` declares no `resource`"
 ---
 
 ## Goal
@@ -50,12 +51,12 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | What | Source | Task |
 | --- | --- | --- |
-| `ping`, `createSession`, `disposeSession`, `createChat`, `disposeChat`, `createTerminal`, `disposeTerminal` answer `null` | AHP 0.9.0 `CommandMap` (`common/messages.ts:162-170`) | 01 |
+| `ping`, `createSession`, `disposeSession`, `createChat`, `disposeChat`, `createTerminal`, `disposeTerminal` answer `null` | AHP 1.0.0 `CommandMap` (`common/messages.ts:164-173`) | 01 |
 | A handler's `null` goes on the wire as `null`, and `undefined` still as `{}` | (defaulted: the other results that are empty objects, `FetchTurnsResult` among them, keep their `{}`) | 01 |
-| `fetchAutomationRuns` answers `{}`, and the older page arrives by `automation/set` with more `runs` and the next `runsNextCursor` | AHP 0.9.0 `FetchAutomationRunsResult` | 02 |
-| How many runs an automation shows is one count per automation, shared by every subscriber | AHP 0.9.0: "keeping all catalogue subscribers synchronized" | 02 |
+| `fetchAutomationRuns` answers `{}`, and the older page arrives by `automation/set` with more `runs` and the next `runsNextCursor` | AHP 1.0.0 `FetchAutomationRunsResult` | 02 |
+| How many runs an automation shows is one count per automation, shared by every subscriber | AHP 1.0.0: "keeping all catalogue subscribers synchronized" | 02 |
 | An unrecognised cursor is refused with `-32602` | (defaulted: `FetchTurnsParams.cursor` says the host MUST reject one, and the two pagers should agree) | 02 |
-| `chat/inputRequested` carries `type` and `request` only | AHP 0.9.0 `ChatInputRequestedAction` | 03 |
+| `chat/inputRequested` carries `type` and `request` only | AHP 1.0.0 `ChatInputRequestedAction` | 03 |
 | The host sets `type: 'object'` on every session config schema it publishes | the request, 2026-10-03: "the host sets it" | 04 |
 | `SessionState` carries no `resource`: the host strips it from a backend's answer, and echo, notes, acp and cofold stop sending it | the request, 2026-10-03, item 5; the host strip (defaulted: one place covers a third-party backend too) | 04 |
 | `activity: null`, the bare requests, the `vscode/*` requests and the `vscode/devContainers/*` notifications stay, written down as deliberate departures | the request, 2026-10-03: "Keep, for VS Code parity (do not change)" | 05 |

@@ -31,7 +31,7 @@ The wire test records each answer as the frame `rpc.ts` sends, over a host whose
 5. A claude turn raises `chat/inputRequested` through an `AskUserQuestion` call, and an echo session is created and subscribed, with `resolveSessionConfig` asked for `provider: 'echo'`.
 6. Send `completions` with `kind`, `text`, `offset`; `sessionConfigCompletions` with `property`; `createTerminal` with a `claim` and no `command`.
 7. Replace `expect(found).toEqual([])` with `expect(found).toEqual(KNOWN)`, where `KNOWN` is today's findings, each line with a comment naming the plan that removes it (`p2`, `p3`); a fix that removes a defect must remove its line.
-8. `DEPARTURES`: every method `skipped()` reports must be in it, and the test calls at least `getManagedSettingsDiagnostics` and one `vscode/*` request so the list is exercised (`shutdown`, `getNetworkDiagnosticsInfo`, `getManagedSettingsDiagnostics`, `diagnosticsFetch`, the `vscode/*` requests, the `vscode/devContainers/*` notifications) and the `activity: null` finding on `root/sessionSummaryChanged`; each entry names the `docs/AHP.md` heading that records it.
+8. `DEPARTURES`: every method `skipped()` reports must be in it, and the test calls at least `getManagedSettingsDiagnostics` and one `vscode/*` request so the list is exercised (`shutdown`, `getNetworkDiagnosticsInfo`, `getManagedSettingsDiagnostics`, `diagnosticsFetch`, the `vscode/*` requests, the `vscode/devContainers/*` notifications) and the `activity: null` finding on `root/sessionSummaryChanged`; each entry names the `docs/AHP.md` heading that records it. `moveChat`, in `CommandMap` and not served, is not an entry: nothing calls it, so it is not in the traffic.
 
 ## Validation
 

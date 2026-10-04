@@ -56,6 +56,10 @@ Each needs the next protocol package or local types.
 - [ ] `session/mcpServerBackgroundRequested` (protocol `edef8d8`).
 - [ ] `ConfigPropertySchema.minItems/maxItems`; `FileEditSide`/`FileEditCollection` (types only).
 - [ ] `AutomationCapabilities.customizations`, `AutomationSessionTemplate.customizations` (protocol `9f94039`).
+- [ ] `ChangesetStatus.recomputing` and `McpServerStartingState.blocking` (1.0.0).
+- [ ] `chat/canvasesChanged`, `canvas/stateChanged` and the experimental `ahp-canvas:` channel, registered as `0.10.0`: if taken, sent only where `isActionKnownToVersion` says the connection's version knows them, which a 1.0.0 connection does and a 0.9.0 one does not.
+
+`@microsoft/agent-host-protocol@1.0.0`, published 2026-10-03, carries every item in this list and the per-chat changesets above. `host/44` moves ahpd to it and takes `AutomationDefinition.disableConditions` with `AutomationEntry.runCount`, `SessionSummary.chats` and `defaultChat`, and `chat/isReadChanged`, and `host/43` p3 keeps `minItems`/`maxItems` on the root config schema; the rest waits here. `SessionChatSummary.archived` shipped as the `status` bitset, `IsRead` and `IsArchived` beside the activity bits, and `chat/isArchivedChanged` sets that bit, so `host/44` p3 takes it too.
 
 ## Pass 4 - 2026-09-19, the first pass with the client in the clone
 

@@ -7,6 +7,7 @@ created: 2026-10-03
 revalidated: 2026-10-03
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
+  - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://tools/schema.mjs#L58-L64](../../../../tools/schema.mjs#L58-L64) - `nameOf` names a type by its alias, so `Partial<SessionSummary>` and `Partial<ChatSummary>` are both `Partial`"
   - "[code://tools/schema.mjs#L176-L185](../../../../tools/schema.mjs#L176-L185) - the first named object becomes the one `$defs` entry every later one points at"
@@ -17,7 +18,7 @@ refs:
   - "[code://packages/sdk/test/wire.test.ts#L278](../../../../packages/sdk/test/wire.test.ts#L278) - `createTerminal` sent `command` and no `claim`"
   - "[code://packages/sdk/src/rpc.ts#L216-L221](../../../../packages/sdk/src/rpc.ts#L216-L221) - how a handler's return becomes the response frame"
   - "[code://tools/validate.mjs](../../../../tools/validate.mjs) - the same checker over a capture taken off a daemon"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `CommandMap` (`src/types/common/messages.ts:160-191`), `ServerNotificationMap` (`:244-254`), `SessionStatus` bit flags (`src/types/channels-session/state.ts:56-69`), `CompletionsParams` (`kind`, `channel`, `text`, `offset`), `SessionConfigCompletionsParams` (`property`), `CreateTerminalParams` (`claim` required)"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` (`src/types/common/messages.ts:162-194`), `ServerNotificationMap` (`:247-257`), `SessionStatus` bit flags (`src/types/channels-session/state.ts:58-71`), `SessionSummary.chats` and `defaultChat` with `SessionChatSummary.status` (`:521-568`), `CompletionsParams` (`kind`, `channel`, `text`, `offset`), `SessionConfigCompletionsParams` (`property`), `CreateTerminalParams` (`claim` required)"
 ---
 
 ## Goal
@@ -45,13 +46,16 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | What | Source | Task |
 | --- | --- | --- |
 | Each `Partial<T>` is its own definition, named after `T` | the audit: one `Partial` definition wrongly flags `project` and `_meta` on `root/sessionSummaryChanged` | 01 |
-| `SessionStatus` is checked as bit flags | AHP 0.9.0 `channels-session/state.ts:56-69` | 01 |
+| `SessionStatus` is checked as bit flags | AHP 1.0.0 `channels-session/state.ts:58-71` | 01 |
+| `PartialSessionSummary` also checks `chats` and `defaultChat`, and the bit-flag check also covers `SessionChatSummary.status` | AHP 1.0.0 `SessionSummary` (`channels-session/state.ts:521-568`) | 01 |
 | Requests, results and notifications are routed by `CommandMap` and `ServerNotificationMap`, not by name guessing | the request, 2026-10-03, item 8 | 02 |
 | A recorded result is what `rpc.ts` puts on the wire, from one function both use | (defaulted: a test that records something other than the frame proves nothing about the frame) | 03 |
 | The traffic includes a users directory, a signed-in person on a team, an automation with an owner and its run, and the daemon's root config with a plugin's options | the request, 2026-10-03, item 8 | 03 |
-| The test sends the protocol's param names | AHP 0.9.0 `CompletionsParams`, `SessionConfigCompletionsParams`, `CreateTerminalParams` | 03 |
+| The test sends the protocol's param names | AHP 1.0.0 `CompletionsParams`, `SessionConfigCompletionsParams`, `CreateTerminalParams` | 03 |
 | The test lands green with today's defects in a known list, each line naming the plan that removes it, and fails on any defect not in the list or any listed one that no longer occurs | (defaulted: the fixes land one by one and each must be proven by its own line leaving) | 03 |
 | The deliberate departures are a list in the test, and each one is named in `docs/AHP.md` | the request, 2026-10-03, item 6 | 03 |
+| `moveChat` is in `CommandMap` and not served; it needs no `DEPARTURES` entry, which lists what ahpd sends or serves outside the maps | (defaulted: a method nobody calls is not traffic, and its absence is `UPSTREAM.md`'s backlog, not a departure) | 03 |
+| The strict schema is rebuilt when the installed package changes by host/44 p1 task 03, not here | the request, 2026-10-03: "the stale-schema guard is host/44 p1's (do not duplicate)" | - |
 | Every `_meta` key is either `ahpd.`-prefixed or one of the reference's own keys at the place the reference reads it; today's unprefixed ones are a pending list p4 empties | Softov, 2026-10-03, "Rename all + clients" | 04 |
 
 ## Proposed architecture
@@ -79,7 +83,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Done so far:** nothing.
 - **Next action:** [task-01-the-schema-has-one-partial-per-type.md](task-01-the-schema-has-one-partial-per-type.md).
 - **Open questions:** none.
-- **Watch out for:** the audit's `null`-result check compared the frame after `result ?? {}`; record through the shared function, or the test passes on `undefined` while the wire says `{}`.
+- **Watch out for:** the audit's `null`-result check compared the frame after `result ?? {}`; record through the shared function, or the test passes on `undefined` while the wire says `{}`. The guard that rebuilds a stale `ahp.strict.schema.json` is host/44 p1 task 03's; do not add a second one.
 
 ## Final verification checklist
 

@@ -12,7 +12,7 @@ refs:
 
 ## Objective
 
-`docs/AHP.md` has one section listing everything ahpd sends or serves that AHP 0.9.0 does not declare, each kept on purpose for VS Code, and it names the same entries as the wire test's `DEPARTURES` list.
+`docs/AHP.md` has one section listing everything ahpd sends or serves that AHP 1.0.0 does not declare, each kept on purpose for VS Code, and it names the same entries as the wire test's `DEPARTURES` list.
 
 ## Files
 

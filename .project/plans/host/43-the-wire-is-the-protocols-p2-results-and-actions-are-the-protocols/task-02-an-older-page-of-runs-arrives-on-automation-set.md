@@ -10,7 +10,7 @@ refs:
   - "[code://packages/sdk/src/automations.ts#L260-L269](../../../../packages/sdk/src/automations.ts#L260-L269) - `runs()` answers `items` and `nextCursor`"
   - "[code://packages/sdk/src/types/automations.ts#L208-L209](../../../../packages/sdk/src/types/automations.ts#L208-L209) - the port's `runs` signature"
   - "[code://packages/sdk/test/automations.test.ts#L440-L460](../../../../packages/sdk/test/automations.test.ts#L440-L460) - asserts `items` and `nextCursor` today"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `FetchAutomationRunsParams.cursor` is the entry's `runsNextCursor`, `FetchAutomationRunsResult {}` (`channels-automation/commands.ts:95-125`), `AutomationEntry.runs` and `runsNextCursor` (`channels-automation/state.ts:319-323`)"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `FetchAutomationRunsParams.cursor` is the entry's `runsNextCursor`, `FetchAutomationRunsResult {}` (`channels-automation/commands.ts:95-125`), `AutomationEntry.runs` and `runsNextCursor` (`channels-automation/state.ts:434-438`)"
   - "file:///github/ahpapp/src/useAutomations.ts - already reads the page from the entry"
 ---
 

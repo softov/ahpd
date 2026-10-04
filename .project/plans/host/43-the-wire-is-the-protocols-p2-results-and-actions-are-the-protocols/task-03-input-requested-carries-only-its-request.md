@@ -6,7 +6,7 @@ layer: "agent-claude, examples"
 refs:
   - "[code://packages/agent-claude/src/session.ts#L2085](../../../../packages/agent-claude/src/session.ts#L2085) - `emitOn(scope, { type: 'chat/inputRequested', turnId: turn.id, request })`"
   - "[code://examples/notes/agent.ts#L271](../../../../examples/notes/agent.ts#L271) - the same action in the notes example"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `ChatInputRequestedAction` is `type` and `request` (`channels-chat/actions.ts:789-793`)"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `ChatInputRequestedAction` is `type` and `request` (`channels-chat/actions.ts:908-912`)"
 ---
 
 ## Objective

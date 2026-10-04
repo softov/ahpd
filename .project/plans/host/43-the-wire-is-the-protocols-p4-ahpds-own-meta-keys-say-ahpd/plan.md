@@ -8,6 +8,7 @@ revalidated: 2026-10-03
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
+  - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://packages/sdk/src/host.ts#L3123](../../../../packages/sdk/src/host.ts#L3123) - `_meta: { owner }` on a session with no directory"
   - "[code://packages/sdk/src/host.ts#L3141](../../../../packages/sdk/src/host.ts#L3141) - `owner` beside the git facts on the summary and the state"
@@ -96,7 +97,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - **Done so far:** nothing.
 - **Next action:** p1 first; then [task-01-the-commit-message-is-read-as-ahpd-commit.md](task-01-the-commit-message-is-read-as-ahpd-commit.md), which needs no client; hand the clients the list in the session's scratch `client-changes-for-protocol.md`.
 - **Answered:** the tool-call timing keys are prefixed too, as `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`: Softov, 2026-10-03, asked "Does \"Rename all + clients\" also cover the tool-call timing keys?": "We will prefix all.. then after I will see about that to remove the prefixes.. So its not a decision to rule.. Its to organize all that is not ahp protocol and to avoid breaking the protocol." The prefix marks what is not the protocol's, for now; it is not a standing rule. The decision `a-tool-calls-times-are-stamped-by-its-plugin` gets a superseding one for the names only, and plugin/29 is amended before it is built.
-- **Waits on:** AHP 1.0.0 (released 2026-10-03, now `latest`); this plan and the rest of host/43 are re-checked against it before any task is built.
+- **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package.
 - **Watch out for:** `argumentHint` is renamed on a skill customization only, never on a completion item; and `_meta.cost` must not come back as a number in dollars, which would read as credits in the reference.
 
 ## Final verification checklist

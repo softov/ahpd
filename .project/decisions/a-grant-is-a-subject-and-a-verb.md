@@ -1,6 +1,7 @@
 ---
 title: A grant is a subject and a verb
-status: accepted
+status: superseded
+superseded-by: decisions/a-grant-names-an-operation-and-read-and-write-are-its-groups.md
 date: 2026-09-23
 refs:
   - "[code://packages/sdk/src/types/users.ts#L21-L32](../../packages/sdk/src/types/users.ts#L21-L32) - `Capability` and `Grant`, the six areas and the scheme-scoped pair this replaces"

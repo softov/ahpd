@@ -1,11 +1,12 @@
 ---
-title: The wire is the protocol's, and the wire test proves every frame against AHP 0.9.0
+title: The wire is the protocol's, and the wire test proves every frame against AHP 1.0.0
 domain: host
 status: planned
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
-requires: []
+requires:
+  - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
   - "[code://packages/sdk/test/wire.test.ts](../../../../packages/sdk/test/wire.test.ts) - the strict schema check over a recorded host, which checks snapshots and actions only"
   - "[code://tools/schema.mjs](../../../../tools/schema.mjs) - generates the strict schema the check runs on"
@@ -13,13 +14,13 @@ refs:
   - "[code://packages/sdk/src/rpc.ts#L220](../../../../packages/sdk/src/rpc.ts#L220) - `result ?? {}`, which turns every `null` into `{}`"
   - "[code://packages/server/src/rootconfig.ts#L156-L201](../../../../packages/server/src/rootconfig.ts#L156-L201) - the root config schema a `config:read` connection reads"
   - "[code://docs/AHP.md](../../../../docs/AHP.md) - the protocol surface, row by row, and where this host departs"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `CommandMap` and `ServerNotificationMap` (`src/types/common/messages.ts:160-191`, `:244-254`), `ConfigPropertySchema` (`src/types/common/state.ts:158-183`)"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` and `ServerNotificationMap` (`src/types/common/messages.ts:162-194`, `:247-257`), `ConfigPropertySchema` (`src/types/common/state.ts:159-198`)"
   - "file:///home/softov/.local/cache/tmp/claude-1000/-home-softov/f22339a5-d379-4c13-91e4-d62f169fefc8/scratchpad/proto-audit.test.ts - the scratch audit these plans come from, with `audit-report.txt` beside it; scratch, so it may be gone"
 ---
 
 ## Goal
 
-Every frame ahpd sends is one AHP 0.9.0 declares: request results are the declared shapes, `null` included, actions carry only declared fields, the root config schema is one a client can read, and every `_meta` key ahpd invents says it is ahpd's.
+Every frame ahpd sends is one AHP 1.0.0 declares: request results are the declared shapes, `null` included, actions carry only declared fields, the root config schema is one a client can read, and every `_meta` key ahpd invents says it is ahpd's.
 The wire test is what proves it, so it is extended first: every request and result by `CommandMap`, every notification by `ServerNotificationMap`, over a host with a users directory, a signed-in person on a team, an automation with an owner and its run, and the daemon's root config with a plugin's options.
 What ahpd keeps on purpose for VS Code parity stays, and is listed by name in the test and in `docs/AHP.md`.
 
@@ -55,7 +56,7 @@ rootConfig port schema -> RootState.config -> config:read connection
 | What | Source | Plan |
 | --- | --- | --- |
 | The wire test is extended first, and every later fix is proven by a line leaving its known-defects list | the request, 2026-10-03: "p1 the checker and the permanent wire coverage (item 8) first, so every later fix is proven by it" | p1 |
-| Results, actions and the session config schema match the protocol | AHP 0.9.0 `CommandMap`, `ChatInputRequestedAction`, `SessionConfigSchema`, `SessionState` | p2 |
+| Results, actions and the session config schema match the protocol | AHP 1.0.0 `CommandMap`, `ChatInputRequestedAction`, `SessionConfigSchema`, `SessionState` | p2 |
 | `activity: null`, the bare `shutdown`, `getNetworkDiagnosticsInfo`, `getManagedSettingsDiagnostics`, `diagnosticsFetch`, the `vscode/*` requests and the `vscode/devContainers/*` notifications stay, as deliberate departures | the request, 2026-10-03: "Keep, for VS Code parity (do not change)" | p2 |
 | The root config schema is mapped to `ConfigPropertySchema`, and validation stays on ahpd's own schema | the request, 2026-10-03, item 4 | p3 |
 | Every `_meta` key ahpd invents becomes `_meta['ahpd.<name>']`, `ahp.commit` becomes `ahpd.commit`, and ahpapp and ahpc are updated in the same wave | Softov, 2026-10-03, asked "how are `_meta` keys that ahpd invents named?": "Rename all + clients" | p4 |
@@ -79,7 +80,7 @@ rootConfig port schema -> RootState.config -> config:read connection
 - **Done so far:** nothing.
 - **Next action:** [p1](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md).
 - **Open questions:** p3's `http` type, explained to Softov and awaiting confirmation; `writeOnly` (not sent) and the timing keys (prefixed) are answered in p3 and p4.
-- **Waits on:** AHP 1.0.0, released 2026-10-03 as `latest`: every child is re-checked against it before a task is built, since these plans were written against 0.9.0.
+- **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package and owns the guard that rebuilds the strict schema when the package changes; the children were re-checked against 1.0.0 on 2026-10-03.
 - **Watch out for:** a fix that lands without removing its line from p1's known-defects list fails the wire test, and that is the point.
 
 ## Final verification checklist

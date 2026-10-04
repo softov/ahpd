@@ -87,13 +87,19 @@ Reference: [00-host.md](host/00-host.md)
 | [40 - A connection is told who it is signed in as](host/40-a-connection-is-told-who-it-is/plan.md) | high | built 2026-10-03 ([implemented.md](host/40-a-connection-is-told-who-it-is/implemented.md)) | host 36 | ahpapp people/01 |
 | [41 - A failure belongs to the item that failed, and a start says what it skipped](host/41-a-failure-belongs-to-the-item-that-failed/plan.md) | high | built 2026-10-03 ([implemented.md](host/41-a-failure-belongs-to-the-item-that-failed/implemented.md)) | claude 15 | - |
 | [42 - An automation's owner rides in _meta, where the protocol has room for it](host/42-an-automation-owner-rides-in-meta/plan.md) | high | built 2026-10-03 ([implemented.md](host/42-an-automation-owner-rides-in-meta/implemented.md)) | - | host 40 |
-| [43 - The wire is the protocol's, and the wire test proves every frame against AHP 0.9.0](host/43-the-wire-is-the-protocols/plan.md) | high | planned 2026-10-03; p1-p4 planned | - | ahpc run paging; ahpapp and ahpc `_meta` readers |
-| [43 p1 - The wire test checks every request, result and notification against the protocol](host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | high | planned 2026-10-03; tasks 01-04 todo | host 43 | 43 p2, 43 p3, 43 p4 |
-| [43 p2 - Results and actions are the protocol's shapes](host/43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | high | planned 2026-10-03; tasks 01-05 todo | host 43 p1 | ahpc `automationRuns` |
-| [43 p3 - The root config schema is one a client can read](host/43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | high | planned 2026-10-03; tasks 01-03 todo, 02 and 03 wait on open questions | host 43 p1, daemon 11 | - |
-| [43 p4 - Every `_meta` key ahpd invents is named `ahpd.<name>`](host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) | high | planned 2026-10-03; tasks 01-05 todo, 02-05 wait on ahpapp and ahpc reading both names | host 43 p1 | - |
+| [43 - The wire is the protocol's, and the wire test proves every frame against AHP 1.0.0](host/43-the-wire-is-the-protocols/plan.md) | high | planned 2026-10-03; p1-p4 planned, retargeted to 1.0.0 | host 44 p1 | ahpc run paging; ahpapp and ahpc `_meta` readers |
+| [43 p1 - The wire test checks every request, result and notification against the protocol](host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | high | planned 2026-10-03; tasks 01-04 todo | host 43, host 44 p1 | 43 p2, 43 p3, 43 p4 |
+| [43 p2 - Results and actions are the protocol's shapes](host/43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | high | planned 2026-10-03; tasks 01-05 todo | host 43 p1, host 44 p1 | ahpc `automationRuns` |
+| [43 p3 - The root config schema is one a client can read](host/43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | high | planned 2026-10-03; tasks 01-02 todo, 03 dropped | host 43 p1, daemon 11, host 44 p1 | - |
+| [43 p4 - Every `_meta` key ahpd invents is named `ahpd.<name>`](host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) | high | planned 2026-10-03; tasks 01-05 todo, 02-05 wait on ahpapp and ahpc reading both names | host 43 p1, host 44 p1 | - |
+| [44 - ahpd speaks AHP 1.0.0, and keeps 0.9.0](host/44-ahpd-speaks-ahp-1-0-0/plan.md) | high | planned 2026-10-03; p1-p3 planned | - | ahpapp and ahpc moving to the 1.0.0 package; host 43 |
+| [44 p1 - ahpd speaks 1.0.0 and 0.9.0](host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md) | high | planned 2026-10-03; tasks 01-04 todo | host 44 | 44 p2, 44 p3, host 43, ahpapp on 1.0.0 |
+| [44 p2 - An automation disables itself as its definition says, and a kind given twice is refused](host/44-ahpd-speaks-ahp-1-0-0-p2-an-automation-disables-itself/plan.md) | medium | planned 2026-10-03; tasks 01-02 todo | host 44 p1 | - |
+| [44 p3 - A session's row lists its chats with their status, and a chat is read or archived on its own](host/44-ahpd-speaks-ahp-1-0-0-p3-a-sessions-row-lists-its-chats/plan.md) | high | planned 2026-10-03; tasks 01-02 todo | host 44 p1 | - |
+| [45 - The root config declares every value it holds, as VS Code's agent host declares it](host/45-root-config-declares-every-value-it-holds/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo | host 44 p1, host 43 p1, host 43 p3 | - |
+| [46 - The host's own surfaces are advertised with their operations, and a role grants an operation](host/46-built-in-surfaces-are-advertised-for-role-control/plan.md) | medium | planned 2026-10-03; tasks 01-04 todo | host 44 p1 | ahpapp people/01's role editor |
 
-Next free number in `host`: `44`.
+Next free number in `host`: `47`.
 
 ## claude
 

@@ -13,7 +13,7 @@ refs:
   - "[code://packages/agent-acp/src/session.ts#L1748](../../../../packages/agent-acp/src/session.ts#L1748) - the same in acp"
   - "[code://packages/agent-cofold/src/session.ts#L1239](../../../../packages/agent-cofold/src/session.ts#L1239) - the same in cofold"
   - "[code://packages/agent-claude/src/session.ts#L3088-L3089](../../../../packages/agent-claude/src/session.ts#L3088-L3089) - claude already leaves `resource` off, and says why"
-  - "npm://@microsoft/agent-host-protocol@0.9.0 - `SessionConfigSchema.type: 'object'` required (`channels-session/state.ts:579-585`); `SessionState` and `SessionMetadata` declare no `resource`"
+  - "npm://@microsoft/agent-host-protocol@1.0.0 - `SessionConfigSchema.type: 'object'` required (`channels-session/state.ts:634-641`); `SessionState` and `SessionMetadata` declare no `resource`"
 ---
 
 ## Objective
