@@ -736,13 +736,15 @@ describe('what a served command reads', () => {
 
   it('answers a write-only option as set and any other as the file holds it', async () => {
     const one = await daemon(
-      { http: true, plugins: [BACKEND, { name: SECRET, options: { apiKey: 'k1', region: 'eu' } }] },
+      { http: true, plugins: [BACKEND, { name: SECRET, options: { apiKey: 'SECRETKEY1', region: 'eu' } }] },
       ['--connection-token', 'root-secret'],
     );
     const answered = await get(`http://127.0.0.1:${String(one.port)}/api/config`, 'root-secret');
     expect(answered.status).toBe(200);
     const body = await answered.text();
-    expect(body).not.toContain('k1');
+    // Longer than the six random characters of the run's temp folder, which the
+    // body names, so a match is the key and never the folder.
+    expect(body).not.toContain('SECRETKEY1');
     const parsed = JSON.parse(body) as { config: { plugins: { options: Record<string, unknown> }[] } };
     expect(parsed.config.plugins[1]?.options).toEqual({ apiKey: '<set>', region: 'eu' });
   }, 30000);
