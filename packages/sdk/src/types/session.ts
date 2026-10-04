@@ -110,6 +110,8 @@ export interface SessionOptions {
   schema?: () => Bag;
   /** Customizations to report until the agent reports its own. */
   seedCustomizations?: Bag[];
+  /** Models this session's variant offers, so a stored one can be checked. */
+  seedModels?: { id: string; name: string }[];
   /** Where state actions go. */
   emit: Emit;
   /**
@@ -222,6 +224,8 @@ export interface MessageFrom {
   origin?: { kind: 'user' | 'agent' | 'tool' | 'automation' | 'systemNotification' };
   /** `Message._meta`, carried whole. */
   _meta?: Bag;
+  /** `Message.agent`, the protocol's `AgentSelection`: the agent this message picked. */
+  agent?: { uri: string };
 }
 
 /** A live session. */

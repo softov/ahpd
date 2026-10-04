@@ -1,6 +1,6 @@
 ---
 title: A restored session reopens on its model
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

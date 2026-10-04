@@ -1,6 +1,6 @@
 ---
 title: Built-in agents are listed as VS Code lists them
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { customizationsOf } from '../src/session.js';
 import type { Bag } from '../../sdk/src/types/common.js';
@@ -14,6 +17,32 @@ import type { Bag } from '../../sdk/src/types/common.js';
 const PLUGIN = { name: 'acme', path: '/plugins/acme', version: '1.0.0' };
 const children = (one: Bag | undefined): Bag[] => (one?.children ?? []) as Bag[];
 const byType = (list: Bag[], type: string): Bag | undefined => list.find((one) => one.type === type);
+
+/**
+ * A home with an `agents` folder in it, as one agent of the two below has.
+ *
+ * The check is the real one - a `file:` uri that names a file nobody has is
+ * the same broken link as a `claude-internal:` one is not - so the folder is
+ * written where the listing will look for it rather than stubbed out.
+ */
+function withHome(names: string[]): { home: string; restore: () => void } {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+  mkdirSync(join(home, '.claude', 'agents'), { recursive: true });
+  for (const name of names) writeFileSync(join(home, '.claude', 'agents', `${name}.md`), `---\nname: ${name}\n---\n`);
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  return { home, restore: () => { if (was === undefined) delete process.env.HOME; else process.env.HOME = was; rmSync(home, { recursive: true, force: true }); } };
+}
+
+/** Every agent leaf a listing reported, wherever it put it. */
+const listed = (out: Bag[]): Bag[] =>
+  out.filter((one) => one.type === 'directory' || one.type === 'plugin')
+    .flatMap((one) => children(one))
+    .filter((one) => one.type === 'agent');
+
+const agentNames = (out: Bag[]): string[] => listed(out).map((one) => String(one.name));
+
+const agentNamed = (out: Bag[], name: string): Bag | undefined => listed(out).find((one) => one.name === name);
 
 describe('where a customization came from', () => {
   it('projects a reported plugin as its own container with the real path, name and version', () => {
@@ -59,7 +88,9 @@ describe('where a customization came from', () => {
     const plugin = byType(out, 'plugin');
     expect(children(plugin)).toEqual([
       { type: 'prompt', id: 'command:acme:acme-command', name: 'acme-command', uri: '/plugins/acme/commands/acme-command.md', enabled: true, description: '(acme) A plugin command' },
-      { type: 'agent', id: 'agent:acme:acme-agent', name: 'acme-agent', uri: '/plugins/acme/agents/acme-agent.md', enabled: true, description: 'A plugin agent' },
+      // No file under the plugin this names, so it is the CLI's own agent and
+      // carries the internal uri rather than a path to nothing.
+      { type: 'agent', id: 'agent:acme:acme-agent', name: 'acme-agent', uri: 'claude-internal:/agent/acme-agent', enabled: true, description: 'A plugin agent' },
     ]);
     // Everything was attributed, so no per-kind directory is reported at all.
     expect(out.filter((one) => one.type === 'directory')).toEqual([]);
@@ -73,5 +104,54 @@ describe('where a customization came from', () => {
     expect(byType(out, 'plugin')).toMatchObject({ name: 'acme' });
     expect(children(byType(out, 'plugin'))).toEqual([]);
     expect(children(byType(out, 'directory')).map((one) => one.name)).toEqual(['ghost:ghost-skill']);
+  });
+});
+
+describe('where an agent lives', () => {
+  it('gives an agent the CLI ships, and which has no file of its own, an internal uri', () => {
+    const { restore } = withHome([]);
+    try {
+      const out = customizationsOf({ agents: [{ name: 'Explore', description: 'Reads the code' }] }, []);
+      // A `file:` uri here would name a file nobody has, and a client that
+      // reads what it names gets nothing back.
+      expect(agentNamed(out, 'Explore')).toMatchObject({
+        type: 'agent', id: 'agent:Explore', name: 'Explore', uri: 'claude-internal:/agent/Explore', description: 'Reads the code',
+      });
+    } finally { restore(); }
+  });
+
+  it('keeps the file uri for an agent a person wrote in their own agents folder', () => {
+    const { home, restore } = withHome(['Plan']);
+    try {
+      const out = customizationsOf({ agents: [{ name: 'Plan' }] }, []);
+      expect(agentNamed(out, 'Plan')).toMatchObject({
+        type: 'agent', uri: `file://${home}/.claude/agents/Plan.md`,
+      });
+    } finally { restore(); }
+  });
+
+  it('does not list general-purpose, which is what the CLI runs when nothing is picked', () => {
+    const { restore } = withHome([]);
+    try {
+      const out = customizationsOf({ agents: [{ name: 'general-purpose' }, { name: 'Explore' }] }, []);
+      // Offering it as a choice would offer the absence of a choice, and a
+      // person who picked it would be told nothing changed.
+      expect(agentNames(out)).toEqual(['Explore']);
+    } finally { restore(); }
+  });
+
+  it('gives a plugin agent the file under the plugin when there is one, and an internal uri when there is not', () => {
+    const { restore } = withHome([]);
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-plugin-'));
+    mkdirSync(join(root, 'agents'), { recursive: true });
+    writeFileSync(join(root, 'agents', 'scribe.md'), '---\nname: scribe\n---\n');
+    try {
+      const out = customizationsOf(
+        { agents: [{ name: 'acme:scribe' }, { name: 'acme:ghost' }] }, [], [], undefined,
+        [{ name: 'acme', path: root }],
+      );
+      expect(agentNamed(out, 'scribe')).toMatchObject({ uri: `${root}/agents/scribe.md` });
+      expect(agentNamed(out, 'ghost')).toMatchObject({ uri: 'claude-internal:/agent/ghost' });
+    } finally { restore(); rmSync(root, { recursive: true, force: true }); }
   });
 });

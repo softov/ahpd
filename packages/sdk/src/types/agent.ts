@@ -226,6 +226,15 @@ export interface Start {
   schema(): Bag;
   /** What to report as customizations until the backend reports its own. */
   seedCustomizations?: Bag[];
+  /**
+   * What this backend's variant offers, so a session opened with a stored
+   * model can say whether it is one this variant serves.
+   *
+   * Seeded beside the customizations because it answers the same question: a
+   * session that is running will say its own models, and one that is not has
+   * nothing to say them from except this.
+   */
+  seedModels?: { id: string; name: string }[];
   /** Where state actions go. The host routes them to the right channel. */
   emit: Emit;
   /**

@@ -143,6 +143,16 @@ A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one 
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 
+## The agent a message picks
+
+A client sends the agent on every message, as `message.agent`, and the turn runs on it. A message naming none runs on the SDK's default agent.
+
+A uri becomes the name the SDK is given: an agent's own file, `file://…/agents/reviewer.md`, gives its frontmatter `name`, or the file's own name when it has none or has been deleted since the listing was made; a built-in agent's `claude-internal:/agent/Explore` gives its last segment; any other uri names no agent, rather than naming one the CLI does not have.
+
+The SDK reads the agent when its query is built and has no way to change it on a CLI already running, so a message picking a different agent closes the query and starts another resumed into the same conversation, before that turn's prompt goes out. The send that switches pays a restart; a client that sends the same agent on every message, which is the usual case, pays nothing.
+
+A session is not tied to an agent: nothing is stored per session, because the next message carries the pick again.
+
 ## Credentials
 
 Sessions use whatever the Claude CLI is signed in with. A client can push a token instead. Pushed tokens are held per connection and are not used for other clients' sessions.

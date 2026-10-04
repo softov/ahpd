@@ -1590,6 +1590,13 @@ export function createHost(options: HostOptions): Host {
       // otherwise.
       seedCustomizations: about(agent.provider).seeds,
       /*
+       * What the boot probe learned the models are, for the same reason and
+       * read from the same place: a session opened with a stored model needs to
+       * know this variant offers it before it will reopen on it, and a session
+       * that has not been asked is not going to find out from anybody.
+       */
+      seedModels: about(agent.provider).models,
+      /*
        * The worker chat a backend asks for, named and opened here.
        *
        * The host is the only thing that knows what a chat URI looks like, what
@@ -4453,13 +4460,19 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
-   * Who a message came from, read off the message itself.
+   * Who a message came from, read off the message itself, and what it picked.
    *
-   * `Message.origin` is required by the protocol and `message._meta` is
-   * optional, and a backend's `begin`/`queue` take them as `from` because a
-   * `Session` is handed the words rather than the whole envelope. Starting a
-   * turn without them is how a person's own message comes back with no
-   * origin, and a client then has nothing to draw a bubble from.
+   * `Message.origin` is required by the protocol, `message._meta` and
+   * `message.agent` are optional, and a backend's `begin`/`queue` take them as
+   * `from` because a `Session` is handed the words rather than the whole
+   * envelope. Starting a turn without them is how a person's own message comes
+   * back with no origin, and a client then has nothing to draw a bubble from.
+   *
+   * The agent is read here rather than left to the caller, because every send
+   * path already goes through this and the pick is on the message rather than
+   * on the action: `origin` and `_meta` are read the same way, and a message
+   * that carries only an agent is a person who picked one and said nothing
+   * else.
    */
   const messageFrom = (message: Record<string, unknown>): MessageFrom | undefined => {
     const origin = typeof message.origin === 'object' && message.origin !== null
@@ -4468,10 +4481,15 @@ export function createHost(options: HostOptions): Host {
     const meta = typeof message._meta === 'object' && message._meta !== null
       ? message._meta as Bag
       : undefined;
-    if (origin === undefined && meta === undefined) return undefined;
+    const picked = typeof message.agent === 'object' && message.agent !== null
+      && typeof (message.agent as Bag).uri === 'string'
+      ? { uri: (message.agent as Bag).uri as string }
+      : undefined;
+    if (origin === undefined && meta === undefined && picked === undefined) return undefined;
     return {
       ...(origin === undefined ? {} : { origin }),
       ...(meta === undefined ? {} : { _meta: meta }),
+      ...(picked === undefined ? {} : { agent: picked }),
     };
   };
 

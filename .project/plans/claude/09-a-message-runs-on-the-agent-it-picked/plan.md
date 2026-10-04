@@ -1,7 +1,7 @@
 ---
 title: A message runs on the custom agent it picked
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -67,11 +67,11 @@ client: message.agent = { uri } -> host chat/turnStarted -> messageFrom(message)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The picked agent reaches the backend](task-01-the-picked-agent-reaches-the-backend.md) | todo | - |
-| [02 - Built-in agents are listed as VS Code lists them](task-02-built-in-agents-are-listed-as-vscode-lists-them.md) | todo | - |
-| [03 - The query runs on the picked agent](task-03-the-query-runs-on-the-picked-agent.md) | todo | 01, 02 |
-| [04 - Docs](task-04-docs.md) | todo | 03, 05 |
-| [05 - A restored session reopens on its model](task-05-a-restored-session-reopens-on-its-model.md) | todo | - |
+| [01 - The picked agent reaches the backend](task-01-the-picked-agent-reaches-the-backend.md) | done | - |
+| [02 - Built-in agents are listed as VS Code lists them](task-02-built-in-agents-are-listed-as-vscode-lists-them.md) | done | - |
+| [03 - The query runs on the picked agent](task-03-the-query-runs-on-the-picked-agent.md) | done | 01, 02 |
+| [04 - Docs](task-04-docs.md) | done | 03, 05 |
+| [05 - A restored session reopens on its model](task-05-a-restored-session-reopens-on-its-model.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,10 @@ client: message.agent = { uri } -> host chat/turnStarted -> messageFrom(message)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-picked-agent-reaches-the-backend.md](task-01-the-picked-agent-reaches-the-backend.md).
-- **Open questions:** none.
-- **Watch out for:** the queued-message path (`host.ts` near 8972) reads `message.model` too and must read `agent` the same way.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] In ahpapp and VS Code, picking `Plan` and sending runs the turn on it; picking none runs the default.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] In ahpapp and VS Code, picking `Plan` and sending runs the turn on it; picking none runs the default.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

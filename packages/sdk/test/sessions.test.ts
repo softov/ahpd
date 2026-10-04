@@ -22,7 +22,7 @@ import type { Bag } from '../src/types/common.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Agent, Listed } from '../src/types/agent.js';
-import type { MessageAttachment } from '../src/types/session.js';
+import type { MessageAttachment, MessageFrom } from '../src/types/session.js';
 
 const ROOT = 'ahp-root://';
 const SESSION = 'ahp-session:/one';
@@ -211,6 +211,33 @@ const watching = (agent: Agent, seen: (MessageAttachment[] | undefined)[]): Agen
   },
 });
 
+/**
+ * Echo under a backend that records what each message was handed about itself.
+ *
+ * The agent a person picked rides on the message rather than on the action, so
+ * the record a test reads is what says the host passed the pick on rather than
+ * picking for the person. Read on both `begin` and `queue`, because a message
+ * that waited its turn was picked at the moment it was sent, not the moment it
+ * ran.
+ */
+const picking = (agent: Agent, seen: (MessageFrom | undefined)[]): Agent => ({
+  ...agent,
+  create: (start) => {
+    const session = agent.create(start);
+    return {
+      ...session,
+      begin: (turnId, text, model, from, attachments) => {
+        seen.push(from);
+        session.begin(turnId, text, model, from, attachments);
+      },
+      queue: (id, text, model, from) => {
+        seen.push(from);
+        session.queue(id, text, model, from);
+      },
+    };
+  },
+});
+
 const archive = (client: Awaited<ReturnType<typeof running>>['client']) => client.handle({
   method: 'dispatchAction',
   params: { channel: SESSION, action: { type: 'session/isArchivedChanged', isArchived: true } },
@@ -248,6 +275,108 @@ it('hands over no attachment at all for a message that carried none', async () =
   // Absent rather than an empty list, so a backend can tell a message that
   // carried nothing from one it was handed nothing to look at.
   expect(seen).toEqual([undefined]);
+});
+
+it('hands the agent a live message picked to the backend that begins the turn', async () => {
+  const seen: (MessageFrom | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chat,
+      action: {
+        type: 'chat/turnStarted',
+        turnId: 't1',
+        message: { text: 'what is this?', origin: { kind: 'user' }, agent: { uri: 'file:///home/ana/.claude/agents/Plan.md' } },
+      },
+    },
+  });
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  expect(seen).toEqual([{ origin: { kind: 'user' }, agent: { uri: 'file:///home/ana/.claude/agents/Plan.md' } }]);
+});
+
+it('hands the agent of a message that carried nothing else but the pick on', async () => {
+  const seen: (MessageFrom | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  // Neither `origin` nor `_meta`, which is what a client that only picked an
+  // agent and said nothing else sends. Answering undefined here would drop the
+  // pick on the one message that was nothing but a pick.
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chat,
+      action: {
+        type: 'chat/turnStarted',
+        turnId: 't1',
+        message: { text: 'what is this?', agent: { uri: 'claude-internal:/agent/Explore' } },
+      },
+    },
+  });
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Explore' } }]);
+});
+
+it('hands over nothing at all for a message that picked no agent', async () => {
+  const seen: (MessageFrom | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  await ask(client, chat, 't1');
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  // An `agent` of no uri is no pick, and the message said nothing else either.
+  expect(seen).toEqual([undefined]);
+});
+
+it('hands the agent of a queued message to the backend before the turn runs', async () => {
+  const seen: (MessageFrom | undefined)[] = [];
+  const { client } = await running(memorySessions(), undefined, picking(echo({ path: root, pace: 0 }), seen));
+  const chat = await chatOf(client);
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chat,
+      action: {
+        type: 'chat/pendingMessageSet',
+        kind: 'queued',
+        id: 'q1',
+        message: { text: 'and then this', agent: { uri: 'claude-internal:/agent/Plan' } },
+      },
+    },
+  });
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Plan' } }]);
+});
+
+it('hands the agent of the first message of a session that was not running to the backend that resumes it', async () => {
+  const seen: (MessageFrom | undefined)[] = [];
+  const store = memorySessions();
+  const agent = picking(echo({ path: root, pace: 0 }), seen);
+  const first = await running(store, undefined, agent);
+  const chat = await chatOf(first.client);
+  await ask(first.client, chat, 't1');
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  await first.client.handle({ method: 'disposeSession', params: { channel: SESSION } });
+  await new Promise((tick) => { setTimeout(tick, 20); });
+  seen.length = 0;
+
+  // A daemon that came back, said the first thing about a row it has never
+  // listed: the catalogue teaches it whose the row is and the turn starts it.
+  const second = await running(store, undefined, agent);
+  await second.client.handle({ method: 'listSessions', params: { channel: ROOT } });
+  await second.client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: `ahp-chat:/one`,
+      action: {
+        type: 'chat/turnStarted',
+        turnId: 't2',
+        message: { text: 'again', agent: { uri: 'claude-internal:/agent/Plan' } },
+      },
+    },
+  });
+  await new Promise((tick) => { setTimeout(tick, 100); });
+  expect(seen).toEqual([{ agent: { uri: 'claude-internal:/agent/Plan' } }]);
 });
 
 it('carries the archived bit into the status a client reads', async () => {

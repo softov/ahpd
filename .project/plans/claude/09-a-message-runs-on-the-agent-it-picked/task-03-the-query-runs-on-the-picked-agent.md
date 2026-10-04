@@ -1,6 +1,6 @@
 ---
 title: The query runs on the picked agent
-status: todo
+status: done
 depends: [task-01-the-picked-agent-reaches-the-backend.md, task-02-built-in-agents-are-listed-as-vscode-lists-them.md]
 layer: "agent-claude"
 refs:

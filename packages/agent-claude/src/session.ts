@@ -1,6 +1,7 @@
-import { rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -349,12 +350,36 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const found = bag(raw);
     const name = str(found.name);
     if (!name) continue;
+    /*
+     * The agent the CLI runs when nobody picked one.
+     *
+     * Not listed, because it is not a choice: a person who offered it would be
+     * told nothing changed. Everything else the CLI reports is a choice, so
+     * this is the only name dropped.
+     */
+    if (name === 'general-purpose') continue;
     const plugin = pluginOf(name);
+    const own = plugin === undefined ? name : bare(plugin, name);
+    const path = plugin === undefined
+      ? join(home, '.claude', 'agents', `${name}.md`)
+      : join(str(plugin.path) ?? '', 'agents', `${own}.md`);
     const leaf: Bag = {
       type: 'agent',
       id: `agent:${name}`,
-      name: plugin === undefined ? name : bare(plugin, name),
-      uri: plugin === undefined ? `${folder('agents')}/${name}.md` : `${str(plugin.path) ?? ''}/agents/${bare(plugin, name)}.md`,
+      name: own,
+      /*
+       * Where the file is, or that there is none.
+       *
+       * The CLI reports an agent's name and never where it came from, and a
+       * built-in the CLI ships has no file of its own - so a `file:` uri would
+       * name a path nobody has, and a client that read what it names would get
+       * nothing back. Those get the internal uri instead, which says the agent
+       * exists without claiming a file for it. The name is encoded, because it
+       * is a path segment here and a URI segment there.
+       */
+      uri: existsSync(path)
+        ? (plugin === undefined ? `file://${path}` : path)
+        : `${INTERNAL_AGENT}${encodeURIComponent(own)}`,
       enabled: true,
       ...(str(found.description) ? { description: str(found.description) as string } : {}),
     };
@@ -450,6 +475,56 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   }
 
   return out;
+}
+
+/** The uri scheme `customizationsOf` gives an agent the CLI ships itself. */
+export const INTERNAL_AGENT = 'claude-internal:/agent/';
+
+/** The most of an agent file read for its name. */
+const AGENT_FILE_MOST = 64 * 1024;
+
+/**
+ * The name the SDK's `agent` option wants, out of a customization's uri.
+ *
+ * A `file:` uri names the file a person wrote, and the name the CLI knows the
+ * agent by is the one in that file's frontmatter - `reviewer.md` may well say
+ * `name: reviewer`, and the file's own name is not what the CLI will take. A
+ * file that has been deleted since the listing was made, or one whose
+ * frontmatter names nothing, leaves the file's own name without its extension,
+ * which is the last thing the CLI can be asked by.
+ *
+ * An internal uri carries no file at all: the agent is the CLI's own and the
+ * last segment of the uri is its name, put there by the same function that
+ * built the uri.
+ *
+ * Nothing rather than a wrong name, for a uri that is neither: handing the CLI
+ * an agent it does not have would fail the turn over a picker.
+ */
+export function agentNameOf(uri: string): string | undefined {
+  if (uri.startsWith(INTERNAL_AGENT)) {
+    const last = uri.slice(INTERNAL_AGENT.length).split('/').filter((one) => one !== '').pop();
+    if (last === undefined) return undefined;
+    try { return decodeURIComponent(last); }
+    catch { return undefined; }
+  }
+  if (!uri.startsWith('file://')) return undefined;
+  let path: string;
+  try { path = fileURLToPath(uri); }
+  catch { return undefined; }
+  const own = basename(path).replace(/\.md$/i, '');
+  // Only a regular file of an agent's size is read: the uri is the client's,
+  // and a device or a huge file would hold the host up for a name.
+  let said: string;
+  try {
+    const held = statSync(path);
+    if (!held.isFile() || held.size > AGENT_FILE_MOST) return own;
+    said = readFileSync(path, 'utf8');
+  }
+  catch { return own; }
+  const front = said.startsWith('---') ? said.split(/^---$/m).slice(1, 2).join('') : '';
+  const named = front.split('\n').find((line) => /^name:/.test(line.trim()));
+  const value = named?.slice(named.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '');
+  return value === undefined || value === '' ? own : value;
 }
 
 /**
@@ -730,6 +805,23 @@ export function createSession(options: ClaudeSessionOptions): Session {
   let offered: { id: string; name: string }[] = [];
   /** What the client picked. Absent means whatever the CLI defaults to. */
   let chosen: string | undefined;
+  /*
+   * The model this session was stored on, taken before the CLI is there.
+   *
+   * A restored session carries the model it last ran on in its settings, and
+   * nothing else says which: this session has not asked the CLI anything, and
+   * its first query has not been built. So the stored id is taken here and
+   * reported from the first moment, the way a session that never stopped
+   * reports what it is on.
+   *
+   * Only when this variant offers it. `default` is the CLI's own choice rather
+   * than a model in any list, and a stored id a variant's endpoint does not
+   * serve must not reach a CLI that would refuse it - which leaves the session
+   * on what it always ran on, as an unstored one does.
+   */
+  const stored = options.settings?.model;
+  if (typeof stored === 'string' && stored !== 'default'
+    && (options.seedModels ?? []).some((model) => model.id === stored)) chosen = stored;
   /**
    * The turn `beginTurn` is starting, from the moment it waits on a switch until
    * it is running or refused.
@@ -2208,7 +2300,21 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   // ------------------------------------------------------------------ the run
 
-  const handle = query({
+  /**
+   * A query for this session, on the agent named, carrying the conversation
+   * this session already has.
+   *
+   * A function rather than a single call because the agent a message picks is
+   * read after the CLI has already been started, and the SDK takes `agent` at
+   * startup: a send that picks a different one has to ask for a new CLI and
+   * resume the conversation into it. Only the agent and the conversation move;
+   * every other option is read from the same places in every call.
+   *
+   * `first` is how this conversation is picked up, which is a fact about the
+   * query that opened it. A rebuild asks again for nothing: it resumes the id
+   * the CLI gave this session, which is the whole of what carries it over.
+   */
+  const startQuery = (agent: string | undefined, first: boolean): ReturnType<typeof query> => query({
     prompt: input(),
     options: {
       cwd,
@@ -2290,6 +2396,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
       ...(typeof settings.permissionMode === 'string' ? { permissionMode: settings.permissionMode } : {}),
+      /*
+       * The model this session is on, which the CLI only reads at startup.
+       *
+       * A session that was set to one and stopped there has no other way to
+       * reopen on it: the stored setting is read above, and the query is the
+       * only thing the CLI will take the model from before it says anything.
+       * `default` is the CLI's own choice rather than a name, so it is left off
+       * exactly as `take` leaves it off.
+       */
+      ...(chosen && chosen !== 'default' ? { model: chosen } : {}),
       // Before every shell command, while a client has a script in force.
       hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [sourceFirst] }] },
       /*
@@ -2302,34 +2418,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
        */
       ...(allowed.allow.length > 0 ? { allowedTools: [...allowed.allow] } : {}),
       ...(allowed.deny.length > 0 ? { disallowedTools: [...allowed.deny] } : {}),
-      // Resumed, not replayed: the agent picks up the context it built - the
-      // files it read, the decisions it made - rather than being handed a
-      // transcript of them and asked to infer the rest.
-      ...(options.resume ? { resume: options.resume } : {}),
       /*
-       * A fork, which the SDK spells as a resume that does not keep the id.
+       * Which conversation this query carries.
        *
-       * `resumeSessionAt` is the prompt to continue from and `forkSession`
-       * makes the continuation a session of its own, so the conversation this
-       * was cut from carries on untouched.
-       */
-      ...(options.resume && options.forkAt
-        ? { forkSession: true, resumeSessionAt: options.forkAt }
-        : {}),
-      /*
-       * A rewind, which is the same resume without the new id.
+       * The first one is told how to pick it up - a resume, a fork, a rewind,
+       * or an id of its own - and a rebuild asks again for none of it: the
+       * conversation exists, and what changed is the agent running on it.
        *
-       * `chat/truncated` drops the turns after a named one and carries on in
-       * the conversation it dropped them from - so the id has to survive it,
-       * or every later resume would reach the transcript that still has them.
-       * That is the whole difference from a fork, and it is one word.
-       */
-      ...(options.resume && options.rewindAt && !options.forkAt
-        ? { resumeSessionAt: options.rewindAt }
-        : {}),
-      /*
-       * On disk under the name the client gave it.
-       *
+       * On disk under the name the client gave it, in the first query at least.
        * The SDK invents an id and writes the transcript under that, so a
        * session a client created lived on disk under a name the client had
        * never heard of. While the daemon ran it answered to both, because it
@@ -2340,11 +2436,59 @@ export function createSession(options: ClaudeSessionOptions): Session {
        *
        * Only where the client named a UUID, because that is what the SDK will
        * take. A client that names a session something else keeps what it had.
+       * A rebuild that happens before the CLI has said its own id keeps it
+       * too, for the same reason: nothing has been said under any other name.
        */
-      ...(options.resume === undefined && UUID.test(idOf(uri)) ? { sessionId: idOf(uri) } : {}),
+      ...(first
+        ? (options.resume === undefined
+          ? (UUID.test(idOf(uri)) ? { sessionId: idOf(uri) } : {})
+          : {
+            // Resumed, not replayed: the agent picks up the context it built -
+            // the files it read, the decisions it made - rather than being
+            // handed a transcript of them and asked to infer the rest.
+            resume: options.resume,
+            /*
+             * A fork, which the SDK spells as a resume that does not keep the id.
+             *
+             * `resumeSessionAt` is the prompt to continue from and `forkSession`
+             * makes the continuation a session of its own, so the conversation
+             * this was cut from carries on untouched.
+             */
+            ...(options.forkAt ? { forkSession: true, resumeSessionAt: options.forkAt } : {}),
+            /*
+             * A rewind, which is the same resume without the new id.
+             *
+             * `chat/truncated` drops the turns after a named one and carries on
+             * in the conversation it dropped them from - so the id has to
+             * survive it, or every later resume would reach the transcript that
+             * still has them. That is the whole difference from a fork, and it
+             * is one word.
+             */
+            ...(!options.forkAt && options.rewindAt ? { resumeSessionAt: options.rewindAt } : {}),
+          })
+        : (agentId !== undefined
+          ? { resume: agentId }
+          : (UUID.test(idOf(uri)) ? { sessionId: idOf(uri) } : {}))),
+      /*
+       * The agent the main thread runs as, which the CLI reads at startup.
+       *
+       * Absent means the CLI's own default agent, which is what a message that
+       * picked nothing is asking for.
+       */
+      ...(agent === undefined ? {} : { agent }),
       canUseTool,
     },
   } as Parameters<typeof query>[0]);
+
+  /**
+   * The agent the running query was built with, and the CLI answering it.
+   *
+   * `running` is what a message's pick is compared against: it is what the CLI
+   * is actually running on, so a pick equal to it changes nothing and only a
+   * different one pays for a new CLI.
+   */
+  let running: string | undefined;
+  let handle = startQuery(running, true);
 
   /**
    * Start a turn, whoever asked for it.
@@ -2434,6 +2578,35 @@ export function createSession(options: ClaudeSessionOptions): Session {
     }
   };
 
+  /**
+   * Move this session's CLI onto the agent a message picked, if it is not
+   * already there.
+   *
+   * The SDK reads `agent` when the query is built and has nowhere to put a
+   * later one, so a pick that differs cannot be answered by the CLI already
+   * running: it has to be answered by a new CLI, resumed into the same
+   * conversation, before the turn's prompt goes out. A pick equal to what is
+   * running costs nothing, which is the ordinary case - the picker sends the
+   * same agent on every message.
+   *
+   * No agent named means the CLI's own default, which is also what a query
+   * built without one runs on.
+   */
+  const switchAgent = (uri: string | undefined): string | undefined => {
+    const name = uri === undefined ? undefined : agentNameOf(uri);
+    if (name === running) return undefined;
+    const was = handle;
+    try { was.close(); }
+    catch (error: unknown) {
+      return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    running = name;
+    gone = undefined;
+    handle = startQuery(name, false);
+    void consume();
+    return undefined;
+  };
+
   const beginTurn = async (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): Promise<void> => {
     /*
      * A session whose CLI has exited answers at once, and says why.
@@ -2446,6 +2619,21 @@ export function createSession(options: ClaudeSessionOptions): Session {
      */
     if (gone !== undefined) {
       refuseTurn(turnId, text, gone, queuedMessageId, from);
+      return;
+    }
+    /*
+     * The agent this message picked, taken before the model and before the
+     * prompt, because it is what decides which CLI the model is switched on.
+     *
+     * Named in `beginning` for as long as it takes, so a message queued behind
+     * this one waits rather than reaching the CLI beside the one being built.
+     */
+    beginning = turnId;
+    const refused = switchAgent(from?.agent?.uri);
+    beginning = undefined;
+    if (refused !== undefined) {
+      refuseTurn(turnId, text, refused, queuedMessageId, from);
+      startNext();
       return;
     }
     /*
@@ -2574,6 +2762,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     const from: MessageFrom = {};
     if (message.origin !== undefined) from.origin = bag(message.origin) as NonNullable<MessageFrom['origin']>;
     if (message._meta !== undefined) from._meta = bag(message._meta);
+    const picked = bag(message.agent);
+    if (typeof picked.uri === 'string') from.agent = { uri: str(picked.uri) as string };
     void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from);
   };
 
@@ -2735,9 +2925,19 @@ export function createSession(options: ClaudeSessionOptions): Session {
   };
   void describe().catch(() => {});
 
-  void (async () => {
+  /**
+   * Read one CLI's frames until it ends.
+   *
+   * One call per query rather than one for the session, because a message that
+   * picks another agent replaces the query and this has to be reading whichever
+   * one is current. A loop that ended because it was replaced says nothing:
+   * `handle` is not the query it was reading, so its ending is this host's own
+   * doing and the session is exactly where it was.
+   */
+  const consume = async (): Promise<void> => {
+    const mine = handle;
     try {
-      for await (const raw of handle) {
+      for await (const raw of mine) {
         const message = bag(raw as unknown);
         const type = str(message.type);
         // Every message carries it, so this needs no particular one to arrive.
@@ -2963,6 +3163,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         }
       }
     } catch (error) {
+      // A query this host put away is not a CLI that died: the one that
+      // replaced it is already running the same conversation.
+      if (handle !== mine) return;
       failed = error instanceof Error ? error.message : String(error);
       /*
        * The CLI is gone, and it is not coming back on this session.
@@ -2990,9 +3193,11 @@ export function createSession(options: ClaudeSessionOptions): Session {
     }
     // A loop that ended without throwing has ended all the same: the CLI
     // exited and said nothing, and a later turn has as little to answer it.
+    if (handle !== mine) return;
     gone ??= 'The agent stopped';
     touch();
-  })();
+  };
+  void consume();
 
   /**
    * One shell command as a turn of this chat's.
@@ -3488,6 +3693,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
           origin: from?.origin ?? { kind: 'user' },
           ...(from?._meta ? { _meta: from._meta } : {}),
           ...(model ? { model: { id: model.id, ...(model.config ? { config: model.config } : {}) } } : {}),
+          // The agent, kept with the message rather than applied now: this
+          // message waits for the turn in front of it, and the CLI it runs on is
+          // the one in place when its turn comes.
+          ...(from?.agent ? { agent: from.agent } : {}),
         },
       };
       const at = queued.findIndex((held) => str(held.id) === id);

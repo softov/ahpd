@@ -531,6 +531,7 @@ export function claude(options: ClaudeOptions): Agent {
       schema: start.schema,
       emit: start.emit,
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
+      ...(start.seedModels ? { seedModels: start.seedModels } : {}),
       ...(start.resume !== undefined ? { resume: start.resume } : {}),
       ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
       ...(start.rewindAt !== undefined ? { rewindAt: start.rewindAt } : {}),

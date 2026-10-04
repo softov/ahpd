@@ -1,6 +1,6 @@
 ---
 title: Docs say a message runs on the agent it picked
-status: todo
+status: done
 depends: [task-03-the-query-runs-on-the-picked-agent.md, task-05-a-restored-session-reopens-on-its-model.md]
 layer: "docs"
 refs:

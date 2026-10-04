@@ -139,7 +139,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 
 | [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | built 2026-10-03 ([implemented.md](claude/08-tool-input-is-the-whole-input/implemented.md)) | - | - |
 
-| [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | - | - |
+| [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | built 2026-10-04 ([implemented.md](claude/09-a-message-runs-on-the-agent-it-picked/implemented.md)) | - | - |
 | [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | active 2026-10-02; tasks 01, 02, 04 done, 03 awaits the ahpapp check | host 31 | - |
 | [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | planned 2026-09-30; tasks 01-03 todo, answers in result.structuredContent | claude 08 | ahpapp chat/01 |
 | [12 - A second Claude harness runs on another endpoint, named on its own and keyed from the daemon's environment](claude/12-a-second-claude-runs-on-another-endpoint/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/12-a-second-claude-runs-on-another-endpoint/implemented.md)) | claude 10 | - |
