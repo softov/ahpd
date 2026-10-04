@@ -286,6 +286,25 @@ const mirrored: { block: Bag; line: unknown; past: unknown }[] = [
     block: { type: 'tool_use', id: 'toolu_topic', name: 'mcp__docs__search', input: { limit: 5, topic: 'kqueue' } },
     line: 'kqueue', past: 'kqueue',
   },
+  {
+    block: { type: 'tool_use', id: 'toolu_body', name: 'mcp__docs__write', input: { body: `${'z'.repeat(100)}\nsecond line` } },
+    line: `${'z'.repeat(80)}…`, past: `${'z'.repeat(80)}…`,
+  },
+  {
+    block: {
+      type: 'tool_use', id: 'toolu_ask_wide', name: 'AskUserQuestion',
+      input: { questions: [{ question: `${'q'.repeat(100)}\nwhy`, header: 'Why', multiSelect: false, options: [{ label: 'Red' }] }] },
+    },
+    line: `${'q'.repeat(80)}…`, past: `${'q'.repeat(80)}…`,
+  },
+  {
+    block: { type: 'tool_use', id: 'toolu_search_wide', name: 'WebSearch', input: { query: 's'.repeat(100) } },
+    line: `${'s'.repeat(80)}…`, past: `${'s'.repeat(80)}…`,
+  },
+  {
+    block: { type: 'tool_use', id: 'toolu_body_blank', name: 'mcp__docs__write', input: { body: '\n\nfirst words\nmore' } },
+    line: 'first words', past: 'first words',
+  },
 ];
 
 /** A result for each mirrored call; the first one failed. */
@@ -325,6 +344,19 @@ it('draws a restored call\'s row line and past tense as the live one does', asyn
     expect(back.get(id)?.toolInput, id).toBe(block.name === 'Bash' ? input.command : JSON.stringify(input));
   }
   expect(back.get('toolu_said')?.success).toBe(false);
+});
+
+it('cuts a subject over 80 characters to its first line', async () => {
+  const { held, ready } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: mirrored.map(({ block }) => block) } },
+  ]);
+  for (const id of ['toolu_body', 'toolu_ask_wide', 'toolu_search_wide']) {
+    for (const line of [ready.get(id)?.invocationMessage, held.get(id)?.pastTenseMessage]) {
+      const text = textOf(line);
+      expect(text, id).not.toMatch(/\n/);
+      expect(text.length, id).toBeLessThanOrEqual(81);
+    }
+  }
 });
 
 it('gives a confirmation card the row line, not the CLI\'s title', async () => {

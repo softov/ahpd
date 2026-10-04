@@ -106,7 +106,7 @@ const DESCRIBED = new Set(['Bash', 'Task', 'Agent', 'Monitor']);
  * The call's `description` for a tool whose description says what the call
  * does. Otherwise VS Code's line for the tools `getClaudeInvocationMessage`
  * maps, in its English and as markdown where it sends markdown. Otherwise the
- * subject from `summarize`, or the tool's name.
+ * subject from `summarize`, cut as VS Code's lines are, or the tool's name.
  */
 export function lineOf(name: string, input: Bag): StringOrMarkdown {
   const said = DESCRIBED.has(name) ? filled(input.description) : undefined;
@@ -156,7 +156,10 @@ export function lineOf(name: string, input: Bag): StringOrMarkdown {
       }
     case 'TaskList': return 'Read task list';
     case 'TaskGet': return 'Read task';
-    default: return summarize(name, input) ?? name;
+    default: {
+      const subject = summarize(name, input)?.split('\n').find((line) => line.trim() !== '');
+      return subject === undefined ? name : truncate(subject, 80);
+    }
   }
 }
 

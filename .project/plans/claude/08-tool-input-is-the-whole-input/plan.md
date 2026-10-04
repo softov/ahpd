@@ -1,15 +1,15 @@
 ---
 title: A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line
 domain: claude
-status: active
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
 requires: []
 refs:
-  - "[code://packages/agent-claude/src/session.ts#L170-L176](../../../../packages/agent-claude/src/session.ts#L170-L176) - `summarize`: any tool without its own summary is `JSON.stringify(input).slice(0, 400)`"
-  - "[code://packages/agent-claude/src/session.ts#L1630-L1690](../../../../packages/agent-claude/src/session.ts#L1630-L1690) - the live call puts that summary in `toolInput` too"
-  - "[code://packages/agent-claude/src/transcript.ts#L25-L33](../../../../packages/agent-claude/src/transcript.ts#L25-L33) - the same cut on restored calls"
+  - "[code://packages/agent-claude/src/input.ts#L23-L36](../../../../packages/agent-claude/src/input.ts#L23-L36) - `summarize`: any tool without its own summary is `JSON.stringify(input).slice(0, 400)`"
+  - "[code://packages/agent-claude/src/session.ts#L1737](../../../../packages/agent-claude/src/session.ts#L1737) - the live call puts that summary in `toolInput` too"
+  - "[code://packages/agent-claude/src/transcript.ts#L361](../../../../packages/agent-claude/src/transcript.ts#L361) - the same cut on restored calls"
   - https://github.com/microsoft/agent-host-protocol - `ToolCallParameterFields.toolInput`: "Final tool input"
 ---
 
@@ -46,22 +46,19 @@ tool_use input -> summarize (cut at 400 for unknown tools) -> invocationMessage 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - toolInput is the whole input](task-01-tool-input-is-the-whole-input.md) | implemented | - |
-| [02 - A row line is never cut JSON](task-02-a-row-line-is-never-cut-json.md) | implemented | 01 |
-| [03 - A confirmation during streaming carries the input](task-03-a-confirmation-during-streaming-carries-the-input.md) | implemented | 01 |
-| [04 - A row reads the call's description, or VS Code's line when it has none](task-04-a-row-reads-the-calls-description-or-vs-codes-line.md) | implemented | 02 |
+| [01 - toolInput is the whole input](task-01-tool-input-is-the-whole-input.md) | done | - |
+| [02 - A row line is never cut JSON](task-02-a-row-line-is-never-cut-json.md) | done | 01 |
+| [03 - A confirmation during streaming carries the input](task-03-a-confirmation-during-streaming-carries-the-input.md) | done | 01 |
+| [04 - A row reads the call's description, or VS Code's line when it has none](task-04-a-row-reads-the-calls-description-or-vs-codes-line.md) | done | 02 |
 
 ## Resume state
 
-- **Done so far:** planned 2026-09-29; task 01 implemented 2026-09-29, tasks 02, 03 and 04 implemented 2026-09-30, all awaiting review. See each task's Resume section.
-- **Next action:** Softov checks the four in ahpapp. Task 01 was checked 2026-09-30: `toolInput` whole, the row line cut.
-- **Open questions:** none.
-- **Watch out for:** a `chat/toolCallReady` or any later action that sends `toolInput` must send the whole input too; check how VS Code reads `toolInput` for a non-terminal call before changing it.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A live and a restored call of a tool with a long input carry it whole in `toolInput`.
-- [ ] An AskUserQuestion row reads its first question, not JSON.
-- [ ] A call confirmed while it streamed shows its arguments to a client that subscribes after.
-- [ ] A Bash row reads its description, and without one ``Running `<first line>` ``.
-- [ ] `plans/index.md` updated.
+- [x] A live and a restored call of a tool with a long input carry it whole in `toolInput`.
+- [x] An AskUserQuestion row reads its first question, not JSON.
+- [x] A call confirmed while it streamed shows its arguments to a client that subscribes after.
+- [x] A Bash row reads its description, and without one ``Running `<first line>` ``.
+- [x] `plans/index.md` updated.

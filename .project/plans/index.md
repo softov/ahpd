@@ -137,7 +137,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [06 - A stop in a worker chat stops that worker, unless configured to stop the session](claude/06-a-stop-in-a-worker-chat-stops-that-worker/plan.md) | medium | built 2026-09-28 ([implemented.md](claude/06-a-stop-in-a-worker-chat-stops-that-worker/implemented.md)) | claude 04 | - |
 | [07 - A Claude turn ends with no tool call left running or waiting](claude/07-a-turn-ends-with-no-call-left-open/plan.md) | high | built 2026-09-28 ([implemented.md](claude/07-a-turn-ends-with-no-call-left-open/implemented.md)) | - | - |
 
-| [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | active 2026-09-30; tasks 01-04 implemented, awaiting review | - | - |
+| [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | built 2026-10-03 ([implemented.md](claude/08-tool-input-is-the-whole-input/implemented.md)) | - | - |
 
 | [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | planned 2026-09-29; tasks 01-04 todo | - | - |
 | [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | active 2026-10-02; tasks 01, 02, 04 done, 03 awaits the ahpapp check | host 31 | - |

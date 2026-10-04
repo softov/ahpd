@@ -1,14 +1,14 @@
 ---
 title: A row reads the call's description, or VS Code's line when it has none
-status: implemented
+status: done
 depends: [task-02-a-row-line-is-never-cut-json.md]
 layer: "agent-claude"
 refs:
-  - "[code://packages/agent-claude/src/input.ts#L21-L34](../../../../packages/agent-claude/src/input.ts#L21-L34) - `summarize`, the row's subject today"
-  - "[code://packages/agent-claude/src/session.ts#L1621](../../../../packages/agent-claude/src/session.ts#L1621) - live `invocationMessage`"
-  - "[code://packages/agent-claude/src/session.ts#L1727-L1743](../../../../packages/agent-claude/src/session.ts#L1727-L1743) - live `pastTenseMessage`"
-  - "[code://packages/agent-claude/src/transcript.ts#L246](../../../../packages/agent-claude/src/transcript.ts#L246) - replayed `pastTenseMessage`"
-  - "[code://packages/agent-claude/src/transcript.ts#L347-L350](../../../../packages/agent-claude/src/transcript.ts#L347-L350) - replayed `invocationMessage` and `pastTenseMessage`"
+  - "[code://packages/agent-claude/src/input.ts#L23-L36](../../../../packages/agent-claude/src/input.ts#L23-L36) - `summarize`, the row's subject today"
+  - "[code://packages/agent-claude/src/session.ts#L1812](../../../../packages/agent-claude/src/session.ts#L1812) - live `invocationMessage`"
+  - "[code://packages/agent-claude/src/session.ts#L1928](../../../../packages/agent-claude/src/session.ts#L1928) - live `pastTenseMessage`"
+  - "[code://packages/agent-claude/src/transcript.ts#L364](../../../../packages/agent-claude/src/transcript.ts#L364) - replayed `pastTenseMessage`"
+  - "[code://packages/agent-claude/src/transcript.ts#L361-L364](../../../../packages/agent-claude/src/transcript.ts#L361-L364) - replayed `invocationMessage` and `pastTenseMessage`"
   - "git://ac05bdfe1e1 - VS Code `src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts`: `getClaudeInvocationMessage` and `getClaudePastTenseMessage`, the lines this task mirrors"
 ---
 
@@ -41,11 +41,3 @@ Live and replayed calls read the same, and a past tense is computed from the inp
 - By hand in ahpapp: the Bash row from the screenshot of 2026-09-30 reads "Check scratch directory".
 
 ## Resume
-
-Implemented 2026-09-30.
-`packages/agent-claude/src/input.ts` adds `lineOf` and `pastLineOf`: the `description` of Bash, Task, Agent and Monitor; otherwise VS Code's lines from `getClaudeInvocationMessage` and `getClaudePastTenseMessage` at `ac05bdfe1e1`, as markdown where VS Code sends markdown, with its `truncate`, `appendEscapedMarkdownInlineCode`, `escapeMarkdownLinkLabel` and `URI.file` encoding hand-rolled; otherwise `summarize` or the tool's name.
-`session.ts` draws the live row, the ready action and the confirmation card in `canUseTool` from `lineOf`, keeps each call's `pastLineOf` by id and completes with it, success or not. `transcript.ts` builds both lines from the input and no longer overwrites the past tense at the result.
-`busyWith` stays on `summarize`.
-What failed first: in `packages/agent-claude/test/agent-claude-tool-input.test.ts`, 8 of 9 cases, the three new ones (live, restored, confirmation card) and the five task 01 and 02 cases whose rows changed (TodoWrite now "Update todo list", Bash "List files", WebFetch markdown); the streaming confirmation case passed.
-What the plan did not know: five cases in `packages/sdk/test/host.test.ts` asserted the old Bash lines, `ls` and the CLI's "Claude wants to run ls", and were updated, with Softov's clearance, to ``Running `ls` `` and ``Ran `ls` `` as markdown. `packages/sdk/test/wire.test.ts` rewrites `packages/sdk/test/fixtures/wire.jsonl`, whose one call, a Read, now reads ``{ markdown: 'Read [a](file:///home/softov/a)' }``; `/home/softov` is the test's fixed path, not the machine's. VS Code's streaming line for Write, Edit, MultiEdit and NotebookEdit is not mirrored, as no streaming `invocationMessage` is sent. VS Code's `getServerToolDisplay` does not apply: it covers VS Code's own server tools, which ahpd does not contribute.
-Gates: `pnpm typecheck`, `pnpm boundary` and the full `pnpm test` exit 0 (121 files, 1759 tests).

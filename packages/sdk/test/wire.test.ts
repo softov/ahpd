@@ -330,6 +330,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   const names = new Map<string, string>();
   const steady = (text: string): string => text
     .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '2020-01-01T00:00:00.000Z')
+    .replace(/"ahpd\.durationMs":\d+/g, '"ahpd.durationMs":0')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (found) => {
       if (!names.has(found)) names.set(found, `00000000-0000-4000-8000-${String(minted++).padStart(12, '0')}`);
       return names.get(found) as string;
