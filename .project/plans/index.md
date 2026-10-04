@@ -124,8 +124,9 @@ Reference: [00-host.md](host/00-host.md)
 | [53 - ahpd.grants lists every subject a role can name, the schemes included](host/53-ahpd-grants-lists-every-scheme/plan.md) | high | built 2026-10-04 ([implemented.md](host/53-ahpd-grants-lists-every-scheme/implemented.md)); tasks implemented, awaiting review | host 46 | ahpapp people/01's role editor |
 | [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/54-host-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-03 todo | - | - |
+| [56 - The catalogue answers at once, and a summary is sent only when it changes](host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md) | high | planned 2026-10-04; tasks 01-05 todo | - | - |
 
-Next free number in `host`: `53`.
+Next free number in `host`: `57`.
 
 ## claude
 
