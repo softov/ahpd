@@ -1,8 +1,12 @@
 import { expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { isGrant } from '../src/users.js';
+import { peopleProviders } from '../src/people.js';
+import { policyProviders } from '../src/policy.js';
+import { filePolicies } from '../src/policies.js';
+import { isGrant, OPERATIONS } from '../src/users.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Offered } from '../src/types/probe.js';
@@ -391,9 +395,59 @@ it('advertises the operations of every subject it gates, on both blocks', async 
   expect(grants['session']?.groups.write).toContain('dispose');
   expect(grants['session']?.groups.write).not.toContain('list');
   expect(grants['session']?.groups.read).toContain('list');
-  // A chat is a session's, and the description says so rather than leaving a
-  // client to work it out from the refusals.
-  expect(grants['chat']?.description).toContain('session:');
+  // A description is what the table says, whole: a client shows it to a person
+  // deciding what a grant is for, and this host adds nothing to it.
+  expect(grants['chat']?.description).toBe(OPERATIONS['chat']?.description);
+});
+
+it('advertises the schemes it serves beside the built-ins, so a role editor reads one key', async () => {
+  const people = directory();
+  const { host } = served({ users: people, resourceProviders: peopleProviders(people) });
+  const client = host.accept(peer(), undefined, true);
+  const grants = await grantsOf(client);
+
+  // The eight still lead, in the table's order, and every scheme follows under
+  // its own name: `team:put` is written into a role the way `file:put` is.
+  expect(Object.keys(grants)).toEqual([
+    'session', 'chat', 'terminal', 'automation', 'file', 'config', 'diagnostics', 'container',
+    'user', 'team', 'project', 'role',
+  ]);
+  // The root snapshot says the same thing the handshake said.
+  expect(await snapshotGrants(client)).toEqual(grants);
+
+  const PEOPLE = ['user', 'team', 'project', 'role'];
+  for (const [scheme, one] of Object.entries(grants).filter(([key]) => PEOPLE.includes(key))) {
+    expect(one.title, scheme).not.toBe('');
+    expect(one.description, scheme).not.toBe('');
+    // What these four providers implement, and the resource groups those
+    // operations fall into - the groups the gate answers `team:put` from.
+    expect(one.operations, scheme).toEqual(['get', 'list', 'resolve', 'put', 'delete']);
+    expect(one.groups.read, scheme).toEqual(['get', 'list', 'resolve']);
+    expect(one.groups.write, scheme).toEqual(['put', 'delete']);
+    // A scheme entry carries the same invariant a built-in one does, so a
+    // client draws a form off either without asking which it is reading.
+    expect([...one.groups.read, ...one.groups.write].sort(), scheme).toEqual([...one.operations].sort());
+    for (const op of one.operations) expect(isGrant(`${scheme}:${op}` as Grant), `${scheme}:${op}`).toBe(true);
+  }
+
+  // `file` keeps the table's entry: a built-in subject wins a name a provider
+  // shares with it, and `file`'s own operations are the ten rather than the five
+  // a file provider would say.
+  expect(grants['file']?.operations).toEqual(OPERATIONS['file']?.operations);
+});
+
+it('advertises the policy scheme beside them too, since a host serves it either way', async () => {
+  const store = filePolicies({ file: join(DIR, 'policies.json') });
+  const { host } = served({ resourceProviders: policyProviders(store) });
+  const client = host.accept(peer(), undefined, true);
+  const grants = await grantsOf(client);
+
+  expect(grants['policy']).toEqual({
+    title: 'Policies',
+    description: expect.any(String),
+    operations: ['get', 'list', 'resolve', 'put', 'delete'],
+    groups: { read: ['get', 'list', 'resolve'], write: ['put', 'delete'] },
+  });
 });
 
 it('advertises the subjects on a host with no directory, because a role could still be held', async () => {

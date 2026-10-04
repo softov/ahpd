@@ -1,6 +1,6 @@
 ---
 title: ahpd.grants holds every scheme
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:

@@ -366,9 +366,13 @@ operation called `read` or `write`, and the two words in that position mean the
 group every time - decision
 `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
 
-The host advertises this table in `_meta['ahpd.grants']` on the handshake and on
-the root state, so a client reads the operations from the wire rather than from
-this page.
+The host advertises every subject a grant may name in `_meta['ahpd.grants']` on
+the handshake and on the root state, so a client reads the operations from the
+wire rather than from this page. That map holds the eight the host decides and,
+beside them, every scheme this host serves - `user`, `team`, `project`, `role`,
+`policy`, `usage` and any plugin's - each under its own name, with the
+operations its provider implements and the groups those fall into. A client
+drawing a role editor reads that one key and has every subject there is.
 
 The subjects the host decides are these eight:
 
@@ -513,8 +517,10 @@ none of the four.
 Those operations are the grant's words and not the provider's method names: a
 provider's `read` is advertised as `get` and its `write` as `put`, so the entry
 for `team` reads `"operations": ["get", "list", "resolve", "put", "delete"]` and
-those are the words a role is written in. The groups those two belong to are in
-`ahpd.grants` under `file`, beside this key on the same handshake.
+those are the words a role is written in. The groups those belong to are on the
+scheme's own entry in `ahpd.grants`, beside this key on the same handshake:
+`team` carries `get`, `list` and `resolve` under `read`, and `put` and `delete`
+under `write`.
 
 The grant for a scheme is the subject of its own name: `team:list` lists teams,
 `team:put` makes and titles them and `team:delete` takes them away, and none of

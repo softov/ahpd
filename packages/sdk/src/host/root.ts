@@ -1,8 +1,47 @@
 import { seesConfig, PER_CONNECTION } from './gate.js';
-import { OPERATIONS } from '../users.js';
+import { OPERATIONS, operationsOf } from '../users.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
+import type { ResourceProvider } from '../types/resources.js';
+
+/*
+ * The provider's method names, and the words a grant is made of.
+ *
+ * The order lists what a scheme does and the lookup says how: a provider
+ * implements `read`, `write` and `remove` and a role grants `get`, `put`
+ * and `delete`, so the advertised word is the one a client can put in a
+ * `role://` body and have it mean the method the host will call. They were
+ * `read` and `write` before, which named a group rather than an act, and
+ * a client that wrote `policy:read` into a role was naming a group the gate
+ * never asked for - decision
+ * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+ */
+const ORDER = ['get', 'list', 'resolve', 'put', 'delete', 'mkdir', 'move', 'copy'] as const;
+
+const METHOD_OF: Record<typeof ORDER[number], string> = {
+  get: 'read',
+  list: 'list',
+  resolve: 'resolve',
+  put: 'write',
+  delete: 'remove',
+  mkdir: 'mkdir',
+  move: 'move',
+  copy: 'copy',
+};
+
+/**
+ * What one provider can be granted, read off the methods it implements.
+ *
+ * The one place a scheme's operations are worked out, which is what keeps
+ * `ahpd.resourceProviders` and the scheme's entry in `ahpd.grants` from being
+ * two lists that drift: a client that offers what the first says can put in a
+ * role and the gate answers from the second.
+ */
+const schemeOperations = (provider: ResourceProvider): string[] => {
+  const held = provider as unknown as Record<string, unknown>;
+  return ORDER.filter((one) => typeof held[METHOD_OF[one]] === 'function');
+};
 
 /** What the root channel advertises, and the config a client pushes to it. */
 export interface Root {
@@ -175,63 +214,76 @@ export function createRoot(ctx: HostContext): Root {
     if (providers === undefined) return undefined;
     const entries = Object.entries(providers);
     if (entries.length === 0) return undefined;
-    /*
-     * The provider's method names, and the words a grant is made of.
-     *
-     * The order lists what a scheme does and the lookup says how: a provider
-     * implements `read`, `write` and `remove` and a role grants `get`, `put`
-     * and `delete`, so the advertised word is the one a client can put in a
-     * `role://` body and have it mean the method the host will call. They were
-     * `read` and `write` before, which named a group rather than an act, and
-     * a client that wrote `policy:read` into a role was naming a group the gate
-     * never asked for - decision
-     * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
-     */
-    const order = ['get', 'list', 'resolve', 'put', 'delete', 'mkdir', 'move', 'copy'] as const;
-    const methodOf = (one: typeof order[number]): string =>
-      one === 'get' ? 'read' : one === 'put' ? 'write' : one === 'delete' ? 'remove' : one;
     return Object.fromEntries(entries.map(([scheme, provider]) => {
       const said = typeof provider.describe === 'function' ? provider.describe() : undefined;
-      const held = provider as unknown as Record<string, unknown>;
       return [scheme, {
         ...(said ?? {}),
         root: `${scheme}://`,
-        operations: order.filter((one) => typeof held[methodOf(one)] === 'function'),
+        operations: schemeOperations(provider),
       }];
     }));
   };
 
   /**
+   * One entry per registered scheme the table does not hold, shaped like a
+   * built-in one.
+   *
+   * `operations` are the ones the provider implements, read by the same helper
+   * `ahpd.resourceProviders` uses, and the groups are the resource ones - which
+   * is what the gate answers from for any subject `OPERATIONS` does not hold,
+   * so `team:put` here means exactly what it means at the gate. They are kept
+   * to the operations actually advertised, so the invariant every entry carries
+   * holds here too: a client's two group lists are its operation list, and
+   * neither operation is in both.
+   *
+   * A built-in subject wins a name a scheme shares with it: `file` is the
+   * host's own scheme, and its entry is the table's rather than a provider's.
+   */
+  const schemeGrants = (): [string, unknown][] => Object.entries(options.resourceProviders ?? {})
+    .filter(([scheme]) => !Object.hasOwn(OPERATIONS, scheme))
+    .map(([scheme, provider]): [string, unknown] => {
+      const said = typeof provider.describe === 'function' ? provider.describe() : undefined;
+      const operations = schemeOperations(provider);
+      const { groups } = operationsOf(scheme);
+      return [scheme, {
+        title: said?.title ?? scheme,
+        description: said?.description ?? scheme,
+        operations,
+        groups: {
+          read: groups.read.filter((one) => operations.includes(one)),
+          write: groups.write.filter((one) => operations.includes(one)),
+        },
+      }];
+    });
+
+  /**
    * Every subject a grant may name, and the operations each one has.
    *
    * Read off `OPERATIONS`, so what the host advertises and what the gate asks
-   * for cannot be two lists that drift. Eight subjects: the ones the gate
-   * itself asks for, with a scheme's own grant (`notes:get`) being the scheme's
-   * to say and not in here. Always present, with or without a directory: it
-   * says what a role *could* hold, not what anybody holds, and a host with no
-   * `users` still has a `role:` scheme to write a role into - step 2 of this
-   * task.
+   * for cannot be two lists that drift. Eight subjects are the ones the gate
+   * itself asks for, and every scheme this host serves is beside them under its
+   * own name, so a client drawing a role editor reads one map rather than a
+   * table and a key it has to join itself. Always present, with or without a
+   * directory: it says what a role *could* hold, not what anybody holds, and a
+   * host with no `users` still has a `role:` scheme to write a role into.
+   *
+   * A description is passed through as the table or the provider wrote it,
+   * because a client shows it to a person deciding what a grant is for: one
+   * short sentence about the subject, and nothing appended here about groups,
+   * history or how the host is built.
    */
-  const advertisedGrants = (): Record<string, unknown> => Object.fromEntries(
-    Object.entries(OPERATIONS).map(([subject, mine]) => {
+  const advertisedGrants = (): Record<string, unknown> => Object.fromEntries([
+    ...Object.entries(OPERATIONS).map(([subject, mine]) => {
       const { title, description, operations, groups } = mine;
       return [subject, {
         title,
-        /*
-         * A chat is a session's, so a `session:` grant covers it and this says
-         * so: `holds` answers `chat:turns` from `session:read` and a client
-         * drawing a form has to know that before it offers the two apart.
-         */
-        description: subject === 'chat'
-          ? `${description} A grant on \`session:\` covers this subject's groups, because a chat is a session's.`
-          : subject === 'file'
-            ? `${description} Every other scheme a host serves has the same operations under its own name, and these groups are where they belong.`
-            : description,
+        description,
         operations: [...operations],
         groups: { read: [...groups.read], write: [...groups.write] },
       }];
     }),
-  );
+    ...schemeGrants(),
+  ]);
 
   const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection): Promise<Bag> => {
     /*

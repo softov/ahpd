@@ -1,6 +1,6 @@
 ---
 title: The docs read one key
-status: todo
+status: implemented
 depends: [task-01-ahpd-grants-holds-every-scheme.md]
 layer: "docs"
 refs:

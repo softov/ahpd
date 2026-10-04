@@ -389,6 +389,25 @@ it('advertises every scheme it serves on the handshake and on the root state', a
   expect(ready.snapshots[0]?.state._meta?.['ahpd.resourceProviders'])
     .toEqual(ready._meta?.['ahpd.resourceProviders']);
 
+  // And the scheme is a subject in `ahpd.grants` beside the built-ins, under
+  // its own name: a client drawing a role editor reads one key, not two. Its
+  // operations are the ones the provider implements, and the groups are the
+  // resource ones kept to them, which is what the gate answers `notes:put`
+  // from.
+  const grants = ready._meta?.['ahpd.grants'] as Grants;
+  expect(grants['notes']).toEqual({
+    title: 'Notes',
+    description: 'Files a session keeps.',
+    operations: ['get', 'list', 'put', 'delete'],
+    groups: { read: ['get', 'list'], write: ['put', 'delete'] },
+  });
+  // The eight the host decides are still there ahead of it, untouched.
+  expect(Object.keys(grants).slice(0, 8)).toEqual([
+    'session', 'chat', 'terminal', 'automation', 'file', 'config', 'diagnostics', 'container',
+  ]);
+  // And the root snapshot says so, as it does for the key beside it.
+  expect(ready.snapshots[0]?.state._meta?.['ahpd.grants']).toEqual(grants);
+
   // The `vscode.*` flags the reference client reads are still there beside it.
   expect(ready._meta?.['vscode.removeSessionArtifact']).toBe(true);
 
@@ -398,6 +417,52 @@ it('advertises every scheme it serves on the handshake and on the root state', a
   for (const [scheme, entry] of Object.entries(ready._meta?.['ahpd.resourceProviders'] as Record<string, { operations: string[] }>)) {
     for (const word of ['read', 'write']) expect(entry.operations, scheme).not.toContain(word);
   }
+});
+
+/** One entry of `ahpd.grants`, as this file reads it. */
+interface Grants {
+  [scheme: string]: {
+    title: string;
+    description: string;
+    operations: string[];
+    groups: { read: string[]; write: string[] };
+  };
+}
+
+it('names a scheme that says nothing of itself, and keeps one built-in subject once', async () => {
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture',
+    agents: [],
+    tools: [],
+    sessionConfig: {},
+    sessionCompletions: {},
+    ports: {},
+    // No `describe`, so the entry falls back to the scheme's own name; and one
+    // registered under a subject the host decides, which must not be listed
+    // twice.
+    providers: {
+      bare: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }), remove: async () => {} },
+      file: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }) },
+    },
+    events: {},
+  }]);
+
+  const client = createHost(options).accept(peer());
+  const ready = await client.handle({
+    method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] },
+  }) as { _meta?: Record<string, unknown> };
+
+  const grants = ready._meta?.['ahpd.grants'] as Grants;
+  expect(grants['bare']).toEqual({
+    title: 'bare',
+    description: 'bare',
+    operations: ['get', 'delete'],
+    groups: { read: ['get'], write: ['delete'] },
+  });
+  // `file` is the host's own scheme: the table's entry stands, with the ten
+  // operations the gate gives it rather than the one this provider implements.
+  expect(Object.keys(grants).filter((one) => one === 'file')).toHaveLength(1);
+  expect(grants['file']?.operations).toContain('request');
 });
 
 it('advertises only what a read-only provider implements', async () => {

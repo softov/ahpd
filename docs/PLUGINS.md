@@ -304,8 +304,10 @@ not the provider's method names: a `read` is advertised as `get` and a `write` a
 for. The words changed from `read` and `write` when grants stopped naming a
 group - decision `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
 Every other operation keeps its provider's name, because a resource scheme has
-no other pair that differs. The groups those two belong to are in the
-`ahpd.grants` key beside it, under `file`.
+no other pair that differs. The scheme is a subject in the `ahpd.grants` key
+beside it, under its own name and carrying those operations with the groups they
+fall into, so a client drawing a role editor reads that one key rather than
+joining two.
 
 ```ts
 host.registerResourceProvider('computer', {

@@ -27,7 +27,7 @@ refs:
 
 ## Goal
 
-A client building a role editor reads one key, `_meta['ahpd.grants']`, and finds every subject a role can name: the host's own eight and every resource scheme this host serves, `user`, `team`, `project`, `role`, `membership`, `policy` and a plugin's own, each with its title, its operations and its read and write groups.
+A client building a role editor reads one key, `_meta['ahpd.grants']`, and finds every subject a role can name: the host's own eight and every resource scheme this host serves, `user`, `team`, `project`, `role`, `policy`, `usage` and a plugin's own, each with its title, its operations and its read and write groups.
 
 ## Reconnaissance
 
@@ -58,6 +58,7 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 | --- | --- | --- |
 | `ahpd.grants` also lists every registered resource scheme, so a role editor reads one key | Softov, 2026-10-04, asked "Should `ahpd.grants` also list the resource schemes (user, team, project, role, membership, policy, and plugin schemes), so a role editor reads one key?" | 01 |
 | A scheme's entry carries the `title` and `description` its provider's `describe()` gives, else the scheme name; `operations` are the ones `ahpd.resourceProviders` advertises for it; `groups` are `RESOURCE`'s, kept to those operations | (defaulted: one shape for every entry, and the gate's own groups) | 01 |
+| A description is passed through as `OPERATIONS` or the provider's `describe()` wrote it, with the two sentences the `chat` and `file` entries used to append removed; a client shows these to a person, so each is one short plain sentence about the subject and nothing about groups, history or how the host works | Softov, 2026-10-04, asked "descriptions in ahpd.grants are shown to people in a UI, so they are one short plain sentence about what the subject is. Remove the sentences appended to the chat and file descriptions and pass every description through as it is." | 01 |
 | A built-in subject wins over a scheme of the same name, so `file` keeps its table entry | (defaulted: the gate answers `file` from `OPERATIONS`) | 01 |
 | `ahpd.resourceProviders` stays as it is, for a scheme's root and what its provider says of itself | (defaulted: nothing that reads it today changes) | 01 |
 | The docs say a client reads every subject from `ahpd.grants`, and drop "read a scheme's groups from `ahpd.grants.file`" | follows row 1 | 02 |
@@ -74,8 +75,8 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahpd.grants holds every scheme](task-01-ahpd-grants-holds-every-scheme.md) | todo | - |
-| [02 - The docs read one key](task-02-the-docs-read-one-key.md) | todo | 01 |
+| [01 - ahpd.grants holds every scheme](task-01-ahpd-grants-holds-every-scheme.md) | implemented | - |
+| [02 - The docs read one key](task-02-the-docs-read-one-key.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,15 +85,16 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-ahpd-grants-holds-every-scheme.md](task-01-ahpd-grants-holds-every-scheme.md).
+- **Done so far:** tasks 01 and 02, implemented 2026-10-04 and uncommitted in `build/agents/9e279e09`: `schemeOperations` at module scope in `root.ts` with `advertisedSchemes` and the new `schemeGrants` both reading it, `advertisedGrants` the eight of `OPERATIONS` plus one entry per registered scheme, and the descriptions passed through with the `chat` and `file` suffixes removed.
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done` and updates `plans/index.md`.
 - **Open questions:** none.
-- **Watch out for:** ahpapp's people/01 role editor reads this key; tell its session the schemes moved in once this lands.
+- **Watch out for:** ahpapp's people/01 role editor reads this key; tell its session the schemes moved in once this lands. `docs/COMPUTER.md` was changed as well as the two files task 02 names, because it sent a client to the `file` entry for a scheme's groups too.
 
 ## Final verification checklist
 
-- [ ] With a users directory, `initialize` and root state carry `ahpd.grants` entries for `user`, `team`, `project`, `role`, `membership` and `policy`, each with operations and groups.
-- [ ] A plugin's scheme (`notes:` in a fixture) is listed with the operations its provider implements.
-- [ ] Without any resource provider, `ahpd.grants` is the eight built-in subjects, as before.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] With a users directory, `initialize` and root state carry `ahpd.grants` entries for `user`, `team`, `project`, `role` and `policy`, each with operations and groups.
+- [x] A plugin's scheme (`notes:` in a fixture) is listed with the operations its provider implements.
+- [x] Without any resource provider, `ahpd.grants` is the eight built-in subjects, as before.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
 - [ ] `plans/index.md` updated.
+
