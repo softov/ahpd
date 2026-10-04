@@ -65,6 +65,7 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part
 
 | What | Source | Task |
 | --- | --- | --- |
+| A profile naming no image runs `debian:bookworm-slim` with its parts mounted; the joined image is built only for a runtime that cannot mount image parts, so no fifteen-part build precedes the first default machine | Softov, 2026-10-04, asked "container/05 p3: when a profile names no image, which machines are made from the joined image (all fifteen parts baked in)?": "Only where parts can't mount" | 04 |
 | A part lives at `/opt/ahpd/<part>` and its launchers at `/opt/ahpd/<part>/bin` | the proposal Softov asked to plan, 2026-09-26 | 02 |
 | Node is a part of its own, `node`, that npm parts name as a requirement, so one Node serves them all | (defaulted: one Node per part would multiply the largest file by eleven) | 01, 02 |
 | Bases are glibc; a part is built on `debian:bookworm-slim` | the proposal: goose ships only glibc builds | 02 |
@@ -102,7 +103,7 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part
 
 - **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-01-the-versions-file.md](task-01-the-versions-file.md).
-- **Open question (ask before task 04):** which machines are made from the joined image when no image is named - (a) every machine, as the decision on the published image says, so `ensureJoined` builds all fifteen parts before the first default machine, or (b) only a machine whose runtime cannot mount parts, and `debian:bookworm-slim` with its parts mounted stays the default?
+- **Open questions:** none.
 - **Watch out for:**
   - `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build.
   - From a checkout the ahpd part's tag covers the packed tarballs, not only the versions entry, or a code change would reuse a stale image.

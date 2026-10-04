@@ -39,6 +39,7 @@ The files read are the `refs` above.
 
 | What | Source | Task |
 | --- | --- | --- |
+| Everything after the plugin in `--plugin-option` is a key path set deep into the file's value, so `@ahpd/agent-claude.presets.x.model=...` changes one preset's model for the run and leaves the others | Softov, 2026-10-04, asked "daemon/12: `--plugin-option` sets one top-level key, so `@ahpd/agent-claude.presets.x.model=...` fails and a typed `presets` replaces every preset. What should it do?": "Nested key path" | 04 |
 | `ahpd plugin config <name>` shows the options, `<name> <key>` one, `<name> <key> <value>` sets it, `--unset` removes it; the value is JSON when it parses, otherwise a string | Softov, 2026-09-29, asked what "--flags" meant: "Both", a config command and start flags | 01 |
 | `ahpd plugin enable <name>` and `disable <name>` set the entry's `enabled` | (defaulted: root config can turn a plugin on and off, and the terminal matches it) | 01 |
 | A set is checked against the plugin's `optionsSchema`, importing the module the loader would; a plugin that cannot be imported is written and said to be checked at the next start | (defaulted: refuse what is known bad, never block on what cannot be read) | 01 |
@@ -72,14 +73,14 @@ The files read are the `refs` above.
 ## Risks and tradeoffs
 
 - A value typed at the shell lands in the shell's history and in the daemon record's `argv`, which a restart starts again; a credential is given as a `$secret` reference (task 04).
-- `--plugin-option` sets one top-level key, so an option holding an object, such as a backend's `presets`, is replaced whole for that run (see the open question).
+- `--plugin-option` today sets one top-level key; task 04 makes everything after the plugin a key path, so one preset's field changes without replacing the others.
 
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
 - **Reviews applied:** the review of 2026-09-30, the second, and the third, which refuses a typed value holding an inexact whole number, the fourth, which refuses only a number that would not keep its value, and the fifth, which holds a number to reading back as typed at every depth.
 - **Next action:** [task-04-a-credential-on-the-command-line-is-a-secret.md](task-04-a-credential-on-the-command-line-is-a-secret.md); then review, `implemented.md` and `status: built`.
-- **Open question (ask before task 04):** `--plugin-option` splits the plugin at the last `.` before `=` and sets one top-level key, so `@ahpd/agent-claude.presets.x.model=...` names a plugin that does not exist, and a typed `presets` replaces every preset for the run - (a) a nested key path after the plugin, set deep into the file's value, or (b) keep one key and have the docs say an object option such as `presets` is replaced whole.
+- **Open questions:** none.
 - Served `plugin config` showing non-`writeOnly` values while `plugin list` and `config` mask every value is daemon/11's (task 04).
 - **Watch out for:** a typed `--plugin` replaces the file's list; `--plugin-option` for a plugin not in the list, or switched off, is refused, naming it.
 

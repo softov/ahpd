@@ -16,20 +16,20 @@ refs:
 ## Files
 
 - `UPDATE: packages/computer/src/parts.ts` - `joinedDockerfile()`, `ensureJoined()`.
-- `UPDATE: packages/computer/src/plugin.ts:38,267` - which machines fall back to the joined image waits on the plan's open question; whatever it answers, it is ensured when a machine is made rather than at load.
+- `UPDATE: packages/computer/src/plugin.ts:38,267` - `defaults.image` stays `debian:bookworm-slim` with its parts mounted; the joined image is ensured, when a machine is made rather than at load, only for a runtime that cannot mount image parts (plan row, Softov 2026-10-04).
 - `UPDATE: packages/computer/test/` every test that asserts the default image - name an image, or expect the joined tag.
 
 ## Steps
 
 1. Ensure every part, then build the joined image from their tags; the joined hash is `hashOf` from task 01, which folds in the `ahpd` part's `tagOf`.
 2. `PATH` in the image includes every part's `bin`.
-3. A part whose build fails refuses only the machines that need that part, with a sentence naming the part; every other machine is made. With answer (a) below, the joined image is then built without the failed part and labelled with the parts it holds, so a machine needing it is refused and every other one is made.
-4. Which machines use the joined image by default waits on the open question in the plan's *Resume state*; do not change `defaults.image` until it is answered.
+3. A part whose build fails refuses only the machines that need that part, with a sentence naming the part; every other machine is made. Where the joined image is built, it is built without the failed part and labelled with the parts it holds, so a machine needing it is refused and every other one is made.
+4. A machine with no image named stays on `debian:bookworm-slim` with its parts mounted; only a runtime that cannot mount image parts (`docker` older than the `type=image` mount, or one that refuses it) is made from the joined image.
 
 ## Validation
 
 - The Dockerfile text copies every part once, from its tag.
 - A failing build of one part (the fake Docker fails `build` for `ahpd-part/goose`) refuses a machine whose agent needs goose, naming goose, and makes a machine whose agent does not.
-- The default image case follows the answer to the open question.
+- A machine with no image named is made from `debian:bookworm-slim` with its parts mounted, and no joined build runs; a fake runtime that refuses `--mount type=image` is made from the joined image.
 
 ## Resume
