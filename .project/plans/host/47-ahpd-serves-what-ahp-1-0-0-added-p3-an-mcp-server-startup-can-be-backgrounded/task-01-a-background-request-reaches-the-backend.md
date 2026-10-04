@@ -7,7 +7,7 @@ refs:
   - "[code://packages/sdk/src/types/session.ts#L513-L516](../../../../packages/sdk/src/types/session.ts#L513-L516) - where the optional method goes"
   - "[code://packages/sdk/src/host/chatactions.ts#L890-L899](../../../../packages/sdk/src/host/chatactions.ts#L890-L899) - the case it goes beside"
   - "[code://packages/sdk/src/nested.ts#L498-L505](../../../../packages/sdk/src/nested.ts#L498-L505) - the forward it copies"
-  - "[code://packages/sdk/test/host.test.ts#L3430-L3530](../../../../packages/sdk/test/host.test.ts#L3430-L3530) - `withServers` and the start and stop case"
+  - "[code://packages/sdk/test/host-harness.test.ts#L483-L585](../../../../packages/sdk/test/host-harness.test.ts#L483-L585) - `withServers` and the start and stop case in `turning a customization on and off`"
   - "[code://packages/sdk/test/nested-proxy.test.ts](../../../../packages/sdk/test/nested-proxy.test.ts) - an inner host behind a nested one"
   - "[code://packages/sdk/test/users-gate.test.ts](../../../../packages/sdk/test/users-gate.test.ts) - the dispatch gate's cases"
   - "[code://packages/agent-claude/test/customizations.test.ts](../../../../packages/agent-claude/test/customizations.test.ts) - the Claude backend's MCP rows"
@@ -23,7 +23,7 @@ refs:
 - `UPDATE: packages/sdk/src/types/session.ts:513-516` - `backgroundMcpServerStartup?(id: string): Promise<boolean>`, documented as VS Code's seam: the backend emits `session/mcpServerBackgroundRequested` and the new state when it took the request, and `session/mcpServerStateChanged` restoring `blocking: true` when it could not.
 - `UPDATE: packages/sdk/src/host/chatactions.ts:890-899` - a `session/mcpServerBackgroundRequested` case: `void session.backgroundMcpServerStartup?.(id)`, with no `no(...)` on `false` or absence.
 - `UPDATE: packages/sdk/src/nested.ts:498-505` - `backgroundMcpServerStartup` delivers the action to the inner host and answers `true`.
-- `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/nested-proxy.test.ts`, `packages/sdk/test/users-gate.test.ts`, `packages/agent-claude/test/customizations.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-harness.test.ts`, `packages/sdk/test/nested-proxy.test.ts`, `packages/sdk/test/users-gate.test.ts`, `packages/agent-claude/test/customizations.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - a `session/mcpServerBackgroundRequested` row: client, served, a no-op on every backend but a nested host, as on VS Code's Claude backend.
 
 ## Steps
@@ -34,7 +34,7 @@ refs:
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`, in `turning a customization on and off`: dispatching the action for `mcp:desk` on the Claude backend produces no `is not served yet` line and no action on the session channel; with a fake session whose `backgroundMcpServerStartup` records its id, the id is recorded once.
+- `packages/sdk/test/host-harness.test.ts`, in `turning a customization on and off`: dispatching the action for `mcp:desk` on the Claude backend produces no `is not served yet` line and no action on the session channel; with a fake session whose `backgroundMcpServerStartup` records its id, the id is recorded once.
 - `packages/sdk/test/nested-proxy.test.ts`: the outer dispatch reaches the inner host as `session/mcpServerBackgroundRequested` with the same id, and a `session/mcpServerStateChanged` the inner host sends with `{ kind: 'starting', blocking: false }` reaches the outer client.
 - `packages/sdk/test/users-gate.test.ts`: a role holding only `session:read` is refused the action; `session:write` is not.
 - `packages/agent-claude/test/customizations.test.ts`: a server the CLI reports `pending` is `{ kind: 'starting' }` with no `blocking` key.

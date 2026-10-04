@@ -32,7 +32,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - `node cmpschema.mjs` over the two packages' JSON schemas - no definition removed, no property removed or made required; additions only, and `ChangesetStatus` gains `recomputing`.
 - `pnpm exec tsc --noEmit` in the trial tree with 1.0.0 installed - passes with no change.
-- `vitest run` in the trial tree - 435 failures, every one traced to an `initialize` offering `['0.8.0']` (40 literal offers in 22 test files and 92 `hello(['0.8.0'])` calls in `host.test.ts`), to the handshake tests in `packages/sdk/test/host.test.ts:211-234`, or to the two version tests in `packages/sdk/test/nested-proxy.test.ts:302-335`.
+- `vitest run` in the trial tree - 435 failures, every one traced to an `initialize` offering `['0.8.0']` (40 literal offers in 22 test files and 92 `hello(['0.8.0'])` calls in `host-handshake.test.ts`), to the handshake tests in `packages/sdk/test/host-handshake.test.ts:12-34`, or to the two version tests in `packages/sdk/test/nested-proxy.test.ts:302-335`.
 - `rg -n "protocolVersions" /github/ahpapp/node_modules/@microsoft/agent-host-protocol/dist` - the package's `MultiHostClient` offers only `[PROTOCOL_VERSION]` (`client/hosts/runtime.js:494`, `:510`), so ahpapp on 1.0.0 offers `['1.0.0']` alone.
 - `/github/ahpc/src/ahp/live.ts:207` - ahpc offers `['0.9.0', '0.8.0', '0.7.0']`.
 

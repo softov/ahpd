@@ -29,7 +29,8 @@ createHost({ agents, resources, terminals, git, github, worktrees, automations }
 
 ## Tests
 
-- `code://test/host.test.ts` - the host through a scenario client, and the main suite.
+- `code://test/host-*.test.ts` - the host through a scenario client, and the main suite, one file per area.
+- `code://test/support/host.ts`, `code://test/support/claude-sdk.ts` - the helpers those files share, and the fake SDK they drive.
 - `code://test/conformance.test.ts` - every emitted action replayed through the protocol package's own reducers.
 - `code://test/wire.test.ts` - the declared surface checked against a JSON Schema generated from it.
 - `code://test/sessiontools.test.ts`, `code://test/artifacttools.test.ts`, `code://test/pullrequest.test.ts`, `code://test/operations.test.ts` - the tools and the stores beside them.

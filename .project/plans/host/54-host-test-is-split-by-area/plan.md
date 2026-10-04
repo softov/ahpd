@@ -1,7 +1,7 @@
 ---
 title: host.test.ts is split into one test file per area, with its helpers in one module
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -105,14 +105,14 @@ The test column adds up to 328, the count `host.test.ts` holds today.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The fake SDK and the shared helpers are modules of their own](task-01-the-helpers-are-a-module.md) | todo | - |
-| [02 - The handshake and the catalogue are test files of their own](task-02-handshake-and-catalogue.md) | todo | 01 |
-| [03 - A turn and what a client puts into it are test files of their own](task-03-turn-and-input.md) | todo | 02 |
-| [04 - Session config and what the harness offers are test files of their own](task-04-session-config-and-harness.md) | todo | 03 |
-| [05 - Tools and terminals are test files of their own](task-05-tools-and-terminals.md) | todo | 04 |
-| [06 - Files and chats are test files of their own](task-06-files-and-chats.md) | todo | 05 |
-| [07 - Names, snapshots and GitHub are test files of their own, and host.test.ts is gone](task-07-names-snapshots-and-github.md) | todo | 06 |
-| [08 - Open plans cite the new test files](task-08-open-plans-cite-the-new-files.md) | todo | 07 |
+| [01 - The fake SDK and the shared helpers are modules of their own](task-01-the-helpers-are-a-module.md) | implemented | - |
+| [02 - The handshake and the catalogue are test files of their own](task-02-handshake-and-catalogue.md) | implemented | 01 |
+| [03 - A turn and what a client puts into it are test files of their own](task-03-turn-and-input.md) | implemented | 02 |
+| [04 - Session config and what the harness offers are test files of their own](task-04-session-config-and-harness.md) | implemented | 03 |
+| [05 - Tools and terminals are test files of their own](task-05-tools-and-terminals.md) | implemented | 04 |
+| [06 - Files and chats are test files of their own](task-06-files-and-chats.md) | implemented | 05 |
+| [07 - Names, snapshots and GitHub are test files of their own, and host.test.ts is gone](task-07-names-snapshots-and-github.md) | implemented | 06 |
+| [08 - Open plans cite the new test files](task-08-open-plans-cite-the-new-files.md) | implemented | 07 |
 
 ## Risks and tradeoffs
 
@@ -124,19 +124,18 @@ The test column adds up to 328, the count `host.test.ts` holds today.
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-04 at `b4f1a4b`.
-- **Next action:** [task-01-the-helpers-are-a-module.md](task-01-the-helpers-are-a-module.md).
-- **Count before:** 1,316 tests in `packages/sdk` at `b4f1a4b`, 328 of them in `host.test.ts`; task 01 records it again before its first edit.
-- **Open questions:**
-  1. Keep `driving a turn` whole in one file of about 830 lines instead of splitting it? - proposed: split, as in the table, since 830 is over the 800 aim.
-- **Watch out for:** line numbers are at `b4f1a4b` and task 01 moves them all; find each block by its `describe` name. The `vi.mock` factory loads `support/claude-sdk.ts`, never `support/host.ts`.
+- **Done so far:** all eight tasks, 2026-10-04. `host.test.ts` (7,945 lines, 328 tests) is gone; `support/claude-sdk.ts` (128), `support/host.ts` (115) and the 13 area files hold it, the largest `host-turn.test.ts` at 756 lines.
+- **Next action:** review; nothing is left to build.
+- **Count before:** 1,334 tests in `packages/sdk` at `a93988a`, the count this plan measured for itself; after task 08 it is still 1,334, and the sorted list of test names still fingerprints to `532860aa4c087b69e30d8a47dcead5f4`.
+- **Open questions:** none open. The one the plan asked (keep `driving a turn` whole at about 830 lines, or split it) was answered by building it as the table says.
+- **Watch out for:** the four `00-*.md` overview files and the three built plans that still write `host.test.ts` are history and were left alone; `claude/00-claude.md`, `daemon/00-daemon.md` and `plugin/00-plugin.md` were also given the `host-*.test.ts` spelling, which task 08 did not list.
 
 ## Final verification checklist
 
-- [ ] `packages/sdk/test/host.test.ts` does not exist.
-- [ ] `wc -l packages/sdk/test/host-*.test.ts packages/sdk/test/support/*.ts` shows no file over 800 lines.
-- [ ] `pnpm exec vitest list packages/sdk | wc -l` is 1,316, or the count task 01 recorded.
-- [ ] `pnpm exec vitest list packages/sdk | sed 's/^[^ ]* > //' | sort` equals the same list taken before task 01.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/sdk` pass.
-- [ ] `rg -n "test/host\.test\.ts" .project/plans` matches only built or dropped plans and this plan's family.
-- [ ] `plans/index.md` updated.
+- [x] `packages/sdk/test/host.test.ts` does not exist.
+- [x] `wc -l packages/sdk/test/host-*.test.ts packages/sdk/test/support/*.ts` shows no file over 800 lines.
+- [x] `pnpm exec vitest list packages/sdk | wc -l` is 1,334, the count task 01 recorded.
+- [x] `pnpm exec vitest list packages/sdk | sed 's/^[^ ]* > //' | sort` equals the same list taken before task 01.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/sdk` pass.
+- [x] `rg -n "test/host\.test\.ts" .project/plans` matches only built or dropped plans and this plan's family.
+- [ ] `plans/index.md` updated. - left to the reviewer, as the build was told not to edit it.

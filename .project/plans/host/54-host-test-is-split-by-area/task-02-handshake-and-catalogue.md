@@ -1,6 +1,6 @@
 ---
 title: The handshake and the catalogue are test files of their own
-status: todo
+status: implemented
 depends: [task-01-the-helpers-are-a-module.md]
 layer: "sdk test"
 refs:
@@ -47,3 +47,11 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-handshake.test.ts` is 627 lines, `host-catalogue.test.ts` is 630, both under 800. `host.test.ts` is 6,478 lines with 262 tests left. Blocks kept their order and their names.
+- **Counts:** `vitest list` gives 36 for handshake and 30 for catalogue, the numbers the plan predicted; 262 remain in `host.test.ts`.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 85 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged.
+- **Note:** a first run of `packages/sdk` after this task reported 1 failure of 1,334. It did not reproduce, and the run that showed it took 67s against 28s for the clean one, so it was flake under load rather than a defect; `host-handshake.test.ts` and `host-catalogue.test.ts` pass on their own.
+- **Next action:** [task-03-turn-and-input.md](task-03-turn-and-input.md).
+- **Open questions:** none.
+- **Watch out for:** blocks are cut by a scratch script at `.split54.mjs`, which the import header of each file is generated from. A name in a comment is not a use of it, so the generator strips comments before it decides what to import; check an import by hand if a file's header looks thin.

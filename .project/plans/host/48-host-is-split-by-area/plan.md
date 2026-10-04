@@ -4,7 +4,7 @@ domain: host
 status: active
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-04
 requires:
   - plans/plugin/29-a-tool-call-says-when-it-ran/plan.md
 refs:
@@ -36,7 +36,7 @@ Line numbers are at `1eb8c8f`; plugin/29 lands before this plan and shifts them,
 - `grep -nE "^  (const|let|function|interface|type) " packages/sdk/src/host.ts` - 291 declarations directly inside `createHost`, mapped to the areas in *Proposed architecture*.
 - `grep -nE "^      (const|let) " packages/sdk/src/host.ts` past line 7349 - inside `accept`: `tokensFor`, `expire`, `storeFor`, `capabilityFor`, `ownRecord`, `excusedBy`, `denied`, `admit`, `containers`, `handlers` (47 methods), `applyDispatch`, `notifications`.
 - `rg -l "src/host\.js'" packages examples` - 69 files, all tests; they import `createHost` (62), `ROOT` (17), `GATE` (1), `HOST_CLOSE_WAIT_MS` (1).
-- `rg -n "host\.ts" packages/sdk/test` - `users-gate.test.ts:142` reads the source; `host.test.ts:3739` and `:3806` use the file only as a file to list and read, which is unaffected.
+- `rg -n "host\.ts" packages/sdk/test` - `users-gate.test.ts:142` reads the source; `host-files.test.ts:120` and `:172` use the file only as a file to list and read, which is unaffected.
 - `find packages/*/src -mindepth 1 -type d` - `packages/sdk/src/types/`, `packages/server/src/commands/` and `packages/server/src/proxy/`; every other package is flat.
 - `rg -l "code://packages/sdk/src/host.ts" .project/plans` - 26 open plan folders cite the file, listed per child and rewritten by p11.
 

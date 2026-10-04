@@ -22,7 +22,7 @@ A session summary and state carry `_meta['ahpd.owner']`, a live `chat/turnStarte
 
 - `UPDATE: packages/sdk/src/host/facts.ts:161, 179` and `packages/sdk/src/host/spawn.ts:140, 474` - the new keys; the plugin event fields at `spawn.ts:515` and `spawn.ts:525` are not `_meta` and stay.
 - `UPDATE: packages/sdk/src/changes.ts:634, 108, 244` - write and read the new keys.
-- `UPDATE: packages/sdk/test/*.test.ts` - `host.test.ts`, `sessions.test.ts`, `plugin-events-fire.test.ts`, `commit.test.ts` and any other that reads the old keys (`rg -n "_meta\??\.(owner|sender|staged|unstaged)" packages/sdk/test`).
+- `UPDATE: packages/sdk/test/*.test.ts` - the `host-*.test.ts` area files, `sessions.test.ts`, `plugin-events-fire.test.ts`, `commit.test.ts` and any other that reads the old keys (`rg -n "_meta\??\.(owner|sender|staged|unstaged)" packages/sdk/test`).
 - `UPDATE: packages/sdk/test/wire.test.ts` - `owner` and `sender` leave `PENDING`.
 - `UPDATE: docs/AHP.md:217, 246, 349, 633, 661` - the new names.
 

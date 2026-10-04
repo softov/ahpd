@@ -26,7 +26,7 @@ A chat is started with `Start.plugins`, the paths of the session's enabled clien
 - `UPDATE: packages/sdk/src/types/agent.ts` - `Start.plugins?: { path: string }[]`, documented: a backend that cannot load plugins ignores it.
 - `UPDATE: packages/sdk/src/host/tooling.ts`, `packages/sdk/src/host/spawn.ts`, `packages/sdk/src/host/lifecycle.ts` - `pluginsFor(session)` and `mcpFor(session)` reading the enabled copies and each copy's `.mcp.json`; both passed at every spawn; the set a chat started with is kept, and a send on a chat whose set differs restarts it first, as `restartChat` does.
 - `UPDATE: packages/agent-claude/src/session.ts` - `plugins: start.plugins.map((one) => ({ type: 'local', path: one.path, skipMcpDiscovery: true }))` in the `query` options; a plugin the SDK reports whose path is one of `start.plugins` is left out of its customizations, as the host reports it.
-- `UPDATE: packages/agent-claude/test/agent-claude-options.test.ts`, `packages/sdk/test/host.test.ts` - the cases below.
+- `UPDATE: packages/agent-claude/test/agent-claude-options.test.ts`, `packages/sdk/test/host-tools.test.ts` - the cases below.
 - `UPDATE: .project/plans/acp/11-the-agent-gets-mcp-servers/deferred.md` - line 7 points at this plan.
 
 ## Steps
@@ -37,7 +37,7 @@ A chat is started with `Start.plugins`, the paths of the session's enabled clien
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`, with a fake agent recording `Start` and a client plugin copied in a temp directory with a `.mcp.json` naming server `a` that the host also names: the next spawn's `Start.plugins` names the copy and `Start.mcpServers.a` is the plugin's; toggling the plugin off and sending restarts the chat with neither; a send with an unchanged set does not restart; a change during a turn waits for the turn to end.
+- `packages/sdk/test/host-tools.test.ts`, in `the MCP servers a session is offered`, with a fake agent recording `Start` and a client plugin copied in a temp directory with a `.mcp.json` naming server `a` that the host also names: the next spawn's `Start.plugins` names the copy and `Start.mcpServers.a` is the plugin's; toggling the plugin off and sending restarts the chat with neither; a send with an unchanged set does not restart; a change during a turn waits for the turn to end.
 - `packages/agent-claude/test/agent-claude-options.test.ts`: `Start.plugins` reaches the SDK options with `skipMcpDiscovery: true`, and none are passed when it is absent.
 - `pnpm test` passes.
 

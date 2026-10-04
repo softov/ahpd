@@ -74,7 +74,7 @@ ahpd [flags] -> main.ts parses config.json under the flags -> createHost(literal
 ## Tests
 
 - `code://test/example.test.ts#L1-L30` - the fake-peer pattern an end-to-end plugin test follows.
-- `code://test/host.test.ts` - the host as the daemon builds it, which is what a plugin-contributed backend is expected to pass through unchanged.
+- `code://test/host-*.test.ts` - the host as the daemon builds it, which is what a plugin-contributed backend is expected to pass through unchanged.
 
 ## Known gaps
 

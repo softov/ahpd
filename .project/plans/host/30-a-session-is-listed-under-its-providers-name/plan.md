@@ -22,7 +22,7 @@ refs:
   - "[code://packages/sdk/src/host/sessionmethods.ts#L101-L148](../../../../packages/sdk/src/host/sessionmethods.ts#L101-L148) - `subscribe`, which records the alias and applies `spelledFor`"
   - "[code://packages/sdk/src/host/chatactions.ts#L140-L204](../../../../packages/sdk/src/host/chatactions.ts#L140-L204) - resuming a listed session, which already spawns it under `nameOf(id)`: the pattern task 01 mirrors"
   - "[code://packages/sdk/src/sessions.ts#L42-L52](../../../../packages/sdk/src/sessions.ts#L42-L52) - chat titles, kept by the exact chat URI"
-  - "[code://packages/sdk/test/host.test.ts#L6387-L6520](../../../../packages/sdk/test/host.test.ts#L6387-L6520) - `a session asked for by the name a client computed`, the tests for the other spelling of a listed session"
+  - "[code://packages/sdk/test/host-names.test.ts#L200-L335](../../../../packages/sdk/test/host-names.test.ts#L200-L335) - `a session asked for by the name a client computed`, the tests for the other spelling of a listed session"
   - https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/session-channel.md - the provider is not in the session URI's scheme
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: Tools and terminals are test files of their own
-status: todo
+status: implemented
 depends: [task-04-session-config-and-harness.md]
 layer: "sdk test"
 refs:
@@ -42,3 +42,10 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-tools.test.ts` is 753 lines and `host-terminals.test.ts` is 579, both under 800. `host.test.ts` has 112 tests left. `ETX` moved with its comment to the top of `host-terminals.test.ts`, after the imports, and `host.test.ts` no longer declares it.
+- **Counts:** `vitest list` gives 26 for tools and 21 for terminals, the numbers the plan predicted.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 91 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged.
+- **Next action:** [task-06-files-and-chats.md](task-06-files-and-chats.md).
+- **Open questions:** none.
+- **Watch out for:** a constant whose only reader has moved on has to be pinned to its new file before the move, or the file it was in stops declaring it and nobody does. `.split54.mjs pin ETX <file>` does this; `REPO` needs the same in task 06.

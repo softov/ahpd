@@ -1,0 +1,753 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Agent, McpServer, Start } from '../src/types/agent.js';
+import {
+  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
+  machine, peer, sdk, serving, sessionQueries, settle, running,
+} from './support/host.js';
+
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
+
+beforeEach(resetSdk);
+
+describe('tools the host contributes', () => {
+  const withTools = async (tools = hostTools()) => {
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/served';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    // The name the session is held and listed by, which is the one a tool
+    // answers with and is asked by.
+    const held = 'claude:/served';
+    return { host, client, peer: p, uri, held };
+  };
+
+  it('reports them on the session, and says nothing when it has none', async () => {
+    const { client, uri } = await withTools();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { serverTools?: { name: string }[] } };
+    }).snapshot.state;
+    expect(state.serverTools?.map((one) => one.name)).toEqual([
+      'list_sessions', 'get_current_session', 'set_workspace', 'create_session', 'create_chat',
+      'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+      'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
+      'ahp_resource', 'ahp_terminals',
+    ]);
+
+    // A host given none contributes none, and the field is absent rather than
+    // an empty list - which is the difference between "no tools" and "a host
+    // that has not said".
+    const { client: bare, uri: other } = await (async () => {
+      const host = serving('/home/softov');
+      const client_ = host.accept(peer());
+      await client_.handle(hello(['0.9.0']));
+      await client_.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
+      return { client: client_, uri: 'ahp-session:/bare' };
+    })();
+    const empty = (await bare.handle({ method: 'subscribe', params: { channel: other } }) as {
+      snapshot: { state: { serverTools?: unknown } };
+    }).snapshot.state;
+    expect(empty.serverTools).toBeUndefined();
+  });
+
+  it('withholds a tool that declares it needs advanced permission', async () => {
+    const tool = (name: string, advancedPermission?: boolean) => ({
+      definition: { name, description: name, inputSchema: { type: 'object' as const, properties: {} } },
+      ...(advancedPermission === undefined ? {} : { advancedPermission }),
+      run: () => `${name} ran`,
+    });
+    const names = async (advancedTools: boolean) => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+        tools: [tool('launch_rocket', true), tool('peek')],
+        advancedTools,
+      });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/marked', provider: 'claude' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/marked' } }) as {
+        snapshot: { state: { serverTools?: { name: string }[] } };
+      }).snapshot.state;
+      return state.serverTools?.map((one) => one.name);
+    };
+
+    // Absent, not refused: a model is never offered a tool the host did not permit.
+    expect(await names(false)).toEqual(['peek']);
+    expect(await names(true)).toEqual(['launch_rocket', 'peek']);
+  });
+
+  it('hands them to the backend as a server it can call', async () => {
+    const { held } = await withTools();
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    // Under a name of this host's, beside whatever the settings files declared.
+    expect(Object.keys(servers)).toContain('ahp');
+    const listing = servers.ahp?.tools.find((one) => one.name === 'list_sessions');
+    expect(listing?.description).toContain('List sessions');
+
+    // And calling one answers about this host, which is the whole reason a
+    // tool is the host's rather than the backend's: the row is the catalogue's
+    // own, with the link the reference window opens.
+    const answered = await listing?.handler({});
+    const said = JSON.parse(answered?.content[0]?.text ?? '{}') as { sessions: { session: string; openLink: string; status: string }[] };
+    expect(said.sessions.map((one) => one.session)).toEqual([held]);
+    expect(said.sessions[0]?.openLink).toBe('agent-host-session://claude/served');
+    expect(said.sessions[0]?.status).toBe('idle');
+  });
+
+  /**
+   * The session tools, driven the way the model drives them.
+   *
+   * Each is the same operation a client has - a command or a dispatch - reached
+   * from inside a turn, so what is checked is that the host side actually
+   * moves: a message becomes a turn, a session appears in the catalogue, a
+   * title changes on the wire.
+   */
+  describe('the session tools', () => {
+    type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
+    const toolsOf = (index = -1): Record<string, Tool> => {
+      const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
+      return Object.fromEntries((servers?.ahp?.tools ?? []).map((one) => [one.name, one]));
+    };
+    // A refusal is a tool result too: the backend hands the model the message
+    // as text, marked as an error, which is how a model learns what it got wrong.
+    const call = async (name: string, input: unknown, index = -1): Promise<string> => {
+      const tool = toolsOf(index)[name];
+      if (!tool) throw new Error(`no ${name}`);
+      return (await tool.handler(input)).content[0]?.text ?? '';
+    };
+
+    it('says which session it is running in, with the row and the link', async () => {
+      const { held } = await withTools();
+      const said = JSON.parse(await call('get_current_session', {})) as Record<string, unknown>;
+      expect(said.session).toBe(held);
+      expect(said.openLink).toBe('agent-host-session://claude/served');
+      expect(said.status).toBe('idle');
+      expect(said.workingDirectory).toBe('file:///home/softov');
+    });
+
+    it('sends a message into another session, and it starts a turn there as the agent\'s', async () => {
+      const { client, peer: p } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/other', provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/other' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      // From the first session's tools, at the second, by its link.
+      const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
+      expect(said).toBe('Message sent (agent-host-session://claude/other).');
+      await settle();
+      const started = actions(p, chatUri).find((one) => one.action.type === 'chat/turnStarted');
+      expect(started?.action.message).toMatchObject({
+        text: 'check the makefile',
+        origin: { kind: 'agent' },
+        _meta: { 'vscode.chat.delegation': { sourceSession: 'claude:/served' } },
+      });
+    });
+
+    it('queues the message when the other chat is busy, and refuses its own chat', async () => {
+      const { client, peer: p, held } = await withTools();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/busy', provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/busy' } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+      });
+      await settle();
+      const said = await call('send_message', { session: 'claude:/busy', message: 'and then this' }, 0);
+      expect(said).toBe('Message queued (agent-host-session://claude/busy).');
+      await settle();
+      const queued = actions(p, chatUri).find((one) => one.action.type === 'chat/pendingMessageSet');
+      expect(queued?.action).toMatchObject({ kind: 'queued', message: { text: 'and then this', origin: { kind: 'agent' } } });
+
+      expect(await call('send_message', { session: held, message: 'to myself' }, 0)).toContain('refusing to send a message to the current chat');
+      expect(await call('send_message', { session: 'ahp-session:/nobody', message: 'x' }, 0)).toContain('session must match the URI of a known session');
+    });
+
+    it('creates an independent session in a directory, titled, with its first prompt', async () => {
+      const { client, peer: p } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: '/home/softov', title: 'Port the makefile', prompt: 'port it', worktree: false,
+      });
+      expect(said).toMatch(/^New session created \(agent-host-session:\/\/claude\/[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = p.notes.find((one) => one.method === 'root/sessionAdded');
+      const summary = (added?.params as { summary?: { resource: string; title: string; workingDirectories: string[] } } | undefined)?.summary;
+      expect(summary?.title).toBe('Port the makefile');
+      // Held under its provider's name, as a client's `createSession` is.
+      expect(summary?.resource).toMatch(/^claude:\/[0-9a-f-]+$/);
+      expect(summary?.workingDirectories).toEqual(['file:///home/softov']);
+      // Its first turn, as the creating agent's.
+      const chat = (await client.handle({ method: 'subscribe', params: { channel: summary?.resource } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      const state = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+        snapshot: { state: { activeTurn?: { message: unknown }; turns: { message: unknown }[] } };
+      }).snapshot.state;
+      const first = state.activeTurn ?? state.turns[0];
+      expect(first?.message).toMatchObject({ text: 'port it', origin: { kind: 'agent' } });
+      // And a second session's own tools answer about both.
+      const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
+      expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
+      expect(rows.sessions.map((one) => one.session)).toContain('claude:/served');
+    });
+
+    it('creates a chat in the current session for currentSession work, and refuses a workspace with it', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      const said = await call('create_session', { relationship: 'currentSession', title: 'Tests', prompt: 'write the tests' }, 0);
+      expect(said).toMatch(/^Chat created in the current session \(agent-host-session:\/\/claude\/served\?chat=[0-9a-f-]+\)\.$/);
+      await settle();
+      const added = actions(p, uri).find((one) => one.action.type === 'session/chatAdded');
+      expect((added?.action.summary as { title?: string } | undefined)?.title).toBe('Tests');
+      expect(await call('create_session', { relationship: 'currentSession', title: 'x', prompt: 'y', workspace: '/tmp' }, 0)).toContain('only valid with relationship "independent"');
+      expect(await call('create_session', { relationship: 'sideways', title: 'x', prompt: 'y' }, 0)).toContain('relationship must be');
+    });
+
+    it('renames the calling chat, which is the session when it is the default one', async () => {
+      const { client, peer: p, uri, held } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      expect(await call('rename_chat', { title: '  Kqueue   port ' })).toBe('Renamed chat to "Kqueue port".');
+      expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.action.title).toBe('Kqueue port');
+      const rows = JSON.parse(await call('list_sessions', { session: held })) as { sessions: { title: string }[] };
+      expect(rows.sessions[0]?.title).toBe('Kqueue port');
+      expect(await call('rename_chat', { title: 'Auto', automatic: true })).toBe('Renaming chat.');
+      expect(await call('rename_chat', { title: '   ' })).toContain('title must be a non-empty string');
+    });
+
+    it('renames a peer chat as a chat, by its link', async () => {
+      const { client, peer: p, uri } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      const made = await call('create_chat', { prompt: 'look at the tests' }, 0);
+      const link = /\((agent-host-session:[^)]+)\)/.exec(made)?.[1] as string;
+      expect(link).toContain('?chat=');
+      p.notes.length = 0;
+      expect(await call('rename_chat', { chat: link, title: 'Tests' }, 0)).toBe('Renamed chat to "Tests".');
+      const updated = actions(p, uri).find((one) => one.action.type === 'session/chatUpdated');
+      expect(updated?.action.changes).toEqual({ title: 'Tests' });
+      expect(actions(p, uri).some((one) => one.action.type === 'session/titleChanged')).toBe(false);
+    });
+
+    it('gives a deferred session rename_chat without the automatic argument, and still runs an explicit rename', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { deferredTitleGeneration: true } } },
+      });
+      await settle();
+      const uri = 'ahp-session:/deferred';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { serverTools?: { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } }[] } };
+      }).snapshot.state;
+      const rename = state.serverTools?.find((one) => one.name === 'rename_chat');
+      expect(rename).toBeDefined();
+      expect(rename?.inputSchema?.properties).not.toHaveProperty('automatic');
+      expect(rename?.description).toContain('Automatic naming is handled by the host');
+      // Every other tool is offered, the artifact one included: the strategy
+      // shapes rename_chat alone.
+      expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
+      // And the model can still rename when the user asks, without `automatic`.
+      expect(await call('rename_chat', { title: 'Kqueue port' })).toBe('Renamed chat to "Kqueue port".');
+    });
+
+    it('deletes another session and refuses its own', async () => {
+      const { client, peer: p, held } = await withTools();
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
+      expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
+      expect(await call('delete_session', { session: 'claude:/doomed' }, 0))
+        .toBe('Deleted session claude:/doomed. Reply with one short sentence confirming the session was deleted.');
+      expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
+        && (one.params as { session?: string }).session === 'claude:/doomed')).toBe(true);
+      const rows = JSON.parse(await call('list_sessions', {}, 0)) as { sessions: { session: string }[] };
+      expect(rows.sessions.map((one) => one.session)).not.toContain('claude:/doomed');
+    });
+
+    it('reads another chat\'s turns, cut to the detail asked for', async () => {
+      const { client, chatUri: mine } = await (async () => {
+        const made = await withTools();
+        const chat = (await made.client.handle({ method: 'subscribe', params: { channel: made.uri } }) as {
+          snapshot: { state: { defaultChat: string } };
+        }).snapshot.state.defaultChat;
+        return { ...made, chatUri: chat };
+      })();
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reader', provider: 'claude' } });
+      // A turn in the first session, said and answered.
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: mine, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is in this directory' } } },
+      });
+      await settle();
+      const first = sessionQueries()[0];
+      if (!first) throw new Error('no first session');
+      first.frames.push(
+        { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Four files.' }] } },
+        { type: 'result', subtype: 'success', is_error: false, duration_ms: 4 },
+      );
+      first.wake?.();
+      first.wake = undefined;
+      await settle(8);
+      // Read from the second session's tools.
+      const said = JSON.parse(await call('get_session_context', { session: 'claude:/served', detail: 'digest' })) as {
+        openLink: string; transcript: { turn: number; state: string; user?: string; assistant?: string }[];
+      };
+      expect(said.openLink).toBe('agent-host-session://claude/served');
+      expect(said.transcript).toEqual([{ turn: 1, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' }]);
+      expect(await call('get_session_context', { session: 'claude:/served', detail: 'everything' })).toContain('detail must be');
+    });
+
+    it('moves the session once the turn that asked is over, and tells the agent where it is', async () => {
+      const { client, peer: p, uri, chatUri } = await (async () => {
+        const host = createHost({
+          path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+        });
+        const p_ = peer();
+        const client_ = host.accept(p_);
+        await client_.handle(hello(['0.9.0']));
+        const uri_ = 'ahp-session:/mover';
+        await client_.handle({ method: 'createSession', params: { channel: uri_, provider: 'claude' } });
+        const chat = (await client_.handle({ method: 'subscribe', params: { channel: uri_ } }) as {
+          snapshot: { state: { defaultChat: string } };
+        }).snapshot.state.defaultChat;
+        await client_.handle({ method: 'subscribe', params: { channel: chat } });
+        return { client: client_, peer: p_, uri: uri_, chatUri: chat };
+      })();
+      // Not from outside a turn: there is nothing to wait for the end of.
+      expect(await call('set_workspace', { workspaceFolder: '/tmp', isolation: false })).toContain('must run from an active chat turn');
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work in /tmp' } } },
+      });
+      await settle();
+      const said = await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false });
+      expect(said).toContain('Workspace will be set to file:///tmp after this turn ends');
+      // Nothing moved yet: the turn is still running.
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+      const moved = actions(p, uri).find((one) => one.action.type === 'session/workingDirectoryReplaced');
+      expect(moved?.action.directory).toBe('file:///tmp');
+      // Restarted there, resumed, and told so in a turn the window will not
+      // draw as somebody's request, will list under a label rather than the
+      // prompt, and will still credit with the file changes made in it: the
+      // reference host's own continuation turn, key for key.
+      const restarted = sessionQueries().at(-1);
+      expect(restarted?.options.cwd).toBe('/tmp');
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Continue in Requested Workspace',
+          'vscode.chat.workspaceContinuation': true,
+        },
+      });
+      expect(String((notice?.action.message as { text: string }).text)).toContain('/tmp');
+    });
+  });
+
+  it('replaces the set whole, and tells every running session', async () => {
+    const { host, client, peer: p, uri } = await withTools();
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    host.setTools([]);
+    const said = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string; tools?: unknown[] } })
+      .filter((one) => one.action?.type === 'session/serverToolsChanged');
+    expect(said).toHaveLength(1);
+    // Full replacement: the action carries the new set, not the difference.
+    expect(said[0]?.channel).toBe(uri);
+    expect(said[0]?.action?.tools).toEqual([]);
+  });
+
+  it('reads what a client published, which is the only thing that can', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
+    });
+    /*
+     * A second client, publishing something this machine has no copy of.
+     *
+     * `<scheme>://<clientId>/…` is how a client-served resource is addressed,
+     * and answering one is what the reverse `resource*` direction exists for:
+     * a plugin's virtual files, an editor's unsaved buffers. The agent inside
+     * a session cannot open any of it, so the host's own tool asks the client.
+     */
+    const publisher = peer();
+    publisher.request = async () => ({ data: 'ZG9uZQ==', encoding: 'base64' });
+    const other = served.accept(publisher);
+    await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.9.0'] } });
+
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reads', provider: 'claude' } });
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_resource')
+      ?.handler({ uri: 'virtual://plugin/notes.md' });
+    // Decoded, because a tool result is text and the model reads it.
+    expect(said?.content[0]?.text).toBe('done');
+  });
+
+  it('lists the terminals this host has open', async () => {
+    const { client } = await withTools();
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: 'ahp-terminal:/t1', cwd: 'file:///home/softov', command: 'true' },
+    });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/asks', provider: 'claude' } });
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+      name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
+    }[] }>;
+    const said = await servers.ahp?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
+  });
+});
+
+describe('the MCP servers a session is offered', () => {
+  /**
+   * The example backend, keeping every `Start` it was handed.
+   *
+   * `Start` is the one place a session's servers reach a backend, so what is
+   * read here is what the host decided rather than what a harness went on to
+   * declare with them.
+   */
+  const recording = () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const seen: Start[] = [];
+    const agent: Agent = {
+      ...base,
+      create: (start: Start) => {
+        seen.push(start);
+        return base.create(start);
+      },
+    };
+    return { seen, agent };
+  };
+
+  /** What one session's backend was given, on a host holding these servers. */
+  const offered = async (mcpServers: Record<string, McpServer> | undefined) => {
+    const { seen, agent } = recording();
+    const host = createHost({
+      path: '/home/softov',
+      agents: [agent],
+      ...machine(),
+      ...(mcpServers === undefined ? {} : { mcpServers }),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/served', provider: 'echo' } });
+    return seen.at(0)?.mcpServers;
+  };
+
+  it('are the host\'s own, in both shapes and under the names they were given', async () => {
+    const files: McpServer = { type: 'stdio', command: 'mcp-files', args: ['--root', '/home/softov'] };
+    const api: McpServer = { type: 'http', url: 'https://example.test/mcp', headers: { authorization: 'Bearer k' } };
+    expect(await offered({ files, api })).toEqual({ files, api });
+  });
+
+  /*
+   * Nothing where the host configured none.
+   *
+   * Absent rather than an empty map, because a backend that reads the field has
+   * no other way to tell a host with no servers from a host that never heard of
+   * them, and the answer to either is the same. A client plugin's servers are
+   * merged into this one, and there is nothing to merge yet - the half of the
+   * merge that is a plugin's comes with the first one.
+   */
+  it('are absent on a host that was given none', async () => {
+    expect(await offered(undefined)).toBeUndefined();
+    expect(await offered({})).toBeUndefined();
+  });
+
+  it('are read when the session starts, so an edit reaches the next one', async () => {
+    const files: Record<string, McpServer> = { files: { type: 'stdio', command: 'mcp-files' } };
+    const api: Record<string, McpServer> = { api: { type: 'http', url: 'https://example.test/mcp' } };
+    const { seen, agent } = recording();
+    // A host on a map a client can edit over root config, which is what the
+    // daemon hands: the key is read at the start rather than held at the boot.
+    let held: Record<string, McpServer> = files;
+    const host = createHost({
+      path: '/home/softov',
+      agents: [agent],
+      ...machine(),
+      get mcpServers() { return held; },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    held = api;
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } });
+    expect(seen.map((one) => one.mcpServers)).toEqual([files, api]);
+  });
+});
+
+describe('tools a client contributes', () => {
+  const OPEN_FILE = {
+    name: 'openFile',
+    description: 'Open a file in the editor',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  };
+
+  /** A running session with one client that says it can run `openFile`. */
+  async function providing(tools: unknown[] = [OPEN_FILE]) {
+    const held = await running();
+    held.client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: held.uri,
+        action: { type: 'session/activeClientSet', activeClient: { name: 'VS Code', tools } },
+      },
+    });
+    await settle();
+    return held;
+  }
+
+  /** The tools the session is offering the model right now. */
+  const offered = () => (sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+    tools: {
+      name: string; description: string;
+      handler: (input: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+    }[];
+  }> | undefined)?.ahp?.tools ?? [];
+
+  it('offers what a client announced to the model, under a name of its own', async () => {
+    await providing();
+    // Re-declared on the running session rather than only at creation: a
+    // client announces what it provides when it opens the session, which is
+    // after the agent has started.
+    expect(sdk.mcpDeclared).toHaveLength(1);
+    // Named for the client as well as the tool. Two clients in one session may
+    // both provide `openFile`, and the model is offered one list.
+    const one = offered().find((tool) => tool.name === 'probe__openFile');
+    expect(one?.description).toBe('Open a file in the editor');
+  });
+
+  it('reports the call against the client that provides it, and waits for it', async () => {
+    const { client, peer: p, uri, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{
+          type: 'tool_use', id: 'call-1',
+          name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' },
+        }],
+      },
+    });
+
+    /*
+     * A client contributor, not this host's MCP server.
+     *
+     * The tools a client provides ride this host's own in-process server, so
+     * by name they all look like `mcp__ahp__*` - and reporting one as this
+     * host's contribution would tell every client that the call is nobody's
+     * to answer, including the one whose call it is.
+     */
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
+
+    // The model's call reaches the client as a promise that does not settle
+    // until the client says what happened.
+    const call = offered().find((tool) => tool.name === 'probe__openFile');
+    let done = false;
+    const answering = call?.handler({ path: '/a.txt' }).then((answer) => { done = true; return answer; });
+    await settle();
+    expect(done).toBe(false);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: {
+          type: 'chat/toolCallComplete',
+          toolCallId: 'call-1',
+          result: { success: true, pastTenseMessage: 'Opened it', content: [{ type: 'text', text: 'opened /a.txt' }] },
+        },
+      },
+    });
+    expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
+    expect(uri).toBeTruthy();
+  });
+
+  it('says a failed call failed, in the words the client used', async () => {
+    const { client, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/gone' } }],
+      },
+    });
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/gone' });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: {
+          type: 'chat/toolCallComplete',
+          toolCallId: 'call-1',
+          result: { success: false, pastTenseMessage: 'Could not open it', error: { message: 'no such file' } },
+        },
+      },
+    });
+    // An MCP tool that rejects is a transport failure; one that could not do
+    // the thing is an answer, and the model reads the reason.
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toBe('no such file');
+  });
+
+  it('refuses a result from a client whose call it is not', async () => {
+    const { host, client, chatUri } = await providing();
+    const theirs = peer();
+    const other = host.accept(theirs);
+    await other.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: 'someone-else', protocolVersions: ['0.9.0'] },
+    });
+    await other.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    other.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true } },
+      },
+    });
+    await settle();
+    // A result from anybody else is a client answering for work it did not do.
+    const refused = actions(theirs).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('is not a call someone-else is running here');
+
+    // And the same for writing into the call while it runs, which the protocol
+    // says is the contributor's alone.
+    other.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/toolCallContentChanged', toolCallId: 'call-1', content: [] },
+      },
+    });
+    await settle();
+    expect(actions(theirs).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason)
+      .toContain('is probe\'s call');
+  });
+
+  it('relays what the owning client writes into its own call', async () => {
+    const { host, client, chatUri } = await providing();
+    const watching = peer();
+    const other = host.accept(watching);
+    await other.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: 'watcher', protocolVersions: ['0.9.0'] },
+    });
+    await other.handle({ method: 'subscribe', params: { channel: chatUri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 4,
+        action: {
+          type: 'chat/toolCallContentChanged',
+          toolCallId: 'call-1',
+          content: [{ type: 'text', text: 'reading…' }],
+        },
+      },
+    });
+    await settle();
+    // Passed through rather than reduced: what a tool is printing as it runs
+    // is the running client's to say, and this host holds none of it.
+    const said = actions(watching, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged');
+    expect(said?.action.toolCallId).toBe('call-1');
+    expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
+  });
+
+  it('fails the calls of a client that goes, rather than leaving the turn hanging', async () => {
+    const { client, uri, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+
+    // Unsubscribing is one of the three ways the protocol says a client stops
+    // being active in a session.
+    client.handle({ method: 'unsubscribe', params: { channel: uri } });
+    await settle();
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toContain('no longer here');
+
+    // And the tool goes with the client: one whose provider has left is one
+    // every call to would fail.
+    expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
+  });
+});

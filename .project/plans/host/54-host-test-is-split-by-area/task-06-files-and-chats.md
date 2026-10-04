@@ -1,6 +1,6 @@
 ---
 title: Files and chats are test files of their own
-status: todo
+status: implemented
 depends: [task-05-tools-and-terminals.md]
 layer: "sdk test"
 refs:
@@ -43,3 +43,10 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-files.test.ts` is 481 lines and `host-chats.test.ts` is 560, both under 800. `host.test.ts` has 66 tests left. `REPO` moved with its comment to the top of `host-files.test.ts`; its `new URL('../../..', import.meta.url)` is unchanged because the file stays in `packages/sdk/test/`.
+- **Counts:** `vitest list` gives 25 for files and 21 for chats, the numbers the plan predicted.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 93 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged.
+- **Next action:** [task-07-names-snapshots-and-github.md](task-07-names-snapshots-and-github.md).
+- **Open questions:** none.
+- **Watch out for:** `host.test.ts` still reads `REPOS`, a constant of its own inside `what GitHub knows about the branch`'s neighbours. It is a different name from the `REPO` that moved, and `\bREPO\b` does not match it, so the two do not collide.

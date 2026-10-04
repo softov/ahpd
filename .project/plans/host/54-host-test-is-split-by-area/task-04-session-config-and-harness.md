@@ -1,6 +1,6 @@
 ---
 title: Session config and what the harness offers are test files of their own
-status: todo
+status: implemented
 depends: [task-03-turn-and-input.md]
 layer: "sdk test"
 refs:
@@ -41,3 +41,10 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-sessionconfig.test.ts` is 546 lines and `host-harness.test.ts` is 658, both under 800. `host.test.ts` has 159 tests left. The `beforeEach` and `afterEach` inside `a session's config across a restart` moved inside it, unchanged.
+- **Counts:** `vitest list` gives 25 for sessionconfig and 32 for harness, the numbers the plan predicted.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 89 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged.
+- **Next action:** [task-05-tools-and-terminals.md](task-05-tools-and-terminals.md).
+- **Open questions:** none.
+- **Watch out for:** a block's name is quoted in the source, so `a session's config across a restart` is written `a session\'s config across a restart` there. Address a block by the name vitest reports, with the quote unescaped.

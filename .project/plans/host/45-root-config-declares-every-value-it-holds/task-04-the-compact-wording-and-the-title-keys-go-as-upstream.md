@@ -16,8 +16,8 @@ refs:
   - "[code://packages/sdk/src/types/host.ts#L462-L469](../../../../packages/sdk/src/types/host.ts#L462-L469) - `HostTool.compact`"
   - "[code://packages/sdk/src/validate.ts#L99-L104](../../../../packages/sdk/src/validate.ts#L99-L104) - `TOOL_OPTIONAL`, which accepts `compact` from a plugin"
   - "[code://packages/sdk/src/sessiontools.ts#L515-L546](../../../../packages/sdk/src/sessiontools.ts#L515-L546) - `rename_chat` and its `forSession`"
-  - "[code://packages/sdk/test/host.test.ts#L5193-L5215](../../../../packages/sdk/test/host.test.ts#L5193-L5215) - the deferred case, which pushes `deferredTitleGeneration`"
-  - "[code://packages/sdk/test/host.test.ts#L7618-L7640](../../../../packages/sdk/test/host.test.ts#L7618-L7640) - the artifact cases, whose `withTools(compact)` pushes `artifactToolsCompactPrompts`"
+  - "[code://packages/sdk/test/host-tools.test.ts#L239-L262](../../../../packages/sdk/test/host-tools.test.ts#L239-L262) - the deferred case, which pushes `deferredTitleGeneration`, in `tools the host contributes`"
+  - "[code://packages/sdk/test/host-github.test.ts#L266-L276](../../../../packages/sdk/test/host-github.test.ts#L266-L276) - the artifact cases, whose `withTools(compact)` pushes `artifactToolsCompactPrompts`, in `what a session recorded`"
   - "[code://packages/sdk/test/users-gate.test.ts#L315](../../../../packages/sdk/test/users-gate.test.ts#L315) - one of the gate tests that use `artifactToolsCompactPrompts` as the host-wide key (also :584, :651-681, :712-728)"
   - "[code://packages/sdk/test/root-config.test.ts#L129-L133](../../../../packages/sdk/test/root-config.test.ts#L129-L133) - the schema key lists"
   - "[code://packages/sdk/test/conformance.test.ts#L466-L471](../../../../packages/sdk/test/conformance.test.ts#L466-L471) - asserts both keys are declared"
@@ -41,7 +41,7 @@ A client older than 1.140 that still pushes any of the three has that key refuse
 - `UPDATE: packages/sdk/src/types/host.ts:462-469` - `HostTool.compact` goes; `TitleStrategy` keeps `activeAgent`, `utility` and `deferred`, and `forSession` stays.
 - `UPDATE: packages/sdk/src/validate.ts:101` - `compact` leaves `TOOL_OPTIONAL`; `checkTool` does not look at a member the table does not list, so a plugin tool still carrying `compact` registers and the member is ignored.
 - `UPDATE: packages/sdk/src/sessiontools.ts:515-546` - `rename_chat` gains `deferLoading: true`.
-- `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/artifacttools.test.ts`, `packages/sdk/test/users-gate.test.ts`, `packages/sdk/test/root-config.test.ts`, `packages/sdk/test/conformance.test.ts`, `packages/sdk/test/sessiontools.test.ts`, `packages/sdk/test/plugin-validate.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-tools.test.ts`, `packages/sdk/test/host-github.test.ts`, `packages/sdk/test/artifacttools.test.ts`, `packages/sdk/test/users-gate.test.ts`, `packages/sdk/test/root-config.test.ts`, `packages/sdk/test/conformance.test.ts`, `packages/sdk/test/sessiontools.test.ts`, `packages/sdk/test/plugin-validate.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - task 01's root config paragraph says ahpd acts on `defaultShell` and the daemon's keys; a sentence says the compact wording and the two title keys were removed with VS Code 1.140 and a push of them is refused; the artifact and session tool rows, where they mention either key, say the long wording and deferred titles are the only ones.
 
 ## Steps
@@ -54,7 +54,7 @@ A client older than 1.140 that still pushes any of the three has that key refuse
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`: a session created with nothing pushed reports `rename_chat` in `serverTools` without `automatic`, with the deferred description and `deferLoading: true`, and an explicit `rename_chat` still answers `Renamed chat to "<title>".`; the artifact instruction a session is given is the long one whatever was pushed.
+- `packages/sdk/test/host-tools.test.ts` and `packages/sdk/test/host-github.test.ts`: a session created with nothing pushed reports `rename_chat` in `serverTools` without `automatic`, with the deferred description and `deferLoading: true`, and an explicit `rename_chat` still answers `Renamed chat to "<title>".`; the artifact instruction a session is given is the long one whatever was pushed.
 - `packages/sdk/test/root-config.test.ts`: `{ artifactToolsCompactPrompts: true, telemetryLevel: 'off' }` echoes `{ telemetryLevel: 'off' }`; `{ deferredTitleGeneration: true }` and `{ activeAgentTitleGeneration: true }` are each rejected naming the key; neither key is in `config.schema.properties`.
 - `packages/sdk/test/sessiontools.test.ts`: `rename_chat` has `deferLoading: true`; `forSession` still answers for all three strategies.
 - `packages/sdk/test/plugin-validate.test.ts`: a tool carrying `compact: 1` registers.

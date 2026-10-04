@@ -23,7 +23,7 @@ A peer chat carries `movable: true` in its `ChatState` and `ChatSummary` exactly
 - `UPDATE: packages/sdk/src/nested.ts` - `resumable: () => false`.
 - `UPDATE: packages/agent-acp/src/session.ts` - `resumable` answers whether the handshake advertised `loadSession`.
 - `UPDATE: packages/sdk/src/host/catalogue.ts`, `packages/sdk/src/host/spawn.ts`, `packages/sdk/src/host/sessionmethods.ts` - a `movable(chatUri)` function; `movable` in `chatSummary` and a peer chat's state; a `movableMoved(chatUri)` that dispatches the two actions when the answer changed, called at a turn's start and end (`packages/sdk/src/host/spawn.ts:615`), when a worker of the chat starts or ends a turn, and when the default chat changes in `disposeChat`.
-- `UPDATE: packages/sdk/test/host.test.ts`, `packages/agent-acp/test/agent-acp.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-chats.test.ts`, `packages/agent-acp/test/agent-acp.test.ts` - the cases below, the host's in `more than one chat in a session`.
 - `UPDATE: docs/AHP.md` - the `chat/movableChanged` row.
 
 ## Steps
@@ -34,7 +34,7 @@ A peer chat carries `movable: true` in its `ChatState` and `ChatSummary` exactly
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`: with chats A (default) and B on a fake agent, A has no `movable` and B has `movable: true` in state and summary; a turn on B sends `chat/movableChanged` `false` and `session/chatUpdated` at its start and `true` at its end; a worker of B running a turn keeps B `false`; disposing A makes B the default and B goes `false`; a fake session answering `resumable: false` keeps B `false` with no action sent.
+- `packages/sdk/test/host-chats.test.ts`, in `more than one chat in a session`: with chats A (default) and B on a fake agent, A has no `movable` and B has `movable: true` in state and summary; a turn on B sends `chat/movableChanged` `false` and `session/chatUpdated` at its start and `true` at its end; a worker of B running a turn keeps B `false`; disposing A makes B the default and B goes `false`; a fake session answering `resumable: false` keeps B `false` with no action sent.
 - `packages/agent-acp/test/agent-acp.test.ts`: a fake server without `loadSession` makes `resumable()` answer `false`, and one with it `true`.
 - `pnpm test` passes.
 

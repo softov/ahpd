@@ -33,7 +33,7 @@ ahpd [start|stop|status|config|plugin list] [flags]
 
 ## Tests
 
-- `code://test/host.test.ts` - the host as the daemon builds it, through a scenario client.
+- `code://test/host-*.test.ts` - the host as the daemon builds it, through a scenario client.
 - `code://test/wire.test.ts` - `--wire` and the lines it writes.
 - `code://test/sessions.test.ts` - the session store beside the configuration.
 - `code://test/update.test.ts` - the update check, against a local registry.

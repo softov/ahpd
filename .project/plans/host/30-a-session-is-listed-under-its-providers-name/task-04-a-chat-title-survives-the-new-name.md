@@ -17,7 +17,7 @@ A chat renamed while its session was held as `ahp-session:/<uuid>` keeps that ti
 ## Files
 
 - `UPDATE: packages/sdk/src/host/spawn.ts:693-694` and the writes near `packages/sdk/src/host/tooling.ts:209`, `packages/sdk/src/host/lifecycle.ts:754` and `packages/sdk/src/host/tooling.ts:304` - read a title under the held chat URI, and when there is none, under the same chat built from `uriFor(id)`; write under the held chat URI.
-- `UPDATE: packages/sdk/test/host.test.ts` - the case below, next to `brings a renamed peer chat back with its title after a restart on the same file` (3068).
+- `UPDATE: packages/sdk/test/host-snapshots.test.ts` - the case below, next to `brings a renamed peer chat back with its title after a restart on the same file` (89).
 
 ## Steps
 
@@ -34,5 +34,5 @@ A chat renamed while its session was held as `ahp-session:/<uuid>` keeps that ti
 
 `titleOf(uri, chatUri)` reads the title under the chat URI and, when there is none, under the same chat respelled to `uriFor(id)` with `respell`; `keepTitle` writes under the chat URI and clears the old key when one is there.
 `spawn` reads through `titleOf`, and `renameChat`, the session tools' `createChat` and `openSession`'s first name write through `keepTitle`; a chat a client named keeps one key, since its URI does not carry the session.
-Test: `host.test.ts`, `keeps a title written under the session's old name once it is held under its provider's`: a store with `Paging` under the `ahp-session:/<uuid>` chat resumes as `claude:/<uuid>` with that title, and renaming it leaves one entry under the `claude:` chat URI.
+Test: `host-snapshots.test.ts`, `keeps a title written under the session's old name once it is held under its provider's`: a store with `Paging` under the `ahp-session:/<uuid>` chat resumes as `claude:/<uuid>` with that title, and renaming it leaves one entry under the `claude:` chat URI.
 It failed first with the derived title, `carry on`.

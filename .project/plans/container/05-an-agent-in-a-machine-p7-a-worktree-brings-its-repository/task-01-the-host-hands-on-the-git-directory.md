@@ -21,7 +21,7 @@ refs:
 - `UPDATE: packages/sdk/src/types/computers.ts:84-85` - `gitDir?` and `repository?` beside `folder`.
 - `UPDATE: packages/sdk/src/host/machines.ts:182-212` - ask and pass, beside `folder` in the maker call, after `owner`, `team` and `project`.
 - `UPDATE: packages/sdk/test/worktrees.test.ts` - the git call.
-- `UPDATE: packages/sdk/test/host.test.ts` - what `placedIn` passes.
+- `UPDATE: packages/sdk/test/host-files.test.ts` - what `placedIn` passes, beside `where the agent works` and `more than one directory`.
 
 ## Steps
 

@@ -1,6 +1,6 @@
 ---
 title: A turn and what a client puts into it are test files of their own
-status: todo
+status: implemented
 depends: [task-02-handshake-and-catalogue.md]
 layer: "sdk test"
 refs:
@@ -43,3 +43,10 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-turn.test.ts` is 756 lines and `host-input.test.ts` is 494, both under 800. `host.test.ts` is 5,248 lines with 216 tests left. `driving a turn` opened in both files and each test kept its full name: 25 of the 46 tests across the two files still read `driving a turn > ...`.
+- **Counts:** `vitest list` gives 26 for turn and 20 for input, the numbers the plan predicted; 216 remain in `host.test.ts`.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 87 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged.
+- **Next action:** [task-04-session-config-and-harness.md](task-04-session-config-and-harness.md).
+- **Open questions:** none.
+- **Watch out for:** the mover at `.split54.mjs` copies a block's text without it passing through the caller's context, which is why it moves whole describes safely. Its `refresh` step rewrites the header of every file in `.split54.state.json` and nothing else; `host-close.test.ts` matches `host-*.test.ts` but is not this plan's, and it was restored from `a93988a` after a first run of the script rewrote its header by mistake.

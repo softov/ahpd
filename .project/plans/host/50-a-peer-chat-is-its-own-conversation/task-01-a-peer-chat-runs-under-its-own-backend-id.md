@@ -26,7 +26,7 @@ refs:
 - `UPDATE: packages/agent-claude/src/claude.ts`, `packages/agent-claude/src/session.ts:2308` - `sessionId: start.chatId ?? idOf(uri)` when not resuming.
 - `UPDATE: packages/agent-pi/src/session.ts:659` - `id: start.chatId ?? idFor(start.uri)`.
 - `UPDATE: packages/agent-cofold/src/session.ts:192-194` - `start.resume ?? start.chatId ?? sessionIdOf(start.uri)`.
-- `UPDATE: packages/agent-claude/test/agent-claude-options.test.ts`, `packages/agent-pi/test/agent-pi.test.ts`, `packages/agent-cofold/test/agent-cofold-store.test.ts`, `packages/sdk/test/host.test.ts` - the cases below.
+- `UPDATE: packages/agent-claude/test/agent-claude-options.test.ts`, `packages/agent-pi/test/agent-pi.test.ts`, `packages/agent-cofold/test/agent-cofold-store.test.ts`, `packages/sdk/test/host-chats.test.ts` - the cases below.
 
 ## Steps
 
@@ -38,7 +38,7 @@ refs:
 - `packages/agent-claude/test/agent-claude-options.test.ts`: a start with `chatId` passes it as `sessionId`; without it, the session's uuid as today; with `resume`, no `sessionId`.
 - `packages/agent-pi/test/agent-pi.test.ts`: a start with `chatId` opens pi with that `id`.
 - `packages/agent-cofold/test/agent-cofold-store.test.ts`: two starts on one session URI with different `chatId`s keep two conversations; a turn in one does not appear in the other.
-- `packages/sdk/test/host.test.ts`: with a fake agent recording `Start`, `createChat` sends `chatId` equal to the uuid of the chat URI it answers, and the session's first chat sends none.
+- `packages/sdk/test/host-chats.test.ts`, in `more than one chat in a session`: with a fake agent recording `Start`, `createChat` sends `chatId` equal to the uuid of the chat URI it answers, and the session's first chat sends none.
 - `pnpm test` passes.
 
 ## Resume

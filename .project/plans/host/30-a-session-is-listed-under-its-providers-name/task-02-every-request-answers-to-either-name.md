@@ -33,7 +33,7 @@ A client that created a session as `ahp-session:/<uuid>` can fork a chat in it, 
 
 ## Validation
 
-- `host.test.ts`, a new `describe('a session asked for by the name its creator used')`: after `createSession` as `ahp-session:/<uuid>`, each of `createChat`, `disposeSession`, `initialize` with `initialSubscriptions: ["ahp-session:/<uuid>"]` and `reconnect` with that subscription succeeds, and every snapshot it returns is in the `ahp-session:` spelling.
+- `host-names.test.ts`, a new `describe('a session asked for by the name its creator used')`: after `createSession` as `ahp-session:/<uuid>`, each of `createChat`, `disposeSession`, `initialize` with `initialSubscriptions: ["ahp-session:/<uuid>"]` and `reconnect` with that subscription succeeds, and every snapshot it returns is in the `ahp-session:` spelling.
 - `pnpm -C packages/sdk test` passes.
 
 ## Resume
@@ -41,7 +41,7 @@ A client that created a session as `ahp-session:/<uuid>` can fork a chat in it, 
 One `answeredAs(connection, channel, snapshot)` takes the resolve, alias and respell steps out of `subscribe`, and `subscribe`, `initialize`'s `initialSubscriptions` and `reconnect`'s snapshots call it; `createChat` and `disposeSession` resolve with `heldAs`.
 `unsubscribe` already drops the alias and the watch; `leaves`, which it calls, looked the session up by the exact string, so it now resolves the name and says `session/activeClientRemoved` under the held one.
 Other client-supplied lookups found by the step 3 search and resolved: `completions` (both the `@` and the `/` paths, through `meantBy`), `vscode/getAgentHostSessionStateFile`'s `chat` (through `chatOf`), `refuse`, which now answers under the connection's alias, and the changeset scans (`operationsMoved`, `contentMoved`, `watchedIn`, the cleanup in `removeSession`) through a new `changesetOf`, with `operationContext` and `statusOf` resolving the name too.
-Tests: `host.test.ts`, `a session asked for by the name its creator used`: forks a chat in it, disposes it (`root/sessionRemoved` names `claude:/<uuid>`), answers it in `initialSubscriptions` and on a `reconnect` in the creator's spelling, and lets its creator go when it unsubscribes under its own name.
+Tests: `host-names.test.ts`, `a session asked for by the name its creator used`: forks a chat in it, disposes it (`root/sessionRemoved` names `claude:/<uuid>`), answers it in `initialSubscriptions` and on a `reconnect` in the creator's spelling, and lets its creator go when it unsubscribes under its own name.
 Each failed first: `No agent for session ahp-session:/<uuid>` for the two requests, no snapshot for the handshake, the held spelling on the reconnect, and no `activeClientRemoved` where the others watch.
 A `reconnect` replay in the connection's spelling is task 03's, where its Resume says how.
 Seen and not changed: the users gate (`capabilityFor`) asks `file:read`, not `session:read`, to subscribe to a session under any scheme other than `ahp-session:` or `ahp-chat:`, which now covers every listed session.

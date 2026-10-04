@@ -25,7 +25,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts` - the two destinations in the `moveChat` handler; a `moveChat` helper that closes the chat and its workers, rewrites `byChat`, the subagent map and the claims, and spawns under the destination with `{ resume: <backend id>, seed: allTurns(), chatId: <backend id> }` and the chat's own folders.
 - `UPDATE: packages/sdk/src/sessions.ts`, `packages/sdk/src/types/sessions.ts` - a `moveChat(from, to, uri)` on both stores that moves the chat's title, senders and its entry in host/50's chat list in one write.
-- `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/sessions.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-chats.test.ts`, `packages/sdk/test/sessions.test.ts` - the cases below, the host's in `more than one chat in a session`.
 - `UPDATE: docs/AHP.md` - the `moveChat` row.
 
 ## Steps
@@ -38,7 +38,7 @@ refs:
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`: on a fake agent recording `Start`, chat B of session S1 moved after chat X of S2 is gone from S1's snapshot and catalogue row and sits after X in S2's, keeps its URI and turns, its new `Start` has `resume` and `chatId` equal to its backend id and B's own folders, and a turn sent on it runs; a worker of B moves with it and its URI still resolves; a move to a session of another provider, or of another `config.computer`, is refused and both sessions are unchanged; a spawn that throws leaves B in S1; `newSession` answers a new session URI whose `defaultChat` is B and whose row lists B without `movable`; after a new host over the same file store, B is rebuilt in S2, and the `newSession` session lists once.
+- `packages/sdk/test/host-chats.test.ts`, in `more than one chat in a session`: on a fake agent recording `Start`, chat B of session S1 moved after chat X of S2 is gone from S1's snapshot and catalogue row and sits after X in S2's, keeps its URI and turns, its new `Start` has `resume` and `chatId` equal to its backend id and B's own folders, and a turn sent on it runs; a worker of B moves with it and its URI still resolves; a move to a session of another provider, or of another `config.computer`, is refused and both sessions are unchanged; a spawn that throws leaves B in S1; `newSession` answers a new session URI whose `defaultChat` is B and whose row lists B without `movable`; after a new host over the same file store, B is rebuilt in S2, and the `newSession` session lists once.
 - `packages/sdk/test/sessions.test.ts`: the file store's `moveChat` moves a title, a sender and the chat list entry, and a new store reads them under the destination.
 - `packages/sdk/test/conformance.test.ts` and `pnpm test` pass.
 

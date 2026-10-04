@@ -1,6 +1,6 @@
 ---
 title: Names, snapshots and GitHub are test files of their own, and host.test.ts is gone
-status: todo
+status: implemented
 depends: [task-06-files-and-chats.md]
 layer: "sdk test"
 refs:
@@ -45,3 +45,10 @@ refs:
 - `wc -l` of each new file, recorded in *Resume*, is under 800; `wc -l packages/sdk/test/host-*.test.ts packages/sdk/test/support/*.ts` shows every file of this plan under 800.
 
 ## Resume
+
+- **Done:** implemented 2026-10-04. `host-names.test.ts` is 504 lines, `host-snapshots.test.ts` is 672, `host-github.test.ts` is 580, all under 800. `packages/sdk/test/host.test.ts` no longer exists: the last block to leave it was `the pull request a create-pr recorded`, and `grep -cE "^\s*(it|test)\("` was 0 before the file was removed.
+- **Counts:** `vitest list` gives 25 for names, 25 for snapshots and 16 for github, the numbers the plan predicted.
+- **Gates:** `pnpm exec tsc --noEmit` and `pnpm boundary` pass. `pnpm exec vitest run packages/sdk` passes, 1,334 tests in 95 files. The sorted-name fingerprint is `532860aa4c087b69e30d8a47dcead5f4`, unchanged through every task.
+- **Next action:** [task-08-open-plans-cite-the-new-files.md](task-08-open-plans-cite-the-new-files.md).
+- **Open questions:** none.
+- **Watch out for:** the mover's last step unlinks `host.test.ts` when the last block leaves, and then re-checks for it; that second check threw once because the file was already gone. It is harmless and the script now returns instead.

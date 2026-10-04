@@ -4,7 +4,7 @@ domain: claude
 status: active
 priority: high
 created: 2026-09-29
-revalidated: 2026-09-29
+revalidated: 2026-10-04
 requires:
   - plans/host/31-a-sessions-config-outlives-a-restart/plan.md
 decisions:

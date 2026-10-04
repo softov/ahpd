@@ -12,7 +12,7 @@ refs:
   - "[code://packages/sdk/src/types/sessions.ts#L136-L145](../../../../packages/sdk/src/types/sessions.ts#L136-L145) - `chatTitle` and `setChatTitle`, the shape to mirror"
   - "[code://packages/sdk/src/sessions.ts#L39](../../../../packages/sdk/src/sessions.ts#L39) - `chatTitles`, the memory store's per-chat map"
   - "[code://packages/sdk/src/sessions.ts#L194-L212](../../../../packages/sdk/src/sessions.ts#L194-L212) - `rowOf`, what the file store writes for a session"
-  - "[code://packages/sdk/test/host.test.ts#L6394-L6403](../../../../packages/sdk/test/host.test.ts#L6394-L6403) - a row nobody is running keeps its read bit"
+  - "[code://packages/sdk/test/host-snapshots.test.ts#L302-L307](../../../../packages/sdk/test/host-snapshots.test.ts#L302-L307) - a row nobody is running keeps its read bit, in `the fields a client reads by name`"
 ---
 
 ## Objective
@@ -25,7 +25,7 @@ A client's `chat/isReadChanged` or `chat/isArchivedChanged` sets or clears that 
 - `UPDATE: packages/sdk/src/types/sessions.ts` - `chatFlags(id, chatUri): number` and `setChatFlags(id, chatUri, value)`, beside `chatTitle`.
 - `UPDATE: packages/sdk/src/sessions.ts` - the memory store's map, the file store's row field, both forgotten with the session.
 - `UPDATE: packages/sdk/src/host/chatactions.ts` - a handler beside `actions.ts:511` for the two chat actions on a chat channel: compare, store, dispatch the action on the chat channel, `session/chatUpdated` with the new `status`, `summaryMoved`; `chat/isArchivedChanged` whose chat is the session's `defaultChat` goes through the session's path instead (`kept.flags` / `kept.setFlags` on the session's `IsArchived`, `session/isArchivedChanged` dispatched on the session channel, `summaryMoved`, and nothing on the chat channel, whose reducer would set the chat's bit), shared with the `session/isArchivedChanged` branch rather than copied; `chatSummary`, `subagentSummary`, the restored workers' rows and a chat's state OR the chat's flags into `status`.
-- `UPDATE: packages/sdk/test/host.test.ts`, `packages/sdk/test/sessions.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-snapshots.test.ts`, `packages/sdk/test/sessions.test.ts` - the cases below.
 - `UPDATE: docs/AHP.md` - two rows in the chat actions table.
 
 ## Steps
@@ -37,7 +37,7 @@ A client's `chat/isReadChanged` or `chat/isArchivedChanged` sets or clears that 
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`: marking a peer chat read sends `chat/isReadChanged` on its channel, `session/chatUpdated` whose `status` has `IsRead`, and a `root/sessionSummaryChanged` whose entry for that chat has it, while the session's `status` and the other chat's do not; sending it twice sends nothing the second time; a worker chat can be marked read; archiving a peer chat and restoring it clears the bit; `chat/isArchivedChanged` with `isArchived: true` on the default chat sends `session/isArchivedChanged` on the session channel and a `root/sessionSummaryChanged` whose session `status` has `IsArchived`, while no `chat/isArchivedChanged` goes out on the chat channel and the default chat's `status` does not have it, and the same with `false` restores the session; a turn starting in a read chat keeps `IsRead` beside `InProgress`.
+- `packages/sdk/test/host-snapshots.test.ts`: marking a peer chat read sends `chat/isReadChanged` on its channel, `session/chatUpdated` whose `status` has `IsRead`, and a `root/sessionSummaryChanged` whose entry for that chat has it, while the session's `status` and the other chat's do not; sending it twice sends nothing the second time; a worker chat can be marked read; archiving a peer chat and restoring it clears the bit; `chat/isArchivedChanged` with `isArchived: true` on the default chat sends `session/isArchivedChanged` on the session channel and a `root/sessionSummaryChanged` whose session `status` has `IsArchived`, while no `chat/isArchivedChanged` goes out on the chat channel and the default chat's `status` does not have it, and the same with `false` restores the session; a turn starting in a read chat keeps `IsRead` beside `InProgress`.
 - `packages/sdk/test/sessions.test.ts`: the file store writes a chat's flags and a new store over the same directory reads them; disposing the session forgets them.
 - `packages/sdk/test/conformance.test.ts` and `pnpm test` pass.
 

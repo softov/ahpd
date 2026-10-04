@@ -1,0 +1,128 @@
+/*
+ * The fake Claude SDK.
+ *
+ * What the real one returns is opaque - a registered in-process server - so
+ * the fake keeps the definitions where a test can call one. It is a module of
+ * its own, and imports nothing, because a `vi.mock` factory loads it while
+ * `@anthropic-ai/claude-agent-sdk` is still being mocked.
+ */
+
+export interface Fake {
+  frames: Record<string, unknown>[];
+  wake: (() => void) | undefined;
+  closed: boolean;
+  options: Record<string, unknown>;
+}
+
+export const sdk = {
+  sessions: [] as Record<string, unknown>[],
+  transcript: [] as Record<string, unknown>[],
+  /** How many times a transcript was actually read off disk. */
+  reads: 0,
+  /** How many of the next reads should throw, so a retry can be seen. */
+  throwOnce: 0,
+  init: {} as Record<string, unknown>,
+  mcp: [] as Record<string, unknown>[],
+  skills: [] as Record<string, unknown>[],
+  said: [] as string[],
+  modelsSet: [] as (string | undefined)[],
+  modesSet: [] as string[],
+  effortsSet: [] as (string | null | undefined)[],
+  sandboxSet: [] as ({ enabled: boolean } | null | undefined)[],
+  interrupted: 0,
+  mcpToggled: [] as { name: string; enabled: boolean }[],
+  mcpReconnected: [] as string[],
+  /** Every set of MCP servers re-declared on a running session, in order. */
+  mcpDeclared: [] as Record<string, unknown>[],
+  canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
+  /**
+   * Every CLI the host started, in order.
+   *
+   * Per query and not shared, because the host opens one at boot just to
+   * ask what the harness offers - and a single frame queue would let that
+   * one swallow the frames meant for a session, which is a test failing for
+   * a reason that has nothing to do with the code under it.
+   */
+  queries: [] as Fake[],
+};
+
+export const fake = {
+  createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  listSessions: async () => sdk.sessions,
+  getSessionMessages: async () => {
+    sdk.reads += 1;
+    // A tick, so concurrent callers actually overlap: an implementation that
+    // reads once per caller and one that shares a read are indistinguishable
+    // when the read resolves synchronously.
+    await new Promise((r) => { setTimeout(r, 1); });
+    if (sdk.throwOnce > 0) {
+      sdk.throwOnce -= 1;
+      throw new Error('the transcript could not be read');
+    }
+    return sdk.transcript;
+  },
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    const fake = { frames: [] as Record<string, unknown>[], wake: undefined as undefined | (() => void), closed: false, options };
+    sdk.queries.push(fake);
+    if (options.canUseTool) sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+    void (async () => {
+      for await (const frame of prompt) {
+        sdk.said.push((frame as { message?: { content?: string } }).message?.content ?? '');
+      }
+    })();
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          while (fake.frames.length > 0) yield fake.frames.shift() as Record<string, unknown>;
+          if (fake.closed) return;
+          await new Promise<void>((resolve) => { fake.wake = resolve; });
+        }
+      },
+      interrupt: async () => { sdk.interrupted++; },
+      setPermissionMode: async (mode: string) => { sdk.modesSet.push(mode); },
+      setModel: async (model?: string) => { sdk.modelsSet.push(model); },
+      applyFlagSettings: async (settings: { effortLevel?: string | null; sandbox?: { enabled: boolean } | null }) => {
+        if ('effortLevel' in settings) sdk.effortsSet.push(settings.effortLevel);
+        if ('sandbox' in settings) sdk.sandboxSet.push(settings.sandbox);
+      },
+      toggleMcpServer: async (name: string, enabled: boolean) => { sdk.mcpToggled.push({ name, enabled }); },
+      reconnectMcpServer: async (name: string) => { sdk.mcpReconnected.push(name); },
+      // Replaces the set, which is what the real one does - so the options a
+      // test reads back are what the session is actually offering now.
+      setMcpServers: async (servers: Record<string, unknown>) => {
+        fake.options.mcpServers = servers;
+        sdk.mcpDeclared.push(servers);
+      },
+      // The control protocol: answers without a turn having happened, which
+      // is the whole reason capabilities are read from here.
+      initializationResult: async () => sdk.init,
+      mcpServerStatus: async () => sdk.mcp,
+      reloadSkills: async () => ({ skills: sdk.skills }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close: () => { fake.closed = true; fake.wake?.(); },
+    };
+  },
+};
+
+export function resetSdk(): void {
+  sdk.sessions.length = 0;
+  sdk.transcript.length = 0;
+  sdk.reads = 0;
+  sdk.throwOnce = 0;
+  sdk.mcp.length = 0;
+  sdk.skills.length = 0;
+  sdk.said.length = 0;
+  sdk.modelsSet.length = 0;
+  sdk.modesSet.length = 0;
+  sdk.effortsSet.length = 0;
+  sdk.sandboxSet.length = 0;
+  sdk.queries.length = 0;
+  sdk.init = {};
+  sdk.interrupted = 0;
+  sdk.mcpToggled.length = 0;
+  sdk.mcpReconnected.length = 0;
+  sdk.mcpDeclared.length = 0;
+  sdk.canUseTool = undefined;
+}

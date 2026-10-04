@@ -9,7 +9,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L263](../../../../packages/sdk/src/host.ts#L263) - `names`, whose comment says the client names the session"
   - "[code://packages/sdk/src/host/spawn.ts#L695-L697](../../../../packages/sdk/src/host/spawn.ts#L695-L697) - `names.set(idOf(uri), uri)` in `spawn`"
   - "[code://packages/sdk/src/host/chatactions.ts#L140-L204](../../../../packages/sdk/src/host/chatactions.ts#L140-L204) - resume, which spawns under `nameOf(id)`: the pattern to mirror"
-  - "[code://packages/sdk/test/host.test.ts#L6351-L6385](../../../../packages/sdk/test/host.test.ts#L6351-L6385) - `a session a client names`, where the new cases go"
+  - "[code://packages/sdk/test/host-names.test.ts#L74-L199](../../../../packages/sdk/test/host-names.test.ts#L74-L199) - `a session a client names`, where the new cases go"
 ---
 
 ## Objective
@@ -21,7 +21,7 @@ A session created as `ahp-session:/<uuid>` with `provider: "claude"` is held, li
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts:442-566` - `createSession` computes ``held = `${provider}:/${idOf(uri)}` `` and passes it to `placedIn`, `openSession` and the `presence` / `activeClientSet` block, instead of `uri`.
 - `UPDATE: packages/sdk/src/host/channels.ts:67-81` - the comment on `named`: the client names the id and the host names the scheme, per decision 1; the code is unchanged.
 - `UPDATE: packages/sdk/src/host.ts:263` and `packages/sdk/src/host/spawn.ts:695-697` - the comments: `names` records the held name, which is the provider's.
-- `UPDATE: packages/sdk/test/host.test.ts` - new cases under `a session a client names`.
+- `UPDATE: packages/sdk/test/host-names.test.ts` - new cases under `a session a client names`.
 
 ## Steps
 
@@ -32,7 +32,7 @@ A session created as `ahp-session:/<uuid>` with `provider: "claude"` is held, li
 
 ## Validation
 
-- `host.test.ts`, `a session a client names`:
+- `host-names.test.ts`, `a session a client names`:
   - created as `ahp-session:/<uuid>`, `listSessions` returns `resource: "claude:/<uuid>"` and `root/sessionAdded` carries `summary.resource: "claude:/<uuid>"`;
   - subscribing `ahp-session:/<uuid>` returns a snapshot whose `resource` and `defaultChat` are in the `ahp-session:` spelling;
   - the backend's `sessionId` is `<uuid>`;
@@ -43,18 +43,18 @@ A session created as `ahp-session:/<uuid>` with `provider: "claude"` is held, li
 
 `createSession` computes the held name ``uri = `${provider}:/${idOf(given)}` `` right after `named` checks the client's URI, and every call below it (`isolated`, `settle`, `placedIn`, `openSession`, the `activeClientSet` block) uses the held name.
 The comments on `named`, `names` and the `names.set` in `spawn` say what the code does now.
-Test: `host.test.ts`, `a session a client names`, `holds a session created under another scheme as its provider's, and answers its creator in its own`: listed and announced as `claude:/<uuid>`, subscribed as `ahp-session:/<uuid>` with `resource` and `defaultChat` in that spelling, and the backend's `sessionId` is `<uuid>`.
+Test: `host-names.test.ts`, `a session a client names`, `holds a session created under another scheme as its provider's, and answers its creator in its own`: listed and announced as `claude:/<uuid>`, subscribed as `ahp-session:/<uuid>` with `resource` and `defaultChat` in that spelling, and the backend's `sessionId` is `<uuid>`.
 It failed first on `listSessions` returning `ahp-session:/<uuid>`.
 A live session snapshot has no `state.resource`, so the case checks `snapshot.resource` and `defaultChat` only.
 Not known to the plan: two example backends and one package derived their id by stripping a literal `ahp-session:/` rather than through `idOf`, so a session held as `echo:/one` got the id `echo:/one`: `examples/echo/agent.ts`, `examples/notes/agent.ts` and `packages/agent-cofold/src/session.ts` (`sessionIdOf`) now call `idOf`; a cofold session created before this by VS Code as `cofold:/<uuid>` was stored under the id `cofold:/<uuid>` and still resumes under it, since a resume carries the stored id.
-The change broke 124 existing cases across the repository at first; tasks 02 and 03 fixed the host side, and the rest were expectations of the created name where the held one is now published (listings, `root/session*` notifications, plugin events, session tools, terminal claims, OTLP log lines), updated in `host.test.ts`, `operations.test.ts`, `changes-refresh.test.ts`, `plugin-events-fire.test.ts`, `otlp.test.ts`, `subagent-chat.test.ts`, `agent-acp-turn.test.ts` and `agent-cofold-turn.test.ts`.
+The change broke 124 existing cases across the repository at first; tasks 02 and 03 fixed the host side, and the rest were expectations of the created name where the held one is now published (listings, `root/session*` notifications, plugin events, session tools, terminal claims, OTLP log lines), updated in `host-names.test.ts`, `operations.test.ts`, `changes-refresh.test.ts`, `plugin-events-fire.test.ts`, `otlp.test.ts`, `subagent-chat.test.ts`, `agent-acp-turn.test.ts` and `agent-cofold-turn.test.ts`.
 The session tools answer with the held name (`list_sessions`, `create_session`) and resolve the name they are given through `heldAs` (`send_message`, `delete_session`, `get_session_context`); the tests pass them `claude:/...`, the name a model is given by `list_sessions`.
 `packages/sdk/test/fixtures/wire.jsonl` is rewritten by `wire.test.ts` and shows the new names.
-After the review of 2026-09-30, the `create_session` session tool and `startForAutomation` now make their session as `<provider>:/<uuid>`, as `createSession` does; tests: `host.test.ts` `creates an independent session in a directory, titled, with its first prompt` checks the announced `resource` is `claude:/<uuid>`, and `automations.test.ts` `settles a run cancelled when its session is disposed mid-turn` and `lets go of a session a run was holding when the session is disposed` expect `echo:/<uuid>`; all three failed first with `ahp-session:/`.
-A session whose id is already held under any scheme is refused with `-32003`, since everything kept about a session is kept by id; test: `host.test.ts` `refuses a session whose id another provider already holds` (`claude:/<id>` live, then `ahp-session:/<id>` with provider `codex`), which failed first by resolving.
+After the review of 2026-09-30, the `create_session` session tool and `startForAutomation` now make their session as `<provider>:/<uuid>`, as `createSession` does; tests: `host-tools.test.ts` `creates an independent session in a directory, titled, with its first prompt` checks the announced `resource` is `claude:/<uuid>`, and `automations.test.ts` `settles a run cancelled when its session is disposed mid-turn` and `lets go of a session a run was holding when the session is disposed` expect `echo:/<uuid>`; all three failed first with `ahp-session:/`.
+A session whose id is already held under any scheme is refused with `-32003`, since everything kept about a session is kept by id; test: `host-names.test.ts` `refuses a session whose id another provider already holds` (`claude:/<id>` live, then `ahp-session:/<id>` with provider `codex`), which failed first by resolving.
 After the re-review of 2026-09-30 that check is `unheld`, asked at the top of `createSession` and `startForAutomation` before any worktree, machine or recorded choice is made, and in `openSession` for the session tools; it refuses an id a running session holds or a listed one has (`sessions` or `owners` under `nameOf(id)`).
 `removeSession` now drops the session from `owners`, so a disposed session's id can be created again until a listing finds it on disk.
-Tests in `host.test.ts`: `refuses a held id before it makes anything for the new session` (a fake worktrees port is never asked for a repository) and `refuses the id of a session a backend keeps on disk`; each fails with its half of the fix taken out.
+Tests in `host-names.test.ts`: `refuses a held id before it makes anything for the new session` (a fake worktrees port is never asked for a repository) and `refuses the id of a session a backend keeps on disk`; each fails with its half of the fix taken out.
 `startForAutomation`'s id is a fresh uuid, so its check is not tested on its own.
 Comments rewritten to say what the code is: `heldAs`, `uriFor` and `idOf` in `catalog.ts`, and `formerChatUri`, `titleOf` and `keepTitle`, which now say the fallback exists because a session store may hold a chat's title under its `ahp-session:` spelling.
 `heldAs`, `spellingOf` and `sessionChannel` share one `OWN_CHANNEL` pattern for an `ahp-` channel that is not a session.

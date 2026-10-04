@@ -36,6 +36,6 @@ Three things the task did not settle, and what was done instead:
 
 - The preset is over the session's own config keys, not under them. host/31 merges `defaults()` into a session's `settings`, so a key the client sent and a key that arrived as a default are the same thing by the time the session reads it. There is no telling them apart from here, and the plan's ordering is what makes two presets differ at all.
 - A plugin whose load fails is reported by the loader with the time it took, so the case pins `failed…: options.presets.work.temperature is not an option a preset holds` and leaves the timing free.
-- The resume case is run through `createSession` with a stored `settings.preset` rather than through the host's own resume, which `packages/sdk/test/host.test.ts` already covers; what it checks is the same thing from this side - the name nobody can resolve is the first preset.
+- The resume case is run through `createSession` with a stored `settings.preset` rather than through the host's own resume, which `packages/sdk/test/host-sessionconfig.test.ts` already covers; what it checks is the same thing from this side - the name nobody can resolve is the first preset.
 
 Task 03 removes the three session keys this task still has to merge between the fallbacks and the preset.

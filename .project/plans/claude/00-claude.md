@@ -26,7 +26,7 @@ claude() -> Agent.start() -> a Claude Agent SDK session -> SDK events
 
 ## Tests
 
-- `code://test/host.test.ts`, `code://test/conformance.test.ts`, `code://test/wire.test.ts` - the host and the wire, driven with this backend attached.
+- `code://test/host-*.test.ts`, `code://test/conformance.test.ts`, `code://test/wire.test.ts` - the host and the wire, driven with this backend attached.
 - `code://test/diagnostics.test.ts`, `code://test/mcp.test.ts`, `code://test/toolauth.test.ts` - the diagnostics, the MCP surface and tool authorization against it.
 
 ## Known gaps

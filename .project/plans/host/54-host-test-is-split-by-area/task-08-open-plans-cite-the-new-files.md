@@ -1,6 +1,6 @@
 ---
 title: Open plans cite the new test files
-status: todo
+status: implemented
 depends: [task-07-names-snapshots-and-github.md]
 layer: "docs"
 refs:
@@ -36,3 +36,23 @@ Every plan not yet built that cites `code://packages/sdk/test/host.test.ts`, and
 - `git diff --stat .project/` touches only the folders from step 1 and `00-host.md`.
 
 ## Resume
+
+Built 2026-10-04.
+
+Each ref, `UPDATE:` line, validation line and `pnpm exec vitest run` line that named `host.test.ts` now names the area file that holds the block, at its current lines. The folders rewritten: claude/10, container/05 p7, host/30, host/44 p3, host/44, host/45, host/47 p1, host/47 p3, host/49, host/50, plus `host/00-host.md`.
+
+Three folders the grep in step 1 missed, because they write the bare `host.test.ts` and not the full path, were rewritten too: host/31 (three `## Resume` lines naming `a session's config across a restart`, now `host-sessionconfig.test.ts`), host/48 (a search record naming `host.test.ts:3739` and `:3806`, the two filesystem cases now at `host-files.test.ts:120` and `:172`) and host/43 task-02 (a `*.test.ts` glob line, now naming the area files). All three plans are `active` or `planned`.
+
+`claude/00-claude.md`, `daemon/00-daemon.md` and `plugin/00-plugin.md` also wrote `code://test/host.test.ts`; they are overview files like `00-host.md` and would have been left naming a file that no longer exists, so they were given the `code://test/host-*.test.ts` spelling as well. None of the three carries a `revalidated` field, so no date moved; host/48's did, to 2026-10-04.
+
+Which area file a task that adds a test now names, where the plan's table does not say outright:
+
+| Case | File | Why |
+| --- | --- | --- |
+| host/47 p1 tasks 02-04, chat reorder, move and `movable` | `host-chats.test.ts`, `more than one chat in a session` | the table gives that file the areas `chatactions.ts` and `sessionmethods.ts`, which is where all three actions land |
+| host/49 task-03, a session's client plugins | `host-tools.test.ts`, `the MCP servers a session is offered` | that block already holds the case where a server set is read at session start, which is what this case checks |
+| host/50 tasks 01 and 03, `createChat`'s backend id and a restart rebuilding every chat | `host-chats.test.ts`, `more than one chat in a session` | same reasoning as host/47 p1 |
+
+Every remaining `host.test.ts` in `.project/plans` is in a folder whose `plan.md` reads `built` or `dropped`, in this plan's own folder, or in `plans/index.md`, which the build was told not to edit.
+
+Gates: `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` pass (198 files, 2,839 tests). `pnpm exec vitest list packages/sdk | wc -l` is 1,334 and the sorted name list still fingerprints to `532860aa4c087b69e30d8a47dcead5f4`, the value taken before task 01.

@@ -20,7 +20,7 @@ refs:
 
 - `UPDATE: packages/sdk/src/host/gate.ts:79-80` - `moveChat: 'session:write'` in `NEEDS` (`chat:move` once host/46 lands).
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts` - a `moveChat` handler beside `createChat`; the reorder writes host/50's chat list in the new order.
-- `UPDATE: packages/sdk/test/host.test.ts` - the cases below.
+- `UPDATE: packages/sdk/test/host-chats.test.ts` - the cases below, in `more than one chat in a session`.
 - `UPDATE: docs/AHP.md` - the `moveChat` and `session/chatsReordered` rows.
 
 ## Steps
@@ -31,7 +31,7 @@ refs:
 
 ## Validation
 
-- `packages/sdk/test/host.test.ts`: with chats A (default), B and C, moving C after A sends one `session/chatsReordered` naming A, C, B and the workers, and the session snapshot lists them so; moving B with no `after` puts it first; moving A, an unknown chat, a worker, B after itself, or B during a turn on B is refused and nothing is dispatched; the order survives a new host over the same file store.
+- `packages/sdk/test/host-chats.test.ts`, in `more than one chat in a session`: with chats A (default), B and C, moving C after A sends one `session/chatsReordered` naming A, C, B and the workers, and the session snapshot lists them so; moving B with no `after` puts it first; moving A, an unknown chat, a worker, B after itself, or B during a turn on B is refused and nothing is dispatched; the order survives a new host over the same file store.
 - `packages/sdk/test/conformance.test.ts` replays the reorder through `sessionReducer` and reaches the same list; `pnpm test` passes.
 
 ## Resume
