@@ -57,13 +57,14 @@ assistant() tool_use Agent -> spawning.set(id, { description, prompt, ... }) -> 
 | A worker chat opens only once its spawn is recorded; frames that arrive before are held in order and delivered when it opens | VS Code 1.140 announces the worker on the first frame after the spawn is known | 01 |
 | The spawn is recorded wherever the call's input is first complete: the canonical message, or the `canUseTool` callback, which is handed the whole input | (defaulted: the input is complete in both, and the callback can run first) | 01 |
 | Held frames are released with the fallback title when the spawning call ends or 5 s pass with no spawn recorded, so a worker is never lost | (defaulted: a worker whose spawn is never seen still has a chat to read) | 01 |
+| A worker still held when the turn is cancelled is released at once and ended with the turn, so no chat opens after the cancel | Softov, 2026-10-04 | 01 |
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A live worker chat waits for its spawn](task-01-a-live-worker-chat-waits-for-its-spawn.md) | todo | - |
-| [02 - A restored worker chat takes the same title](task-02-a-restored-worker-chat-takes-the-same-title.md) | todo | - |
+| [01 - A live worker chat waits for its spawn](task-01-a-live-worker-chat-waits-for-its-spawn.md) | implemented | - |
+| [02 - A restored worker chat takes the same title](task-02-a-restored-worker-chat-takes-the-same-title.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -72,11 +73,13 @@ assistant() tool_use Agent -> spawning.set(id, { description, prompt, ... }) -> 
 
 ## Resume state
 
-- **Next:** task 01.
+- **Done so far:** both tasks implemented 2026-10-04. A worker chat waits for its spawn, is titled by its task live and restored, and opens on the prompt; the spawn is recorded from the canonical message or from `canUseTool`, whichever says it first.
 
 ## Final verification checklist
 
 - [ ] A build session that spawns background `Agent` workers: each worker chat is titled with its description and its first turn holds the prompt.
 - [ ] After a daemon restart, the same chats keep that title and prompt.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
 - [ ] `plans/index.md` updated.
+
+Not done by hand: the first two. There is no client in this repository to open a session and read the tabs, so both are checked against captures instead - `claude-subagent.jsonl` live with a worker frame delivered ahead of its `tool_use`, and the `.meta.json` fixtures live and restored. What neither can show is the titles in a real session list.

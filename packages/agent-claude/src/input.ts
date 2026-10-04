@@ -48,6 +48,28 @@ export function toolInputOf(name: string, input: Bag): string | undefined {
   return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
 }
 
+/** VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it is cut. */
+const TITLE_MAX = 60;
+
+/**
+ * What a worker chat is called, from the one-line task its own call described.
+ *
+ * VS Code's `subagentChatTitle`: the task description, which is the sentence
+ * somebody actually wrote and the one thing that tells two workers apart, cut
+ * to sixty characters; failing that the kind of agent it is, which says what
+ * it is rather than what it was for; failing that `Subagent`, which says only
+ * that there is one.
+ *
+ * One rule for a live chat, one restored from a transcript and the `subagent`
+ * block that links the two, so a worker's name does not change when the daemon
+ * does - and so six workers spawned by one turn do not all read `Explore`.
+ */
+export function titleOf(description: string | undefined, agentType: string | undefined): string {
+  const task = description?.trim();
+  if (task) return truncate(task, TITLE_MAX);
+  return agentType?.trim() || 'Subagent';
+}
+
 /**
  * The carousel an `AskUserQuestion` asks for, and the map its answers are read
  * back through.

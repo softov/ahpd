@@ -6,7 +6,7 @@ import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
-import { lineOf, pastLineOf, questionRequest, summarize, toolInputOf } from './input.js';
+import { lineOf, pastLineOf, questionRequest, summarize, titleOf, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 import { flagSettingsOf, optionDefaults, queryOptionsOf } from './options.js';
 import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
@@ -1035,6 +1035,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
     parts: Map<string, Bag>;
     calling: Map<string, string>;
     streaming: string | undefined;
+    /**
+     * Frames for a worker whose chat is not open yet, in the order they came.
+     *
+     * Nothing has been applied and nothing has been said: a frame for a worker
+     * the harness has not named yet has no turn to belong to, and saying it on
+     * the lead chat would draw a worker's words as the parent's. Delivered
+     * whole when the chat opens, so it is applied as if it had arrived then.
+     */
+    waiting?: (() => void)[] | undefined;
+    /** What releases `waiting` when no spawn is recorded in time. */
+    release?: ReturnType<typeof setTimeout> | undefined;
   }
 
   /** The session's own agent, which is the scope a frame without a parent is in. */
@@ -1100,6 +1111,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const dropped: SubagentChat = { uri: '', turnId: '', emit: () => {}, end: () => {} };
 
   /**
+   * How long a worker whose spawn has not been recorded keeps its frames before
+   * they are let through anyway.
+   *
+   * A live capture puts the spawning call's `tool_use` 8-18 ms before its
+   * worker's first frame, so this bounds a gap that is normally nothing at all.
+   * It is here so a worker the harness never says anything more about still has
+   * a chat to read, not because a well-behaved run waits for it.
+   */
+  const SPAWN_GRACE = 5000;
+
+  /**
    * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
    *
    * The host mints the chat, announces it, opens its turn with the prompt and
@@ -1120,16 +1142,56 @@ export function createSession(options: ClaudeSessionOptions): Session {
       };
     }
     const info = spawning.get(parent);
+    /*
+     * Nothing has said what this worker is for.
+     *
+     * Its title and the prompt its chat opens with are both in the spawning
+     * call's input, and a worker can speak before that call arrives - which is
+     * what it does, every time, a few milliseconds ahead. So the scope holds
+     * rather than opens, and `recordSpawn` opens it from the record when that
+     * lands. Until then every frame is held whole rather than applied here: a
+     * turn built before the host minted the chat is the wrong turn, with the
+     * wrong id and no prompt in it.
+     */
+    if (info === undefined) {
+      const held: Scope = {
+        parent,
+        chat: undefined,
+        turn: undefined,
+        parts: new Map(),
+        calling: new Map(),
+        streaming: undefined,
+        waiting: [],
+      };
+      scopes.set(parent, held);
+      held.release = setTimeout(() => { releaseHeld(parent); }, SPAWN_GRACE);
+      held.release.unref?.();
+      return held;
+    }
+    const scope = openWorker(parent, info, options.subagent);
+    scopes.set(parent, scope);
+    return scope;
+  };
+
+  /**
+   * A worker's chat, opened from the record of the call that spawned it.
+   *
+   * Named by the call's task and opened on its prompt, which is the worker's
+   * own first message - what VS Code's `taskDescription` and `taskPrompt` are
+   * for. The seam is passed in because `scopeFor` has already refused a session
+   * that has none.
+   */
+  const openWorker = (parent: string, info: Spawning | undefined, open: NonNullable<ClaudeSessionOptions['subagent']>): Scope => {
     const subagentType = info?.subagentType;
-    const chat = options.subagent(parent, {
-      title: subagentType ?? 'Subagent',
+    const chat = open(parent, {
+      title: titleOf(info?.description, subagentType),
       ...(subagentType !== undefined ? { agentName: subagentType } : {}),
       ...(info?.description !== undefined ? { description: info.description } : {}),
       ...(info?.prompt !== undefined ? { prompt: info.prompt } : {}),
       ...(info?.parent !== undefined && info.parent !== '' ? { parentToolCallId: info.parent } : {}),
     });
     if (info !== undefined) info.chat = chat.uri;
-    const scope: Scope = {
+    return {
       parent,
       chat,
       turn: {
@@ -1143,8 +1205,66 @@ export function createSession(options: ClaudeSessionOptions): Session {
       calling: new Map(),
       streaming: undefined,
     };
-    scopes.set(parent, scope);
-    return scope;
+  };
+
+  /**
+   * Open a held worker chat and deliver what it was holding.
+   *
+   * With the record, when there is one: named by the task, opened on the
+   * prompt. Without one, from the call's own result or after `SPAWN_GRACE`,
+   * which is the last thing there is to wait for - a worker whose call has
+   * ended has a chat whether the harness said what it was for or not, and a
+   * worker the harness is simply slow about gets one five seconds from now.
+   */
+  const releaseHeld = (parent: string, info?: Spawning): void => {
+    const open = options.subagent;
+    const held = scopes.get(parent);
+    if (open === undefined || held?.waiting === undefined) return;
+    const frames = held.waiting;
+    held.waiting = undefined;
+    if (held.release !== undefined) {
+      clearTimeout(held.release);
+      held.release = undefined;
+    }
+    const opened = openWorker(parent, info ?? spawning.get(parent), open);
+    /*
+     * The scope keeps its own identity - `byAgent` holds scopes by reference,
+     * and a frame that arrives during the replay below has to find this one -
+     * and takes the chat and the turn the worker really has, neither of which
+     * has been said to anybody yet.
+     */
+    held.chat = opened.chat;
+    held.turn = opened.turn;
+    for (const frame of frames) frame();
+  };
+
+  /**
+   * Record what a spawning call said, and open its worker's chat if one waits.
+   *
+   * The call's input is the only place the harness says what a worker is for:
+   * its kind, its one-line task and the prompt it runs on. It is handed over
+   * twice - in the canonical assistant message, and in whole through the
+   * permission callback, which the SDK runs as soon as that input is complete -
+   * and the callback can be first, for a call approved while it was still
+   * streaming, which is the case where the canonical message then skips the
+   * call altogether. A record that already names a chat is kept: that chat was
+   * opened from it, and a second record is the same information said twice.
+   */
+  const recordSpawn = (id: string, given: Bag, scope: Scope, turnId?: string): void => {
+    if (spawning.get(id)?.chat !== undefined) return;
+    const kind = str(given.subagent_type);
+    const about = str(given.description);
+    const prompt = str(given.prompt);
+    const made = scope === mainScope ? turnId : spawning.get(scope.parent)?.turn;
+    spawning.set(id, {
+      ...(kind !== undefined ? { subagentType: kind } : {}),
+      ...(about !== undefined ? { description: about } : {}),
+      ...(prompt !== undefined ? { prompt } : {}),
+      parent: scope.parent,
+      foreground: given.run_in_background !== true,
+      ...(made !== undefined ? { turn: made } : {}),
+    });
+    releaseHeld(id, spawning.get(id));
   };
 
   /** The scope a tool call was opened in, whichever conversation that is. */
@@ -1158,6 +1278,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
   /** One action on the chat a scope writes to. */
   const emitOn = (scope: Scope, action: Bag): void => {
     if (scope.chat !== undefined) scope.chat.emit(action);
+    /*
+     * A worker whose chat is not open yet says nothing, because the only chat
+     * there is to say it on is the lead's - and a worker's words drawn as the
+     * parent's are worse than a worker's words a few milliseconds late.
+     */
+    else if (scope.waiting !== undefined) return;
     else emit('chat', action);
   };
 
@@ -1611,6 +1737,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * message that completes it.
      */
     const scope = scopeFor(parent);
+    // The worker has not been named yet: held whole, and delivered once the
+    // chat is open and the turn its frames belong to exists.
+    if (scope.waiting !== undefined) {
+      scope.waiting.push(() => { streamed(event, parent); });
+      return;
+    }
 
     if (type === 'message_start') {
       scope.streaming = str(bag(event.message).id) ?? 'm';
@@ -1783,6 +1915,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   const assistant = (message: Bag, parent = ''): void => {
     const scope = scopeFor(parent);
+    if (scope.waiting !== undefined) {
+      scope.waiting.push(() => { assistant(message, parent); });
+      return;
+    }
     const turn = openTurn(scope);
     const of = str(message.id) ?? 'm';
     // The model a turn ran on is the session's own answer; a worker's may be
@@ -1833,25 +1969,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
          * the worker is for. Recorded here rather than where the block streams
          * in, because the input is complete only in the canonical message -
          * and a worker's first frame can arrive before this one does, which is
-         * what the `Subagent` fallback is for.
+         * what the scope waits for. Recorded there too, from the permission
+         * callback, which is handed the whole input and can be first.
          */
-        if (name === 'Task' || name === 'Agent') {
-          const given = bag(block.input);
-          const kind = str(given.subagent_type);
-          const about = str(given.description);
-          const prompt = str(given.prompt);
-          const made = scope === mainScope ? str(turn.id) : spawning.get(scope.parent)?.turn;
-          const opened = spawning.get(id)?.chat ?? scopes.get(id)?.chat?.uri;
-          spawning.set(id, {
-            ...(kind !== undefined ? { subagentType: kind } : {}),
-            ...(about !== undefined ? { description: about } : {}),
-            ...(prompt !== undefined ? { prompt } : {}),
-            parent: scope.parent,
-            foreground: given.run_in_background !== true,
-            ...(made !== undefined ? { turn: made } : {}),
-            ...(opened !== undefined ? { chat: opened } : {}),
-          });
-        }
+        if (name === 'Task' || name === 'Agent') recordSpawn(id, bag(block.input), scope, str(turn.id));
         /*
          * Whose tool this is, which decides who has to run it.
          *
@@ -1973,10 +2094,25 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   const results = (message: Bag, parent = ''): void => {
     const scope = scopeFor(parent);
+    if (scope.waiting !== undefined) {
+      scope.waiting.push(() => { results(message, parent); });
+      return;
+    }
     for (const raw of list(message.content)) {
       const block = bag(raw);
       if (str(block.type) !== 'tool_result') continue;
       const id = str(block.tool_use_id);
+      /*
+       * A worker that spoke before the call that spawned it was recorded.
+       *
+       * The call's own result is the last thing there is to wait for: its
+       * spawn was either going to be recorded by now or it never will be, and
+       * a worker whose call has ended has a chat either way. Before the part is
+       * looked up, because a call whose `tool_use` never arrived is exactly the
+       * one with a result and nothing else - and before `workerBlock` below, so
+       * a result for a call that does have a record still links what it opens.
+       */
+      if (id !== undefined) releaseHeld(id);
       const part = id ? scope.parts.get(id) : undefined;
       if (!part) continue;
       const call = bag(part.toolCall);
@@ -2112,7 +2248,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const workerBlock = (callId: string): Bag | undefined => {
     const info = spawning.get(callId);
     if (info?.chat === undefined) return undefined;
-    const title = info.subagentType ?? 'Subagent';
+    const title = titleOf(info.description, info.subagentType);
     return {
       type: 'subagent',
       resource: info.chat,
@@ -2170,6 +2306,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ?? mainScope;
       if (agentId !== undefined && scope.chat !== undefined) byAgent.set(agentId, scope);
       const turn = openTurn(scope);
+      /*
+       * A spawning call, recorded from the input this callback was handed.
+       *
+       * `canUseTool` is given the whole input, and the SDK runs it as soon as
+       * that input is complete - which for a call confirmed while it was still
+       * streaming is before the canonical assistant message arrives, and that
+       * message then skips the call because it is no longer streaming. A
+       * worker whose spawn is only recorded there would have no chat at all.
+       */
+      if ((toolName === 'Task' || toolName === 'Agent') && callId !== undefined) {
+        recordSpawn(callId, bag(raw), scope, str(turn.id));
+      }
       /*
        * The agent's own id for this call.
        *
@@ -3797,6 +3945,18 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * running and ends on its own `task_notification`. A worker whose call
        * was never seen has no turn on record and is ended with this one.
        */
+      /*
+       * A worker still waiting to be told what it is.
+       *
+       * It has a chat to open either way, and a chat that opens five seconds
+       * after the turn that spawned it was stopped is a chat nobody asked for.
+       * So it is opened here, with whatever the record said by now - the
+       * fallback title and no prompt if nothing did - and the loop below ends it
+       * with the workers this turn already ends.
+       */
+      for (const scope of [...scopes.values()]) {
+        if (scope.waiting !== undefined) releaseHeld(scope.parent);
+      }
       const cancelling = turnId || str(active?.id);
       for (const scope of [...scopes.values()]) {
         if (scope.parent === '' || scope.chat === undefined) continue;
@@ -4047,6 +4207,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
       answeredInputs.clear();
       spawning.clear();
       background.clear();
+      // A worker still waiting for a spawn that will now never be recorded, and
+      // a timer that would open its chat on a session nobody is listening to.
+      for (const scope of scopes.values()) {
+        if (scope.release !== undefined) clearTimeout(scope.release);
+        scope.waiting = undefined;
+      }
       wake?.();
       for (const one of [...pending.values()]) {
         pending.delete(one.id);

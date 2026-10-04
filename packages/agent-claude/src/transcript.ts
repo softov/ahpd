@@ -5,7 +5,7 @@ import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { lineOf, pastLineOf, questionAnswers, questionRequest, toolInputOf } from './input.js';
+import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 
 /**
@@ -154,7 +154,14 @@ export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<
     const description = str(about.description);
     out.push({
       toolCallId,
-      title: agentType ?? 'Subagent',
+      /*
+       * By the same rule as a chat opened live, from the same two fields the
+       * live one reads. A worker that reads `Explore` while it is running and
+       * `Explore` for ever after is consistent but useless - six workers from
+       * one turn are six tabs saying the same thing - and the task the call
+       * described is in the meta file either way.
+       */
+      title: titleOf(description, agentType),
       ...(agentType !== undefined ? { agentName: agentType } : {}),
       ...(description !== undefined ? { description } : {}),
       turns: buildTurns(readJsonl(join(folder, name))) as unknown as Bag[],

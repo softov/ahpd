@@ -78,10 +78,32 @@ const settle = async (times = 30): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-/** The same frames as a worker's: its stream events carry the call that runs it. */
-const asSubagent = (frames: Record<string, unknown>[], toolCallId = 'toolu_worker'): Record<string, unknown>[] => frames
-  .filter((one) => one.type === 'stream_event')
-  .map((one) => ({ ...one, parent_tool_use_id: toolCallId }));
+/**
+ * The same frames as a worker's: its stream events carry the call that runs it.
+ *
+ * Behind the spawning call, because the harness always sends that too, and this
+ * host holds a worker's frames until it does - a worker whose call was never
+ * seen is held for five seconds rather than counted as it speaks.
+ */
+const asSubagent = (frames: Record<string, unknown>[], toolCallId = 'toolu_worker'): Record<string, unknown>[] => [
+  {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      id: 'msg_worker_call',
+      role: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: toolCallId,
+        name: 'Agent',
+        input: { subagent_type: 'Explore', description: 'Count its tokens', prompt: 'answer once' },
+      }],
+    },
+  },
+  ...frames
+    .filter((one) => one.type === 'stream_event')
+    .map((one) => ({ ...one, parent_tool_use_id: toolCallId })),
+];
 
 /** The frame a turn ends with, priced at a query's running cost so far. */
 const result = (costUSD: number, costBasis: 'list' | 'managed' | 'unknown' = 'list'): Record<string, unknown> => ({

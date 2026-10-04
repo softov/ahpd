@@ -103,6 +103,15 @@ function laid(): { project: string; session: string } {
       content: [{ type: 'tool_result', tool_use_id: 'toolu_second', content: [{ type: 'text', text: 'All clear.\nagentId: b2' }] }],
     }),
     frame('assistant', 'a3', { id: 'm3', model: 'claude-opus-5', content: [{ type: 'text', text: 'Both are done.' }] }),
+    // One whose call said no description, so only the kind of worker names it.
+    frame('assistant', 'a4', {
+      id: 'm4', model: 'claude-opus-5',
+      content: [{ type: 'tool_use', id: 'toolu_third', name: 'Agent', input: { subagent_type: 'Plan', prompt: 'plan it' } }],
+    }),
+    frame('user', 'u4', {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'toolu_third', content: [{ type: 'text', text: 'Planned.\nagentId: e5' }] }],
+    }),
   ];
   sdk.sessions = [{ sessionId: SESSION, lastModified: Date.now(), cwd: DIR, summary: 'Restored' }];
 
@@ -131,6 +140,12 @@ function laid(): { project: string; session: string } {
     frame('user', 'su2', { role: 'user', content: 'audit it' }),
     frame('assistant', 'sa2', { id: 'sm2', model: 'claude-opus-5', content: [{ type: 'text', text: 'Nothing to report.' }] }),
   ].map(line).join(''));
+  // A meta file naming only the kind of worker: no task to be named by.
+  writeFileSync(join(subagents, 'agent-e5.meta.json'), JSON.stringify({ agentType: 'Plan', toolUseId: 'toolu_third', spawnDepth: 1 }));
+  writeFileSync(join(subagents, 'agent-e5.jsonl'), [
+    frame('user', 'su5', { role: 'user', content: 'plan it' }),
+    frame('assistant', 'sa5', { id: 'sm5', model: 'claude-opus-5', content: [{ type: 'text', text: 'Three steps.' }] }),
+  ].map(line).join(''));
   // Neither a meta file nor a suffix, so nothing names the call that ran it.
   writeFileSync(join(subagents, 'agent-c3.jsonl'), [
     frame('assistant', 'sa3', { id: 'sm3', model: 'claude-opus-5', content: [{ type: 'text', text: 'Orphan.' }] }),
@@ -146,20 +161,31 @@ it('reads a session\'s subagents back, their turns and the call that ran each', 
   laid();
   const agent = claude({ paths: [DIR] });
   const found = await agent.subagents?.(SESSION);
-  expect(found).toHaveLength(3);
+  expect(found).toHaveLength(4);
   const byCall = new Map((found ?? []).map((one) => [one.toolCallId, one]));
   // The nested one names the call in a1's chat that spawned it.
   expect(byCall.get('toolu_nested')?.parentToolCallId).toBe('toolu_task');
   expect(byCall.get('toolu_task')?.parentToolCallId).toBeUndefined();
 
   const first = byCall.get('toolu_task');
-  expect(first).toMatchObject({ title: 'Explore', agentName: 'Explore', description: 'List files' });
+  expect(first).toMatchObject({ title: 'List files', agentName: 'Explore', description: 'List files' });
   expect(first?.turns).toHaveLength(1);
   const parts = first?.turns[0]?.responseParts as Bag[];
   expect(parts[0]).toMatchObject({ kind: 'markdown', content: 'Found three files.' });
+  /*
+   * The worker's own first turn carries the prompt it was run with, which the
+   * CLI writes as that worker's first user line - the same prompt a live chat
+   * is opened on, so the two read alike across a restart.
+   */
+  expect(first?.turns[0]?.message).toMatchObject({ text: 'list the files', origin: { kind: 'user' } });
 
   // No meta file: the suffix at the end of the spawning call's result is the link.
   expect(byCall.get('toolu_second')).toMatchObject({ title: 'Subagent' });
+
+  // A meta file that says what kind of worker and nothing else: the kind is
+  // what it can be called, which is what a live chat with no task says too.
+  expect(byCall.get('toolu_third')).toMatchObject({ title: 'Plan', agentName: 'Plan' });
+  expect(byCall.get('toolu_third')?.description).toBeUndefined();
 
   // And the one with neither is left out, not linked to somebody else's call.
   expect(found?.some((one) => one.title === 'Orphan')).toBe(false);
@@ -187,7 +213,7 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
   const row = chats.find((one) => one.resource === workerUri);
   expect(row).toBeDefined();
   expect(row).toMatchObject({
-    title: 'Explore',
+    title: 'List files',
     interactivity: 'read-only',
     origin: { kind: 'tool', toolCallId: 'toolu_task' },
   });
@@ -216,7 +242,7 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
     .map((part) => (part.toolCall as Bag | undefined)?.content as Bag[] | undefined)
     .flatMap((content) => content ?? [])
     .find((one) => one.type === 'subagent');
-  expect(link).toMatchObject({ resource: workerUri, title: 'Explore' });
+  expect(link).toMatchObject({ resource: workerUri, title: 'List files' });
 });
 
 it('links a restored nested worker from the call in its parent worker\'s chat', async () => {
@@ -239,7 +265,7 @@ it('links a restored nested worker from the call in its parent worker\'s chat', 
   const link = ((worker.snapshot.state.turns ?? []) as Bag[]).flatMap((turn) => (turn.responseParts as Bag[]) ?? [])
     .map((part) => part.toolCall as Bag | undefined)
     .find((call) => call?.toolCallId === 'toolu_nested');
-  expect((link?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent')).toMatchObject({ resource: nested, title: 'Explore' });
+  expect((link?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent')).toMatchObject({ resource: nested, title: 'Look deeper' });
 });
 
 /** A host and one client, initialised. */
@@ -285,7 +311,7 @@ it('keeps a restored session\'s workers listed and linked once it is sent a turn
   // Named in the spelling the host holds the session under, as a worker
   // opened live is.
   const link = (call?.content as Bag[] | undefined)?.find((one) => one.type === 'subagent');
-  expect(link).toMatchObject({ title: 'Explore' });
+  expect(link).toMatchObject({ title: 'List files' });
   expect(String(link?.resource)).toMatch(/^ahp-chat:\/\/subagent\/[^/]+\/toolu_task$/);
 });
 
