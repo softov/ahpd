@@ -122,6 +122,8 @@ Reference: [00-host.md](host/00-host.md)
 | [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | built 2026-10-03 ([implemented.md](host/51-a-user-put-clears-issuer-and-roles-from/implemented.md)) | host 36 | - |
 | [52 - Deleting a session deletes the backend's copy, and a listed row can be deleted](host/52-deleting-a-session-deletes-the-backends-copy/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | - | - |
 | [53 - ahpd.grants lists every subject a role can name, the schemes included](host/53-ahpd-grants-lists-every-scheme/plan.md) | high | built 2026-10-04 ([implemented.md](host/53-ahpd-grants-lists-every-scheme/implemented.md)); tasks implemented, awaiting review | host 46 | ahpapp people/01's role editor |
+| [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-08 todo | - | - |
+| [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-03 todo | - | - |
 
 Next free number in `host`: `53`.
 
@@ -150,6 +152,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [15 - A Claude plugin is loaded once, and each preset is a variant with its own name and models](claude/15-one-load-and-each-preset-is-a-variant/plan.md) | high | built 2026-10-02 ([implemented.md](claude/15-one-load-and-each-preset-is-a-variant/implemented.md)) | claude 10, 12, 13 | the ACP presets plan |
 | [16 - A Claude preset that cannot be resolved skips only itself](claude/16-a-preset-that-fails-skips-only-itself/plan.md) | high | built 2026-10-03 ([implemented.md](claude/16-a-preset-that-fails-skips-only-itself/implemented.md)) | claude 15 | - |
 | [17 - A Claude subagent chat opens with its task's description as title and its prompt as the first message](claude/17-a-subagent-chat-opens-with-its-task/plan.md) | high | built 2026-10-04 ([implemented.md](claude/17-a-subagent-chat-opens-with-its-task/implemented.md)); tasks implemented, awaiting review | - | - |
+| [18 - session.ts is split into one file per area, and session.ts only composes them](claude/18-session-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-08 todo | - | - |
 
 Next free number in `claude`: `18`.
 
@@ -209,6 +212,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 
 | [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
+| [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-05 todo | - | - |
 
 Next free number in `plugin`: `34`.
 
@@ -259,6 +263,7 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [11 - A turn's parts come in the order the model wrote them, one part per block](pi/11-a-turns-parts-come-in-the-order-they-were-written/plan.md) | high | built 2026-09-28 ([implemented.md](pi/11-a-turns-parts-come-in-the-order-they-were-written/implemented.md)) | pi 10 | - |
 | [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | built 2026-09-28 ([implemented.md](pi/12-a-tool-call-says-what-it-runs-on/implemented.md)) | - | - |
 | [13 - A model pi cannot find fails the turn that asked for it](pi/13-a-model-pi-cannot-find-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](pi/13-a-model-pi-cannot-find-fails-the-turn/implemented.md)) | - | - |
+| [14 - agent-pi.test.ts is split into one test file per area](pi/14-pi-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | - | - |
 
 Next free number in `pi`: `13`.
 
@@ -282,6 +287,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/10-a-prompt-carries-what-the-agent-accepts/implemented.md)) | - | - |
 | [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/11-the-agent-gets-mcp-servers/implemented.md)) | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | built 2026-10-02 ([implemented.md](acp/12-the-bridge-is-on-the-current-sdk/implemented.md)) | acp 01 | - |
+| [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-06 todo | host 52 | - |
 
 Next free number in `acp`: `13`.
 
